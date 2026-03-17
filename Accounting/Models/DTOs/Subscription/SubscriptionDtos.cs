@@ -158,6 +158,80 @@ public record PlanTemplateResponse(
     int TrialExtensionDays,
     FeatureFlags TrialFeatures);
 
+// ===== Subscription Notification Settings =====
+public record UpdateSubscriptionNotificationRequest(
+    bool? NotifyBeforeExpiry,
+    string? NotifyDaysBeforeExpiry,          // e.g. "30,15,7,3,1"
+    bool? NotifyOnExpiry,
+    bool? NotifyAfterExpiry,
+    string? NotifyDaysAfterExpiry,           // e.g. "1,3,7"
+    int? DeactivationDaysAfterExpiry,        // ตัดบัญชีหลังหมดอายุกี่วัน
+    bool? NotifyBeforeDeactivation,
+    string? NotifyDaysBeforeDeactivation);   // e.g. "7,3,1"
+
+public record SubscriptionNotificationSettingsResponse(
+    bool NotifyBeforeExpiry,
+    List<int> NotifyDaysBeforeExpiry,
+    bool NotifyOnExpiry,
+    bool NotifyAfterExpiry,
+    List<int> NotifyDaysAfterExpiry,
+    int DeactivationDaysAfterExpiry,
+    bool NotifyBeforeDeactivation,
+    List<int> NotifyDaysBeforeDeactivation);
+
+// ===== Subscription Payment (Slip Upload & Approval) =====
+public record SubmitSubscriptionPaymentRequest(
+    Guid SubscriptionId,
+    decimal Amount,
+    DateTime PaymentDate,
+    PaymentMethod PaymentMethod,
+    string? FromBankName,
+    string? FromAccountNumber,
+    string? ToBankName,
+    string? ToAccountNumber,
+    string? TransferReference,
+    SubscriptionPlan RequestedPlan,
+    BillingCycle RequestedBillingCycle,
+    int RequestedPeriodMonths,
+    string? CustomerNotes);
+
+public record ReviewSubscriptionPaymentRequest(
+    bool Approve,
+    string? ReviewNotes,
+    string? RejectionReason);
+
+public record SubscriptionPaymentResponse(
+    Guid Id,
+    Guid SubscriptionId,
+    string PaymentNumber,
+    decimal Amount,
+    string Currency,
+    DateTime PaymentDate,
+    PaymentMethod PaymentMethod,
+    string? FromBankName,
+    string? FromAccountNumber,
+    string? ToBankName,
+    string? ToAccountNumber,
+    string? TransferReference,
+    string? SlipFileName,
+    string? SlipUrl,
+    SubscriptionPlan RequestedPlan,
+    BillingCycle RequestedBillingCycle,
+    int RequestedPeriodMonths,
+    SubscriptionPaymentStatus Status,
+    string? ReviewedBy,
+    DateTime? ReviewedAt,
+    string? ReviewNotes,
+    string? RejectionReason,
+    DateTime? SubscriptionExtendedTo,
+    string? CustomerNotes,
+    DateTime CreatedAt);
+
+public record SubscriptionPaymentListResponse(
+    List<SubscriptionPaymentResponse> Payments,
+    int TotalCount,
+    int PendingCount);
+
 // ===== Admin: Update Trial Config Directly =====
 public record UpdateTrialConfigRequest(
     int? TrialDurationDays,

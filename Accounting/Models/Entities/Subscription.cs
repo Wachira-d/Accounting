@@ -49,8 +49,19 @@ public class Subscription : BaseEntity
     public DateTime? LastPaymentDate { get; set; }
     public DateTime? NextBillingDate { get; set; }
 
+    // Notification Settings (กำหนดการแจ้งเตือน Subscription)
+    public bool NotifyBeforeExpiry { get; set; } = true;
+    public string NotifyDaysBeforeExpiry { get; set; } = "30,15,7,3,1"; // comma-separated days
+    public bool NotifyOnExpiry { get; set; } = true;
+    public bool NotifyAfterExpiry { get; set; } = true;
+    public string NotifyDaysAfterExpiry { get; set; } = "1,3,7";  // comma-separated days
+    public int DeactivationDaysAfterExpiry { get; set; } = 14;     // ตัดบัญชีหลังหมดอายุกี่วัน
+    public bool NotifyBeforeDeactivation { get; set; } = true;
+    public string NotifyDaysBeforeDeactivation { get; set; } = "7,3,1"; // comma-separated days before deactivation
+
     // Navigation
     public ICollection<SubscriptionHistory> History { get; set; } = new List<SubscriptionHistory>();
+    public ICollection<SubscriptionPayment> SubscriptionPayments { get; set; } = new List<SubscriptionPayment>();
 }
 
 /// <summary>
@@ -158,4 +169,52 @@ public class PlanTemplate : BaseEntity
     public int TrialMaxJournalEntriesPerMonth { get; set; } = 50;
     public bool TrialBlockOnExpiry { get; set; } = false;
     public int TrialGracePeriodDays { get; set; } = 7;
+}
+
+/// <summary>
+/// การชำระเงิน Subscription (โอนเงิน + อัพโหลดสลิป)
+/// ลูกค้าโอนเงินแล้วอัพโหลดสลิป → Admin ตรวจสอบ → Approve → ต่ออายุ Subscription
+/// </summary>
+public class SubscriptionPayment : BaseEntity
+{
+    public Guid SubscriptionId { get; set; }
+    public Subscription Subscription { get; set; } = null!;
+
+    // Payment Info
+    public string PaymentNumber { get; set; } = null!;  // รหัสการชำระ (auto-generated)
+    public decimal Amount { get; set; }
+    public string Currency { get; set; } = "THB";
+    public DateTime PaymentDate { get; set; }            // วันที่ลูกค้าโอน
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.BankTransfer;
+
+    // Bank Transfer Details
+    public string? FromBankName { get; set; }            // ธนาคารผู้โอน
+    public string? FromAccountNumber { get; set; }       // เลขบัญชีผู้โอน (last 4 digits)
+    public string? ToBankName { get; set; }              // ธนาคารปลายทาง
+    public string? ToAccountNumber { get; set; }         // เลขบัญชีปลายทาง
+    public string? TransferReference { get; set; }       // เลขอ้างอิงการโอน
+
+    // Slip Upload
+    public string? SlipFileName { get; set; }
+    public string? SlipOriginalFileName { get; set; }
+    public string? SlipContentType { get; set; }
+    public long? SlipFileSize { get; set; }
+    public string? SlipStoragePath { get; set; }
+
+    // Subscription Plan Requested
+    public SubscriptionPlan RequestedPlan { get; set; }
+    public BillingCycle RequestedBillingCycle { get; set; }
+    public int RequestedPeriodMonths { get; set; }       // จำนวนเดือนที่ต้องการต่อ
+
+    // Approval
+    public SubscriptionPaymentStatus Status { get; set; } = SubscriptionPaymentStatus.Pending;
+    public Guid? ReviewedByUserId { get; set; }
+    public User? ReviewedByUser { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public string? ReviewNotes { get; set; }             // หมายเหตุจาก Admin
+    public string? RejectionReason { get; set; }         // เหตุผลที่ปฏิเสธ
+
+    // Result (after approval)
+    public DateTime? SubscriptionExtendedTo { get; set; } // วันที่ต่ออายุถึง
+    public string? CustomerNotes { get; set; }            // หมายเหตุจากลูกค้า
 }

@@ -292,6 +292,16 @@ public enum AccessScope
     Full = 3
 }
 
+// ==================== Subscription Payment ====================
+public enum SubscriptionPaymentStatus
+{
+    Pending = 0,           // รอตรวจสอบ
+    UnderReview = 1,       // กำลังตรวจสอบ
+    Approved = 2,          // อนุมัติแล้ว
+    Rejected = 3,          // ปฏิเสธ
+    Cancelled = 4          // ยกเลิก
+}
+
 // ==================== Notification ====================
 public enum NotificationType
 {
@@ -304,7 +314,14 @@ public enum NotificationType
     FreelanceInvite = 7,
     SecurityAlert = 8,
     DocumentCreated = 9,
-    MonthEndReminder = 10
+    MonthEndReminder = 10,
+    SubscriptionExpiring = 11,     // แจ้งเตือนก่อนหมดอายุ
+    SubscriptionExpired = 12,      // แจ้งเตือนหมดอายุแล้ว
+    SubscriptionDeactivation = 13, // แจ้งเตือนก่อนตัดบัญชี/ระงับ
+    SubscriptionPaymentPending = 14,  // มีการชำระเงินรอตรวจสอบ
+    SubscriptionPaymentApproved = 15, // ชำระเงินอนุมัติแล้ว
+    SubscriptionPaymentRejected = 16, // ชำระเงินถูกปฏิเสธ
+    SubscriptionRenewed = 17          // ต่ออายุสำเร็จ
 }
 
 public enum NotificationChannel

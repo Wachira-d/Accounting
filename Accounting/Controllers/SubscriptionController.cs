@@ -111,6 +111,96 @@ public class SubscriptionController : ControllerBase
         return Ok(new ApiResponse<List<PlanTemplateResponse>>(true, result));
     }
 
+    // ===== Notification Settings =====
+
+    /// <summary>
+    /// ดูการตั้งค่าแจ้งเตือน Subscription
+    /// </summary>
+    [HttpGet("{companyId:guid}/notifications")]
+    public async Task<ActionResult<ApiResponse<SubscriptionNotificationSettingsResponse>>> GetNotificationSettings(Guid companyId)
+    {
+        var result = await _subscriptionService.GetNotificationSettingsAsync(companyId);
+        return Ok(new ApiResponse<SubscriptionNotificationSettingsResponse>(true, result));
+    }
+
+    /// <summary>
+    /// ตั้งค่าแจ้งเตือน Subscription (กำหนดวันแจ้งเตือนก่อนหมดอายุ, หลังหมดอายุ, ก่อนตัดบัญชี)
+    /// </summary>
+    [HttpPut("{companyId:guid}/notifications")]
+    public async Task<ActionResult<ApiResponse<SubscriptionNotificationSettingsResponse>>> UpdateNotificationSettings(
+        Guid companyId, [FromBody] UpdateSubscriptionNotificationRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _subscriptionService.UpdateNotificationSettingsAsync(companyId, request, userId);
+        return Ok(new ApiResponse<SubscriptionNotificationSettingsResponse>(true, result, "อัพเดทการตั้งค่าแจ้งเตือนสำเร็จ"));
+    }
+
+    // ===== Payment (โอนเงิน + อัพโหลดสลิป) =====
+
+    /// <summary>
+    /// ส่งข้อมูลการชำระเงิน (โอนเงิน)
+    /// </summary>
+    [HttpPost("{companyId:guid}/payments")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> SubmitPayment(
+        Guid companyId, [FromBody] SubmitSubscriptionPaymentRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _subscriptionService.SubmitPaymentAsync(companyId, request, userId);
+        return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "ส่งข้อมูลการชำระเงินสำเร็จ รอการตรวจสอบ"));
+    }
+
+    /// <summary>
+    /// อัพโหลดสลิปการโอนเงิน
+    /// </summary>
+    [HttpPost("payments/{paymentId:guid}/slip")]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> UploadSlip(Guid paymentId, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "กรุณาอัพโหลดไฟล์สลิป"));
+
+        var allowedTypes = new[] { "image/jpeg", "image/png", "image/webp", "application/pdf" };
+        if (!allowedTypes.Contains(file.ContentType.ToLower()))
+            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "รองรับเฉพาะไฟล์ JPG, PNG, WebP, PDF"));
+
+        // Save file
+        var fileName = $"slip_{paymentId}_{DateTime.UtcNow:yyyyMMddHHmmss}{Path.GetExtension(file.FileName)}";
+        var storagePath = Path.Combine("uploads", "slips", fileName);
+        var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        using (var stream = new FileStream(fullPath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _subscriptionService.UploadPaymentSlipAsync(
+            paymentId, fileName, file.FileName, file.ContentType, file.Length, storagePath, userId);
+
+        return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "อัพโหลดสลิปสำเร็จ"));
+    }
+
+    /// <summary>
+    /// ดูรายการชำระเงินทั้งหมดของบริษัท
+    /// </summary>
+    [HttpGet("{companyId:guid}/payments")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentListResponse>>> GetPayments(Guid companyId)
+    {
+        var result = await _subscriptionService.GetPaymentsAsync(companyId);
+        return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
+    }
+
+    /// <summary>
+    /// ดูรายละเอียดการชำระเงิน
+    /// </summary>
+    [HttpGet("payments/{paymentId:guid}")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> GetPayment(Guid paymentId)
+    {
+        var result = await _subscriptionService.GetPaymentAsync(paymentId);
+        return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result));
+    }
+
     // ===== Feature Check =====
 
     /// <summary>

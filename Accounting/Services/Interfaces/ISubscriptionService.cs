@@ -30,6 +30,20 @@ public interface ISubscriptionService
     // Admin: Direct Trial Config Update
     Task<TrialStatusResponse> UpdateTrialConfigAsync(Guid companyId, UpdateTrialConfigRequest request, string performedBy);
 
-    // Background: Check expired trials
+    // Subscription Notification Settings
+    Task<SubscriptionNotificationSettingsResponse> GetNotificationSettingsAsync(Guid companyId);
+    Task<SubscriptionNotificationSettingsResponse> UpdateNotificationSettingsAsync(Guid companyId, UpdateSubscriptionNotificationRequest request, string performedBy);
+
+    // Subscription Payment (Slip Upload & Approval)
+    Task<SubscriptionPaymentResponse> SubmitPaymentAsync(Guid companyId, SubmitSubscriptionPaymentRequest request, string performedBy);
+    Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(Guid paymentId, string fileName, string originalFileName, string contentType, long fileSize, string storagePath, string performedBy);
+    Task<SubscriptionPaymentListResponse> GetPaymentsAsync(Guid companyId);
+    Task<SubscriptionPaymentResponse> GetPaymentAsync(Guid paymentId);
+    Task<SubscriptionPaymentResponse> ReviewPaymentAsync(Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy);
+    Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync(); // Admin: ดูรายการชำระเงินรอตรวจสอบทั้งหมด
+
+    // Background: Check expired trials & subscriptions
     Task ProcessExpiredTrialsAsync();
+    Task ProcessSubscriptionNotificationsAsync(); // ตรวจสอบและส่งแจ้งเตือน
+    Task ProcessExpiredSubscriptionsAsync();       // ตรวจสอบ subscription หมดอายุ
 }

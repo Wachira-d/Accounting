@@ -4,6 +4,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
@@ -13,10 +14,12 @@ namespace Accounting.Services.Implementations;
 public class SubscriptionService : ISubscriptionService
 {
     private readonly AccountingDbContext _db;
+    private readonly INotificationService _notificationService;
 
-    public SubscriptionService(AccountingDbContext db)
+    public SubscriptionService(AccountingDbContext db, INotificationService notificationService)
     {
         _db = db;
+        _notificationService = notificationService;
     }
 
     // ==================== Trial Management ====================
@@ -602,7 +605,496 @@ public class SubscriptionService : ISubscriptionService
         await _db.SaveChangesAsync();
     }
 
+    // ==================== Subscription Notification Settings ====================
+
+    public async Task<SubscriptionNotificationSettingsResponse> GetNotificationSettingsAsync(Guid companyId)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        return MapNotificationSettings(sub);
+    }
+
+    public async Task<SubscriptionNotificationSettingsResponse> UpdateNotificationSettingsAsync(
+        Guid companyId, UpdateSubscriptionNotificationRequest request, string performedBy)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        if (request.NotifyBeforeExpiry.HasValue) sub.NotifyBeforeExpiry = request.NotifyBeforeExpiry.Value;
+        if (request.NotifyDaysBeforeExpiry != null) sub.NotifyDaysBeforeExpiry = request.NotifyDaysBeforeExpiry;
+        if (request.NotifyOnExpiry.HasValue) sub.NotifyOnExpiry = request.NotifyOnExpiry.Value;
+        if (request.NotifyAfterExpiry.HasValue) sub.NotifyAfterExpiry = request.NotifyAfterExpiry.Value;
+        if (request.NotifyDaysAfterExpiry != null) sub.NotifyDaysAfterExpiry = request.NotifyDaysAfterExpiry;
+        if (request.DeactivationDaysAfterExpiry.HasValue) sub.DeactivationDaysAfterExpiry = request.DeactivationDaysAfterExpiry.Value;
+        if (request.NotifyBeforeDeactivation.HasValue) sub.NotifyBeforeDeactivation = request.NotifyBeforeDeactivation.Value;
+        if (request.NotifyDaysBeforeDeactivation != null) sub.NotifyDaysBeforeDeactivation = request.NotifyDaysBeforeDeactivation;
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "NotificationSettingsUpdated",
+            Notes = "Subscription notification settings updated",
+            PerformedBy = performedBy
+        });
+
+        await _db.SaveChangesAsync();
+        return MapNotificationSettings(sub);
+    }
+
+    // ==================== Subscription Payment ====================
+
+    public async Task<SubscriptionPaymentResponse> SubmitPaymentAsync(
+        Guid companyId, SubmitSubscriptionPaymentRequest request, string performedBy)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        // Generate payment number
+        var count = await _db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == sub.Id);
+        var paymentNumber = $"SP-{sub.CompanyId.ToString()[..8].ToUpper()}-{count + 1:D4}";
+
+        var payment = new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id,
+            PaymentNumber = paymentNumber,
+            Amount = request.Amount,
+            PaymentDate = request.PaymentDate,
+            PaymentMethod = request.PaymentMethod,
+            FromBankName = request.FromBankName,
+            FromAccountNumber = request.FromAccountNumber,
+            ToBankName = request.ToBankName,
+            ToAccountNumber = request.ToAccountNumber,
+            TransferReference = request.TransferReference,
+            RequestedPlan = request.RequestedPlan,
+            RequestedBillingCycle = request.RequestedBillingCycle,
+            RequestedPeriodMonths = request.RequestedPeriodMonths,
+            CustomerNotes = request.CustomerNotes,
+            Status = SubscriptionPaymentStatus.Pending,
+            CreatedBy = performedBy
+        };
+
+        _db.SubscriptionPayments.Add(payment);
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "PaymentSubmitted",
+            Notes = $"Payment {paymentNumber} submitted: {request.Amount:N2} THB",
+            PerformedBy = performedBy
+        });
+
+        await _db.SaveChangesAsync();
+
+        // Notify admins about pending payment
+        var adminUsers = await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == companyId && (cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin))
+            .Select(cu => cu.UserId)
+            .ToListAsync();
+
+        foreach (var adminId in adminUsers)
+        {
+            await _notificationService.SendAsync(adminId, companyId,
+                NotificationType.SubscriptionPaymentPending,
+                "มีการชำระเงิน Subscription รอตรวจสอบ",
+                $"การชำระเงิน {paymentNumber} จำนวน {request.Amount:N2} THB รอการตรวจสอบ",
+                $"/admin/subscription-payments/{payment.Id}",
+                "SubscriptionPayment", payment.Id);
+        }
+
+        return MapPaymentToResponse(payment);
+    }
+
+    public async Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(
+        Guid paymentId, string fileName, string originalFileName,
+        string contentType, long fileSize, string storagePath, string performedBy)
+    {
+        var payment = await _db.SubscriptionPayments.FindAsync(paymentId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+
+        if (payment.Status != SubscriptionPaymentStatus.Pending)
+            throw new InvalidOperationException("ไม่สามารถอัพโหลดสลิปได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
+
+        payment.SlipFileName = fileName;
+        payment.SlipOriginalFileName = originalFileName;
+        payment.SlipContentType = contentType;
+        payment.SlipFileSize = fileSize;
+        payment.SlipStoragePath = storagePath;
+
+        await _db.SaveChangesAsync();
+        return MapPaymentToResponse(payment);
+    }
+
+    public async Task<SubscriptionPaymentListResponse> GetPaymentsAsync(Guid companyId)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        var payments = await _db.SubscriptionPayments
+            .Include(p => p.ReviewedByUser)
+            .Where(p => p.SubscriptionId == sub.Id)
+            .OrderByDescending(p => p.CreatedAt)
+            .ToListAsync();
+
+        return new SubscriptionPaymentListResponse(
+            payments.Select(MapPaymentToResponse).ToList(),
+            payments.Count,
+            payments.Count(p => p.Status == SubscriptionPaymentStatus.Pending));
+    }
+
+    public async Task<SubscriptionPaymentResponse> GetPaymentAsync(Guid paymentId)
+    {
+        var payment = await _db.SubscriptionPayments
+            .Include(p => p.ReviewedByUser)
+            .FirstOrDefaultAsync(p => p.Id == paymentId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+
+        return MapPaymentToResponse(payment);
+    }
+
+    public async Task<SubscriptionPaymentResponse> ReviewPaymentAsync(
+        Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy)
+    {
+        var payment = await _db.SubscriptionPayments
+            .Include(p => p.Subscription)
+            .FirstOrDefaultAsync(p => p.Id == paymentId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+
+        if (payment.Status != SubscriptionPaymentStatus.Pending && payment.Status != SubscriptionPaymentStatus.UnderReview)
+            throw new InvalidOperationException("ไม่สามารถตรวจสอบรายการนี้ได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
+
+        if (!Guid.TryParse(performedBy, out var reviewerUserId))
+            throw new InvalidOperationException("ไม่สามารถระบุผู้ตรวจสอบได้");
+
+        payment.ReviewedByUserId = reviewerUserId;
+        payment.ReviewedAt = DateTime.UtcNow;
+        payment.ReviewNotes = request.ReviewNotes;
+
+        if (request.Approve)
+        {
+            payment.Status = SubscriptionPaymentStatus.Approved;
+
+            // Extend/renew subscription
+            var sub = payment.Subscription;
+            var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == payment.RequestedPlan && p.IsActive);
+
+            var now = DateTime.UtcNow;
+            var baseDate = sub.EndDate > now ? sub.EndDate : now; // ต่อจากวันหมดอายุเดิม หรือจากวันนี้
+            var newEndDate = baseDate.AddMonths(payment.RequestedPeriodMonths);
+
+            sub.Plan = payment.RequestedPlan;
+            sub.Status = SubscriptionStatus.Active;
+            sub.BillingCycle = payment.RequestedBillingCycle;
+            sub.EndDate = newEndDate;
+            sub.NextBillingDate = newEndDate;
+            sub.LastPaymentDate = payment.PaymentDate;
+            sub.PaymentReference = payment.PaymentNumber;
+
+            if (template != null)
+            {
+                sub.EnabledFeatures = template.EnabledFeatures;
+                sub.MaxUsers = template.MaxUsers;
+                sub.MaxCompanies = template.MaxCompanies;
+                sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
+                sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
+                sub.MaxStorageBytes = template.MaxStorageBytes;
+
+                var price = payment.RequestedBillingCycle switch
+                {
+                    BillingCycle.Monthly => template.MonthlyPrice,
+                    BillingCycle.Quarterly => template.QuarterlyPrice,
+                    BillingCycle.SemiAnnual => template.SemiAnnualPrice,
+                    BillingCycle.Annual => template.AnnualPrice,
+                    _ => template.MonthlyPrice
+                };
+                sub.PricePerCycle = price;
+            }
+
+            payment.SubscriptionExtendedTo = newEndDate;
+
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = "PaymentApproved",
+                ToPlan = payment.RequestedPlan,
+                ToStatus = SubscriptionStatus.Active,
+                Notes = $"Payment {payment.PaymentNumber} approved. Subscription extended to {newEndDate:yyyy-MM-dd}",
+                PerformedBy = performedBy
+            });
+
+            // Notify customer
+            var ownerUserId = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId)
+                .FirstOrDefaultAsync();
+
+            if (ownerUserId != Guid.Empty)
+            {
+                await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                    NotificationType.SubscriptionPaymentApproved,
+                    "การชำระเงินได้รับการอนุมัติ",
+                    $"การชำระเงิน {payment.PaymentNumber} ได้รับการอนุมัติ Subscription ต่ออายุถึง {newEndDate:dd/MM/yyyy}",
+                    $"/subscription",
+                    "SubscriptionPayment", payment.Id);
+
+                await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                    NotificationType.SubscriptionRenewed,
+                    "ต่ออายุ Subscription สำเร็จ",
+                    $"Subscription plan {payment.RequestedPlan} ต่ออายุถึง {newEndDate:dd/MM/yyyy}",
+                    $"/subscription",
+                    "Subscription", sub.Id);
+            }
+        }
+        else
+        {
+            payment.Status = SubscriptionPaymentStatus.Rejected;
+            payment.RejectionReason = request.RejectionReason;
+
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = payment.SubscriptionId,
+                Action = "PaymentRejected",
+                Notes = $"Payment {payment.PaymentNumber} rejected: {request.RejectionReason}",
+                PerformedBy = performedBy
+            });
+
+            // Notify customer
+            var sub = payment.Subscription;
+            var ownerUserId = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId)
+                .FirstOrDefaultAsync();
+
+            if (ownerUserId != Guid.Empty)
+            {
+                await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                    NotificationType.SubscriptionPaymentRejected,
+                    "การชำระเงินถูกปฏิเสธ",
+                    $"การชำระเงิน {payment.PaymentNumber} ถูกปฏิเสธ: {request.RejectionReason}",
+                    $"/subscription/payments/{payment.Id}",
+                    "SubscriptionPayment", payment.Id);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return MapPaymentToResponse(payment);
+    }
+
+    public async Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync()
+    {
+        var payments = await _db.SubscriptionPayments
+            .Include(p => p.Subscription)
+            .Include(p => p.ReviewedByUser)
+            .Where(p => p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview)
+            .OrderBy(p => p.CreatedAt)
+            .ToListAsync();
+
+        return new SubscriptionPaymentListResponse(
+            payments.Select(MapPaymentToResponse).ToList(),
+            payments.Count,
+            payments.Count(p => p.Status == SubscriptionPaymentStatus.Pending));
+    }
+
+    // ==================== Background: Process Subscription Notifications ====================
+
+    public async Task ProcessSubscriptionNotificationsAsync()
+    {
+        var now = DateTime.UtcNow;
+        var activeSubscriptions = await _db.Subscriptions
+            .Where(s => s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.PastDue)
+            .ToListAsync();
+
+        foreach (var sub in activeSubscriptions)
+        {
+            var daysUntilExpiry = (int)(sub.EndDate - now).TotalDays;
+            var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
+            var daysUntilDeactivation = (int)(deactivationDate - now).TotalDays;
+
+            // แจ้งเตือนก่อนหมดอายุ
+            if (sub.NotifyBeforeExpiry && daysUntilExpiry > 0)
+            {
+                var notifyDays = ParseDaysList(sub.NotifyDaysBeforeExpiry);
+                if (notifyDays.Contains(daysUntilExpiry))
+                {
+                    await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionExpiring,
+                        $"Subscription จะหมดอายุในอีก {daysUntilExpiry} วัน",
+                        $"Subscription plan {sub.Plan} จะหมดอายุในวันที่ {sub.EndDate:dd/MM/yyyy} (อีก {daysUntilExpiry} วัน) กรุณาต่ออายุก่อนหมดอายุ");
+                }
+            }
+
+            // แจ้งเตือนก่อนตัดบัญชี
+            if (sub.NotifyBeforeDeactivation && daysUntilExpiry <= 0 && daysUntilDeactivation > 0)
+            {
+                var notifyDays = ParseDaysList(sub.NotifyDaysBeforeDeactivation);
+                if (notifyDays.Contains(daysUntilDeactivation))
+                {
+                    await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionDeactivation,
+                        $"บัญชีจะถูกระงับในอีก {daysUntilDeactivation} วัน",
+                        $"Subscription หมดอายุแล้ว บัญชีจะถูกระงับในวันที่ {deactivationDate:dd/MM/yyyy} (อีก {daysUntilDeactivation} วัน) กรุณาต่ออายุโดยด่วน");
+                }
+            }
+        }
+
+        // แจ้งเตือนวันหมดอายุ
+        var expiringToday = await _db.Subscriptions
+            .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate.Date == now.Date)
+            .ToListAsync();
+
+        foreach (var sub in expiringToday)
+        {
+            if (sub.NotifyOnExpiry)
+            {
+                await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionExpired,
+                    "Subscription หมดอายุวันนี้",
+                    $"Subscription plan {sub.Plan} หมดอายุวันนี้ ({sub.EndDate:dd/MM/yyyy}) กรุณาต่ออายุเพื่อใช้งานต่อ");
+            }
+        }
+
+        // แจ้งเตือนหลังหมดอายุ
+        var expiredSubscriptions = await _db.Subscriptions
+            .Where(s => s.Status == SubscriptionStatus.Expired || s.Status == SubscriptionStatus.PastDue)
+            .ToListAsync();
+
+        foreach (var sub in expiredSubscriptions)
+        {
+            if (!sub.NotifyAfterExpiry) continue;
+
+            var daysSinceExpiry = (int)(now - sub.EndDate).TotalDays;
+            var notifyDays = ParseDaysList(sub.NotifyDaysAfterExpiry);
+            if (notifyDays.Contains(daysSinceExpiry))
+            {
+                var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
+                var daysUntilDeactivation = (int)(deactivationDate - now).TotalDays;
+
+                await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionExpired,
+                    $"Subscription หมดอายุแล้ว {daysSinceExpiry} วัน",
+                    $"Subscription plan {sub.Plan} หมดอายุไปแล้ว {daysSinceExpiry} วัน บัญชีจะถูกระงับในอีก {Math.Max(0, daysUntilDeactivation)} วัน");
+            }
+        }
+    }
+
+    public async Task ProcessExpiredSubscriptionsAsync()
+    {
+        var now = DateTime.UtcNow;
+
+        // Mark active subscriptions as expired
+        var newlyExpired = await _db.Subscriptions
+            .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate < now)
+            .ToListAsync();
+
+        foreach (var sub in newlyExpired)
+        {
+            sub.Status = SubscriptionStatus.PastDue;
+
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = "SubscriptionPastDue",
+                FromStatus = SubscriptionStatus.Active,
+                ToStatus = SubscriptionStatus.PastDue,
+                Notes = $"Subscription expired on {sub.EndDate:yyyy-MM-dd}",
+                PerformedBy = "System"
+            });
+        }
+
+        // Deactivate subscriptions past deactivation period
+        var pastDue = await _db.Subscriptions
+            .Where(s => s.Status == SubscriptionStatus.PastDue)
+            .ToListAsync();
+
+        foreach (var sub in pastDue)
+        {
+            var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
+            if (now >= deactivationDate)
+            {
+                sub.Status = SubscriptionStatus.Suspended;
+
+                _db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = sub.Id,
+                    Action = "SubscriptionSuspended",
+                    FromStatus = SubscriptionStatus.PastDue,
+                    ToStatus = SubscriptionStatus.Suspended,
+                    Notes = $"Suspended after {sub.DeactivationDaysAfterExpiry} days past expiry",
+                    PerformedBy = "System"
+                });
+
+                await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionDeactivation,
+                    "บัญชีถูกระงับ",
+                    $"Subscription plan {sub.Plan} ถูกระงับเนื่องจากไม่ได้ต่ออายุภายในกำหนด กรุณาชำระเงินเพื่อเปิดใช้งานอีกครั้ง");
+            }
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
     // ==================== Private Helpers ====================
+
+    private async Task SendSubscriptionNotificationToOwner(Subscription sub, NotificationType type, string title, string message)
+    {
+        var ownerUserId = await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+            .Select(cu => cu.UserId)
+            .FirstOrDefaultAsync();
+
+        if (ownerUserId != Guid.Empty)
+        {
+            await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                type, title, message, "/subscription", "Subscription", sub.Id);
+        }
+    }
+
+    private static List<int> ParseDaysList(string daysString)
+    {
+        if (string.IsNullOrWhiteSpace(daysString)) return new List<int>();
+        return daysString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s, out var d) ? d : -1)
+            .Where(d => d > 0)
+            .ToList();
+    }
+
+    private static SubscriptionNotificationSettingsResponse MapNotificationSettings(Subscription sub)
+    {
+        return new SubscriptionNotificationSettingsResponse(
+            sub.NotifyBeforeExpiry,
+            ParseDaysList(sub.NotifyDaysBeforeExpiry),
+            sub.NotifyOnExpiry,
+            sub.NotifyAfterExpiry,
+            ParseDaysList(sub.NotifyDaysAfterExpiry),
+            sub.DeactivationDaysAfterExpiry,
+            sub.NotifyBeforeDeactivation,
+            ParseDaysList(sub.NotifyDaysBeforeDeactivation));
+    }
+
+    private static SubscriptionPaymentResponse MapPaymentToResponse(SubscriptionPayment p)
+    {
+        return new SubscriptionPaymentResponse(
+            p.Id,
+            p.SubscriptionId,
+            p.PaymentNumber,
+            p.Amount,
+            p.Currency,
+            p.PaymentDate,
+            p.PaymentMethod,
+            p.FromBankName,
+            p.FromAccountNumber,
+            p.ToBankName,
+            p.ToAccountNumber,
+            p.TransferReference,
+            p.SlipOriginalFileName,
+            p.SlipStoragePath,
+            p.RequestedPlan,
+            p.RequestedBillingCycle,
+            p.RequestedPeriodMonths,
+            p.Status,
+            p.ReviewedByUser?.FullName,
+            p.ReviewedAt,
+            p.ReviewNotes,
+            p.RejectionReason,
+            p.SubscriptionExtendedTo,
+            p.CustomerNotes,
+            p.CreatedAt);
+    }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)
     {

@@ -18,6 +18,7 @@ public class AccountingDbContext : DbContext
     public DbSet<TrialConfig> TrialConfigs => Set<TrialConfig>();
     public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
     public DbSet<PlanTemplate> PlanTemplates => Set<PlanTemplate>();
+    public DbSet<SubscriptionPayment> SubscriptionPayments => Set<SubscriptionPayment>();
 
     // Accounting
     public DbSet<ChartOfAccount> ChartOfAccounts => Set<ChartOfAccount>();
@@ -128,6 +129,9 @@ public class AccountingDbContext : DbContext
             e.HasOne(s => s.Company).WithOne(c => c.Subscription).HasForeignKey<Subscription>(s => s.CompanyId);
             e.Property(s => s.PricePerCycle).HasPrecision(18, 2);
             e.Property(s => s.Currency).HasMaxLength(3);
+            e.Property(s => s.NotifyDaysBeforeExpiry).HasMaxLength(100);
+            e.Property(s => s.NotifyDaysAfterExpiry).HasMaxLength(100);
+            e.Property(s => s.NotifyDaysBeforeDeactivation).HasMaxLength(100);
             e.HasQueryFilter(s => !s.IsDeleted);
         });
 
@@ -157,6 +161,29 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.SemiAnnualPrice).HasPrecision(18, 2);
             e.Property(p => p.AnnualPrice).HasPrecision(18, 2);
             e.Property(p => p.Currency).HasMaxLength(3);
+        });
+
+        // ===== SubscriptionPayment =====
+        modelBuilder.Entity<SubscriptionPayment>(e =>
+        {
+            e.HasIndex(p => p.PaymentNumber).IsUnique();
+            e.HasIndex(p => new { p.SubscriptionId, p.Status });
+            e.Property(p => p.PaymentNumber).HasMaxLength(50);
+            e.Property(p => p.Amount).HasPrecision(18, 2);
+            e.Property(p => p.Currency).HasMaxLength(3);
+            e.Property(p => p.FromBankName).HasMaxLength(100);
+            e.Property(p => p.FromAccountNumber).HasMaxLength(50);
+            e.Property(p => p.ToBankName).HasMaxLength(100);
+            e.Property(p => p.ToAccountNumber).HasMaxLength(50);
+            e.Property(p => p.TransferReference).HasMaxLength(100);
+            e.Property(p => p.SlipFileName).HasMaxLength(500);
+            e.Property(p => p.SlipOriginalFileName).HasMaxLength(500);
+            e.Property(p => p.SlipContentType).HasMaxLength(100);
+            e.Property(p => p.ReviewNotes).HasMaxLength(1000);
+            e.Property(p => p.RejectionReason).HasMaxLength(1000);
+            e.Property(p => p.CustomerNotes).HasMaxLength(1000);
+            e.HasOne(p => p.Subscription).WithMany(s => s.SubscriptionPayments).HasForeignKey(p => p.SubscriptionId);
+            e.HasOne(p => p.ReviewedByUser).WithMany().HasForeignKey(p => p.ReviewedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== ChartOfAccount =====

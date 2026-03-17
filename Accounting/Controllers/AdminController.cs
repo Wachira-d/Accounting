@@ -99,4 +99,96 @@ public class AdminController : ControllerBase
         await _subscriptionService.ProcessExpiredTrialsAsync();
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired trials สำเร็จ"));
     }
+
+    // ===== Subscription Payment Review =====
+
+    /// <summary>
+    /// ดูรายการชำระเงินรอตรวจสอบทั้งหมด (Admin)
+    /// </summary>
+    [HttpGet("subscription-payments/pending")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentListResponse>>> GetPendingPayments()
+    {
+        var result = await _subscriptionService.GetAllPendingPaymentsAsync();
+        return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
+    }
+
+    /// <summary>
+    /// ดูรายละเอียดการชำระเงิน (Admin)
+    /// </summary>
+    [HttpGet("subscription-payments/{paymentId:guid}")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> GetPaymentDetail(Guid paymentId)
+    {
+        var result = await _subscriptionService.GetPaymentAsync(paymentId);
+        return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result));
+    }
+
+    /// <summary>
+    /// ตรวจสอบและอนุมัติ/ปฏิเสธการชำระเงิน (Admin)
+    /// เมื่ออนุมัติจะต่ออายุ Subscription อัตโนมัติ
+    /// </summary>
+    [HttpPost("subscription-payments/{paymentId:guid}/review")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> ReviewPayment(
+        Guid paymentId, [FromBody] ReviewSubscriptionPaymentRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _subscriptionService.ReviewPaymentAsync(paymentId, request, userId);
+        var message = request.Approve ? "อนุมัติการชำระเงินสำเร็จ ต่ออายุ Subscription แล้ว" : "ปฏิเสธการชำระเงินแล้ว";
+        return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, message));
+    }
+
+    /// <summary>
+    /// ดูรายการชำระเงินทั้งหมดของบริษัท (Admin)
+    /// </summary>
+    [HttpGet("companies/{companyId:guid}/subscription-payments")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentListResponse>>> GetCompanyPayments(Guid companyId)
+    {
+        var result = await _subscriptionService.GetPaymentsAsync(companyId);
+        return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
+    }
+
+    // ===== Subscription Notification Settings (Admin) =====
+
+    /// <summary>
+    /// ดูการตั้งค่าแจ้งเตือน Subscription ของบริษัท (Admin)
+    /// </summary>
+    [HttpGet("companies/{companyId:guid}/subscription-notifications")]
+    public async Task<ActionResult<ApiResponse<SubscriptionNotificationSettingsResponse>>> GetNotificationSettings(Guid companyId)
+    {
+        var result = await _subscriptionService.GetNotificationSettingsAsync(companyId);
+        return Ok(new ApiResponse<SubscriptionNotificationSettingsResponse>(true, result));
+    }
+
+    /// <summary>
+    /// แก้ไขการตั้งค่าแจ้งเตือน Subscription ของบริษัท (Admin)
+    /// </summary>
+    [HttpPut("companies/{companyId:guid}/subscription-notifications")]
+    public async Task<ActionResult<ApiResponse<SubscriptionNotificationSettingsResponse>>> UpdateNotificationSettings(
+        Guid companyId, [FromBody] UpdateSubscriptionNotificationRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _subscriptionService.UpdateNotificationSettingsAsync(companyId, request, userId);
+        return Ok(new ApiResponse<SubscriptionNotificationSettingsResponse>(true, result, "อัพเดทการตั้งค่าแจ้งเตือนสำเร็จ"));
+    }
+
+    // ===== Background Processing (Scheduler) =====
+
+    /// <summary>
+    /// ประมวลผลแจ้งเตือน Subscription (เรียกจาก scheduler)
+    /// </summary>
+    [HttpPost("subscription/process-notifications")]
+    public async Task<ActionResult<ApiResponse<string>>> ProcessSubscriptionNotifications()
+    {
+        await _subscriptionService.ProcessSubscriptionNotificationsAsync();
+        return Ok(new ApiResponse<string>(true, null, "ประมวลผลแจ้งเตือน subscription สำเร็จ"));
+    }
+
+    /// <summary>
+    /// ประมวลผล Subscription หมดอายุ + ตัดบัญชี (เรียกจาก scheduler)
+    /// </summary>
+    [HttpPost("subscription/process-expired")]
+    public async Task<ActionResult<ApiResponse<string>>> ProcessExpiredSubscriptions()
+    {
+        await _subscriptionService.ProcessExpiredSubscriptionsAsync();
+        return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired subscriptions สำเร็จ"));
+    }
 }
