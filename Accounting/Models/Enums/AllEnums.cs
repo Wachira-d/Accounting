@@ -7,6 +7,8 @@ public enum UserRole
     Accountant = 2,
     Staff = 3,
     Auditor = 4,
+    Viewer = 5,           // ดูอย่างเดียว
+    ExternalAccountant = 6, // นักบัญชีภายนอก / Freelance
     SystemAdmin = 99
 }
 
@@ -14,7 +16,8 @@ public enum UserStatus
 {
     Active = 1,
     Inactive = 2,
-    Suspended = 3
+    Suspended = 3,
+    PendingVerification = 4
 }
 
 // ==================== Company ====================
@@ -31,6 +34,8 @@ public enum BusinessType
     JuristicPerson = 2,   // นิติบุคคล
     Partnership = 3,       // ห้างหุ้นส่วน
     PublicCompany = 4,     // บริษัทมหาชน
+    Foundation = 5,        // มูลนิธิ
+    Association = 6,       // สมาคม
     Other = 99
 }
 
@@ -99,7 +104,10 @@ public enum TaxType
 {
     VAT = 1,              // ภาษีมูลค่าเพิ่ม
     WithholdingTax3 = 2,  // ภงด.3
-    WithholdingTax53 = 3  // ภงด.53
+    WithholdingTax53 = 3, // ภงด.53
+    WithholdingTax1 = 4,  // ภงด.1 (เงินเดือน)
+    SocialSecurity = 5,   // ประกันสังคม
+    CorporateIncomeTax = 6 // ภงด.50/51
 }
 
 public enum VatRate
@@ -124,18 +132,25 @@ public enum DocumentType
     Receipt = 3,          // ใบเสร็จรับเงิน
     TaxInvoice = 4,       // ใบกำกับภาษี
     DebitNote = 5,        // ใบเพิ่มหนี้
-    CreditNote = 6        // ใบลดหนี้
+    CreditNote = 6,       // ใบลดหนี้
+    PurchaseOrder = 7,    // ใบสั่งซื้อ
+    PurchaseInvoice = 8,  // ใบแจ้งหนี้ซื้อ
+    Expense = 9,          // ใบบันทึกค่าใช้จ่าย
+    DeliveryNote = 10,    // ใบส่งของ
+    BillingNote = 11      // ใบวางบิล
 }
 
 public enum DocumentStatus
 {
     Draft = 0,
-    Approved = 1,
-    Sent = 2,
-    PartiallyPaid = 3,
-    Paid = 4,
-    Voided = 5,
-    Overdue = 6
+    WaitingApproval = 1,
+    Approved = 2,
+    Sent = 3,
+    PartiallyPaid = 4,
+    Paid = 5,
+    Voided = 6,
+    Overdue = 7,
+    Rejected = 8
 }
 
 public enum PaymentMethod
@@ -145,6 +160,8 @@ public enum PaymentMethod
     CreditCard = 3,
     Cheque = 4,
     PromptPay = 5,
+    DirectDebit = 6,
+    EWallet = 7,
     Other = 99
 }
 
@@ -157,7 +174,152 @@ public enum AuditAction
     Login = 4,
     Logout = 5,
     Export = 6,
-    Print = 7
+    Print = 7,
+    View = 8,
+    Approve = 9,
+    Reject = 10,
+    FreelanceAccess = 11,
+    ApiAccess = 12
+}
+
+// ==================== Product/Service ====================
+public enum ProductType
+{
+    Product = 1,      // สินค้า
+    Service = 2,      // บริการ
+    NonStock = 3      // ไม่ติดตามสต็อก
+}
+
+// ==================== Bank ====================
+public enum BankTransactionType
+{
+    Deposit = 1,
+    Withdrawal = 2,
+    Transfer = 3,
+    Fee = 4,
+    Interest = 5
+}
+
+public enum ReconciliationStatus
+{
+    Unmatched = 0,
+    Matched = 1,
+    Excluded = 2
+}
+
+// ==================== Recurring ====================
+public enum RecurringFrequency
+{
+    Daily = 1,
+    Weekly = 7,
+    BiWeekly = 14,
+    Monthly = 30,
+    Quarterly = 90,
+    SemiAnnual = 180,
+    Annual = 365
+}
+
+public enum RecurringStatus
+{
+    Active = 1,
+    Paused = 2,
+    Completed = 3,
+    Cancelled = 4
+}
+
+// ==================== Fixed Asset ====================
+public enum DepreciationMethod
+{
+    StraightLine = 1,           // เส้นตรง
+    DecliningBalance = 2,       // ยอมลดลง
+    DoubleDecliningBalance = 3  // ยอดลดลงสองเท่า
+}
+
+public enum AssetStatus
+{
+    Active = 1,
+    Disposed = 2,
+    FullyDepreciated = 3,
+    WrittenOff = 4
+}
+
+// ==================== Approval Workflow ====================
+public enum ApprovalStatus
+{
+    Pending = 0,
+    Approved = 1,
+    Rejected = 2,
+    Recalled = 3
+}
+
+// ==================== Freelance / External Worker ====================
+public enum FreelanceInvitationStatus
+{
+    Pending = 0,
+    Accepted = 1,
+    Declined = 2,
+    Expired = 3,
+    Revoked = 4
+}
+
+public enum FreelanceTaskStatus
+{
+    Assigned = 0,
+    InProgress = 1,
+    Submitted = 2,
+    UnderReview = 3,
+    Approved = 4,
+    Rejected = 5,
+    Completed = 6
+}
+
+public enum FreelanceTaskType
+{
+    MonthlyClosing = 1,      // ปิดบัญชีรายเดือน
+    YearEndClosing = 2,      // ปิดบัญชีสิ้นปี
+    TaxFiling = 3,           // ยื่นภาษี
+    Reconciliation = 4,      // กระทบยอด
+    AuditPrep = 5,          // เตรียมรับตรวจสอบ
+    DataEntry = 6,           // บันทึกข้อมูล
+    FinancialStatement = 7,  // จัดทำงบการเงิน
+    Custom = 99
+}
+
+public enum AccessScope
+{
+    ReadOnly = 1,
+    ReadWrite = 2,
+    Full = 3
+}
+
+// ==================== Notification ====================
+public enum NotificationType
+{
+    System = 1,
+    TrialExpiry = 2,
+    InvoiceDue = 3,
+    PaymentReceived = 4,
+    ApprovalRequired = 5,
+    TaskAssigned = 6,
+    FreelanceInvite = 7,
+    SecurityAlert = 8,
+    DocumentCreated = 9,
+    MonthEndReminder = 10
+}
+
+public enum NotificationChannel
+{
+    InApp = 1,
+    Email = 2,
+    Both = 3
+}
+
+// ==================== API Key ====================
+public enum ApiKeyStatus
+{
+    Active = 1,
+    Revoked = 2,
+    Expired = 3
 }
 
 // ==================== Feature Flags for Trial ====================
@@ -180,10 +342,25 @@ public enum FeatureFlags : long
     EmailNotification = 1 << 12,
     MultiUser = 1 << 13,
     BankReconciliation = 1 << 14,
+    Inventory = 1 << 15,
+    FixedAssets = 1 << 16,
+    RecurringTransactions = 1 << 17,
+    MultiCurrency = 1 << 18,
+    FreelanceManagement = 1 << 19,
+    ApprovalWorkflow = 1 << 20,
+    FileAttachments = 1 << 21,
+    PurchaseOrders = 1 << 22,
+    ExpenseManagement = 1 << 23,
+    Dashboard = 1 << 24,
+    BudgetManagement = 1 << 25,
+    AgingReport = 1 << 26,
 
     // Preset combos
-    TrialFeatures = BasicAccounting | DocumentEngine | TaxManagement,
-    BasicFeatures = BasicAccounting | DocumentEngine | TaxManagement | AuditLog | EmailNotification,
-    ProFeatures = BasicFeatures | AdvancedReporting | MultiCompany | APIAccess | BulkImport | CustomChartOfAccounts | AutoPosting | MultiUser,
-    EnterpriseFeatures = ProFeatures | EtaxInvoice | WorkflowEngine | BankReconciliation
+    TrialFeatures = BasicAccounting | DocumentEngine | TaxManagement | Dashboard,
+    BasicFeatures = TrialFeatures | AuditLog | EmailNotification | FileAttachments | AgingReport,
+    ProFeatures = BasicFeatures | AdvancedReporting | MultiCompany | APIAccess | BulkImport
+        | CustomChartOfAccounts | AutoPosting | MultiUser | BankReconciliation | Inventory
+        | RecurringTransactions | ApprovalWorkflow | PurchaseOrders | ExpenseManagement | BudgetManagement,
+    EnterpriseFeatures = ProFeatures | EtaxInvoice | WorkflowEngine | FixedAssets
+        | MultiCurrency | FreelanceManagement
 }

@@ -1,0 +1,116 @@
+namespace Accounting.Models.DTOs.Settings;
+
+public record UpdateCompanySettingsRequest(
+    // Branding
+    string? PrimaryColor,
+    string? SecondaryColor,
+
+    // Document Defaults
+    string? DefaultPaymentTerms,
+    int? DefaultPaymentDueDays,
+    string? InvoiceNotes,
+    string? ReceiptNotes,
+    string? QuotationNotes,
+    string? InvoiceFooter,
+    string? ReceiptFooter,
+
+    // Tax
+    decimal? DefaultVatRate,
+    bool? VatRegistered,
+
+    // Email
+    string? EmailFromName,
+    string? EmailReplyTo,
+    string? InvoiceEmailSubject,
+    string? InvoiceEmailBody,
+
+    // Security
+    bool? RequireApprovalForDocuments,
+    decimal? ApprovalThresholdAmount,
+    bool? AllowFreelanceAccess,
+    int? MaxFreelanceUsers,
+    bool? RequireTwoFactorForFreelance,
+    bool? EnableApiAccess,
+    int? MaxApiKeys,
+
+    // Closing
+    bool? AutoCloseMonthEnd,
+    int? MonthEndClosingDay,
+    bool? PreventPostToClosedPeriod);
+
+public record CompanySettingsResponse(
+    Guid CompanyId,
+    string? LogoUrl,
+    string? PrimaryColor,
+    string? SecondaryColor,
+    string? DefaultPaymentTerms,
+    int DefaultPaymentDueDays,
+    decimal DefaultVatRate,
+    bool VatRegistered,
+    bool RequireApprovalForDocuments,
+    decimal? ApprovalThresholdAmount,
+    bool AllowFreelanceAccess,
+    int MaxFreelanceUsers,
+    bool EnableApiAccess,
+    int MaxApiKeys,
+    bool AutoCloseMonthEnd,
+    int MonthEndClosingDay,
+    bool PreventPostToClosedPeriod);
+
+// ===== Number Series =====
+public record CreateNumberSeriesRequest(
+    Accounting.Models.Enums.DocumentType DocumentType,
+    string Prefix,
+    string? Suffix,
+    string Format,
+    int StartNumber = 1,
+    int ResetPeriod = 0);
+
+public record UpdateNumberSeriesRequest(
+    string? Prefix,
+    string? Suffix,
+    string? Format,
+    int? CurrentNumber,
+    int? ResetPeriod,
+    bool? IsActive);
+
+public record NumberSeriesResponse(
+    Guid Id,
+    Accounting.Models.Enums.DocumentType DocumentType,
+    string Prefix,
+    string? Suffix,
+    string Format,
+    int CurrentNumber,
+    int ResetPeriod,
+    bool IsActive);
+
+// ===== API Key Management =====
+public record CreateApiKeyRequest(
+    string Name,
+    DateTime? ExpiresAt,
+    Accounting.Models.Enums.FeatureFlags AllowedFeatures,
+    string? AllowedIpAddresses,
+    int RateLimitPerMinute = 60,
+    bool CanRead = true,
+    bool CanWrite = false,
+    bool CanDelete = false);
+
+public record ApiKeyResponse(
+    Guid Id,
+    string Name,
+    string KeyPrefix,
+    Accounting.Models.Enums.ApiKeyStatus Status,
+    DateTime? ExpiresAt,
+    DateTime? LastUsedAt,
+    Accounting.Models.Enums.FeatureFlags AllowedFeatures,
+    bool CanRead,
+    bool CanWrite,
+    bool CanDelete,
+    DateTime CreatedAt);
+
+public record ApiKeyCreatedResponse(
+    Guid Id,
+    string Name,
+    string ApiKey,      // Raw key (only shown once)
+    string KeyPrefix,
+    DateTime CreatedAt);

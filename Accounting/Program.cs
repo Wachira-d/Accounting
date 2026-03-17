@@ -27,19 +27,28 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!))
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!)),
+            ClockSkew = TimeSpan.FromMinutes(1)
         };
     });
 
 builder.Services.AddAuthorization();
 
 // ===== Services (DI) =====
+// Core
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountingService, AccountingService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
+
+// New modules
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<IBankService, BankService>();
+builder.Services.AddScoped<IFreelanceService, FreelanceService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<ISettingsService, SettingsService>();
 
 // ===== Controllers =====
 builder.Services.AddControllers()
@@ -57,16 +66,26 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Accounting Platform API",
         Version = "v1",
-        Description = "ระบบบัญชี SaaS Platform - Accounting, Tax, Document, Subscription & Trial Management"
+        Description = "ระบบบัญชี SaaS Platform - Accounting, Tax, Document, Subscription, Trial, Freelance Management, Bank Reconciliation, Inventory"
     });
 
+    // JWT Bearer Auth
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
+        Description = "JWT Authorization: Bearer {token}",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer"
+    });
+
+    // API Key Auth
+    c.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+    {
+        Description = "API Key: X-Api-Key {key}",
+        Name = "X-Api-Key",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -75,6 +94,13 @@ builder.Services.AddSwaggerGen(c =>
             new OpenApiSecurityScheme
             {
                 Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        },
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "ApiKey" }
             },
             Array.Empty<string>()
         }
@@ -94,11 +120,38 @@ builder.Services.AddCors(options =>
     });
 });
 
+// ===== Security Headers =====
+builder.Services.AddHsts(options =>
+{
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
+});
+
 var app = builder.Build();
 
-// ===== Middleware Pipeline =====
+// ===== Middleware Pipeline (order matters!) =====
+
+// 1. Exception handling (outermost)
 app.UseMiddleware<ExceptionMiddleware>();
 
+// 2. Rate limiting (protect from abuse early)
+app.UseMiddleware<RateLimitMiddleware>();
+
+// 3. Security headers
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Append("X-Frame-Options", "DENY");
+    context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
+    context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+    await next();
+});
+
+// 4. Swagger (before auth)
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -107,10 +160,27 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors();
+
+// 5. API Key middleware (before JWT auth - alternative auth method)
+app.UseMiddleware<ApiKeyMiddleware>();
+
+// 6. Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
+
+// 7. Tenant access control (after auth)
+app.UseMiddleware<TenantAccessMiddleware>();
+
+// 8. Subscription check
 app.UseMiddleware<SubscriptionCheckMiddleware>();
+
+// 9. Audit logging (innermost - logs after response)
+app.UseMiddleware<AuditMiddleware>();
+
 app.MapControllers();
+
+// Health check endpoint
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 // ===== Auto-migrate in development =====
 if (app.Environment.IsDevelopment())
