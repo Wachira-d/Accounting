@@ -1,0 +1,11 @@
+using Accounting.Models.DTOs.Auth;
+
+namespace Accounting.Services.Interfaces;
+
+public interface IAuthService
+{
+    Task<LoginResponse> RegisterAsync(RegisterRequest request);
+    Task<LoginResponse> LoginAsync(LoginRequest request);
+    Task<LoginResponse> RefreshTokenAsync(string refreshToken);
+    Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request);
+}
