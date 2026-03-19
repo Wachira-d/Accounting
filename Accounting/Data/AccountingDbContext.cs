@@ -80,6 +80,14 @@ public class AccountingDbContext : DbContext
     // Company Settings
     public DbSet<CompanySettings> CompanySettings => Set<CompanySettings>();
 
+    // Expense Claims
+    public DbSet<ExpenseClaim> ExpenseClaims => Set<ExpenseClaim>();
+    public DbSet<ExpenseClaimLine> ExpenseClaimLines => Set<ExpenseClaimLine>();
+
+    // Withholding Tax Certificates
+    public DbSet<WithholdingTaxCert> WithholdingTaxCerts => Set<WithholdingTaxCert>();
+    public DbSet<WithholdingTaxCertLine> WithholdingTaxCertLines => Set<WithholdingTaxCertLine>();
+
     // API Keys
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
@@ -486,6 +494,58 @@ public class AccountingDbContext : DbContext
             e.Property(k => k.KeyPrefix).HasMaxLength(20);
             e.HasOne(k => k.Company).WithMany().HasForeignKey(k => k.CompanyId);
             e.HasOne(k => k.CreatedByUser).WithMany().HasForeignKey(k => k.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== ExpenseClaim =====
+        modelBuilder.Entity<ExpenseClaim>(e =>
+        {
+            e.HasIndex(ec => new { ec.CompanyId, ec.ClaimNumber }).IsUnique();
+            e.Property(ec => ec.ClaimNumber).HasMaxLength(50);
+            e.Property(ec => ec.Title).HasMaxLength(500);
+            e.Property(ec => ec.SubTotal).HasPrecision(18, 2);
+            e.Property(ec => ec.VatAmount).HasPrecision(18, 2);
+            e.Property(ec => ec.WithholdingTaxAmount).HasPrecision(18, 2);
+            e.Property(ec => ec.TotalAmount).HasPrecision(18, 2);
+            e.HasOne(ec => ec.SubmittedByUser).WithMany().HasForeignKey(ec => ec.SubmittedByUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(ec => !ec.IsDeleted);
+        });
+
+        // ===== ExpenseClaimLine =====
+        modelBuilder.Entity<ExpenseClaimLine>(e =>
+        {
+            e.HasOne(l => l.ExpenseClaim).WithMany(ec => ec.Lines).HasForeignKey(l => l.ExpenseClaimId);
+            e.HasOne(l => l.Account).WithMany().HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(l => l.Amount).HasPrecision(18, 2);
+            e.Property(l => l.VatRate).HasPrecision(5, 2);
+            e.Property(l => l.VatAmount).HasPrecision(18, 2);
+            e.Property(l => l.WithholdingTaxRate).HasPrecision(5, 2);
+            e.Property(l => l.WithholdingTaxAmount).HasPrecision(18, 2);
+            e.Property(l => l.NetAmount).HasPrecision(18, 2);
+            e.Property(l => l.Description).HasMaxLength(1000);
+            e.Property(l => l.Category).HasMaxLength(200);
+        });
+
+        // ===== WithholdingTaxCert =====
+        modelBuilder.Entity<WithholdingTaxCert>(e =>
+        {
+            e.HasIndex(w => new { w.CompanyId, w.CertificateNumber }).IsUnique();
+            e.Property(w => w.CertificateNumber).HasMaxLength(50);
+            e.Property(w => w.TotalIncomeAmount).HasPrecision(18, 2);
+            e.Property(w => w.TotalTaxAmount).HasPrecision(18, 2);
+            e.HasOne(w => w.PayeeContact).WithMany().HasForeignKey(w => w.PayeeContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(w => !w.IsDeleted);
+        });
+
+        // ===== WithholdingTaxCertLine =====
+        modelBuilder.Entity<WithholdingTaxCertLine>(e =>
+        {
+            e.HasOne(l => l.WithholdingTaxCert).WithMany(w => w.Lines).HasForeignKey(l => l.WithholdingTaxCertId);
+            e.Property(l => l.IncomeAmount).HasPrecision(18, 2);
+            e.Property(l => l.TaxRate).HasPrecision(5, 2);
+            e.Property(l => l.TaxAmount).HasPrecision(18, 2);
+            e.Property(l => l.IncomeTypeCode).HasMaxLength(10);
+            e.Property(l => l.IncomeDescription).HasMaxLength(500);
         });
 
         // ===== FreelanceInvitation =====

@@ -331,6 +331,17 @@ public enum NotificationChannel
     Both = 3
 }
 
+// ==================== Expense Claim ====================
+public enum ExpenseClaimStatus
+{
+    Draft = 0,
+    Submitted = 1,
+    Approved = 2,
+    Rejected = 3,
+    Paid = 4,
+    Voided = 5
+}
+
 // ==================== API Key ====================
 public enum ApiKeyStatus
 {

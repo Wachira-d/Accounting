@@ -58,6 +58,14 @@ builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
 builder.Services.AddScoped<ICurrencyService, CurrencyService>();
 builder.Services.AddScoped<IBudgetService, BudgetService>();
 
+// Analytics & Reporting modules
+builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<IAgingReportService, AgingReportService>();
+builder.Services.AddScoped<IExpenseClaimService, ExpenseClaimService>();
+builder.Services.AddScoped<IImportExportService, ImportExportService>();
+builder.Services.AddScoped<IAuditTrailService, AuditTrailService>();
+builder.Services.AddScoped<IWithholdingTaxCertService, WithholdingTaxCertService>();
+
 // ===== Controllers =====
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

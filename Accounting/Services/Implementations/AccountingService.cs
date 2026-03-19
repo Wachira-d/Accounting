@@ -329,6 +329,114 @@ public class AccountingService : IAccountingService
             totalRevenue, totalExpenses, totalRevenue - totalExpenses);
     }
 
+    // ==================== Cash Flow Statement ====================
+
+    public async Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate)
+    {
+        var postedLines = await _db.JournalEntryLines
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate >= fromDate
+                && l.JournalEntry.EntryDate <= toDate)
+            .ToListAsync();
+
+        // Operating Activities: Revenue & Expense accounts + changes in current assets/liabilities
+        var operatingItems = new List<CashFlowLineItem>();
+
+        // Net income
+        var revenue = postedLines.Where(l => l.Account.AccountType == AccountType.Revenue)
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        var expenses = postedLines.Where(l => l.Account.AccountType == AccountType.Expense)
+            .Sum(l => l.DebitAmount - l.CreditAmount);
+        var netIncome = revenue - expenses;
+        operatingItems.Add(new CashFlowLineItem("กำไร(ขาดทุน)สุทธิ", null, netIncome));
+
+        // Depreciation add-back (non-cash expense)
+        var depreciation = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("55"))
+            .Sum(l => l.DebitAmount - l.CreditAmount);
+        if (depreciation != 0)
+            operatingItems.Add(new CashFlowLineItem("ค่าเสื่อมราคา (บวกกลับ)", "5500", depreciation));
+
+        // Changes in AR
+        var arChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("12"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (arChange != 0)
+            operatingItems.Add(new CashFlowLineItem("ลูกหนี้การค้า (เพิ่มขึ้น)/ลดลง", "1200", arChange));
+
+        // Changes in Inventory
+        var inventoryChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("13"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (inventoryChange != 0)
+            operatingItems.Add(new CashFlowLineItem("สินค้าคงเหลือ (เพิ่มขึ้น)/ลดลง", "1300", inventoryChange));
+
+        // Changes in AP
+        var apChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("21"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (apChange != 0)
+            operatingItems.Add(new CashFlowLineItem("เจ้าหนี้การค้า เพิ่มขึ้น/(ลดลง)", "2100", apChange));
+
+        // Tax payable changes
+        var taxPayableChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("22") || l.Account.AccountCode.StartsWith("23"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (taxPayableChange != 0)
+            operatingItems.Add(new CashFlowLineItem("ภาษีค้างจ่าย เพิ่มขึ้น/(ลดลง)", "2200", taxPayableChange));
+
+        var operatingTotal = operatingItems.Sum(i => i.Amount);
+
+        // Investing Activities: Fixed asset accounts (15xx)
+        var investingItems = new List<CashFlowLineItem>();
+        var fixedAssetChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("15"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (fixedAssetChange != 0)
+            investingItems.Add(new CashFlowLineItem("ซื้อ/ขาย ที่ดิน อาคาร อุปกรณ์", "1500", fixedAssetChange));
+
+        var investingTotal = investingItems.Sum(i => i.Amount);
+
+        // Financing Activities: Long-term liabilities (25xx) + Equity (3xxx)
+        var financingItems = new List<CashFlowLineItem>();
+        var longTermDebtChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("25"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (longTermDebtChange != 0)
+            financingItems.Add(new CashFlowLineItem("เงินกู้ยืมระยะยาว เพิ่มขึ้น/(ลดลง)", "2500", longTermDebtChange));
+
+        var equityChange = postedLines
+            .Where(l => l.Account.AccountCode.StartsWith("31"))
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        if (equityChange != 0)
+            financingItems.Add(new CashFlowLineItem("ทุนจดทะเบียน เพิ่มขึ้น/(ลดลง)", "3100", equityChange));
+
+        var financingTotal = financingItems.Sum(i => i.Amount);
+
+        // Cash balances
+        var netCashChange = operatingTotal + investingTotal + financingTotal;
+
+        // Opening cash = cash accounts before fromDate
+        var cashAccountCodes = new[] { "111", "112" }; // Cash + Bank deposits
+        var openingCash = await _db.JournalEntryLines
+            .Include(l => l.Account).Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate < fromDate
+                && cashAccountCodes.Any(c => l.Account.AccountCode.StartsWith(c)))
+            .SumAsync(l => l.DebitAmount - l.CreditAmount);
+
+        return new CashFlowStatementResponse(
+            fromDate, toDate,
+            new CashFlowSection("กิจกรรมดำเนินงาน", operatingItems, operatingTotal),
+            new CashFlowSection("กิจกรรมลงทุน", investingItems, investingTotal),
+            new CashFlowSection("กิจกรรมจัดหาเงิน", financingItems, financingTotal),
+            netCashChange, openingCash, openingCash + netCashChange);
+    }
+
     // ==================== Fiscal Period ====================
 
     public async Task<FiscalPeriodResponse> CreateFiscalPeriodAsync(Guid companyId, CreateFiscalPeriodRequest request)

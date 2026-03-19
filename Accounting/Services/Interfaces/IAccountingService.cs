@@ -22,6 +22,7 @@ public interface IAccountingService
     Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate);
     Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate);
     Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate);
+    Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate);
 
     // Fiscal Period
     Task<FiscalPeriodResponse> CreateFiscalPeriodAsync(Guid companyId, CreateFiscalPeriodRequest request);

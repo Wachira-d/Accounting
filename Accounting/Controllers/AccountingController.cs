@@ -105,6 +105,14 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<ProfitAndLossResponse>(true, result));
     }
 
+    [HttpGet("reports/cash-flow")]
+    public async Task<ActionResult<ApiResponse<CashFlowStatementResponse>>> GetCashFlowStatement(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+    {
+        var result = await _accountingService.GetCashFlowStatementAsync(companyId, fromDate, toDate);
+        return Ok(new ApiResponse<CashFlowStatementResponse>(true, result));
+    }
+
     // ===== Fiscal Periods =====
 
     [HttpGet("fiscal-periods")]
