@@ -50,6 +50,14 @@ builder.Services.AddScoped<IFreelanceService, FreelanceService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 
+// Additional modules
+builder.Services.AddScoped<IRecurringTransactionService, RecurringTransactionService>();
+builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
+builder.Services.AddScoped<IApprovalService, ApprovalService>();
+builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
+builder.Services.AddScoped<ICurrencyService, CurrencyService>();
+builder.Services.AddScoped<IBudgetService, BudgetService>();
+
 // ===== Controllers =====
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

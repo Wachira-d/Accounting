@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Accounting.Controllers;
 
 /// <summary>
-/// Admin API สำหรับจัดการ Plan Templates และ Trial Config
+/// Admin API สำหรับจัดการ Plan Templates, Trial Config, Background Processing
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -16,10 +16,12 @@ namespace Accounting.Controllers;
 public class AdminController : ControllerBase
 {
     private readonly ISubscriptionService _subscriptionService;
+    private readonly IRecurringTransactionService _recurringService;
 
-    public AdminController(ISubscriptionService subscriptionService)
+    public AdminController(ISubscriptionService subscriptionService, IRecurringTransactionService recurringService)
     {
         _subscriptionService = subscriptionService;
+        _recurringService = recurringService;
     }
 
     // ===== Plan Template Management =====
@@ -190,5 +192,17 @@ public class AdminController : ControllerBase
     {
         await _subscriptionService.ProcessExpiredSubscriptionsAsync();
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired subscriptions สำเร็จ"));
+    }
+
+    // ===== Recurring Transactions Processing =====
+
+    /// <summary>
+    /// ประมวลผลรายการที่เกิดซ้ำที่ถึงกำหนด (เรียกจาก scheduler)
+    /// </summary>
+    [HttpPost("recurring/process")]
+    public async Task<ActionResult<ApiResponse<string>>> ProcessRecurringTransactions()
+    {
+        await _recurringService.ProcessDueRecurringTransactionsAsync();
+        return Ok(new ApiResponse<string>(true, null, "ประมวลผลรายการที่เกิดซ้ำสำเร็จ"));
     }
 }
