@@ -80,6 +80,12 @@ public class AccountingDbContext : DbContext
     // Company Settings
     public DbSet<CompanySettings> CompanySettings => Set<CompanySettings>();
 
+    // Document Templates
+    public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
+
+    // e-Tax Invoices
+    public DbSet<EtaxInvoice> EtaxInvoices => Set<EtaxInvoice>();
+
     // Expense Claims
     public DbSet<ExpenseClaim> ExpenseClaims => Set<ExpenseClaim>();
     public DbSet<ExpenseClaimLine> ExpenseClaimLines => Set<ExpenseClaimLine>();
@@ -494,6 +500,39 @@ public class AccountingDbContext : DbContext
             e.Property(k => k.KeyPrefix).HasMaxLength(20);
             e.HasOne(k => k.Company).WithMany().HasForeignKey(k => k.CompanyId);
             e.HasOne(k => k.CreatedByUser).WithMany().HasForeignKey(k => k.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== DocumentTemplate =====
+        modelBuilder.Entity<DocumentTemplate>(e =>
+        {
+            e.HasIndex(t => new { t.CompanyId, t.DocumentType, t.IsDefault }).HasFilter("[IsDefault] = 1 AND [IsDeleted] = 0");
+            e.Property(t => t.Name).HasMaxLength(256);
+            e.Property(t => t.PaperSize).HasMaxLength(10);
+            e.Property(t => t.Orientation).HasMaxLength(20);
+            e.Property(t => t.FontFamily).HasMaxLength(100);
+            e.Property(t => t.Language).HasMaxLength(10);
+            e.Property(t => t.MarginTop).HasPrecision(5, 2);
+            e.Property(t => t.MarginBottom).HasPrecision(5, 2);
+            e.Property(t => t.MarginLeft).HasPrecision(5, 2);
+            e.Property(t => t.MarginRight).HasPrecision(5, 2);
+            e.Property(t => t.LogoWidth).HasPrecision(5, 2);
+            e.Property(t => t.LogoHeight).HasPrecision(5, 2);
+            e.Property(t => t.WatermarkOpacity).HasPrecision(3, 2);
+            e.HasQueryFilter(t => !t.IsDeleted);
+        });
+
+        // ===== EtaxInvoice =====
+        modelBuilder.Entity<EtaxInvoice>(e =>
+        {
+            e.HasIndex(ei => new { ei.CompanyId, ei.EtaxRefNumber }).IsUnique();
+            e.HasIndex(ei => new { ei.CompanyId, ei.DocumentId });
+            e.Property(ei => ei.EtaxRefNumber).HasMaxLength(100);
+            e.Property(ei => ei.SellerName).HasMaxLength(500);
+            e.Property(ei => ei.SellerTaxId).HasMaxLength(13);
+            e.Property(ei => ei.BuyerName).HasMaxLength(500);
+            e.Property(ei => ei.BuyerTaxId).HasMaxLength(13);
+            e.HasOne(ei => ei.Document).WithMany().HasForeignKey(ei => ei.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(ei => !ei.IsDeleted);
         });
 
         // ===== ExpenseClaim =====

@@ -66,6 +66,11 @@ builder.Services.AddScoped<IImportExportService, ImportExportService>();
 builder.Services.AddScoped<IAuditTrailService, AuditTrailService>();
 builder.Services.AddScoped<IWithholdingTaxCertService, WithholdingTaxCertService>();
 
+// PDF, Document Templates & e-Tax
+builder.Services.AddScoped<IDocumentTemplateService, DocumentTemplateService>();
+builder.Services.AddScoped<IPdfGenerationService, PdfGenerationService>();
+builder.Services.AddScoped<IEtaxInvoiceService, EtaxInvoiceService>();
+
 // ===== Controllers =====
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -82,7 +87,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Accounting Platform API",
         Version = "v1",
-        Description = "ระบบบัญชี SaaS Platform - Accounting, Tax, Document, Subscription, Trial, Freelance Management, Bank Reconciliation, Inventory"
+        Description = "ระบบบัญชี SaaS Platform - Accounting, Tax, Document, Subscription, Trial, Freelance, Bank, Inventory, Dashboard, e-Tax Invoice, PDF Generation, WHT Certificates"
     });
 
     // JWT Bearer Auth
