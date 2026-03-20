@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.Entities;
@@ -108,6 +109,12 @@ public class TrialConfig : BaseEntity
     public int GracePeriodDays { get; set; } = 7;  // จำนวนวัน grace period หลังหมดอายุ
     public bool DeleteDataAfterGracePeriod { get; set; } = false;
     public int DataRetentionDays { get; set; } = 90; // เก็บข้อมูลกี่วันหลังหมดอายุ
+
+    // Computed Properties
+    [NotMapped]
+    public bool IsTrialExpired => DateTime.UtcNow > TrialEndDate;
+    [NotMapped]
+    public DateTime GracePeriodEndDate => TrialEndDate.AddDays(GracePeriodDays);
 
     // Conversion Incentive
     public decimal? DiscountPercentOnConversion { get; set; }  // ส่วนลดเมื่อแปลงเป็น paid
