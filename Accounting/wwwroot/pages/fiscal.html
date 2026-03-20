@@ -11,12 +11,42 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">งวดบัญชี</h2><p class="page-subtitle">จัดการงวดบัญชี เปิด/ปิดรอบบัญชี</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงวดบัญชี</button>
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่องวด</th><th>ปี</th><th>เดือน</th><th>วันเริ่มต้น</th><th>วันสิ้นสุด</th><th>สถานะ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ชื่องวด</th><th>ปี</th><th>เดือน</th><th>วันเริ่มต้น</th><th>วันสิ้นสุด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
       </table>
+    </div>
+
+    <!-- Create Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">สร้างงวดบัญชี</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่องวด *</label><input type="text" class="form-input" id="fName" placeholder="เช่น มกราคม 2026"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ปี *</label><input type="number" class="form-input" id="fYear" value="2026"></div>
+            <div class="form-group"><label class="form-label">เดือน *</label>
+              <select class="form-select" id="fMonth">
+                <option value="1">1 - มกราคม</option><option value="2">2 - กุมภาพันธ์</option><option value="3">3 - มีนาคม</option>
+                <option value="4">4 - เมษายน</option><option value="5">5 - พฤษภาคม</option><option value="6">6 - มิถุนายน</option>
+                <option value="7">7 - กรกฎาคม</option><option value="8">8 - สิงหาคม</option><option value="9">9 - กันยายน</option>
+                <option value="10">10 - ตุลาคม</option><option value="11">11 - พฤศจิกายน</option><option value="12">12 - ธันวาคม</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่มต้น *</label><input type="date" class="form-input" id="fStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด *</label><input type="date" class="form-input" id="fEnd"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">สร้างงวด</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -35,13 +65,57 @@
           const res = await api.getFiscalPeriods();
           const items = res.data?.items || res.data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่มีงวดบัญชี</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีงวดบัญชี — กดปุ่ม "สร้างงวดบัญชี" เพื่อเริ่มต้น</td></tr>'; return; }
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.name || `${p.year}/${p.month}`}</td>
             <td>${p.year}</td><td>${p.month}</td>
             <td>${Layout.date(p.startDate)}</td><td>${Layout.date(p.endDate)}</td>
             <td>${Layout.statusBadge(p.status)}</td>
+            <td>
+              ${p.status === 'Open' ? `<button class="btn btn-sm btn-warning" onclick="Page.closePeriod('${p.id}')">ปิดงวด</button>` : ''}
+              ${p.status === 'Closed' ? '<span class="text-xs text-gray-400">ปิดแล้ว</span>' : ''}
+            </td>
           </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() {
+        const now = new Date();
+        document.getElementById('fYear').value = now.getFullYear();
+        document.getElementById('fMonth').value = now.getMonth() + 1;
+        this.updateDates();
+        document.getElementById('fMonth').addEventListener('change', () => this.updateDates());
+        document.getElementById('fYear').addEventListener('change', () => this.updateDates());
+        Layout.openModal('formModal');
+      },
+      updateDates() {
+        const y = parseInt(document.getElementById('fYear').value);
+        const m = parseInt(document.getElementById('fMonth').value);
+        const start = new Date(y, m - 1, 1);
+        const end = new Date(y, m, 0);
+        document.getElementById('fStart').value = start.toISOString().split('T')[0];
+        document.getElementById('fEnd').value = end.toISOString().split('T')[0];
+        const months = ['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+        document.getElementById('fName').value = `${months[m]} ${y}`;
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createFiscalPeriod({
+            name: document.getElementById('fName').value,
+            year: parseInt(document.getElementById('fYear').value),
+            month: parseInt(document.getElementById('fMonth').value),
+            startDate: document.getElementById('fStart').value,
+            endDate: document.getElementById('fEnd').value,
+          });
+          Layout.closeModal('formModal'); Layout.toast('สร้างงวดบัญชีสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async closePeriod(id) {
+        if (!confirm('ยืนยันปิดงวดบัญชีนี้? เมื่อปิดแล้วจะไม่สามารถบันทึกรายการในงวดนี้ได้')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.closeFiscalPeriod(id);
+          Layout.toast('ปิดงวดบัญชีสำเร็จ'); await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

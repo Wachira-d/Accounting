@@ -14,7 +14,7 @@
       <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกการชำระเงิน</button>
     </div>
     <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหาเลขที่..." id="searchInput">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="methodFilter" onchange="Page.load()">
         <option value="">ทุกช่องทาง</option>
         <option value="Cash">เงินสด</option>
@@ -26,33 +26,52 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>เอกสารอ้างอิง</th><th>วันที่</th><th>ช่องทาง</th><th class="text-right">จำนวนเงิน</th><th>อ้างอิง</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>เอกสารอ้างอิง</th><th>วันที่</th><th>ช่องทาง</th><th class="text-right">จำนวนเงิน</th><th>อ้างอิง</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
+    <div id="pagination"></div>
 
+    <!-- Create/Detail Modal -->
     <div class="modal-overlay" id="formModal">
-      <div class="modal">
-        <div class="modal-header"><h3 class="modal-title">บันทึกการชำระเงิน</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+      <div class="modal" style="max-width:650px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">บันทึกการชำระเงิน</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">เอกสาร (Document ID) *</label><input type="text" class="form-input" id="fDocId" placeholder="กรอก Document ID"></div>
+          <div class="form-group">
+            <label class="form-label">เอกสารอ้างอิง *</label>
+            <select class="form-select" id="fDocId"><option value="">-- เลือกเอกสาร --</option></select>
+          </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันที่ชำระ *</label><input type="date" class="form-input" id="fDate"></div>
             <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ช่องทาง *</label>
-              <select class="form-select" id="fMethod"><option value="BankTransfer">โอนเงิน</option><option value="Cash">เงินสด</option><option value="CreditCard">บัตรเครดิต</option><option value="Cheque">เช็ค</option><option value="PromptPay">พร้อมเพย์</option></select>
+              <select class="form-select" id="fMethod">
+                <option value="BankTransfer">โอนเงิน</option><option value="Cash">เงินสด</option>
+                <option value="CreditCard">บัตรเครดิต</option><option value="Cheque">เช็ค</option>
+                <option value="PromptPay">พร้อมเพย์</option><option value="DirectDebit">หักบัญชี</option>
+              </select>
             </div>
-            <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+            <div class="form-group"><label class="form-label">หมายเลขอ้างอิง</label><input type="text" class="form-input" id="fRef" placeholder="เช่น เลขที่เช็ค, หมายเลขโอน"></div>
           </div>
-          <div class="form-group"><label class="form-label">บัญชีธนาคาร</label><input type="text" class="form-input" id="fBankAcc"></div>
-          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
+          <div class="form-group"><label class="form-label">บัญชีธนาคาร</label>
+            <select class="form-select" id="fBankAcc"><option value="">-- ไม่ระบุ --</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2"></textarea></div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" id="formFooter">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">รายละเอียดการชำระเงิน</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
       </div>
     </div>
   </div>
@@ -60,7 +79,9 @@
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', Cheque:'เช็ค', PromptPay:'พร้อมเพย์', DirectDebit:'หักบัญชี', EWallet:'E-Wallet' };
     const Page = {
+      page: 1,
       async init() {
         if (!Layout.init('payments')) return;
         Layout.setTitle('การชำระเงิน');
@@ -68,36 +89,79 @@
       },
       async load() {
         const api = Layout.api(); if (!api) return;
+        const method = document.getElementById('methodFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (method) q += `&method=${method}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await api.getPayments('?page=1&pageSize=30');
-          const items = res.data?.items || res.data || [];
+          const res = await api.getPayments(q);
+          const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
-          const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', Cheque:'เช็ค', PromptPay:'พร้อมเพย์', DirectDebit:'หักบัญชี', EWallet:'E-Wallet' };
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.paymentNumber}</td>
-            <td class="text-xs text-gray-500">${p.documentId ? p.documentId.substring(0,8)+'...' : '-'}</td>
+            <td class="text-xs">${p.documentNumber || (p.documentId ? p.documentId.substring(0,8)+'...' : '-')}</td>
             <td>${Layout.date(p.paymentDate)}</td>
             <td><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></td>
             <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
             <td class="text-gray-500">${p.reference || '-'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">ดู</button></td>
           </tr>`).join('');
+          const totalPages = data?.totalPages || 1;
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openCreate() {
+      goPage(p) { Page.page = p; Page.load(); },
+      viewDetail(id, p) {
+        document.getElementById('detailContent').innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${p.paymentNumber}</div></div>
+            <div><div class="text-xs text-gray-500">วันที่ชำระ</div><div>${Layout.date(p.paymentDate)}</div></div>
+            <div><div class="text-xs text-gray-500">ช่องทาง</div><div><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></div></div>
+            <div><div class="text-xs text-gray-500">จำนวนเงิน</div><div class="font-semibold text-lg">${Layout.money(p.amount)}</div></div>
+            <div><div class="text-xs text-gray-500">เอกสารอ้างอิง</div><div>${p.documentNumber || p.documentId || '-'}</div></div>
+            <div><div class="text-xs text-gray-500">หมายเลขอ้างอิง</div><div>${p.reference || '-'}</div></div>
+          </div>
+          ${p.notes ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500">หมายเหตุ</div><div class="text-sm">${p.notes}</div></div>` : ''}`;
+        Layout.openModal('detailModal');
+      },
+      async openCreate() {
+        document.getElementById('formTitle').textContent = 'บันทึกการชำระเงิน';
         document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fAmount').value = '';
+        document.getElementById('fRef').value = '';
+        document.getElementById('fNotes').value = '';
+        // Load documents for dropdown
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [docsRes, bankRes] = await Promise.all([
+            api.getDocuments('?page=1&pageSize=100&status=Approved'),
+            api.getBankAccounts()
+          ]);
+          const docs = docsRes.data?.items || docsRes.data || [];
+          const docSelect = document.getElementById('fDocId');
+          docSelect.innerHTML = '<option value="">-- เลือกเอกสาร --</option>' +
+            docs.map(d => `<option value="${d.id}">${d.documentNumber} - ${d.contactName || ''} (${Layout.money(d.balanceDue || d.totalAmount)})</option>`).join('');
+          const banks = bankRes.data?.items || bankRes.data || [];
+          const bankSelect = document.getElementById('fBankAcc');
+          bankSelect.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
+            banks.map(b => `<option value="${b.id}">${b.accountName} - ${b.bankName}</option>`).join('');
+        } catch (e) { /* ignore */ }
         Layout.openModal('formModal');
       },
       async save() {
         const api = Layout.api(); if (!api) return;
+        const docId = document.getElementById('fDocId').value;
+        if (!docId) { Layout.toast('กรุณาเลือกเอกสารอ้างอิง', 'error'); return; }
         try {
           await api.createPayment({
-            documentId: document.getElementById('fDocId').value,
+            documentId: docId,
             paymentDate: document.getElementById('fDate').value,
             amount: parseFloat(document.getElementById('fAmount').value),
             paymentMethod: document.getElementById('fMethod').value,
             reference: document.getElementById('fRef').value || null,
-            bankAccount: document.getElementById('fBankAcc').value || null,
+            bankAccountId: document.getElementById('fBankAcc').value || null,
             notes: document.getElementById('fNotes').value || null,
           });
           Layout.closeModal('formModal'); Layout.toast('บันทึกการชำระเงินสำเร็จ'); await this.load();
