@@ -214,7 +214,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Accounting Platform API v1"));
 }
 
-app.UseHttpsRedirection();
+// Only redirect to HTTPS if not running on plain HTTP (e.g. IIS port 80)
+if (!app.Environment.IsProduction())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors();
 
 // Static files (frontend)
@@ -246,6 +250,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = Dat
 app.MapFallbackToFile("index.html");
 
 // ===== Auto-migrate & seed data =====
+try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
@@ -253,6 +258,11 @@ app.MapFallbackToFile("index.html");
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
     await SeedAdminUser.SeedAsync(db);
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogError(ex, "Failed to initialize database. Check your ConnectionStrings:DefaultConnection in appsettings.Production.json");
 }
 
 app.Run();
