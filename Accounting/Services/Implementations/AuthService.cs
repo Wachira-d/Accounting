@@ -30,16 +30,44 @@ public class AuthService : IAuthService
 
         ValidatePassword(request.Password);
 
+        // Support both FullName and FirstName+LastName from frontend
+        var fullName = !string.IsNullOrWhiteSpace(request.FullName)
+            ? request.FullName
+            : $"{request.FirstName} {request.LastName}".Trim();
+
+        if (string.IsNullOrWhiteSpace(fullName))
+            throw new InvalidOperationException("กรุณากรอกชื่อ-นามสกุล");
+
         var user = new User
         {
             Email = request.Email,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            FullName = request.FullName,
+            FullName = fullName,
             Phone = request.Phone
         };
 
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
+
+        // Create company if companyName provided
+        if (!string.IsNullOrWhiteSpace(request.CompanyName))
+        {
+            var company = new Company
+            {
+                Name = request.CompanyName,
+                TaxId = "-"
+            };
+            _db.Companies.Add(company);
+
+            _db.CompanyUsers.Add(new CompanyUser
+            {
+                CompanyId = company.Id,
+                UserId = user.Id,
+                Role = Models.Enums.UserRole.Owner
+            });
+
+            await _db.SaveChangesAsync();
+        }
 
         return GenerateLoginResponse(user);
     }
