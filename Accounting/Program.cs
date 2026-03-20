@@ -71,6 +71,38 @@ builder.Services.AddScoped<IDocumentTemplateService, DocumentTemplateService>();
 builder.Services.AddScoped<IPdfGenerationService, PdfGenerationService>();
 builder.Services.AddScoped<IEtaxInvoiceService, EtaxInvoiceService>();
 
+// Phase 1: Dimensional Accounting & Branches
+builder.Services.AddScoped<IDimensionalAccountingService, DimensionalAccountingService>();
+
+// Phase 2: Core Business
+builder.Services.AddScoped<IIntercompanyService, IntercompanyService>();
+builder.Services.AddScoped<IConsolidationService, ConsolidationService>();
+builder.Services.AddScoped<IPayrollService, PayrollService>();
+builder.Services.AddScoped<ITaxCalendarService, TaxCalendarService>();
+builder.Services.AddScoped<IAdvancedArApService, AdvancedArApService>();
+
+// Phase 3: Advanced Operations
+builder.Services.AddScoped<IProjectAccountingService, ProjectAccountingService>();
+builder.Services.AddScoped<IWarehouseService, WarehouseService>();
+builder.Services.AddScoped<IRevenueRecognitionService, RevenueRecognitionService>();
+builder.Services.AddScoped<ILoanService, LoanService>();
+builder.Services.AddScoped<ICommissionService, CommissionService>();
+
+// Phase 4: Intelligence
+builder.Services.AddScoped<IAiService, AiService>();
+builder.Services.AddScoped<IOcrService, OcrService>();
+builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
+builder.Services.AddScoped<IPortalService, PortalService>();
+
+// Phase 5: World-Class
+builder.Services.AddScoped<IFpaService, FpaService>();
+builder.Services.AddScoped<IOpenBankingService, OpenBankingService>();
+builder.Services.AddScoped<IComplianceService, ComplianceService>();
+builder.Services.AddScoped<ITimeBillingService, TimeBillingService>();
+builder.Services.AddScoped<IWebhookService, WebhookService>();
+builder.Services.AddScoped<IMobileApiService, MobileApiService>();
+builder.Services.AddHttpClient();
+
 // ===== Controllers =====
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -87,7 +119,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Accounting Platform API",
         Version = "v1",
-        Description = "ระบบบัญชี SaaS Platform - Accounting, Tax, Document, Subscription, Trial, Freelance, Bank, Inventory, Dashboard, e-Tax Invoice, PDF Generation, WHT Certificates"
+        Description = "ระบบบัญชี SaaS Platform ที่ดีที่สุด - 46 Services, 40+ Controllers | Core Accounting, Tax, Documents, Payroll, Multi-Branch, Cost Center, Intercompany, Consolidation, AR/AP, Project Accounting, Warehouse, Revenue Recognition (TFRS15), Loan, Commission, AI Auto-Categorization, OCR, Report Builder, Customer Portal, FP&A, Open Banking, Compliance, Time & Billing, Webhooks, Mobile API"
     });
 
     // JWT Bearer Auth

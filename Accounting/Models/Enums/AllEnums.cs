@@ -383,12 +383,67 @@ public enum FeatureFlags : long
     BudgetManagement = 1 << 25,
     AgingReport = 1 << 26,
 
+    // New feature flags
+    Payroll = 1 << 27,
+    ProjectAccounting = 1 << 28,
+    CostCenter = 1 << 29,
+    Consolidation = 1L << 30,
+    WarehouseManagement = 1L << 31,
+    LoanManagement = 1L << 32,
+    Commission = 1L << 33,
+    AI_Features = 1L << 34,
+    DocumentOCR = 1L << 35,
+    ReportBuilder = 1L << 36,
+    CustomerPortal = 1L << 37,
+    TimeBilling = 1L << 38,
+    OpenBanking = 1L << 39,
+    Webhook = 1L << 40,
+    RevenueRecognition = 1L << 41,
+    FPA = 1L << 42,
+
     // Preset combos
     TrialFeatures = BasicAccounting | DocumentEngine | TaxManagement | Dashboard,
     BasicFeatures = TrialFeatures | AuditLog | EmailNotification | FileAttachments | AgingReport,
     ProFeatures = BasicFeatures | AdvancedReporting | MultiCompany | APIAccess | BulkImport
         | CustomChartOfAccounts | AutoPosting | MultiUser | BankReconciliation | Inventory
-        | RecurringTransactions | ApprovalWorkflow | PurchaseOrders | ExpenseManagement | BudgetManagement,
+        | RecurringTransactions | ApprovalWorkflow | PurchaseOrders | ExpenseManagement | BudgetManagement
+        | CostCenter,
     EnterpriseFeatures = ProFeatures | EtaxInvoice | WorkflowEngine | FixedAssets
-        | MultiCurrency | FreelanceManagement
+        | MultiCurrency | FreelanceManagement | Payroll | ProjectAccounting | Consolidation
+        | WarehouseManagement | LoanManagement | Commission | AI_Features | DocumentOCR
+        | ReportBuilder | CustomerPortal | TimeBilling | OpenBanking | Webhook
+        | RevenueRecognition | FPA
+}
+
+// ==================== Dimensional Accounting ====================
+public enum DimensionType
+{
+    CostCenter = 1,
+    ProfitCenter = 2,
+    Department = 3,
+    Branch = 4,
+    Project = 5,
+    Fund = 6,
+    Segment = 7,
+    Custom = 99
+}
+
+// ==================== Intercompany ====================
+public enum IntercompanyStatus
+{
+    Pending = 0,
+    ConfirmedBySource = 1,
+    ConfirmedByTarget = 2,
+    Completed = 3,
+    Rejected = 4,
+    Voided = 5
+}
+
+// ==================== Consolidation ====================
+public enum ConsolidationMethod
+{
+    Full = 1,             // > 50% ownership - งบรวมเต็ม
+    Proportionate = 2,    // Joint venture - ตามสัดส่วน
+    Equity = 3,           // 20-50% - วิธีส่วนได้เสีย
+    Cost = 4              // < 20% - วิธีราคาทุน
 }

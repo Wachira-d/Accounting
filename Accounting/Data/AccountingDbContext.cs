@@ -105,6 +105,106 @@ public class AccountingDbContext : DbContext
     public DbSet<FreelanceTimeLog> FreelanceTimeLogs => Set<FreelanceTimeLog>();
     public DbSet<FreelanceActivityLog> FreelanceActivityLogs => Set<FreelanceActivityLog>();
 
+    // Project Accounting
+    public DbSet<Project> Projects => Set<Project>();
+    public DbSet<ProjectTask> ProjectTasks => Set<ProjectTask>();
+    public DbSet<ProjectCostEntry> ProjectCostEntries => Set<ProjectCostEntry>();
+
+    // Warehouse Management
+    public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+    public DbSet<WarehouseStock> WarehouseStocks => Set<WarehouseStock>();
+    public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
+    public DbSet<StockTransferLine> StockTransferLines => Set<StockTransferLine>();
+
+    // Revenue Recognition
+    public DbSet<RevenueContract> RevenueContracts => Set<RevenueContract>();
+    public DbSet<PerformanceObligation> PerformanceObligations => Set<PerformanceObligation>();
+    public DbSet<RevenueSchedule> RevenueSchedules => Set<RevenueSchedule>();
+
+    // Loan & Financing
+    public DbSet<Loan> Loans => Set<Loan>();
+    public DbSet<LoanSchedule> LoanSchedules => Set<LoanSchedule>();
+    public DbSet<LoanPayment> LoanPayments => Set<LoanPayment>();
+
+    // Commission
+    public DbSet<CommissionPlan> CommissionPlans => Set<CommissionPlan>();
+    public DbSet<CommissionTier> CommissionTiers => Set<CommissionTier>();
+    public DbSet<CommissionAssignment> CommissionAssignments => Set<CommissionAssignment>();
+    public DbSet<CommissionCalculation> CommissionCalculations => Set<CommissionCalculation>();
+
+    // AI Features
+    public DbSet<AutoCategorizationRule> AutoCategorizationRules => Set<AutoCategorizationRule>();
+    public DbSet<CategorizationResult> CategorizationResults => Set<CategorizationResult>();
+    public DbSet<AnomalyDetection> AnomalyDetections => Set<AnomalyDetection>();
+    public DbSet<CashFlowForecast> CashFlowForecasts => Set<CashFlowForecast>();
+    public DbSet<CashFlowForecastLine> CashFlowForecastLines => Set<CashFlowForecastLine>();
+
+    // Dimensional Accounting
+    public DbSet<AccountingDimension> AccountingDimensions => Set<AccountingDimension>();
+    public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<JournalLineDimension> JournalLineDimensions => Set<JournalLineDimension>();
+
+    // Intercompany
+    public DbSet<IntercompanyTransaction> IntercompanyTransactions => Set<IntercompanyTransaction>();
+    public DbSet<IntercompanyTransactionLine> IntercompanyTransactionLines => Set<IntercompanyTransactionLine>();
+
+    // Consolidation
+    public DbSet<ConsolidationGroup> ConsolidationGroups => Set<ConsolidationGroup>();
+    public DbSet<ConsolidationMember> ConsolidationMembers => Set<ConsolidationMember>();
+    public DbSet<ConsolidationReport> ConsolidationReports => Set<ConsolidationReport>();
+
+    // Payroll
+    public DbSet<Employee> Employees => Set<Employee>();
+    public DbSet<PayrollRun> PayrollRuns => Set<PayrollRun>();
+    public DbSet<PayrollDetail> PayrollDetails => Set<PayrollDetail>();
+    public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
+    public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
+
+    // Tax Calendar
+    public DbSet<TaxCalendarEvent> TaxCalendarEvents => Set<TaxCalendarEvent>();
+
+    // Advanced AR/AP
+    public DbSet<ContactCreditSetting> ContactCreditSettings => Set<ContactCreditSetting>();
+    public DbSet<DunningLetter> DunningLetters => Set<DunningLetter>();
+    public DbSet<DunningLetterLine> DunningLetterLines => Set<DunningLetterLine>();
+    public DbSet<PaymentReminder> PaymentReminders => Set<PaymentReminder>();
+
+    // OCR
+    public DbSet<OcrScanResult> OcrScanResults => Set<OcrScanResult>();
+
+    // Custom Reports
+    public DbSet<CustomReport> CustomReports => Set<CustomReport>();
+
+    // Portal
+    public DbSet<PortalAccess> PortalAccesses => Set<PortalAccess>();
+    public DbSet<PortalActivity> PortalActivities => Set<PortalActivity>();
+
+    // FP&A
+    public DbSet<FinancialScenario> FinancialScenarios => Set<FinancialScenario>();
+    public DbSet<ScenarioAssumption> ScenarioAssumptions => Set<ScenarioAssumption>();
+    public DbSet<ScenarioResult> ScenarioResults => Set<ScenarioResult>();
+    public DbSet<FinancialKpi> FinancialKpis => Set<FinancialKpi>();
+    public DbSet<KpiSnapshot> KpiSnapshots => Set<KpiSnapshot>();
+
+    // Open Banking
+    public DbSet<BankConnection> BankConnections => Set<BankConnection>();
+    public DbSet<BankFeedImport> BankFeedImports => Set<BankFeedImport>();
+
+    // Compliance
+    public DbSet<ComplianceFiling> ComplianceFilings => Set<ComplianceFiling>();
+
+    // Time & Billing
+    public DbSet<TimeEntry> TimeEntries => Set<TimeEntry>();
+    public DbSet<BillingRate> BillingRates => Set<BillingRate>();
+
+    // Webhooks
+    public DbSet<WebhookRegistration> WebhookRegistrations => Set<WebhookRegistration>();
+    public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
+
+    // Mobile
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<SyncQueue> SyncQueues => Set<SyncQueue>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
