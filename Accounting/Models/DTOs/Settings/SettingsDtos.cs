@@ -1,3 +1,5 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Models.DTOs.Settings;
 
 public record UpdateCompanySettingsRequest(
@@ -59,7 +61,7 @@ public record CompanySettingsResponse(
 
 // ===== Number Series =====
 public record CreateNumberSeriesRequest(
-    Accounting.Models.Enums.DocumentType DocumentType,
+    DocumentType DocumentType,
     string Prefix,
     string? Suffix,
     string Format,
@@ -76,7 +78,7 @@ public record UpdateNumberSeriesRequest(
 
 public record NumberSeriesResponse(
     Guid Id,
-    Accounting.Models.Enums.DocumentType DocumentType,
+    DocumentType DocumentType,
     string Prefix,
     string? Suffix,
     string Format,
@@ -88,7 +90,7 @@ public record NumberSeriesResponse(
 public record CreateApiKeyRequest(
     string Name,
     DateTime? ExpiresAt,
-    Accounting.Models.Enums.FeatureFlags AllowedFeatures,
+    FeatureFlags AllowedFeatures,
     string? AllowedIpAddresses,
     int RateLimitPerMinute = 60,
     bool CanRead = true,
@@ -99,10 +101,10 @@ public record ApiKeyResponse(
     Guid Id,
     string Name,
     string KeyPrefix,
-    Accounting.Models.Enums.ApiKeyStatus Status,
+    ApiKeyStatus Status,
     DateTime? ExpiresAt,
     DateTime? LastUsedAt,
-    Accounting.Models.Enums.FeatureFlags AllowedFeatures,
+    FeatureFlags AllowedFeatures,
     bool CanRead,
     bool CanWrite,
     bool CanDelete,
