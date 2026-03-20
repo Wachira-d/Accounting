@@ -179,62 +179,103 @@
       <div class="section-header">
         <div class="badge badge-success">ราคา</div>
         <h2>แพ็กเกจที่เหมาะกับทุกธุรกิจ</h2>
-        <p>เริ่มต้นฟรี ไม่ต้องผูกบัตรเครดิต อัปเกรดเมื่อพร้อม</p>
+        <p>เริ่มต้นทดลองใช้ฟรี 14 วัน ไม่ต้องผูกบัตรเครดิต อัปเกรดเมื่อพร้อม</p>
       </div>
-      <div class="pricing-grid">
-        <div class="pricing-card">
-          <div class="pricing-name">Starter</div>
-          <div class="pricing-desc">สำหรับธุรกิจขนาดเล็ก เริ่มต้นใช้งาน</div>
-          <div class="pricing-price">
-            <span class="amount">฿590</span>
-            <span class="period">/เดือน</span>
-          </div>
-          <ul class="pricing-features">
-            <li><span class="check">✓</span> ผู้ใช้งาน 2 คน</li>
-            <li><span class="check">✓</span> เอกสาร 100 รายการ/เดือน</li>
-            <li><span class="check">✓</span> บัญชีและสมุดรายวัน</li>
-            <li><span class="check">✓</span> ภาษีมูลค่าเพิ่ม</li>
-            <li><span class="check">✓</span> รายงานมาตรฐาน</li>
-            <li><span class="cross">✗</span> ระบบเงินเดือน</li>
-            <li><span class="cross">✗</span> Multi-branch</li>
-          </ul>
-          <a href="/register.html?plan=starter" class="btn btn-outline w-full">เลือกแพ็กเกจนี้</a>
+
+      <!-- Billing Cycle Toggle -->
+      <div style="display:flex;justify-content:center;margin-bottom:32px">
+        <div style="display:inline-flex;background:#fff;border-radius:var(--radius-lg);padding:4px;box-shadow:var(--shadow)">
+          <button class="billing-toggle active" data-cycle="monthly" onclick="Pricing.setCycle('monthly',this)">รายเดือน</button>
+          <button class="billing-toggle" data-cycle="quarterly" onclick="Pricing.setCycle('quarterly',this)">ราย 3 เดือน <span style="color:var(--success);font-size:11px">-5%</span></button>
+          <button class="billing-toggle" data-cycle="semiannual" onclick="Pricing.setCycle('semiannual',this)">ราย 6 เดือน <span style="color:var(--success);font-size:11px">-10%</span></button>
+          <button class="billing-toggle" data-cycle="annual" onclick="Pricing.setCycle('annual',this)">รายปี <span style="color:var(--success);font-size:11px">-15%</span></button>
         </div>
-        <div class="pricing-card featured">
-          <div class="pricing-name">Professional</div>
-          <div class="pricing-desc">สำหรับธุรกิจที่กำลังเติบโต</div>
-          <div class="pricing-price">
-            <span class="amount">฿1,490</span>
-            <span class="period">/เดือน</span>
-          </div>
-          <ul class="pricing-features">
-            <li><span class="check">✓</span> ผู้ใช้งาน 10 คน</li>
-            <li><span class="check">✓</span> เอกสารไม่จำกัด</li>
-            <li><span class="check">✓</span> ทุกฟีเจอร์บัญชี</li>
-            <li><span class="check">✓</span> ภาษีครบวงจร</li>
-            <li><span class="check">✓</span> ระบบเงินเดือน</li>
-            <li><span class="check">✓</span> AI อัจฉริยะ</li>
-            <li><span class="check">✓</span> API Access</li>
-          </ul>
-          <a href="/register.html?plan=professional" class="btn btn-primary w-full">เริ่มทดลองฟรี</a>
+      </div>
+      <style>
+        .billing-toggle { padding:8px 16px; border:none; background:transparent; font-size:14px; font-weight:500; border-radius:var(--radius); cursor:pointer; color:var(--gray-600); transition:all .2s; }
+        .billing-toggle.active { background:var(--primary); color:#fff; box-shadow:var(--shadow-sm); }
+        .pricing-trial-badge { display:inline-block; background:linear-gradient(135deg,#10B981,#059669); color:#fff; padding:4px 14px; border-radius:9999px; font-size:12px; font-weight:600; margin-bottom:12px; }
+        .pricing-limit { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px; color:var(--gray-600); }
+        .pricing-limit .icon { font-size:16px; }
+        .pricing-compare { margin-top:40px; }
+        .trial-detail-box { background:#ECFDF5; border:1px solid #A7F3D0; border-radius:var(--radius-lg); padding:24px; margin-top:32px; text-align:center; }
+      </style>
+
+      <div class="pricing-grid" id="pricingGrid">
+        <!-- Dynamic pricing cards loaded from API -->
+        <div style="grid-column:1/-1;text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></div>
+      </div>
+
+      <!-- Trial Detail Box -->
+      <div class="trial-detail-box">
+        <h3 style="font-size:20px;font-weight:700;margin-bottom:8px">ทดลองใช้ฟรี ไม่มีข้อผูกมัด</h3>
+        <p style="color:var(--gray-600);margin-bottom:16px">ทดลองใช้งาน 14 วันเต็ม ไม่ต้องผูกบัตรเครดิต สามารถขยายเวลาได้ ยกเลิกเมื่อไหร่ก็ได้</p>
+        <div style="display:flex;justify-content:center;gap:32px;flex-wrap:wrap;margin-bottom:16px">
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">14</div><div class="text-xs text-gray-500">วันทดลองใช้ฟรี</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">0฿</div><div class="text-xs text-gray-500">ค่าใช้จ่าย</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">30</div><div class="text-xs text-gray-500">เอกสาร/เดือน</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">2</div><div class="text-xs text-gray-500">ผู้ใช้งาน</div></div>
         </div>
-        <div class="pricing-card">
-          <div class="pricing-name">Enterprise</div>
-          <div class="pricing-desc">สำหรับองค์กรขนาดใหญ่</div>
-          <div class="pricing-price">
-            <span class="amount">฿4,990</span>
-            <span class="period">/เดือน</span>
-          </div>
-          <ul class="pricing-features">
-            <li><span class="check">✓</span> ผู้ใช้งานไม่จำกัด</li>
-            <li><span class="check">✓</span> เอกสารไม่จำกัด</li>
-            <li><span class="check">✓</span> ทุกฟีเจอร์ + Multi-branch</li>
-            <li><span class="check">✓</span> Consolidation</li>
-            <li><span class="check">✓</span> Intercompany</li>
-            <li><span class="check">✓</span> Webhooks & API</li>
-            <li><span class="check">✓</span> Priority Support</li>
-          </ul>
-          <a href="/register.html?plan=enterprise" class="btn btn-outline w-full">ติดต่อฝ่ายขาย</a>
+        <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--gray-600)">
+          <span>&#10003; ไม่ต้องผูกบัตรเครดิต</span>
+          <span>&#10003; ขยายเวลาได้ 1 ครั้ง (+7 วัน)</span>
+          <span>&#10003; ส่งออกข้อมูลได้หลังหมดอายุ</span>
+          <span>&#10003; Grace period 7 วัน</span>
+        </div>
+      </div>
+
+      <!-- Feature Comparison Table -->
+      <div class="pricing-compare">
+        <h3 style="text-align:center;font-size:24px;font-weight:700;margin-bottom:24px">เปรียบเทียบฟีเจอร์ทุกแพ็กเกจ</h3>
+        <div class="table-container" style="max-width:900px;margin:0 auto">
+          <table class="table">
+            <thead>
+              <tr><th>ฟีเจอร์</th><th class="text-center">ทดลองฟรี</th><th class="text-center">Starter</th><th class="text-center" style="background:#EEF2FF">Professional</th><th class="text-center">Enterprise</th></tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600">ลิมิตการใช้งาน</td></tr>
+              <tr><td>จำนวนผู้ใช้</td><td class="text-center">2</td><td class="text-center">2</td><td class="text-center" style="background:#FAFAFF">10</td><td class="text-center">ไม่จำกัด</td></tr>
+              <tr><td>จำนวนบริษัท</td><td class="text-center">1</td><td class="text-center">1</td><td class="text-center" style="background:#FAFAFF">3</td><td class="text-center">ไม่จำกัด</td></tr>
+              <tr><td>เอกสาร/เดือน</td><td class="text-center">30</td><td class="text-center">100</td><td class="text-center" style="background:#FAFAFF">1,000</td><td class="text-center">ไม่จำกัด</td></tr>
+              <tr><td>รายการบัญชี/เดือน</td><td class="text-center">50</td><td class="text-center">200</td><td class="text-center" style="background:#FAFAFF">2,000</td><td class="text-center">ไม่จำกัด</td></tr>
+              <tr><td>พื้นที่จัดเก็บ</td><td class="text-center">100 MB</td><td class="text-center">500 MB</td><td class="text-center" style="background:#FAFAFF">5 GB</td><td class="text-center">50 GB</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600">ฟีเจอร์หลัก</td></tr>
+              <tr><td>ระบบบัญชี + สมุดรายวัน</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>ออกเอกสาร (ใบแจ้งหนี้/ใบเสร็จ/ใบกำกับ)</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>ภาษีมูลค่าเพิ่ม + หัก ณ ที่จ่าย</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>แดชบอร์ดภาพรวม</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>รายงาน (งบทดลอง/งบดุล/กำไรขาดทุน)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>Audit Log + ไฟล์แนบ</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>รายงานอายุลูกหนี้/เจ้าหนี้</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600">ฟีเจอร์ขั้นสูง (Pro)</td></tr>
+              <tr><td>รายงานขั้นสูง + กระแสเงินสด</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>สต็อกสินค้า + คลังสินค้า</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>กระทบยอดธนาคาร</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>งบประมาณ + ศูนย์ต้นทุน</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>ระบบอนุมัติ + Workflow</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>Multi-company + API Access</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>รายการซ้ำอัตโนมัติ + เบิกค่าใช้จ่าย</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600">ฟีเจอร์ Enterprise</td></tr>
+              <tr><td>e-Tax Invoice + ลายเซ็นดิจิทัล</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>ระบบเงินเดือน + ประกันสังคม</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>โครงการ + Time Billing</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>Consolidation + Intercompany</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>สินทรัพย์ถาวร + ค่าเสื่อมราคา</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>AI อัจฉริยะ + OCR เอกสาร</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>Open Banking + Webhook</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>สินเชื่อ + คอมมิชชั่น + FP&A</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td>Priority Support</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600">การทดลองใช้</td></tr>
+              <tr><td>ระยะเวลาทดลอง</td><td class="text-center">14 วัน</td><td class="text-center">14 วัน</td><td class="text-center" style="background:#FAFAFF">14 วัน</td><td class="text-center">30 วัน</td></tr>
+              <tr><td>ขยายเวลาทดลอง</td><td class="text-center">1 ครั้ง (+7 วัน)</td><td class="text-center">1 ครั้ง (+7 วัน)</td><td class="text-center" style="background:#FAFAFF">2 ครั้ง (+7 วัน)</td><td class="text-center">3 ครั้ง (+15 วัน)</td></tr>
+              <tr><td>Grace Period หลังหมดอายุ</td><td class="text-center">7 วัน</td><td class="text-center">7 วัน</td><td class="text-center" style="background:#FAFAFF">14 วัน</td><td class="text-center">30 วัน</td></tr>
+              <tr><td>ส่งออกข้อมูลหลังหมดอายุ</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -411,6 +452,132 @@
         document.querySelector(a.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth' });
       });
     });
+
+    // ===== Dynamic Pricing =====
+    const Pricing = {
+      plans: [],
+      cycle: 'monthly',
+
+      async init() {
+        try {
+          const res = await fetch('/api/subscription/plans');
+          const json = await res.json();
+          this.plans = (json.data?.items || json.data || []).filter(p => p.plan !== 'FreeTrial');
+          if (this.plans.length) this.render();
+        } catch (e) { this.renderFallback(); }
+      },
+
+      setCycle(cycle, el) {
+        this.cycle = cycle;
+        document.querySelectorAll('.billing-toggle').forEach(b => b.classList.remove('active'));
+        el.classList.add('active');
+        this.render();
+      },
+
+      getPrice(plan) {
+        switch(this.cycle) {
+          case 'quarterly': return { total: plan.quarterlyPrice, perMonth: plan.quarterlyPrice / 3 };
+          case 'semiannual': return { total: plan.semiAnnualPrice, perMonth: plan.semiAnnualPrice / 6 };
+          case 'annual': return { total: plan.annualPrice, perMonth: plan.annualPrice / 12 };
+          default: return { total: plan.monthlyPrice, perMonth: plan.monthlyPrice };
+        }
+      },
+
+      cycleName() {
+        return { monthly: 'เดือน', quarterly: '3 เดือน', semiannual: '6 เดือน', annual: 'ปี' }[this.cycle];
+      },
+
+      formatMoney(n) {
+        return n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      },
+
+      formatStorage(bytes) {
+        if (bytes >= 1024*1024*1024) return (bytes / (1024*1024*1024)).toFixed(0) + ' GB';
+        return (bytes / (1024*1024)).toFixed(0) + ' MB';
+      },
+
+      featureList(plan) {
+        const features = {
+          'Basic': [
+            { check: true, text: `ผู้ใช้งาน ${plan.maxUsers} คน` },
+            { check: true, text: `เอกสาร ${plan.maxDocumentsPerMonth.toLocaleString()} รายการ/เดือน` },
+            { check: true, text: `พื้นที่ ${this.formatStorage(plan.maxStorageBytes)}` },
+            { check: true, text: 'ระบบบัญชีพื้นฐาน + สมุดรายวัน' },
+            { check: true, text: 'ออกเอกสาร + ใบกำกับภาษี' },
+            { check: true, text: 'ภาษีมูลค่าเพิ่ม + หัก ณ ที่จ่าย' },
+            { check: true, text: 'รายงานมาตรฐาน + Audit Log' },
+            { check: true, text: 'ทดลองฟรี ' + plan.trialDurationDays + ' วัน' },
+            { check: false, text: 'สต็อกสินค้า/กระทบยอด' },
+            { check: false, text: 'ระบบเงินเดือน/AI' },
+          ],
+          'Pro': [
+            { check: true, text: `ผู้ใช้งาน ${plan.maxUsers} คน` },
+            { check: true, text: `${plan.maxCompanies} บริษัท` },
+            { check: true, text: `เอกสาร ${plan.maxDocumentsPerMonth.toLocaleString()} รายการ/เดือน` },
+            { check: true, text: `พื้นที่ ${this.formatStorage(plan.maxStorageBytes)}` },
+            { check: true, text: 'ทุกฟีเจอร์ใน Starter' },
+            { check: true, text: 'สต็อกสินค้า + กระทบยอดธนาคาร' },
+            { check: true, text: 'งบประมาณ + ศูนย์ต้นทุน' },
+            { check: true, text: 'API Access + Multi-company' },
+            { check: true, text: 'ระบบอนุมัติ + Workflow' },
+            { check: true, text: 'ทดลองฟรี ' + plan.trialDurationDays + ' วัน' },
+          ],
+          'Enterprise': [
+            { check: true, text: 'ผู้ใช้งานไม่จำกัด' },
+            { check: true, text: `${plan.maxCompanies}+ บริษัท` },
+            { check: true, text: 'เอกสารไม่จำกัด' },
+            { check: true, text: `พื้นที่ ${this.formatStorage(plan.maxStorageBytes)}` },
+            { check: true, text: 'ทุกฟีเจอร์ใน Professional' },
+            { check: true, text: 'e-Tax + ลายเซ็นดิจิทัล' },
+            { check: true, text: 'เงินเดือน + ประกันสังคม' },
+            { check: true, text: 'Consolidation + Intercompany' },
+            { check: true, text: 'AI + OCR + Open Banking' },
+            { check: true, text: 'ทดลองฟรี ' + plan.trialDurationDays + ' วัน + Priority Support' },
+          ],
+        };
+        return features[plan.plan] || [];
+      },
+
+      render() {
+        const grid = document.getElementById('pricingGrid');
+        grid.innerHTML = this.plans.map((p, i) => {
+          const price = this.getPrice(p);
+          const isFeatured = p.plan === 'Pro';
+          const features = this.featureList(p);
+          const savingsPercent = this.cycle !== 'monthly' ? Math.round((1 - price.perMonth / p.monthlyPrice) * 100) : 0;
+
+          return `<div class="pricing-card${isFeatured ? ' featured' : ''}">
+            <div class="pricing-trial-badge">ทดลองฟรี ${p.trialDurationDays} วัน</div>
+            <div class="pricing-name">${p.name}</div>
+            <div class="pricing-desc">${p.description ? p.description.substring(0, 60) + '...' : ''}</div>
+            <div class="pricing-price">
+              <span class="amount">฿${this.formatMoney(price.perMonth)}</span>
+              <span class="period">/เดือน</span>
+            </div>
+            ${this.cycle !== 'monthly' ? `<div style="font-size:13px;color:var(--success);margin-top:-16px;margin-bottom:16px">
+              ฿${this.formatMoney(price.total)}/${this.cycleName()} (ประหยัด ${savingsPercent}%)
+            </div>` : '<div style="margin-bottom:8px"></div>'}
+            <ul class="pricing-features">
+              ${features.map(f => `<li><span class="${f.check ? 'check' : 'cross'}">${f.check ? '✓' : '✗'}</span> ${f.text}</li>`).join('')}
+            </ul>
+            <a href="/register.html?plan=${p.plan.toLowerCase()}" class="btn ${isFeatured ? 'btn-primary' : 'btn-outline'} w-full">
+              ${p.plan === 'Enterprise' ? 'ติดต่อฝ่ายขาย' : 'เริ่มทดลองฟรี'}
+            </a>
+          </div>`;
+        }).join('');
+      },
+
+      renderFallback() {
+        // ใช้ข้อมูล static ถ้า API ไม่ตอบ
+        this.plans = [
+          { name:'Starter', plan:'Basic', monthlyPrice:590, quarterlyPrice:1680, semiAnnualPrice:3186, annualPrice:6018, maxUsers:2, maxCompanies:1, maxDocumentsPerMonth:100, maxStorageBytes:500*1024*1024, trialDurationDays:14, description:'สำหรับฟรีแลนซ์และธุรกิจขนาดเล็กที่เพิ่งเริ่มต้น' },
+          { name:'Professional', plan:'Pro', monthlyPrice:1490, quarterlyPrice:4248, semiAnnualPrice:8046, annualPrice:15198, maxUsers:10, maxCompanies:3, maxDocumentsPerMonth:1000, maxStorageBytes:5*1024*1024*1024, trialDurationDays:14, description:'สำหรับ SME ที่กำลังเติบโต ต้องการระบบบัญชีครบวงจร' },
+          { name:'Enterprise', plan:'Enterprise', monthlyPrice:4990, quarterlyPrice:14222, semiAnnualPrice:26946, annualPrice:50898, maxUsers:999, maxCompanies:99, maxDocumentsPerMonth:99999, maxStorageBytes:50*1024*1024*1024, trialDurationDays:30, description:'สำหรับองค์กรขนาดใหญ่และกลุ่มบริษัท ครบทุกฟีเจอร์' },
+        ];
+        this.render();
+      }
+    };
+    Pricing.init();
   </script>
 </body>
 </html>

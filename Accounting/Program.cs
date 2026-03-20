@@ -245,12 +245,16 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = Dat
 // SPA fallback - serve app.html for non-API, non-file routes
 app.MapFallbackToFile("index.html");
 
-// ===== Auto-migrate in development =====
-if (app.Environment.IsDevelopment())
+// ===== Auto-migrate & seed data =====
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-    db.Database.EnsureCreated();
+    if (app.Environment.IsDevelopment())
+    {
+        db.Database.EnsureCreated();
+    }
+    // Seed default plan templates
+    await SeedPlanTemplates.SeedAsync(db);
 }
 
 app.Run();
