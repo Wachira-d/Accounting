@@ -236,8 +236,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<CompanyUser>(e =>
         {
             e.HasKey(cu => new { cu.UserId, cu.CompanyId });
-            e.HasOne(cu => cu.User).WithMany(u => u.CompanyUsers).HasForeignKey(cu => cu.UserId);
-            e.HasOne(cu => cu.Company).WithMany(c => c.CompanyUsers).HasForeignKey(cu => cu.CompanyId);
+            e.HasOne(cu => cu.User).WithMany(u => u.CompanyUsers).HasForeignKey(cu => cu.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(cu => cu.Company).WithMany(c => c.CompanyUsers).HasForeignKey(cu => cu.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== Subscription =====
@@ -266,7 +266,7 @@ public class AccountingDbContext : DbContext
         // ===== SubscriptionHistory =====
         modelBuilder.Entity<SubscriptionHistory>(e =>
         {
-            e.HasOne(h => h.Subscription).WithMany(s => s.History).HasForeignKey(h => h.SubscriptionId);
+            e.HasOne(h => h.Subscription).WithMany(s => s.History).HasForeignKey(h => h.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
             e.Property(h => h.Action).HasMaxLength(100);
         });
 
@@ -300,7 +300,7 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.ReviewNotes).HasMaxLength(1000);
             e.Property(p => p.RejectionReason).HasMaxLength(1000);
             e.Property(p => p.CustomerNotes).HasMaxLength(1000);
-            e.HasOne(p => p.Subscription).WithMany(s => s.SubscriptionPayments).HasForeignKey(p => p.SubscriptionId);
+            e.HasOne(p => p.Subscription).WithMany(s => s.SubscriptionPayments).HasForeignKey(p => p.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(p => p.ReviewedByUser).WithMany().HasForeignKey(p => p.ReviewedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -310,7 +310,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(a => new { a.CompanyId, a.AccountCode }).IsUnique();
             e.Property(a => a.AccountCode).HasMaxLength(20);
             e.Property(a => a.AccountName).HasMaxLength(256);
-            e.HasOne(a => a.ParentAccount).WithMany(a => a.ChildAccounts).HasForeignKey(a => a.ParentAccountId);
+            e.HasOne(a => a.ParentAccount).WithMany(a => a.ChildAccounts).HasForeignKey(a => a.ParentAccountId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(a => !a.IsDeleted);
         });
 
@@ -321,14 +321,14 @@ public class AccountingDbContext : DbContext
             e.Property(j => j.EntryNumber).HasMaxLength(50);
             e.Property(j => j.TotalDebit).HasPrecision(18, 2);
             e.Property(j => j.TotalCredit).HasPrecision(18, 2);
-            e.HasOne(j => j.FiscalPeriod).WithMany(f => f.JournalEntries).HasForeignKey(j => j.FiscalPeriodId);
+            e.HasOne(j => j.FiscalPeriod).WithMany(f => f.JournalEntries).HasForeignKey(j => j.FiscalPeriodId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(j => !j.IsDeleted);
         });
 
         // ===== JournalEntryLine =====
         modelBuilder.Entity<JournalEntryLine>(e =>
         {
-            e.HasOne(l => l.JournalEntry).WithMany(j => j.Lines).HasForeignKey(l => l.JournalEntryId);
+            e.HasOne(l => l.JournalEntry).WithMany(j => j.Lines).HasForeignKey(l => l.JournalEntryId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Account).WithMany(a => a.JournalEntryLines).HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.DebitAmount).HasPrecision(18, 2);
             e.Property(l => l.CreditAmount).HasPrecision(18, 2);
@@ -361,7 +361,7 @@ public class AccountingDbContext : DbContext
         // ===== DocumentLine =====
         modelBuilder.Entity<DocumentLine>(e =>
         {
-            e.HasOne(l => l.Document).WithMany(d => d.Lines).HasForeignKey(l => l.DocumentId);
+            e.HasOne(l => l.Document).WithMany(d => d.Lines).HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.Quantity).HasPrecision(18, 4);
             e.Property(l => l.UnitPrice).HasPrecision(18, 2);
             e.Property(l => l.Amount).HasPrecision(18, 2);
@@ -408,7 +408,7 @@ public class AccountingDbContext : DbContext
         // ===== TaxReportLine =====
         modelBuilder.Entity<TaxReportLine>(e =>
         {
-            e.HasOne(l => l.TaxReport).WithMany(r => r.Lines).HasForeignKey(l => l.TaxReportId);
+            e.HasOne(l => l.TaxReport).WithMany(r => r.Lines).HasForeignKey(l => l.TaxReportId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.IncomeAmount).HasPrecision(18, 2);
             e.Property(l => l.TaxRate).HasPrecision(5, 2);
             e.Property(l => l.TaxAmount).HasPrecision(18, 2);
@@ -463,7 +463,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(t => new { t.BankAccountId, t.TransactionDate });
             e.Property(t => t.Amount).HasPrecision(18, 2);
             e.Property(t => t.BalanceAfter).HasPrecision(18, 2);
-            e.HasOne(t => t.BankAccount).WithMany(a => a.Transactions).HasForeignKey(t => t.BankAccountId);
+            e.HasOne(t => t.BankAccount).WithMany(a => a.Transactions).HasForeignKey(t => t.BankAccountId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== RecurringTransaction =====
@@ -493,7 +493,7 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.Amount).HasPrecision(18, 2);
             e.Property(d => d.AccumulatedAmount).HasPrecision(18, 2);
             e.Property(d => d.NetBookValue).HasPrecision(18, 2);
-            e.HasOne(d => d.FixedAsset).WithMany(a => a.Depreciations).HasForeignKey(d => d.FixedAssetId);
+            e.HasOne(d => d.FixedAsset).WithMany(a => a.Depreciations).HasForeignKey(d => d.FixedAssetId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== ApprovalRule =====
@@ -508,7 +508,7 @@ public class AccountingDbContext : DbContext
         // ===== ApprovalStep =====
         modelBuilder.Entity<ApprovalStep>(e =>
         {
-            e.HasOne(s => s.ApprovalRule).WithMany(r => r.Steps).HasForeignKey(s => s.ApprovalRuleId);
+            e.HasOne(s => s.ApprovalRule).WithMany(r => r.Steps).HasForeignKey(s => s.ApprovalRuleId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(s => s.ApproverUser).WithMany().HasForeignKey(s => s.ApproverUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -523,7 +523,7 @@ public class AccountingDbContext : DbContext
         // ===== ApprovalAction =====
         modelBuilder.Entity<ApprovalAction>(e =>
         {
-            e.HasOne(a => a.ApprovalRequest).WithMany(r => r.Actions).HasForeignKey(a => a.ApprovalRequestId);
+            e.HasOne(a => a.ApprovalRequest).WithMany(r => r.Actions).HasForeignKey(a => a.ApprovalRequestId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(a => a.ApproverUser).WithMany().HasForeignKey(a => a.ApproverUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -541,7 +541,7 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt });
             e.Property(n => n.Title).HasMaxLength(500);
-            e.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId);
+            e.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== NumberSeries =====
@@ -581,7 +581,7 @@ public class AccountingDbContext : DbContext
         // ===== BudgetLine =====
         modelBuilder.Entity<BudgetLine>(e =>
         {
-            e.HasOne(l => l.Budget).WithMany(b => b.Lines).HasForeignKey(l => l.BudgetId);
+            e.HasOne(l => l.Budget).WithMany(b => b.Lines).HasForeignKey(l => l.BudgetId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Account).WithMany().HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
             for (int i = 1; i <= 12; i++)
                 e.Property($"Month{i}").HasPrecision(18, 2);
@@ -602,7 +602,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(k => k.KeyPrefix);
             e.Property(k => k.Name).HasMaxLength(256);
             e.Property(k => k.KeyPrefix).HasMaxLength(20);
-            e.HasOne(k => k.Company).WithMany().HasForeignKey(k => k.CompanyId);
+            e.HasOne(k => k.Company).WithMany().HasForeignKey(k => k.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(k => k.CreatedByUser).WithMany().HasForeignKey(k => k.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -657,7 +657,7 @@ public class AccountingDbContext : DbContext
         // ===== ExpenseClaimLine =====
         modelBuilder.Entity<ExpenseClaimLine>(e =>
         {
-            e.HasOne(l => l.ExpenseClaim).WithMany(ec => ec.Lines).HasForeignKey(l => l.ExpenseClaimId);
+            e.HasOne(l => l.ExpenseClaim).WithMany(ec => ec.Lines).HasForeignKey(l => l.ExpenseClaimId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Account).WithMany().HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.Amount).HasPrecision(18, 2);
             e.Property(l => l.VatRate).HasPrecision(5, 2);
@@ -683,7 +683,7 @@ public class AccountingDbContext : DbContext
         // ===== WithholdingTaxCertLine =====
         modelBuilder.Entity<WithholdingTaxCertLine>(e =>
         {
-            e.HasOne(l => l.WithholdingTaxCert).WithMany(w => w.Lines).HasForeignKey(l => l.WithholdingTaxCertId);
+            e.HasOne(l => l.WithholdingTaxCert).WithMany(w => w.Lines).HasForeignKey(l => l.WithholdingTaxCertId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.IncomeAmount).HasPrecision(18, 2);
             e.Property(l => l.TaxRate).HasPrecision(5, 2);
             e.Property(l => l.TaxAmount).HasPrecision(18, 2);
@@ -697,7 +697,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(i => i.InvitationToken).IsUnique();
             e.Property(i => i.InviteeEmail).HasMaxLength(256);
             e.Property(i => i.InviteeName).HasMaxLength(256);
-            e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId);
+            e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(i => i.InvitedByUser).WithMany().HasForeignKey(i => i.InvitedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -705,7 +705,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<FreelanceAccess>(e =>
         {
             e.HasIndex(fa => new { fa.CompanyId, fa.UserId }).IsUnique();
-            e.HasOne(fa => fa.Company).WithMany().HasForeignKey(fa => fa.CompanyId);
+            e.HasOne(fa => fa.Company).WithMany().HasForeignKey(fa => fa.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(fa => fa.User).WithMany().HasForeignKey(fa => fa.UserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -717,14 +717,14 @@ public class AccountingDbContext : DbContext
             e.Property(t => t.ActualHours).HasPrecision(8, 2);
             e.Property(t => t.AgreedRate).HasPrecision(18, 2);
             e.Property(t => t.TotalCost).HasPrecision(18, 2);
-            e.HasOne(t => t.FreelanceAccess).WithMany(fa => fa.Tasks).HasForeignKey(t => t.FreelanceAccessId);
-            e.HasOne(t => t.Company).WithMany().HasForeignKey(t => t.CompanyId);
+            e.HasOne(t => t.FreelanceAccess).WithMany(fa => fa.Tasks).HasForeignKey(t => t.FreelanceAccessId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(t => t.Company).WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== FreelanceTaskComment =====
         modelBuilder.Entity<FreelanceTaskComment>(e =>
         {
-            e.HasOne(c => c.FreelanceTask).WithMany(t => t.Comments).HasForeignKey(c => c.FreelanceTaskId);
+            e.HasOne(c => c.FreelanceTask).WithMany(t => t.Comments).HasForeignKey(c => c.FreelanceTaskId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(c => c.User).WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -732,7 +732,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<FreelanceTimeLog>(e =>
         {
             e.Property(l => l.Hours).HasPrecision(8, 2);
-            e.HasOne(l => l.FreelanceTask).WithMany(t => t.TimeLogs).HasForeignKey(l => l.FreelanceTaskId);
+            e.HasOne(l => l.FreelanceTask).WithMany(t => t.TimeLogs).HasForeignKey(l => l.FreelanceTaskId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.User).WithMany().HasForeignKey(l => l.UserId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -742,7 +742,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(l => new { l.CompanyId, l.Timestamp });
             e.HasIndex(l => new { l.FreelanceAccessId, l.Timestamp });
             e.Property(l => l.Action).HasMaxLength(200);
-            e.HasOne(l => l.FreelanceAccess).WithMany(fa => fa.ActivityLogs).HasForeignKey(l => l.FreelanceAccessId);
+            e.HasOne(l => l.FreelanceAccess).WithMany(fa => fa.ActivityLogs).HasForeignKey(l => l.FreelanceAccessId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ======================================================================
@@ -788,7 +788,7 @@ public class AccountingDbContext : DbContext
         // ===== PayrollDetail =====
         modelBuilder.Entity<PayrollDetail>(e =>
         {
-            e.HasOne(pd => pd.PayrollRun).WithMany(pr => pr.Details).HasForeignKey(pd => pd.PayrollRunId);
+            e.HasOne(pd => pd.PayrollRun).WithMany(pr => pr.Details).HasForeignKey(pd => pd.PayrollRunId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(pd => pd.Employee).WithMany().HasForeignKey(pd => pd.EmployeeId).OnDelete(DeleteBehavior.Restrict);
             e.Property(pd => pd.BaseSalary).HasPrecision(18, 2);
             e.Property(pd => pd.OvertimePay).HasPrecision(18, 2);
@@ -816,7 +816,7 @@ public class AccountingDbContext : DbContext
         // ===== EmployeeLeave =====
         modelBuilder.Entity<EmployeeLeave>(e =>
         {
-            e.HasOne(el => el.Employee).WithMany(emp => emp.Leaves).HasForeignKey(el => el.EmployeeId);
+            e.HasOne(el => el.Employee).WithMany(emp => emp.Leaves).HasForeignKey(el => el.EmployeeId).OnDelete(DeleteBehavior.Restrict);
             e.Property(el => el.TotalDays).HasPrecision(5, 1);
             e.HasQueryFilter(el => !el.IsDeleted);
         });
@@ -839,7 +839,7 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.Code).HasMaxLength(50);
             e.Property(d => d.Name).HasMaxLength(256);
             e.Property(d => d.AnnualBudget).HasPrecision(18, 2);
-            e.HasOne(d => d.Parent).WithMany(d => d.Children).HasForeignKey(d => d.ParentId);
+            e.HasOne(d => d.Parent).WithMany(d => d.Children).HasForeignKey(d => d.ParentId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(d => !d.IsDeleted);
         });
 
@@ -856,7 +856,7 @@ public class AccountingDbContext : DbContext
         // ===== JournalLineDimension =====
         modelBuilder.Entity<JournalLineDimension>(e =>
         {
-            e.HasOne(jld => jld.JournalEntryLine).WithMany().HasForeignKey(jld => jld.JournalEntryLineId);
+            e.HasOne(jld => jld.JournalEntryLine).WithMany().HasForeignKey(jld => jld.JournalEntryLineId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(jld => jld.Dimension).WithMany().HasForeignKey(jld => jld.DimensionId).OnDelete(DeleteBehavior.Restrict);
             e.Property(jld => jld.AllocatedAmount).HasPrecision(18, 2);
             e.Property(jld => jld.AllocatedPercent).HasPrecision(5, 2);
@@ -876,7 +876,7 @@ public class AccountingDbContext : DbContext
         // ===== IntercompanyTransactionLine =====
         modelBuilder.Entity<IntercompanyTransactionLine>(e =>
         {
-            e.HasOne(l => l.IntercompanyTransaction).WithMany(ic => ic.Lines).HasForeignKey(l => l.IntercompanyTransactionId);
+            e.HasOne(l => l.IntercompanyTransaction).WithMany(ic => ic.Lines).HasForeignKey(l => l.IntercompanyTransactionId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.Amount).HasPrecision(18, 2);
             e.Property(l => l.VatRate).HasPrecision(5, 2);
             e.Property(l => l.VatAmount).HasPrecision(18, 2);
@@ -894,7 +894,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<ConsolidationMember>(e =>
         {
             e.HasIndex(cm => new { cm.ConsolidationGroupId, cm.CompanyId }).IsUnique();
-            e.HasOne(cm => cm.Group).WithMany(cg => cg.Members).HasForeignKey(cm => cm.ConsolidationGroupId);
+            e.HasOne(cm => cm.Group).WithMany(cg => cg.Members).HasForeignKey(cm => cm.ConsolidationGroupId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(cm => cm.Company).WithMany().HasForeignKey(cm => cm.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.Property(cm => cm.OwnershipPercent).HasPrecision(5, 2);
         });
@@ -902,7 +902,7 @@ public class AccountingDbContext : DbContext
         // ===== ConsolidationReport =====
         modelBuilder.Entity<ConsolidationReport>(e =>
         {
-            e.HasOne(cr => cr.Group).WithMany().HasForeignKey(cr => cr.ConsolidationGroupId);
+            e.HasOne(cr => cr.Group).WithMany().HasForeignKey(cr => cr.ConsolidationGroupId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== Project =====
@@ -924,7 +924,7 @@ public class AccountingDbContext : DbContext
         // ===== ProjectTask =====
         modelBuilder.Entity<ProjectTask>(e =>
         {
-            e.HasOne(pt => pt.Project).WithMany(p => p.Tasks).HasForeignKey(pt => pt.ProjectId);
+            e.HasOne(pt => pt.Project).WithMany(p => p.Tasks).HasForeignKey(pt => pt.ProjectId).OnDelete(DeleteBehavior.Restrict);
             e.Property(pt => pt.Name).HasMaxLength(500);
             e.Property(pt => pt.EstimatedHours).HasPrecision(8, 2);
             e.Property(pt => pt.ActualHours).HasPrecision(8, 2);
@@ -936,7 +936,7 @@ public class AccountingDbContext : DbContext
         // ===== ProjectCostEntry =====
         modelBuilder.Entity<ProjectCostEntry>(e =>
         {
-            e.HasOne(pce => pce.Project).WithMany(p => p.CostEntries).HasForeignKey(pce => pce.ProjectId);
+            e.HasOne(pce => pce.Project).WithMany(p => p.CostEntries).HasForeignKey(pce => pce.ProjectId).OnDelete(DeleteBehavior.Restrict);
             e.Property(pce => pce.Quantity).HasPrecision(18, 4);
             e.Property(pce => pce.UnitCost).HasPrecision(18, 2);
             e.Property(pce => pce.Amount).HasPrecision(18, 2);
@@ -956,7 +956,7 @@ public class AccountingDbContext : DbContext
         // ===== PerformanceObligation =====
         modelBuilder.Entity<PerformanceObligation>(e =>
         {
-            e.HasOne(po => po.Contract).WithMany(rc => rc.Obligations).HasForeignKey(po => po.RevenueContractId);
+            e.HasOne(po => po.Contract).WithMany(rc => rc.Obligations).HasForeignKey(po => po.RevenueContractId).OnDelete(DeleteBehavior.Restrict);
             e.Property(po => po.Name).HasMaxLength(500);
             e.Property(po => po.StandaloneSellingPrice).HasPrecision(18, 2);
             e.Property(po => po.AllocatedPrice).HasPrecision(18, 2);
@@ -968,7 +968,7 @@ public class AccountingDbContext : DbContext
         // ===== RevenueSchedule =====
         modelBuilder.Entity<RevenueSchedule>(e =>
         {
-            e.HasOne(rs => rs.Contract).WithMany(rc => rc.Schedules).HasForeignKey(rs => rs.RevenueContractId);
+            e.HasOne(rs => rs.Contract).WithMany(rc => rc.Schedules).HasForeignKey(rs => rs.RevenueContractId).OnDelete(DeleteBehavior.Restrict);
             e.Property(rs => rs.Amount).HasPrecision(18, 2);
         });
 
@@ -985,7 +985,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<WarehouseStock>(e =>
         {
             e.HasIndex(ws => new { ws.WarehouseId, ws.ProductId, ws.LotNumber }).IsUnique();
-            e.HasOne(ws => ws.Warehouse).WithMany(w => w.Stocks).HasForeignKey(ws => ws.WarehouseId);
+            e.HasOne(ws => ws.Warehouse).WithMany(w => w.Stocks).HasForeignKey(ws => ws.WarehouseId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ws => ws.Product).WithMany().HasForeignKey(ws => ws.ProductId).OnDelete(DeleteBehavior.Restrict);
             e.Property(ws => ws.Quantity).HasPrecision(18, 4);
             e.Property(ws => ws.ReservedQuantity).HasPrecision(18, 4);
@@ -1005,7 +1005,7 @@ public class AccountingDbContext : DbContext
         // ===== StockTransferLine =====
         modelBuilder.Entity<StockTransferLine>(e =>
         {
-            e.HasOne(l => l.StockTransfer).WithMany(st => st.Lines).HasForeignKey(l => l.StockTransferId);
+            e.HasOne(l => l.StockTransfer).WithMany(st => st.Lines).HasForeignKey(l => l.StockTransferId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.Quantity).HasPrecision(18, 4);
             e.Property(l => l.ReceivedQuantity).HasPrecision(18, 4);
@@ -1029,7 +1029,7 @@ public class AccountingDbContext : DbContext
         // ===== LoanSchedule =====
         modelBuilder.Entity<LoanSchedule>(e =>
         {
-            e.HasOne(ls => ls.Loan).WithMany(l => l.Schedules).HasForeignKey(ls => ls.LoanId);
+            e.HasOne(ls => ls.Loan).WithMany(l => l.Schedules).HasForeignKey(ls => ls.LoanId).OnDelete(DeleteBehavior.Restrict);
             e.Property(ls => ls.PaymentAmount).HasPrecision(18, 2);
             e.Property(ls => ls.PrincipalPortion).HasPrecision(18, 2);
             e.Property(ls => ls.InterestPortion).HasPrecision(18, 2);
@@ -1039,7 +1039,7 @@ public class AccountingDbContext : DbContext
         // ===== LoanPayment =====
         modelBuilder.Entity<LoanPayment>(e =>
         {
-            e.HasOne(lp => lp.Loan).WithMany(l => l.Payments).HasForeignKey(lp => lp.LoanId);
+            e.HasOne(lp => lp.Loan).WithMany(l => l.Payments).HasForeignKey(lp => lp.LoanId).OnDelete(DeleteBehavior.Restrict);
             e.Property(lp => lp.PrincipalPaid).HasPrecision(18, 2);
             e.Property(lp => lp.InterestPaid).HasPrecision(18, 2);
             e.Property(lp => lp.TotalPaid).HasPrecision(18, 2);
@@ -1057,7 +1057,7 @@ public class AccountingDbContext : DbContext
         // ===== CommissionTier =====
         modelBuilder.Entity<CommissionTier>(e =>
         {
-            e.HasOne(ct => ct.Plan).WithMany(cp => cp.Tiers).HasForeignKey(ct => ct.CommissionPlanId);
+            e.HasOne(ct => ct.Plan).WithMany(cp => cp.Tiers).HasForeignKey(ct => ct.CommissionPlanId).OnDelete(DeleteBehavior.Restrict);
             e.Property(ct => ct.FromAmount).HasPrecision(18, 2);
             e.Property(ct => ct.ToAmount).HasPrecision(18, 2);
             e.Property(ct => ct.Rate).HasPrecision(8, 4);
@@ -1066,7 +1066,7 @@ public class AccountingDbContext : DbContext
         // ===== CommissionAssignment =====
         modelBuilder.Entity<CommissionAssignment>(e =>
         {
-            e.HasOne(ca => ca.Plan).WithMany(cp => cp.Assignments).HasForeignKey(ca => ca.CommissionPlanId);
+            e.HasOne(ca => ca.Plan).WithMany(cp => cp.Assignments).HasForeignKey(ca => ca.CommissionPlanId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ca => ca.Employee).WithMany().HasForeignKey(ca => ca.EmployeeId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -1110,7 +1110,7 @@ public class AccountingDbContext : DbContext
         // ===== DunningLetterLine =====
         modelBuilder.Entity<DunningLetterLine>(e =>
         {
-            e.HasOne(l => l.DunningLetter).WithMany(dl => dl.Lines).HasForeignKey(l => l.DunningLetterId);
+            e.HasOne(l => l.DunningLetter).WithMany(dl => dl.Lines).HasForeignKey(l => l.DunningLetterId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Document).WithMany().HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.Amount).HasPrecision(18, 2);
             e.Property(l => l.PaidAmount).HasPrecision(18, 2);
@@ -1168,7 +1168,7 @@ public class AccountingDbContext : DbContext
         // ===== CashFlowForecastLine =====
         modelBuilder.Entity<CashFlowForecastLine>(e =>
         {
-            e.HasOne(l => l.Forecast).WithMany(f => f.Lines).HasForeignKey(l => l.CashFlowForecastId);
+            e.HasOne(l => l.Forecast).WithMany(f => f.Lines).HasForeignKey(l => l.CashFlowForecastId).OnDelete(DeleteBehavior.Restrict);
             e.Property(l => l.ProjectedAmount).HasPrecision(18, 2);
             e.Property(l => l.ActualAmount).HasPrecision(18, 2);
             e.Property(l => l.Confidence).HasPrecision(5, 2);
@@ -1205,7 +1205,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PortalActivity>(e =>
         {
             e.HasIndex(a => new { a.PortalAccessId, a.ActivityAt });
-            e.HasOne(a => a.PortalAccess).WithMany().HasForeignKey(a => a.PortalAccessId);
+            e.HasOne(a => a.PortalAccess).WithMany().HasForeignKey(a => a.PortalAccessId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== FinancialScenario =====
@@ -1218,14 +1218,14 @@ public class AccountingDbContext : DbContext
         // ===== ScenarioAssumption =====
         modelBuilder.Entity<ScenarioAssumption>(e =>
         {
-            e.HasOne(sa => sa.Scenario).WithMany(fs => fs.Assumptions).HasForeignKey(sa => sa.FinancialScenarioId);
+            e.HasOne(sa => sa.Scenario).WithMany(fs => fs.Assumptions).HasForeignKey(sa => sa.FinancialScenarioId).OnDelete(DeleteBehavior.Restrict);
             e.Property(sa => sa.AdjustmentValue).HasPrecision(18, 4);
         });
 
         // ===== ScenarioResult =====
         modelBuilder.Entity<ScenarioResult>(e =>
         {
-            e.HasOne(sr => sr.Scenario).WithMany(fs => fs.Results).HasForeignKey(sr => sr.FinancialScenarioId);
+            e.HasOne(sr => sr.Scenario).WithMany(fs => fs.Results).HasForeignKey(sr => sr.FinancialScenarioId).OnDelete(DeleteBehavior.Restrict);
             e.Property(sr => sr.BaselineAmount).HasPrecision(18, 2);
             e.Property(sr => sr.ScenarioAmount).HasPrecision(18, 2);
             e.Property(sr => sr.Variance).HasPrecision(18, 2);
@@ -1247,7 +1247,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<KpiSnapshot>(e =>
         {
             e.HasIndex(ks => new { ks.FinancialKpiId, ks.Year, ks.Month }).IsUnique();
-            e.HasOne(ks => ks.Kpi).WithMany().HasForeignKey(ks => ks.FinancialKpiId);
+            e.HasOne(ks => ks.Kpi).WithMany().HasForeignKey(ks => ks.FinancialKpiId).OnDelete(DeleteBehavior.Restrict);
             e.Property(ks => ks.Value).HasPrecision(18, 4);
         });
 
@@ -1262,7 +1262,7 @@ public class AccountingDbContext : DbContext
         // ===== BankFeedImport =====
         modelBuilder.Entity<BankFeedImport>(e =>
         {
-            e.HasOne(bfi => bfi.Connection).WithMany().HasForeignKey(bfi => bfi.BankConnectionId);
+            e.HasOne(bfi => bfi.Connection).WithMany().HasForeignKey(bfi => bfi.BankConnectionId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== ComplianceFiling =====
@@ -1307,7 +1307,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<WebhookDelivery>(e =>
         {
             e.HasIndex(wd => new { wd.WebhookRegistrationId, wd.DeliveredAt });
-            e.HasOne(wd => wd.Registration).WithMany().HasForeignKey(wd => wd.WebhookRegistrationId);
+            e.HasOne(wd => wd.Registration).WithMany().HasForeignKey(wd => wd.WebhookRegistrationId).OnDelete(DeleteBehavior.Restrict);
             e.Property(wd => wd.DurationMs).HasPrecision(10, 2);
         });
 
@@ -1315,7 +1315,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<UserDevice>(e =>
         {
             e.HasIndex(ud => new { ud.UserId, ud.DeviceToken }).IsUnique();
-            e.HasOne(ud => ud.User).WithMany().HasForeignKey(ud => ud.UserId);
+            e.HasOne(ud => ud.User).WithMany().HasForeignKey(ud => ud.UserId).OnDelete(DeleteBehavior.Restrict);
             e.Property(ud => ud.DeviceToken).HasMaxLength(500);
             e.Property(ud => ud.Platform).HasMaxLength(20);
         });
