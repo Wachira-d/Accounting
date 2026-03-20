@@ -428,7 +428,7 @@ public class AdminController : ControllerBase
             {
                 p.Id, p.PaymentNumber, p.Amount, p.PaymentMethod, p.Status,
                 p.RequestedPlan, p.CreatedAt, p.ReviewedAt,
-                p.AdminNotes, p.SubscriptionExtendedTo,
+                p.ReviewNotes, p.SubscriptionExtendedTo,
                 company = p.Subscription != null ? new { p.Subscription.Company.Id, p.Subscription.Company.Name } : null
             })
             .ToListAsync();
