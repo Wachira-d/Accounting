@@ -205,6 +205,10 @@ public class AccountingDbContext : DbContext
     public DbSet<UserDevice> UserDevices => Set<UserDevice>();
     public DbSet<SyncQueue> SyncQueues => Set<SyncQueue>();
 
+    // Smart Import
+    public DbSet<SmartImportSession> SmartImportSessions => Set<SmartImportSession>();
+    public DbSet<SmartImportColumnMapping> SmartImportColumnMappings => Set<SmartImportColumnMapping>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1322,6 +1326,29 @@ public class AccountingDbContext : DbContext
             e.HasIndex(sq => new { sq.CompanyId, sq.IsProcessed, sq.QueuedAt });
             e.Property(sq => sq.EntityType).HasMaxLength(100);
             e.Property(sq => sq.OperationType).HasMaxLength(20);
+        });
+
+        // ===== SmartImportSession =====
+        modelBuilder.Entity<SmartImportSession>(e =>
+        {
+            e.HasIndex(s => new { s.CompanyId, s.Status });
+            e.Property(s => s.EntityType).HasMaxLength(50);
+            e.Property(s => s.FileName).HasMaxLength(255);
+            e.Property(s => s.FileFormat).HasMaxLength(20);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        // ===== SmartImportColumnMapping =====
+        modelBuilder.Entity<SmartImportColumnMapping>(e =>
+        {
+            e.HasIndex(m => new { m.SessionId, m.SourceIndex }).IsUnique();
+            e.Property(m => m.SourceHeader).HasMaxLength(255);
+            e.Property(m => m.TargetField).HasMaxLength(100);
+            e.HasOne(m => m.Session)
+                .WithMany(s => s.ColumnMappings)
+                .HasForeignKey(m => m.SessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(m => !m.IsDeleted);
         });
     }
 

@@ -447,3 +447,33 @@ public enum ConsolidationMethod
     Equity = 3,           // 20-50% - วิธีส่วนได้เสีย
     Cost = 4              // < 20% - วิธีราคาทุน
 }
+
+// ==================== Smart Import ====================
+public enum ImportSessionStatus
+{
+    Uploading = 0,         // กำลังอัพโหลด
+    Analyzing = 1,         // AI กำลังวิเคราะห์
+    MappingRequired = 2,   // ต้องการ Manual Mapping
+    MappingCompleted = 3,  // Mapping เสร็จแล้ว
+    Validating = 4,        // กำลังตรวจสอบ
+    Ready = 5,             // พร้อม Import
+    Importing = 6,         // กำลัง Import
+    Completed = 7,         // Import สำเร็จ
+    Failed = 8             // Import ล้มเหลว
+}
+
+public enum ColumnMatchType
+{
+    ExactMatch = 1,        // ชื่อตรงกันเป๊ะ
+    AiMatched = 2,         // AI วิเคราะห์จับคู่
+    ManualMatch = 3,       // User จับคู่เอง
+    Unmapped = 4           // ยังไม่ได้จับคู่
+}
+
+public enum ColumnMatchConfidence
+{
+    High = 1,              // ≥ 90% มั่นใจสูง
+    Medium = 2,            // 60-89% มั่นใจปานกลาง
+    Low = 3,               // < 60% มั่นใจต่ำ - ควร Manual
+    None = 4               // จับคู่ไม่ได้
+}

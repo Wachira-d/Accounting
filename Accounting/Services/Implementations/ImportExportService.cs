@@ -397,4 +397,657 @@ public class ImportExportService : IImportExportService
             return $"\"{value.Replace("\"", "\"\"")}\"";
         return value;
     }
+
+    // ===== Smart Import - AI Column Matching =====
+
+    public async Task<SmartImportSessionResponse> UploadAndAnalyzeAsync(Guid companyId, SmartImportUploadRequest request, string performedBy)
+    {
+        var templateFields = GetTemplateFields(request.EntityType);
+        if (templateFields == null)
+            throw new InvalidOperationException($"ไม่รองรับการนำเข้า {request.EntityType}");
+
+        // สร้าง session
+        var session = new SmartImportSession
+        {
+            CompanyId = companyId,
+            EntityType = request.EntityType,
+            FileName = request.FileName,
+            FileFormat = request.FileFormat,
+            HasHeaderRow = request.HasHeaderRow,
+            TotalRows = request.HasHeaderRow ? request.RawData.Count - 1 : request.RawData.Count,
+            Status = ImportSessionStatus.Analyzing,
+            RawDataJson = JsonSerializer.Serialize(request.RawData),
+            CreatedBy = performedBy
+        };
+        _db.SmartImportSessions.Add(session);
+
+        // ดึง header row
+        var headers = request.HasHeaderRow && request.RawData.Count > 0
+            ? request.RawData[0]
+            : Enumerable.Range(0, request.RawData.Count > 0 ? request.RawData[0].Count : 0)
+                .Select(i => $"Column{i + 1}").ToList();
+
+        // ดึง sample data (สูงสุด 5 แถว)
+        var dataRows = request.HasHeaderRow ? request.RawData.Skip(1).ToList() : request.RawData;
+        var sampleRows = dataRows.Take(5).ToList();
+
+        // AI Column Matching
+        var mappings = new List<SmartImportColumnMapping>();
+        var unmappedCount = 0;
+
+        for (int i = 0; i < headers.Count; i++)
+        {
+            var sourceHeader = headers[i];
+            var sampleValues = sampleRows
+                .Where(r => i < r.Count)
+                .Select(r => r[i])
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Take(5)
+                .ToList();
+
+            var matchResult = AnalyzeColumnMatch(sourceHeader, sampleValues, templateFields);
+
+            var mapping = new SmartImportColumnMapping
+            {
+                SessionId = session.Id,
+                SourceIndex = i,
+                SourceHeader = sourceHeader,
+                TargetField = matchResult.TargetField,
+                MatchType = matchResult.MatchType,
+                Confidence = matchResult.Confidence,
+                ConfidenceScore = matchResult.ConfidenceScore,
+                SampleValuesJson = JsonSerializer.Serialize(sampleValues),
+                SuggestionsJson = JsonSerializer.Serialize(matchResult.Suggestions)
+            };
+            mappings.Add(mapping);
+
+            if (matchResult.MatchType == ColumnMatchType.Unmapped ||
+                matchResult.Confidence == ColumnMatchConfidence.Low ||
+                matchResult.Confidence == ColumnMatchConfidence.None)
+            {
+                unmappedCount++;
+            }
+        }
+
+        _db.SmartImportColumnMappings.AddRange(mappings);
+
+        // อัพเดตสถานะ session
+        session.Status = unmappedCount > 0 ? ImportSessionStatus.MappingRequired : ImportSessionStatus.MappingCompleted;
+        await _db.SaveChangesAsync();
+
+        return MapToSessionResponse(session, mappings, sampleRows);
+    }
+
+    public async Task<SmartImportSessionResponse> GetSessionAsync(Guid companyId, Guid sessionId)
+    {
+        var session = await _db.SmartImportSessions
+            .Include(s => s.ColumnMappings)
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ Import Session");
+
+        var rawData = !string.IsNullOrEmpty(session.RawDataJson)
+            ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
+            : new List<List<string>>();
+
+        var dataRows = session.HasHeaderRow ? rawData.Skip(1).Take(5).ToList() : rawData.Take(5).ToList();
+
+        return MapToSessionResponse(session, session.ColumnMappings.OrderBy(m => m.SourceIndex).ToList(), dataRows);
+    }
+
+    public async Task<SmartImportSessionResponse> SubmitManualMappingAsync(Guid companyId, ManualMappingRequest request, string performedBy)
+    {
+        var session = await _db.SmartImportSessions
+            .Include(s => s.ColumnMappings)
+            .FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ Import Session");
+
+        if (session.Status != ImportSessionStatus.MappingRequired &&
+            session.Status != ImportSessionStatus.MappingCompleted)
+            throw new InvalidOperationException("Session ไม่อยู่ในสถานะที่สามารถแก้ไข Mapping ได้");
+
+        var templateFields = GetTemplateFields(session.EntityType)!;
+
+        foreach (var entry in request.Mappings)
+        {
+            var mapping = session.ColumnMappings.FirstOrDefault(m => m.SourceIndex == entry.SourceIndex);
+            if (mapping == null) continue;
+
+            if (string.IsNullOrEmpty(entry.TargetField))
+            {
+                mapping.TargetField = null;
+                mapping.MatchType = ColumnMatchType.Unmapped;
+                mapping.Confidence = ColumnMatchConfidence.None;
+                mapping.ConfidenceScore = 0;
+            }
+            else
+            {
+                var field = templateFields.FirstOrDefault(f =>
+                    f.FieldName.Equals(entry.TargetField, StringComparison.OrdinalIgnoreCase));
+                if (field == null)
+                    throw new InvalidOperationException($"Target field '{entry.TargetField}' ไม่ถูกต้องสำหรับ {session.EntityType}");
+
+                mapping.TargetField = field.FieldName;
+                mapping.MatchType = ColumnMatchType.ManualMatch;
+                mapping.Confidence = ColumnMatchConfidence.High;
+                mapping.ConfidenceScore = 1.0;
+            }
+        }
+
+        // ตรวจสอบว่ายังมี required field ที่ยังไม่ได้ map หรือไม่
+        var mappedTargets = session.ColumnMappings
+            .Where(m => !string.IsNullOrEmpty(m.TargetField))
+            .Select(m => m.TargetField!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var missingRequired = templateFields
+            .Where(f => f.IsRequired && !mappedTargets.Contains(f.FieldName))
+            .ToList();
+
+        session.Status = missingRequired.Count > 0
+            ? ImportSessionStatus.MappingRequired
+            : ImportSessionStatus.MappingCompleted;
+        session.UpdatedBy = performedBy;
+
+        await _db.SaveChangesAsync();
+
+        var rawData = !string.IsNullOrEmpty(session.RawDataJson)
+            ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
+            : new List<List<string>>();
+        var dataRows = session.HasHeaderRow ? rawData.Skip(1).Take(5).ToList() : rawData.Take(5).ToList();
+
+        return MapToSessionResponse(session, session.ColumnMappings.OrderBy(m => m.SourceIndex).ToList(), dataRows);
+    }
+
+    public async Task<SmartImportResult> ConfirmAndImportAsync(Guid companyId, SmartImportConfirmRequest request, string performedBy)
+    {
+        var session = await _db.SmartImportSessions
+            .Include(s => s.ColumnMappings)
+            .FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ Import Session");
+
+        if (session.Status != ImportSessionStatus.MappingCompleted && session.Status != ImportSessionStatus.Ready)
+            throw new InvalidOperationException("Session ยังไม่พร้อม Import — กรุณาตรวจสอบ Column Mapping");
+
+        session.Status = ImportSessionStatus.Importing;
+        await _db.SaveChangesAsync();
+
+        var rawData = !string.IsNullOrEmpty(session.RawDataJson)
+            ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
+            : new List<List<string>>();
+
+        var dataRows = session.HasHeaderRow ? rawData.Skip(1).ToList() : rawData;
+        var activeMappings = session.ColumnMappings
+            .Where(m => !string.IsNullOrEmpty(m.TargetField))
+            .OrderBy(m => m.SourceIndex)
+            .ToList();
+
+        var successCount = 0;
+        var errors = new List<ImportError>();
+        var dateFormat = request.DateFormat ?? "yyyy-MM-dd";
+
+        for (int i = 0; i < dataRows.Count; i++)
+        {
+            try
+            {
+                var rowData = dataRows[i];
+                var mappedRow = new Dictionary<string, string>();
+
+                foreach (var mapping in activeMappings)
+                {
+                    if (mapping.SourceIndex < rowData.Count && !string.IsNullOrEmpty(mapping.TargetField))
+                    {
+                        var value = rowData[mapping.SourceIndex];
+                        mappedRow[mapping.TargetField] = value?.Trim() ?? "";
+                    }
+                }
+
+                switch (session.EntityType.ToLower())
+                {
+                    case "contacts":
+                        await ImportContactAsync(companyId, mappedRow);
+                        break;
+                    case "products":
+                        await ImportProductAsync(companyId, mappedRow);
+                        break;
+                    case "chartofaccounts":
+                        await ImportAccountAsync(companyId, mappedRow);
+                        break;
+                    case "banktransactions":
+                        await ImportBankTransactionAsync(companyId, mappedRow);
+                        break;
+                    default:
+                        errors.Add(new ImportError(i + 1, "EntityType", session.EntityType,
+                            $"ไม่รองรับการนำเข้า {session.EntityType}"));
+                        continue;
+                }
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add(new ImportError(i + 1, "", "", ex.Message));
+            }
+        }
+
+        await _db.SaveChangesAsync();
+
+        session.SuccessCount = successCount;
+        session.ErrorCount = errors.Count;
+        session.SkippedCount = dataRows.Count - successCount - errors.Count;
+        session.Status = errors.Count == 0 ? ImportSessionStatus.Completed : ImportSessionStatus.Failed;
+        session.CompletedAt = DateTime.UtcNow;
+        session.ErrorsJson = errors.Count > 0 ? JsonSerializer.Serialize(errors) : null;
+        session.UpdatedBy = performedBy;
+
+        // ลบ raw data หลัง import เสร็จเพื่อประหยัดพื้นที่
+        session.RawDataJson = null;
+
+        await _db.SaveChangesAsync();
+
+        return new SmartImportResult(session.Id, session.EntityType, session.Status.ToString(),
+            dataRows.Count, successCount, errors.Count, session.SkippedCount, errors, DateTime.UtcNow);
+    }
+
+    // ===== Template Download =====
+
+    public Task<ImportTemplateDownloadResponse> DownloadTemplateAsync(string entityType, string format)
+    {
+        var fields = GetTemplateFields(entityType)
+            ?? throw new InvalidOperationException($"ไม่รองรับ template สำหรับ {entityType}");
+
+        var csv = new StringBuilder();
+
+        // Header row
+        csv.AppendLine(string.Join(",", fields.Select(f => EscapeCsv(f.FieldName))));
+
+        // Sample data row
+        var sampleRow = fields.Select(f => EscapeCsv(GetSampleValue(f))).ToList();
+        csv.AppendLine(string.Join(",", sampleRow));
+
+        // ส่ง description row (comment)
+        var descRow = fields.Select(f => EscapeCsv(
+            $"{f.DisplayName}{(f.IsRequired ? " *จำเป็น" : "")}{(f.Description != null ? $" ({f.Description})" : "")}" +
+            $"{(f.AllowedValues != null ? $" [{string.Join("/", f.AllowedValues)}]" : "")}")).ToList();
+        csv.AppendLine(string.Join(",", descRow));
+
+        var fileName = $"import_template_{entityType}.csv";
+        var fileData = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv.ToString())).ToArray();
+
+        return Task.FromResult(new ImportTemplateDownloadResponse(
+            entityType, fileName, "text/csv", fileData, fields));
+    }
+
+    public Task<List<ImportableEntityInfo>> GetImportableEntitiesAsync()
+    {
+        var entities = new List<ImportableEntityInfo>
+        {
+            new("contacts", "ผู้ติดต่อ", "นำเข้ารายชื่อลูกค้าและผู้ขาย",
+                GetTemplateFields("contacts")!),
+            new("products", "สินค้า/บริการ", "นำเข้ารายการสินค้าและบริการ",
+                GetTemplateFields("products")!),
+            new("chartofaccounts", "ผังบัญชี", "นำเข้าผังบัญชี (Chart of Accounts)",
+                GetTemplateFields("chartofaccounts")!),
+            new("banktransactions", "รายการธนาคาร", "นำเข้ารายการเคลื่อนไหวบัญชีธนาคาร",
+                GetTemplateFields("banktransactions")!)
+        };
+
+        return Task.FromResult(entities);
+    }
+
+    // ===== AI Column Matching Logic =====
+
+    private static ColumnAnalysisResult AnalyzeColumnMatch(
+        string sourceHeader, List<string> sampleValues, List<ImportField> templateFields)
+    {
+        var suggestions = new List<SuggestedMappingDto>();
+        string? bestTarget = null;
+        double bestScore = 0;
+
+        foreach (var field in templateFields)
+        {
+            double score = 0;
+            var reasons = new List<string>();
+
+            // 1. Exact match (header name)
+            if (sourceHeader.Equals(field.FieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                score = 1.0;
+                reasons.Add("ชื่อ column ตรงกัน");
+            }
+            else
+            {
+                // 2. ชื่อภาษาไทยตรงกัน
+                if (sourceHeader.Equals(field.DisplayName, StringComparison.OrdinalIgnoreCase))
+                {
+                    score = 0.95;
+                    reasons.Add("ชื่อภาษาไทยตรงกัน");
+                }
+
+                // 3. Contains / partial match
+                var normalizedSource = NormalizeHeader(sourceHeader);
+                var normalizedField = NormalizeHeader(field.FieldName);
+                var normalizedDisplay = NormalizeHeader(field.DisplayName);
+
+                if (score < 0.9)
+                {
+                    if (normalizedSource.Contains(normalizedField) || normalizedField.Contains(normalizedSource))
+                    {
+                        score = Math.Max(score, 0.8);
+                        reasons.Add("ชื่อคล้ายกัน (EN)");
+                    }
+                    if (normalizedSource.Contains(normalizedDisplay) || normalizedDisplay.Contains(normalizedSource))
+                    {
+                        score = Math.Max(score, 0.8);
+                        reasons.Add("ชื่อคล้ายกัน (TH)");
+                    }
+                }
+
+                // 4. Alias matching (ชื่อที่มักใช้กันทั่วไป)
+                var aliases = GetFieldAliases(field.FieldName);
+                foreach (var alias in aliases)
+                {
+                    if (normalizedSource.Contains(NormalizeHeader(alias)) ||
+                        NormalizeHeader(alias).Contains(normalizedSource))
+                    {
+                        score = Math.Max(score, 0.85);
+                        reasons.Add($"ตรงกับชื่อที่ใช้ทั่วไป: {alias}");
+                        break;
+                    }
+                }
+
+                // 5. Data pattern matching (วิเคราะห์ข้อมูลตัวอย่าง)
+                if (sampleValues.Count > 0 && score < 0.7)
+                {
+                    var patternScore = AnalyzeDataPattern(sampleValues, field);
+                    if (patternScore > 0.5)
+                    {
+                        score = Math.Max(score, patternScore * 0.75);
+                        reasons.Add("รูปแบบข้อมูลตรงกัน");
+                    }
+                }
+            }
+
+            if (score > 0.3)
+            {
+                suggestions.Add(new SuggestedMappingDto(
+                    field.FieldName, field.DisplayName, score,
+                    string.Join(", ", reasons)));
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestTarget = field.FieldName;
+            }
+        }
+
+        // จัดเรียง suggestions ตาม score
+        suggestions = suggestions.OrderByDescending(s => s.Score).Take(3).ToList();
+
+        // กำหนด confidence
+        var matchType = bestScore >= 0.9 ? ColumnMatchType.ExactMatch
+            : bestScore >= 0.6 ? ColumnMatchType.AiMatched
+            : ColumnMatchType.Unmapped;
+
+        var confidence = bestScore >= 0.9 ? ColumnMatchConfidence.High
+            : bestScore >= 0.7 ? ColumnMatchConfidence.Medium
+            : bestScore >= 0.5 ? ColumnMatchConfidence.Low
+            : ColumnMatchConfidence.None;
+
+        // ถ้า confidence ต่ำเกินไป ไม่ auto-assign
+        if (confidence == ColumnMatchConfidence.None || confidence == ColumnMatchConfidence.Low)
+        {
+            bestTarget = null;
+            matchType = ColumnMatchType.Unmapped;
+        }
+
+        return new ColumnAnalysisResult(bestTarget, matchType, confidence, bestScore, suggestions);
+    }
+
+    private static double AnalyzeDataPattern(List<string> values, ImportField field)
+    {
+        if (values.Count == 0) return 0;
+
+        switch (field.DataType.ToLower())
+        {
+            case "decimal":
+                var decimalCount = values.Count(v => decimal.TryParse(v.Replace(",", ""), out _));
+                return (double)decimalCount / values.Count;
+
+            case "date":
+                var dateCount = values.Count(v => DateTime.TryParse(v, out _));
+                return (double)dateCount / values.Count;
+
+            case "bool":
+                var boolPatterns = new[] { "true", "false", "yes", "no", "1", "0", "ใช่", "ไม่ใช่", "y", "n" };
+                var boolCount = values.Count(v => boolPatterns.Contains(v.Trim().ToLower()));
+                return (double)boolCount / values.Count;
+
+            case "guid":
+                var guidCount = values.Count(v => Guid.TryParse(v, out _));
+                return (double)guidCount / values.Count;
+
+            case "enum":
+                if (field.AllowedValues != null)
+                {
+                    var enumCount = values.Count(v =>
+                        field.AllowedValues.Any(a => a.Equals(v.Trim(), StringComparison.OrdinalIgnoreCase)));
+                    return (double)enumCount / values.Count;
+                }
+                return 0;
+
+            case "string":
+                // ตรวจสอบ pattern ของข้อมูลที่เป็นข้อมูลเฉพาะ
+                if (field.FieldName.Contains("Email", StringComparison.OrdinalIgnoreCase))
+                {
+                    var emailCount = values.Count(v => v.Contains('@'));
+                    return (double)emailCount / values.Count;
+                }
+                if (field.FieldName.Contains("Phone", StringComparison.OrdinalIgnoreCase))
+                {
+                    var phoneCount = values.Count(v => v.Any(char.IsDigit) && v.Length >= 9);
+                    return (double)phoneCount / values.Count;
+                }
+                if (field.FieldName.Contains("TaxId", StringComparison.OrdinalIgnoreCase))
+                {
+                    var taxCount = values.Count(v => v.All(char.IsDigit) && v.Length == 13);
+                    return (double)taxCount / values.Count;
+                }
+                return 0;
+
+            default:
+                return 0;
+        }
+    }
+
+    private static List<string> GetFieldAliases(string fieldName)
+    {
+        return fieldName.ToLower() switch
+        {
+            "name" => new List<string> { "ชื่อ", "customer_name", "supplier_name", "company_name",
+                "contact_name", "ชื่อบริษัท", "ชื่อลูกค้า", "ชื่อผู้ขาย", "customer", "supplier", "vendor" },
+            "taxid" => new List<string> { "tax_id", "tin", "เลขผู้เสียภาษี", "เลขประจำตัว",
+                "tax_number", "vat_id", "tax_identification", "เลขที่ผู้เสียภาษี" },
+            "email" => new List<string> { "e_mail", "mail", "อีเมล", "email_address", "e-mail" },
+            "phone" => new List<string> { "tel", "telephone", "โทรศัพท์", "เบอร์โทร", "phone_number",
+                "mobile", "มือถือ", "contact_number" },
+            "address" => new List<string> { "ที่อยู่", "addr", "street", "location", "ที่ตั้ง" },
+            "contactperson" => new List<string> { "contact_person", "ผู้ติดต่อ", "person", "contact_name", "representative" },
+            "iscustomer" => new List<string> { "is_customer", "customer_flag", "เป็นลูกค้า", "customer_type", "ลูกค้า" },
+            "issupplier" => new List<string> { "is_supplier", "supplier_flag", "เป็นผู้ขาย", "vendor_flag", "ผู้ขาย" },
+            "code" => new List<string> { "รหัส", "product_code", "item_code", "sku", "รหัสสินค้า",
+                "barcode", "item_no", "part_number" },
+            "producttype" => new List<string> { "product_type", "type", "ประเภท", "item_type", "ชนิด" },
+            "unit" => new List<string> { "หน่วย", "uom", "unit_of_measure", "หน่วยนับ", "measure" },
+            "sellingprice" => new List<string> { "selling_price", "sell_price", "price", "ราคาขาย",
+                "unit_price", "retail_price", "ราคา" },
+            "costprice" => new List<string> { "cost_price", "cost", "ราคาทุน", "purchase_price",
+                "buy_price", "ต้นทุน" },
+            "vatrate" => new List<string> { "vat_rate", "tax_rate", "vat", "อัตราภาษี", "tax_percent", "ภาษี" },
+            "category" => new List<string> { "หมวดหมู่", "group", "กลุ่ม", "product_group", "item_group" },
+            "accountcode" => new List<string> { "account_code", "acc_code", "gl_code", "รหัสบัญชี",
+                "account_no", "account_number", "เลขที่บัญชี" },
+            "accountname" => new List<string> { "account_name", "acc_name", "gl_name", "ชื่อบัญชี",
+                "account_description" },
+            "accountnameen" => new List<string> { "account_name_en", "english_name", "ชื่อบัญชีอังกฤษ",
+                "name_en", "eng_name" },
+            "accounttype" => new List<string> { "account_type", "acc_type", "type", "ประเภทบัญชี",
+                "gl_type", "account_category" },
+            "description" => new List<string> { "desc", "รายละเอียด", "คำอธิบาย", "note", "remark",
+                "หมายเหตุ", "memo" },
+            "bankaccountid" => new List<string> { "bank_account_id", "bank_account", "บัญชีธนาคาร",
+                "account_id" },
+            "transactiondate" => new List<string> { "transaction_date", "date", "txn_date", "วันที่",
+                "วันที่ทำรายการ", "posting_date", "value_date" },
+            "transactiontype" => new List<string> { "transaction_type", "txn_type", "type", "ประเภทรายการ",
+                "ประเภท" },
+            "amount" => new List<string> { "จำนวนเงิน", "total", "value", "sum", "ยอดเงิน",
+                "จำนวน", "money" },
+            "reference" => new List<string> { "ref", "ref_no", "reference_no", "อ้างอิง",
+                "เลขที่อ้างอิง", "ref_number" },
+            _ => new List<string>()
+        };
+    }
+
+    private static string NormalizeHeader(string header)
+    {
+        return header.ToLower()
+            .Replace(" ", "").Replace("_", "").Replace("-", "")
+            .Replace(".", "").Replace("(", "").Replace(")", "");
+    }
+
+    private static List<ImportField>? GetTemplateFields(string entityType)
+    {
+        return entityType.ToLower() switch
+        {
+            "contacts" => new List<ImportField>
+            {
+                new("Name", "ชื่อ", "string", true, "ชื่อลูกค้า/ผู้ขาย", null),
+                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก", null),
+                new("IsCustomer", "เป็นลูกค้า", "bool", false, "true/false", new List<string> { "true", "false" }),
+                new("IsSupplier", "เป็นผู้ขาย", "bool", false, "true/false", new List<string> { "true", "false" }),
+                new("Email", "อีเมล", "string", false, null, null),
+                new("Phone", "โทรศัพท์", "string", false, null, null),
+                new("Address", "ที่อยู่", "string", false, null, null),
+                new("ContactPerson", "ผู้ติดต่อ", "string", false, null, null),
+            },
+            "products" => new List<ImportField>
+            {
+                new("Code", "รหัสสินค้า", "string", true, null, null),
+                new("Name", "ชื่อสินค้า", "string", true, null, null),
+                new("ProductType", "ประเภท", "enum", false, null, new List<string> { "Product", "Service", "NonStock" }),
+                new("Unit", "หน่วยนับ", "string", true, null, null),
+                new("SellingPrice", "ราคาขาย", "decimal", false, null, null),
+                new("CostPrice", "ราคาทุน", "decimal", false, null, null),
+                new("VatRate", "อัตราภาษี", "decimal", false, null, null),
+                new("Category", "หมวดหมู่", "string", false, null, null),
+            },
+            "chartofaccounts" => new List<ImportField>
+            {
+                new("AccountCode", "รหัสบัญชี", "string", true, null, null),
+                new("AccountName", "ชื่อบัญชี", "string", true, null, null),
+                new("AccountNameEn", "ชื่อบัญชี (อังกฤษ)", "string", false, null, null),
+                new("AccountType", "ประเภทบัญชี", "enum", true, null, new List<string> { "Asset", "Liability", "Equity", "Revenue", "Expense" }),
+                new("Description", "คำอธิบาย", "string", false, null, null),
+            },
+            "banktransactions" => new List<ImportField>
+            {
+                new("BankAccountId", "รหัสบัญชีธนาคาร", "guid", true, null, null),
+                new("TransactionDate", "วันที่", "date", true, "yyyy-MM-dd", null),
+                new("TransactionType", "ประเภท", "enum", true, null, new List<string> { "Deposit", "Withdrawal", "Transfer", "Fee", "Interest" }),
+                new("Amount", "จำนวนเงิน", "decimal", true, null, null),
+                new("Description", "คำอธิบาย", "string", false, null, null),
+                new("Reference", "อ้างอิง", "string", false, null, null),
+            },
+            _ => null
+        };
+    }
+
+    private static string GetSampleValue(ImportField field)
+    {
+        return field.FieldName switch
+        {
+            "Name" => "บริษัท ตัวอย่าง จำกัด",
+            "TaxId" => "0123456789012",
+            "IsCustomer" => "true",
+            "IsSupplier" => "false",
+            "Email" => "info@example.com",
+            "Phone" => "02-123-4567",
+            "Address" => "123 ถ.สุขุมวิท กรุงเทพฯ 10110",
+            "ContactPerson" => "คุณสมชาย",
+            "Code" => "P001",
+            "ProductType" => "Product",
+            "Unit" => "ชิ้น",
+            "SellingPrice" => "100.00",
+            "CostPrice" => "60.00",
+            "VatRate" => "7",
+            "Category" => "สินค้าทั่วไป",
+            "AccountCode" => "1110",
+            "AccountName" => "เงินสด",
+            "AccountNameEn" => "Cash",
+            "AccountType" => "Asset",
+            "Description" => "รายละเอียด",
+            "BankAccountId" => "00000000-0000-0000-0000-000000000000",
+            "TransactionDate" => "2026-01-15",
+            "TransactionType" => "Deposit",
+            "Amount" => "50000.00",
+            "Reference" => "REF001",
+            _ => ""
+        };
+    }
+
+    private static SmartImportSessionResponse MapToSessionResponse(
+        SmartImportSession session, IList<SmartImportColumnMapping> mappings, List<List<string>> previewData)
+    {
+        var unmappedCount = mappings.Count(m =>
+            m.MatchType == ColumnMatchType.Unmapped ||
+            m.Confidence == ColumnMatchConfidence.Low ||
+            m.Confidence == ColumnMatchConfidence.None);
+
+        var columnDtos = mappings.Select(m =>
+        {
+            var sampleValues = !string.IsNullOrEmpty(m.SampleValuesJson)
+                ? JsonSerializer.Deserialize<List<string>>(m.SampleValuesJson) ?? new()
+                : new List<string>();
+
+            var suggestions = !string.IsNullOrEmpty(m.SuggestionsJson)
+                ? JsonSerializer.Deserialize<List<SuggestedMappingDto>>(m.SuggestionsJson) ?? new()
+                : new List<SuggestedMappingDto>();
+
+            var targetDisplay = "";
+            if (!string.IsNullOrEmpty(m.TargetField))
+            {
+                var fields = GetTemplateFields(session.EntityType);
+                targetDisplay = fields?.FirstOrDefault(f =>
+                    f.FieldName.Equals(m.TargetField, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? m.TargetField;
+            }
+
+            return new SmartColumnMappingDto(
+                m.SourceIndex,
+                m.SourceHeader,
+                m.TargetField,
+                targetDisplay,
+                m.MatchType.ToString(),
+                m.Confidence.ToString(),
+                m.ConfidenceScore,
+                sampleValues,
+                suggestions);
+        }).ToList();
+
+        return new SmartImportSessionResponse(
+            session.Id,
+            session.EntityType,
+            session.Status.ToString(),
+            columnDtos,
+            session.TotalRows,
+            unmappedCount,
+            unmappedCount > 0,
+            previewData);
+    }
+
+    private record ColumnAnalysisResult(
+        string? TargetField,
+        ColumnMatchType MatchType,
+        ColumnMatchConfidence Confidence,
+        double ConfidenceScore,
+        List<SuggestedMappingDto> Suggestions);
 }
