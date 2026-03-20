@@ -142,6 +142,14 @@ const Layout = {
       const res = await API.get('/api/company');
       const companies = res.data?.items || res.data || [];
       const select = document.getElementById('companySelect');
+
+      if (companies.length === 0) {
+        // No companies — show create prompt
+        select.innerHTML = '<option value="">ยังไม่มีบริษัท</option>';
+        this.showCompanySetupPrompt();
+        return;
+      }
+
       companies.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.id;
@@ -149,12 +157,79 @@ const Layout = {
         if (this.currentCompany?.id === c.id) opt.selected = true;
         select.appendChild(opt);
       });
-      if (!this.currentCompany && companies.length > 0) {
+
+      // Auto-select if only 1 company or no company selected
+      if (!this.currentCompany || !companies.find(c => c.id === this.currentCompany.id)) {
         this.currentCompany = companies[0];
         localStorage.setItem('currentCompany', JSON.stringify(companies[0]));
         select.value = companies[0].id;
+        // Reload page content with selected company
+        if (typeof Dashboard !== 'undefined' && Dashboard.load) Dashboard.load();
+        else if (typeof Page !== 'undefined' && Page.init) Page.init();
       }
     } catch (e) { console.warn('Could not load companies:', e); }
+  },
+
+  showCompanySetupPrompt() {
+    const pageContent = document.getElementById('pageContent');
+    if (!pageContent) return;
+    pageContent.innerHTML = `
+      <div style="max-width:500px;margin:80px auto;text-align:center">
+        <div style="font-size:64px;margin-bottom:16px">🏢</div>
+        <h2 style="margin-bottom:8px">ยินดีต้อนรับสู่ AcctPlatform!</h2>
+        <p style="color:var(--gray-500);margin-bottom:32px">เริ่มต้นใช้งานโดยสร้างบริษัทแรกของคุณ</p>
+        <div class="card" style="text-align:left;padding:24px">
+          <div class="form-group">
+            <label class="form-label">ชื่อบริษัท / กิจการ <span style="color:red">*</span></label>
+            <input type="text" id="setupCompanyName" class="form-input" placeholder="เช่น บริษัท ทดสอบ จำกัด">
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลขผู้เสียภาษี</label>
+            <input type="text" id="setupTaxId" class="form-input" placeholder="เลขประจำตัวผู้เสียภาษี 13 หลัก" maxlength="13">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ประเภทธุรกิจ</label>
+              <select id="setupBizType" class="form-select">
+                <option value="Company">บริษัทจำกัด</option>
+                <option value="Partnership">ห้างหุ้นส่วน</option>
+                <option value="SoleProprietor">บุคคลธรรมดา</option>
+                <option value="PublicCompany">บริษัทมหาชน</option>
+                <option value="Other">อื่นๆ</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">รหัสสาขา</label>
+              <input type="text" id="setupBranch" class="form-input" placeholder="00000 (สำนักงานใหญ่)" value="00000">
+            </div>
+          </div>
+          <button class="btn btn-primary w-full btn-lg" onclick="Layout.createFirstCompany()" id="setupBtn">
+            สร้างบริษัทและเริ่มต้นใช้งาน
+          </button>
+        </div>
+      </div>`;
+  },
+
+  async createFirstCompany() {
+    const name = document.getElementById('setupCompanyName').value.trim();
+    if (!name) { this.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
+    const btn = document.getElementById('setupBtn');
+    btn.disabled = true; btn.textContent = 'กำลังสร้าง...';
+    try {
+      const res = await API.createCompany({
+        name,
+        taxId: document.getElementById('setupTaxId').value || '-',
+        businessType: document.getElementById('setupBizType').value,
+        branchCode: document.getElementById('setupBranch').value || '00000'
+      });
+      const company = res.data;
+      localStorage.setItem('currentCompany', JSON.stringify(company));
+      this.toast('สร้างบริษัทสำเร็จ!');
+      setTimeout(() => window.location.reload(), 500);
+    } catch (e) {
+      this.toast(e.message, 'error');
+      btn.disabled = false; btn.textContent = 'สร้างบริษัทและเริ่มต้นใช้งาน';
+    }
   },
 
   bindEvents() {
@@ -181,7 +256,7 @@ const Layout = {
 
   api() {
     const cid = this.getCompanyId();
-    if (!cid) { Layout.toast('กรุณาเลือกบริษัทก่อน', 'error'); return null; }
+    if (!cid) { return null; }
     return API.c(cid);
   },
 

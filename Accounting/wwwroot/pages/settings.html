@@ -14,15 +14,56 @@
     </div>
 
     <div class="tabs">
-      <div class="tab active" onclick="Page.showTab('general',this)">ทั่วไป</div>
+      <div class="tab active" onclick="Page.showTab('company',this)">ข้อมูลบริษัท</div>
+      <div class="tab" onclick="Page.showTab('general',this)">ทั่วไป</div>
       <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
       <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
     </div>
 
-    <div id="tabGeneral" class="card">
-      <h3 class="card-title" style="margin-bottom:16px">ข้อมูลทั่วไป</h3>
+    <div id="tabCompany" class="card">
+      <h3 class="card-title" style="margin-bottom:16px">ข้อมูลบริษัท</h3>
+      <div class="form-row">
+        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span style="color:red">*</span></label><input type="text" id="cName" class="form-input" placeholder="ชื่อบริษัท"></div>
+        <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี <span style="color:red">*</span></label><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13"></div>
+        <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
+        <div class="form-group"><label class="form-label">ประเภทธุรกิจ</label>
+          <select id="cBizType" class="form-select">
+            <option value="Company">บริษัทจำกัด</option><option value="Partnership">ห้างหุ้นส่วน</option>
+            <option value="SoleProprietor">บุคคลธรรมดา</option><option value="PublicCompany">บริษัทมหาชน</option><option value="Other">อื่นๆ</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">ที่อยู่</label><textarea class="form-textarea" id="cAddress" rows="2" placeholder="ที่อยู่สำหรับออกเอกสาร"></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">แขวง/ตำบล</label><input type="text" id="cSubDistrict" class="form-input"></div>
+        <div class="form-group"><label class="form-label">เขต/อำเภอ</label><input type="text" id="cDistrict" class="form-input"></div>
+        <div class="form-group"><label class="form-label">จังหวัด</label><input type="text" id="cProvince" class="form-input"></div>
+        <div class="form-group"><label class="form-label">รหัสไปรษณีย์</label><input type="text" id="cPostalCode" class="form-input" maxlength="5"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
+        <div class="form-group"><label class="form-label">อีเมลบริษัท</label><input type="email" id="cEmail" class="form-input"></div>
+        <div class="form-group"><label class="form-label">เดือนเริ่มต้นปีบัญชี</label>
+          <select id="cFiscalMonth" class="form-select">
+            <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+            <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+            <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+            <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="Page.saveCompany()">บันทึกข้อมูลบริษัท</button>
+      </div>
+    </div>
+
+    <div id="tabGeneral" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">ตั้งค่าระบบ</h3>
       <div class="form-row">
         <div class="form-group"><label class="form-label">สีหลัก</label><input type="color" id="sPrimaryColor" value="#4F46E5" class="form-input" style="height:42px"></div>
         <div class="form-group"><label class="form-label">สีรอง</label><input type="color" id="sSecondaryColor" value="#0EA5E9" class="form-input" style="height:42px"></div>
@@ -76,14 +117,62 @@
       async init() {
         if (!Layout.init('settings')) return;
         Layout.setTitle('ตั้งค่า');
+        await this.loadCompanyProfile();
         await this.loadSettings();
       },
       showTab(tab, el) {
-        ['tabGeneral','tabDocument','tabTax','tabApproval','tabNumbering'].forEach(id => document.getElementById(id).classList.add('hidden'));
-        document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
+        ['tabCompany','tabGeneral','tabDocument','tabTax','tabApproval','tabNumbering'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
         if (tab === 'numbering') this.loadNumberSeries();
+      },
+      async loadCompanyProfile() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.getCompany(cid);
+          const c = res.data;
+          if (!c) return;
+          document.getElementById('cName').value = c.name || '';
+          document.getElementById('cNameEn').value = c.nameEn || '';
+          document.getElementById('cTaxId').value = c.taxId || '';
+          document.getElementById('cBranchCode').value = c.branchCode || '00000';
+          document.getElementById('cBizType').value = c.businessType || 'Company';
+          document.getElementById('cAddress').value = c.address || '';
+          document.getElementById('cSubDistrict').value = c.subDistrict || '';
+          document.getElementById('cDistrict').value = c.district || '';
+          document.getElementById('cProvince').value = c.province || '';
+          document.getElementById('cPostalCode').value = c.postalCode || '';
+          document.getElementById('cPhone').value = c.phone || '';
+          document.getElementById('cEmail').value = c.email || '';
+          document.getElementById('cFiscalMonth').value = c.fiscalYearStartMonth || 1;
+        } catch (e) { console.warn('Could not load company profile:', e); }
+      },
+      async saveCompany() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const name = document.getElementById('cName').value.trim();
+        if (!name) { Layout.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
+        try {
+          await API.updateCompany(cid, {
+            name,
+            nameEn: document.getElementById('cNameEn').value || null,
+            taxId: document.getElementById('cTaxId').value || '-',
+            branchCode: document.getElementById('cBranchCode').value || '00000',
+            businessType: document.getElementById('cBizType').value,
+            address: document.getElementById('cAddress').value || null,
+            subDistrict: document.getElementById('cSubDistrict').value || null,
+            district: document.getElementById('cDistrict').value || null,
+            province: document.getElementById('cProvince').value || null,
+            postalCode: document.getElementById('cPostalCode').value || null,
+            phone: document.getElementById('cPhone').value || null,
+            email: document.getElementById('cEmail').value || null,
+            fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
+          });
+          // Update sidebar company name
+          const select = document.getElementById('companySelect');
+          if (select) { const opt = select.querySelector(`option[value="${cid}"]`); if (opt) opt.textContent = name; }
+          Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async loadSettings() {
         const api = Layout.api(); if (!api) return;
