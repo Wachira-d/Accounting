@@ -1350,6 +1350,111 @@ public class AccountingDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasQueryFilter(m => !m.IsDeleted);
         });
+
+        // ===== Global Query Filters for Child Entities =====
+        // Add matching soft-delete filters to child entities whose parent has a filter,
+        // preventing EF Core warning 10622 about mismatched query filters.
+
+        // Subscription children
+        modelBuilder.Entity<TrialConfig>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<SubscriptionHistory>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<SubscriptionPayment>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Accounting detail entities
+        modelBuilder.Entity<JournalEntryLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DocumentLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<TaxReportLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BudgetLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ExpenseClaimLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<WithholdingTaxCertLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<JournalLineDimension>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Bank & Currency
+        modelBuilder.Entity<BankTransaction>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CurrencyRate>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CompanyCurrency>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BankFeedImport>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Fixed Assets
+        modelBuilder.Entity<AssetDepreciation>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Approval Workflow
+        modelBuilder.Entity<ApprovalStep>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ApprovalRequest>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ApprovalAction>().HasQueryFilter(e => !e.IsDeleted);
+
+        // File, Notification, NumberSeries
+        modelBuilder.Entity<FileAttachment>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Notification>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<NumberSeries>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Company Settings & API
+        modelBuilder.Entity<CompanySettings>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ApiKey>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Freelance
+        modelBuilder.Entity<FreelanceInvitation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<FreelanceAccess>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<FreelanceTask>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<FreelanceTaskComment>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<FreelanceTimeLog>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Project & Revenue Recognition
+        modelBuilder.Entity<ProjectTask>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ProjectCostEntry>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<PerformanceObligation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<RevenueSchedule>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Warehouse
+        modelBuilder.Entity<WarehouseStock>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<StockTransferLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<StockMovement>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Loan
+        modelBuilder.Entity<LoanSchedule>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<LoanPayment>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Commission
+        modelBuilder.Entity<CommissionTier>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CommissionAssignment>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CommissionCalculation>().HasQueryFilter(e => !e.IsDeleted);
+
+        // AI & Intelligence
+        modelBuilder.Entity<AnomalyDetection>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CategorizationResult>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CashFlowForecastLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<OcrScanResult>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Intercompany & Consolidation
+        modelBuilder.Entity<IntercompanyTransactionLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ConsolidationGroup>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ConsolidationMember>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Payroll
+        modelBuilder.Entity<PayrollDetail>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Advanced AR/AP
+        modelBuilder.Entity<ContactCreditSetting>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DunningLetterLine>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<TaxCalendarEvent>().HasQueryFilter(e => !e.IsDeleted);
+
+        // FP&A
+        modelBuilder.Entity<ScenarioAssumption>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ScenarioResult>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<FinancialKpi>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<KpiSnapshot>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Portal & Custom Reports
+        modelBuilder.Entity<PortalActivity>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Time & Billing
+        modelBuilder.Entity<TimeEntry>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BillingRate>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Webhooks & Mobile
+        modelBuilder.Entity<WebhookDelivery>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<UserDevice>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<SyncQueue>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override int SaveChanges()
