@@ -196,7 +196,7 @@ public class AccountingService : IAccountingService
         return MapJournalEntryToResponse(entry);
     }
 
-    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request)
+    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null)
     {
         var query = _db.JournalEntries
             .Include(j => j.Lines).ThenInclude(l => l.Account)
@@ -204,6 +204,15 @@ public class AccountingService : IAccountingService
 
         if (!string.IsNullOrEmpty(request.Search))
             query = query.Where(j => j.EntryNumber.Contains(request.Search) || (j.Description != null && j.Description.Contains(request.Search)));
+
+        if (!string.IsNullOrEmpty(status) && Enum.TryParse<Models.Enums.JournalEntryStatus>(status, true, out var parsedStatus))
+            query = query.Where(j => j.Status == parsedStatus);
+
+        if (fromDate.HasValue)
+            query = query.Where(j => j.EntryDate >= fromDate.Value);
+
+        if (toDate.HasValue)
+            query = query.Where(j => j.EntryDate <= toDate.Value);
 
         var total = await query.CountAsync();
         var items = await query

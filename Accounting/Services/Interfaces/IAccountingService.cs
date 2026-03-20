@@ -14,7 +14,7 @@ public interface IAccountingService
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
     Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId);
-    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request);
+    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null);
     Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId);
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
 
