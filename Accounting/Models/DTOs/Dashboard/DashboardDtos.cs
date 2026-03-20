@@ -13,7 +13,7 @@ public record DashboardResponse(
     List<OverdueInvoice> OverdueInvoices,
     List<UpcomingPayable> UpcomingPayables,
     BankBalanceSummary BankBalances,
-    SubscriptionSummary? Subscription);
+    DashboardSubscriptionSummary? Subscription);
 
 public record DashboardKpis(
     decimal TotalRevenue,
@@ -94,7 +94,7 @@ public record BankBalanceItem(
     string Currency,
     decimal Balance);
 
-public record SubscriptionSummary(
+public record DashboardSubscriptionSummary(
     SubscriptionPlan Plan,
     SubscriptionStatus Status,
     DateTime? EndDate,

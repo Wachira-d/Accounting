@@ -158,6 +158,9 @@ builder.Services.AddSwaggerGen(c =>
             Array.Empty<string>()
         }
     });
+
+    // Use full type names to avoid schema ID conflicts between DTOs in different namespaces
+    c.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
 });
 
 // ===== CORS =====

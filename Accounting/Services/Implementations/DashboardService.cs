@@ -31,7 +31,7 @@ public class DashboardService : IDashboardService
         var overdueInvoices = await GetOverdueInvoicesAsync(companyId);
         var upcomingPayables = await GetUpcomingPayablesAsync(companyId);
         var bankBalances = await GetBankBalancesAsync(companyId);
-        var subscription = await GetSubscriptionSummaryAsync(companyId);
+        var subscription = await GetDashboardSubscriptionSummaryAsync(companyId);
 
         return new DashboardResponse(kpis, cashFlow, revenueTrends, expenseTrends,
             topCustomers, topExpenses, overdueInvoices, upcomingPayables, bankBalances, subscription);
@@ -275,14 +275,14 @@ public class DashboardService : IDashboardService
         return new BankBalanceSummary(accounts.Sum(a => a.Balance), accounts);
     }
 
-    private async Task<SubscriptionSummary?> GetSubscriptionSummaryAsync(Guid companyId)
+    private async Task<DashboardSubscriptionSummary?> GetDashboardSubscriptionSummaryAsync(Guid companyId)
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return null;
 
         var usersCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
 
-        return new SubscriptionSummary(sub.Plan, sub.Status, sub.EndDate,
+        return new DashboardSubscriptionSummary(sub.Plan, sub.Status, sub.EndDate,
             Math.Max(0, (int)(sub.EndDate - DateTime.UtcNow).TotalDays),
             sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth,
             usersCount, sub.MaxUsers);
