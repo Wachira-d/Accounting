@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการแพ็กเกจ - Admin AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div id="pageContent">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <div class="admin-card-title">แพ็กเกจทั้งหมด</div>
+      </div>
+      <div id="planList">กำลังโหลด...</div>
+    </div>
+
+    <div id="editModal" style="display:none"></div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('plans');
+
+    async function loadPlans() {
+      try {
+        const res = await AdminAPI.plans(true);
+        const plans = res.data;
+
+        if (!plans || plans.length === 0) {
+          document.getElementById('planList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ยังไม่มีแพ็กเกจ</div>';
+          return;
+        }
+
+        document.getElementById('planList').innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+            ${plans.map(p => `
+              <div class="admin-card" style="border:2px solid ${p.isActive ? 'var(--admin-primary)' : '#e2e8f0'};position:relative">
+                ${!p.isActive ? '<div style="position:absolute;top:12px;right:12px"><span class="admin-badge-sm bg-gray">ปิดใช้งาน</span></div>' : ''}
+                <div style="margin-bottom:16px">
+                  <div style="font-size:18px;font-weight:800">${p.name}</div>
+                  <div style="font-size:12px;color:#94a3b8">${AdminLayout.planBadge(p.plan)}</div>
+                </div>
+                <div style="font-size:13px;color:#64748b;margin-bottom:16px;min-height:60px">${p.description || ''}</div>
+
+                <div style="margin-bottom:16px">
+                  <div style="font-size:28px;font-weight:800">${AdminLayout.money(p.monthlyPrice)}<span style="font-size:14px;font-weight:400;color:#94a3b8">/เดือน</span></div>
+                  <div style="font-size:12px;color:#94a3b8;margin-top:4px">
+                    รายไตรมาส: ${AdminLayout.money(p.quarterlyPrice)} |
+                    ครึ่งปี: ${AdminLayout.money(p.semiAnnualPrice)} |
+                    รายปี: ${AdminLayout.money(p.annualPrice)}
+                  </div>
+                </div>
+
+                <div style="border-top:1px solid #e2e8f0;padding-top:12px;font-size:13px">
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>ผู้ใช้สูงสุด</span><strong>${p.maxUsers}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>บริษัทสูงสุด</span><strong>${p.maxCompanies}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>เอกสาร/เดือน</span><strong>${p.maxDocumentsPerMonth?.toLocaleString() || '-'}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>รายการบัญชี/เดือน</span><strong>${p.maxJournalEntriesPerMonth?.toLocaleString() || '-'}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>พื้นที่จัดเก็บ</span><strong>${formatBytes(p.maxStorageBytes)}</strong>
+                  </div>
+                </div>
+
+                <div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-top:12px;font-size:13px">
+                  <div style="font-weight:600;margin-bottom:6px">การทดลองใช้</div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ระยะเวลา</span><strong>${p.trialDurationDays || 0} วัน</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ต่ออายุได้</span><strong>${p.trialMaxExtensions || 0} ครั้ง (${p.trialExtensionDays || 0} วัน/ครั้ง)</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>Grace Period</span><strong>${p.trialGracePeriodDays || 0} วัน</strong>
+                  </div>
+                </div>
+
+                <div style="margin-top:16px">
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="editPlan('${p.id}')">แก้ไข</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+
+        window._plans = plans;
+      } catch (err) {
+        document.getElementById('planList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
+      }
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return '-';
+      if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(0) + ' GB';
+      if (bytes >= 1048576) return (bytes / 1048576).toFixed(0) + ' MB';
+      return (bytes / 1024).toFixed(0) + ' KB';
+    }
+
+    function editPlan(planId) {
+      const p = window._plans.find(x => x.id === planId);
+      if (!p) return;
+
+      document.getElementById('editModal').style.display = '';
+      document.getElementById('editModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeEditModal()">
+          <div class="admin-modal" style="max-width:600px">
+            <h3>แก้ไขแพ็กเกจ: ${p.name}</h3>
+            <form onsubmit="savePlan(event,'${p.id}')">
+              <div class="admin-grid-2">
+                <div class="admin-form-group">
+                  <label class="admin-label">ชื่อแพ็กเกจ</label>
+                  <input class="admin-input" id="ep_name" value="${p.name}" required>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เปิดใช้งาน</label>
+                  <select class="admin-select" id="ep_active" style="width:100%">
+                    <option value="true" ${p.isActive ? 'selected' : ''}>เปิดใช้งาน</option>
+                    <option value="false" ${!p.isActive ? 'selected' : ''}>ปิดใช้งาน</option>
+                  </select>
+                </div>
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">รายละเอียด</label>
+                <textarea class="admin-input" id="ep_desc" rows="3">${p.description || ''}</textarea>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ราคา (THB)</div>
+              <div class="admin-grid-2">
+                <div class="admin-form-group">
+                  <label class="admin-label">รายเดือน</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_monthly" value="${p.monthlyPrice}" required>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายไตรมาส</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_quarterly" value="${p.quarterlyPrice}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">ครึ่งปี</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_semiannual" value="${p.semiAnnualPrice}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายปี</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_annual" value="${p.annualPrice}">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิต</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ผู้ใช้สูงสุด</label>
+                  <input type="number" class="admin-input" id="ep_users" value="${p.maxUsers}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">บริษัทสูงสุด</label>
+                  <input type="number" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เอกสาร/เดือน</label>
+                  <input type="number" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ระยะเวลา (วัน)</label>
+                  <input type="number" class="admin-input" id="ep_trial_days" value="${p.trialDurationDays || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">ต่อได้ (ครั้ง)</label>
+                  <input type="number" class="admin-input" id="ep_trial_ext" value="${p.trialMaxExtensions || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">ต่อครั้งละ (วัน)</label>
+                  <input type="number" class="admin-input" id="ep_trial_ext_days" value="${p.trialExtensionDays || 0}">
+                </div>
+              </div>
+
+              <div class="admin-modal-actions">
+                <button type="submit" class="admin-btn admin-btn-primary">บันทึก</button>
+                <button type="button" class="admin-btn admin-btn-outline" onclick="closeEditModal()">ยกเลิก</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    async function savePlan(e, planId) {
+      e.preventDefault();
+      try {
+        await AdminAPI.updatePlan(planId, {
+          name: document.getElementById('ep_name').value,
+          description: document.getElementById('ep_desc').value,
+          isActive: document.getElementById('ep_active').value === 'true',
+          monthlyPrice: parseFloat(document.getElementById('ep_monthly').value),
+          quarterlyPrice: parseFloat(document.getElementById('ep_quarterly').value),
+          semiAnnualPrice: parseFloat(document.getElementById('ep_semiannual').value),
+          annualPrice: parseFloat(document.getElementById('ep_annual').value),
+          maxUsers: parseInt(document.getElementById('ep_users').value),
+          maxCompanies: parseInt(document.getElementById('ep_companies').value),
+          maxDocumentsPerMonth: parseInt(document.getElementById('ep_docs').value),
+          trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),
+          trialMaxExtensions: parseInt(document.getElementById('ep_trial_ext').value),
+          trialExtensionDays: parseInt(document.getElementById('ep_trial_ext_days').value),
+        });
+        AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ');
+        closeEditModal();
+        loadPlans();
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+      }
+    }
+
+    function closeEditModal() {
+      document.getElementById('editModal').style.display = 'none';
+      document.getElementById('editModal').innerHTML = '';
+    }
+
+    loadPlans();
+  </script>
+</body>
+</html>

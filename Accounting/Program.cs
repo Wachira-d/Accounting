@@ -253,8 +253,9 @@ app.MapFallbackToFile("index.html");
     {
         db.Database.EnsureCreated();
     }
-    // Seed default plan templates
+    // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
+    await SeedAdminUser.SeedAsync(db);
 }
 
 app.Run();

@@ -20,7 +20,8 @@ public record UserInfo(
     Guid Id,
     string Email,
     string FullName,
-    string? Phone);
+    string? Phone,
+    bool IsSystemAdmin = false);
 
 public record RefreshTokenRequest(string RefreshToken);
 

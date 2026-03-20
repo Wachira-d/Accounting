@@ -7,13 +7,13 @@ namespace Accounting.Helpers;
 
 public static class JwtHelper
 {
-    public static string GenerateToken(Guid userId, string email, string fullName, IConfiguration config)
+    public static string GenerateToken(Guid userId, string email, string fullName, IConfiguration config, bool isSystemAdmin = false)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Secret"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var expireMinutes = int.Parse(config["Jwt:ExpireMinutes"] ?? "60");
 
-        var claims = new[]
+        var claimsList = new List<Claim>
         {
             new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
             new Claim(ClaimTypes.Email, email),
@@ -21,10 +21,15 @@ public static class JwtHelper
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
+        if (isSystemAdmin)
+        {
+            claimsList.Add(new Claim(ClaimTypes.Role, "SystemAdmin"));
+        }
+
         var token = new JwtSecurityToken(
             issuer: config["Jwt:Issuer"],
             audience: config["Jwt:Audience"],
-            claims: claims,
+            claims: claimsList,
             expires: DateTime.UtcNow.AddMinutes(expireMinutes),
             signingCredentials: credentials);
 

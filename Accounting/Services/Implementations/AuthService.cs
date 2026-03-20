@@ -130,7 +130,7 @@ public class AuthService : IAuthService
 
     private LoginResponse GenerateLoginResponse(User user)
     {
-        var accessToken = JwtHelper.GenerateToken(user.Id, user.Email, user.FullName, _config);
+        var accessToken = JwtHelper.GenerateToken(user.Id, user.Email, user.FullName, _config, user.IsSystemAdmin);
         var refreshToken = JwtHelper.GenerateRefreshToken();
         var refreshDays = int.Parse(_config["Jwt:RefreshTokenDays"] ?? "7");
 
@@ -142,6 +142,6 @@ public class AuthService : IAuthService
             accessToken,
             refreshToken,
             DateTime.UtcNow.AddMinutes(int.Parse(_config["Jwt:ExpireMinutes"] ?? "60")),
-            new UserInfo(user.Id, user.Email, user.FullName, user.Phone));
+            new UserInfo(user.Id, user.Email, user.FullName, user.Phone, user.IsSystemAdmin));
     }
 }

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>แดชบอร์ด - Admin AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div id="pageContent">
+    <!-- KPI Cards -->
+    <div class="admin-kpi-grid" id="kpiGrid">
+      <div class="admin-kpi"><div class="admin-kpi-label">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Charts row -->
+    <div class="admin-grid-2">
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">สถานะ Subscription</div>
+        </div>
+        <div id="subChart" style="min-height:200px"></div>
+      </div>
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">การกระจายแพ็กเกจ</div>
+        </div>
+        <div id="planChart" style="min-height:200px"></div>
+      </div>
+    </div>
+
+    <!-- Pending payments -->
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <div class="admin-card-title">การชำระเงินรอตรวจสอบ</div>
+        <a href="/admin/payments.html" class="admin-btn admin-btn-outline admin-btn-sm">ดูทั้งหมด</a>
+      </div>
+      <div id="pendingPayments">กำลังโหลด...</div>
+    </div>
+
+    <!-- Recent users -->
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <div class="admin-card-title">ผู้ใช้ลงทะเบียนล่าสุด</div>
+        <a href="/admin/users.html" class="admin-btn admin-btn-outline admin-btn-sm">ดูทั้งหมด</a>
+      </div>
+      <div id="recentUsers">กำลังโหลด...</div>
+    </div>
+
+    <!-- System actions -->
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <div class="admin-card-title">System Actions</div>
+      </div>
+      <div class="admin-flex" style="flex-wrap:wrap;gap:12px">
+        <button class="admin-btn admin-btn-outline" onclick="runAction('processExpiredTrials','ประมวลผล Expired Trials')">ประมวลผล Expired Trials</button>
+        <button class="admin-btn admin-btn-outline" onclick="runAction('processExpiredSubs','ประมวลผล Expired Subscriptions')">ประมวลผล Expired Subs</button>
+        <button class="admin-btn admin-btn-outline" onclick="runAction('processNotifications','ส่งแจ้งเตือน Subscriptions')">ส่งแจ้งเตือน</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('dashboard');
+
+    async function loadDashboard() {
+      try {
+        const res = await AdminAPI.dashboard();
+        const d = res.data;
+
+        // KPI
+        const o = d.overview;
+        const r = d.revenue;
+        const s = d.subscriptions;
+        const p = d.payments;
+
+        document.getElementById('kpiGrid').innerHTML = `
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">MRR (รายได้รายเดือน)</div>
+            <div class="admin-kpi-value">${AdminLayout.money(r.mrr)}</div>
+            <div class="admin-kpi-sub">ARR: ${AdminLayout.money(r.arr)}</div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">รายได้เดือนนี้</div>
+            <div class="admin-kpi-value">${AdminLayout.money(r.revenueThisMonth)}</div>
+            <div class="admin-kpi-sub">เดือนที่แล้ว: ${AdminLayout.money(r.revenueLastMonth)}
+              <span class="${r.revenueGrowthPercent >= 0 ? 'up' : 'down'}">${r.revenueGrowthPercent >= 0 ? '+' : ''}${r.revenueGrowthPercent}%</span>
+            </div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">ผู้ใช้ทั้งหมด</div>
+            <div class="admin-kpi-value">${o.totalUsers.toLocaleString()}</div>
+            <div class="admin-kpi-sub">ใหม่เดือนนี้: +${o.newUsersThisMonth}
+              <span class="${o.userGrowthPercent >= 0 ? 'up' : 'down'}">${o.userGrowthPercent >= 0 ? '+' : ''}${o.userGrowthPercent}%</span>
+            </div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">บริษัททั้งหมด</div>
+            <div class="admin-kpi-value">${o.totalCompanies.toLocaleString()}</div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">Subscription Active</div>
+            <div class="admin-kpi-value" style="color:var(--admin-success)">${s.active}</div>
+            <div class="admin-kpi-sub">จากทั้งหมด ${s.total} รายการ</div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">ทดลองใช้ (Trial)</div>
+            <div class="admin-kpi-value" style="color:var(--admin-primary)">${s.trial}</div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">Expired / Cancelled</div>
+            <div class="admin-kpi-value" style="color:var(--admin-danger)">${s.expired + s.cancelled}</div>
+          </div>
+          <div class="admin-kpi">
+            <div class="admin-kpi-label">ชำระเงินรอตรวจ</div>
+            <div class="admin-kpi-value" style="color:var(--admin-warning)">${p.pendingReview}</div>
+            <div class="admin-kpi-sub">อนุมัติเดือนนี้: ${p.approvedThisMonth}</div>
+          </div>
+        `;
+
+        // Subscription chart (simple bar)
+        document.getElementById('subChart').innerHTML = renderBarChart([
+          { label: 'Active', value: s.active, color: '#22c55e' },
+          { label: 'Trial', value: s.trial, color: '#6366f1' },
+          { label: 'Expired', value: s.expired, color: '#ef4444' },
+          { label: 'Cancelled', value: s.cancelled, color: '#94a3b8' },
+        ]);
+
+        // Plan distribution
+        document.getElementById('planChart').innerHTML = d.planDistribution.length > 0
+          ? renderBarChart(d.planDistribution.map(p => ({
+              label: p.plan, value: p.count,
+              color: { FreeTrial: '#94a3b8', Basic: '#3b82f6', Pro: '#7c3aed', Enterprise: '#f59e0b' }[p.plan] || '#6366f1'
+            })))
+          : '<div style="text-align:center;color:#94a3b8;padding:40px">ยังไม่มีข้อมูล</div>';
+
+        // Recent users
+        if (d.recentUsers && d.recentUsers.length > 0) {
+          document.getElementById('recentUsers').innerHTML = `
+            <table class="admin-table">
+              <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>สถานะ</th><th>สมัครเมื่อ</th><th>เข้าใช้ล่าสุด</th></tr></thead>
+              <tbody>
+                ${d.recentUsers.map(u => `
+                  <tr>
+                    <td><strong>${u.fullName}</strong>${u.isSystemAdmin ? ' <span class="admin-badge-sm bg-purple">Admin</span>' : ''}</td>
+                    <td>${u.email}</td>
+                    <td>${AdminLayout.statusBadge(u.status)}</td>
+                    <td>${AdminLayout.date(u.createdAt)}</td>
+                    <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+        } else {
+          document.getElementById('recentUsers').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px">ยังไม่มีผู้ใช้</div>';
+        }
+
+        // Pending payments placeholder
+        document.getElementById('pendingPayments').innerHTML = p.pendingReview > 0
+          ? `<div style="text-align:center;padding:20px"><a href="/admin/payments.html" class="admin-btn admin-btn-primary">ตรวจสอบ ${p.pendingReview} รายการ</a></div>`
+          : '<div style="text-align:center;color:#94a3b8;padding:20px">ไม่มีรายการรอตรวจสอบ</div>';
+
+      } catch (err) {
+        document.getElementById('kpiGrid').innerHTML = `<div class="admin-kpi"><div style="color:var(--admin-danger)">${err.message}</div></div>`;
+      }
+    }
+
+    function renderBarChart(items) {
+      const max = Math.max(...items.map(i => i.value), 1);
+      return `<div style="display:flex;align-items:flex-end;gap:16px;height:180px;padding:10px 0">
+        ${items.map(i => `
+          <div style="flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
+            <div style="font-weight:700;font-size:18px;margin-bottom:4px">${i.value}</div>
+            <div style="background:${i.color};border-radius:6px 6px 0 0;height:${Math.max(i.value / max * 120, 4)}px;transition:height .5s"></div>
+            <div style="font-size:12px;color:#64748b;margin-top:6px">${i.label}</div>
+          </div>
+        `).join('')}
+      </div>`;
+    }
+
+    async function runAction(method, label) {
+      if (!confirm(`ต้องการ ${label}?`)) return;
+      try {
+        await AdminAPI[method]();
+        AdminLayout.toast(`${label} สำเร็จ`);
+        loadDashboard();
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+      }
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>
