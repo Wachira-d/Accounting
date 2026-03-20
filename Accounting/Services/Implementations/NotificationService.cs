@@ -124,26 +124,11 @@ public class NotificationService : INotificationService
         _logger.LogInformation("Email notification queued for user {UserId}: {Title}", userId, title);
     }
 
-    private async Task<NotificationPreferences> GetUserPreferencesAsync(Guid userId)
+    private Task<NotificationPreferences> GetUserPreferencesAsync(Guid userId)
     {
-        // Check if user has custom preferences in settings
-        var setting = await _db.Set<CompanySetting>()
-            .FirstOrDefaultAsync(s => s.CreatedBy == userId.ToString() && s.SettingKey == "notification_preferences");
-
-        if (setting?.SettingValue != null)
-        {
-            try
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<NotificationPreferences>(setting.SettingValue)
-                    ?? NotificationPreferences.Default;
-            }
-            catch
-            {
-                return NotificationPreferences.Default;
-            }
-        }
-
-        return NotificationPreferences.Default;
+        // CompanySettings uses typed properties, not a key-value store.
+        // Return default preferences; can be extended when a UserPreferences entity is added.
+        return Task.FromResult(NotificationPreferences.Default);
     }
 
     private static bool ShouldSendEmail(NotificationType type, NotificationPreferences prefs)

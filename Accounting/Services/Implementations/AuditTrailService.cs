@@ -133,7 +133,7 @@ public class AuditTrailService : IAuditTrailService
                     EntityState.Added => AuditAction.Create,
                     EntityState.Modified => AuditAction.Update,
                     EntityState.Deleted => AuditAction.Delete,
-                    _ => AuditAction.Read
+                    _ => AuditAction.View
                 },
                 EntityType = entityType,
                 EntityId = entityId,

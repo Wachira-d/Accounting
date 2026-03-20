@@ -273,7 +273,7 @@ public class ApprovalService : IApprovalService
 
             // Send reminder notification
             await _notificationService.SendAsync(currentAction.ApproverUserId, request.CompanyId,
-                NotificationType.SystemAlert,
+                NotificationType.SecurityAlert,
                 "แจ้งเตือน: คำขออนุมัติค้าง",
                 $"คำขออนุมัติ {request.EntityType} รอการดำเนินการเกิน {EscalationTimeoutHours} ชั่วโมง",
                 $"/approvals/{request.Id}",

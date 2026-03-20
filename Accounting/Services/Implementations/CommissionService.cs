@@ -205,7 +205,7 @@ public class CommissionService : ICommissionService
                     .Where(d => d.CompanyId == companyId
                         && d.DocumentDate >= periodStart
                         && d.DocumentDate <= periodEnd
-                        && d.Type == DocumentType.Invoice
+                        && d.DocumentType == DocumentType.Invoice
                         && d.Status == DocumentStatus.Paid)
                     .SumAsync(d => d.TotalAmount);
 
@@ -213,7 +213,7 @@ public class CommissionService : ICommissionService
                     .Where(d => d.CompanyId == companyId
                         && d.DocumentDate >= periodStart
                         && d.DocumentDate <= periodEnd
-                        && d.Type == DocumentType.PurchaseInvoice
+                        && d.DocumentType == DocumentType.PurchaseInvoice
                         && d.Status == DocumentStatus.Paid)
                     .SumAsync(d => d.TotalAmount);
 

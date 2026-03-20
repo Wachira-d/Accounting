@@ -398,7 +398,7 @@ public class AdvancedArApService : IAdvancedArApService
         var runningBalance = openingBalance;
 
         // Merge invoices and payments chronologically
-        var allEntries = invoices.Select(i => new { Date = i.DocumentDate, IsInvoice = true, Doc = i, Pay = (Payment?)null })
+        var allEntries = invoices.Select(i => new { Date = i.DocumentDate, IsInvoice = true, Doc = (Document?)i, Pay = (Payment?)null })
             .Concat(payments.Select(p => new { Date = p.PaymentDate, IsInvoice = false, Doc = (Document?)null, Pay = (Payment?)p }))
             .OrderBy(e => e.Date)
             .ToList();
