@@ -97,6 +97,9 @@ public class CompanyService : ICompanyService
 
         if (request.Name != null) company.Name = request.Name;
         if (request.NameEn != null) company.NameEn = request.NameEn;
+        if (request.TaxId != null) company.TaxId = request.TaxId;
+        if (request.BranchCode != null) company.BranchCode = request.BranchCode;
+        if (request.BusinessType.HasValue) company.BusinessType = request.BusinessType.Value;
         if (request.Address != null) company.Address = request.Address;
         if (request.SubDistrict != null) company.SubDistrict = request.SubDistrict;
         if (request.District != null) company.District = request.District;
@@ -174,7 +177,8 @@ public class CompanyService : ICompanyService
 
         return new CompanyResponse(
             c.Id, c.Name, c.NameEn, c.TaxId, c.BranchCode,
-            c.BusinessType, c.Status, c.Address, c.Province,
+            c.BusinessType, c.Status, c.Address, c.SubDistrict, c.District, c.Province,
+            c.PostalCode, c.Phone, c.Email,
             c.FiscalYearStartMonth, sub);
     }
 }

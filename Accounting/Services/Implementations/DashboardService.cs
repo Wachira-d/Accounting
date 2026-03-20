@@ -198,32 +198,40 @@ public class DashboardService : IDashboardService
 
     private async Task<List<TopCustomer>> GetTopCustomersAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
     {
-        return await _db.Documents
+        var docs = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.Status != DocumentStatus.Voided
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .GroupBy(d => new { d.ContactId, d.Contact.Name })
-            .Select(g => new TopCustomer(g.Key.ContactId, g.Key.Name, g.Sum(d => d.TotalAmount), g.Count()))
+            .Select(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : "ไม่ระบุ", d.TotalAmount })
+            .ToListAsync();
+
+        return docs
+            .GroupBy(d => new { d.ContactId, d.ContactName })
+            .Select(g => new TopCustomer(g.Key.ContactId, g.Key.ContactName, g.Sum(d => d.TotalAmount), g.Count()))
             .OrderByDescending(c => c.TotalAmount)
             .Take(top)
-            .ToListAsync();
+            .ToList();
     }
 
     private async Task<List<TopExpenseCategory>> GetTopExpenseCategoriesAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
     {
-        var expenseLines = await _db.JournalEntryLines
+        var rawLines = await _db.JournalEntryLines
             .Include(l => l.Account).Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Expense)
-            .GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName })
+            .Select(l => new { l.Account.AccountCode, l.Account.AccountName, l.DebitAmount, l.CreditAmount })
+            .ToListAsync();
+
+        var expenseLines = rawLines
+            .GroupBy(l => new { l.AccountCode, l.AccountName })
             .Select(g => new { g.Key.AccountCode, g.Key.AccountName, Amount = g.Sum(l => l.DebitAmount - l.CreditAmount) })
             .OrderByDescending(e => e.Amount)
             .Take(top)
-            .ToListAsync();
+            .ToList();
 
         var totalExpenses = expenseLines.Sum(e => e.Amount);
         return expenseLines.Select(e => new TopExpenseCategory(

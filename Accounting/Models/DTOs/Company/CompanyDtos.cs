@@ -20,6 +20,9 @@ public record CreateCompanyRequest(
 public record UpdateCompanyRequest(
     string? Name,
     string? NameEn,
+    string? TaxId,
+    string? BranchCode,
+    BusinessType? BusinessType,
     string? Address,
     string? SubDistrict,
     string? District,
@@ -38,7 +41,12 @@ public record CompanyResponse(
     BusinessType BusinessType,
     CompanyStatus Status,
     string? Address,
+    string? SubDistrict,
+    string? District,
     string? Province,
+    string? PostalCode,
+    string? Phone,
+    string? Email,
     int FiscalYearStartMonth,
     SubscriptionSummary? Subscription);
 

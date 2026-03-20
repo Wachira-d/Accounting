@@ -81,6 +81,10 @@ public record CreateContactRequest(
 
 public record UpdateContactRequest(
     string? Name,
+    string? TaxId,
+    string? BranchCode,
+    bool? IsCustomer,
+    bool? IsSupplier,
     string? Address,
     string? Phone,
     string? Email,

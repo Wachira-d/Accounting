@@ -63,7 +63,7 @@ const AdminAPI = {
   pendingPayments() { return this.get('/subscription-payments/pending'); },
   allPayments(params = '') { return this.get(`/subscription-payments/all${params}`); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
-  reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, adminNotes: notes }); },
+  reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes }); },
 
   // Company specifics
   companyTrial(id) { return this.get(`/companies/${id}/trial`); },

@@ -311,6 +311,10 @@ public class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
 
         if (request.Name != null) contact.Name = request.Name;
+        if (request.TaxId != null) contact.TaxId = request.TaxId;
+        if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
+        if (request.IsCustomer.HasValue) contact.IsCustomer = request.IsCustomer.Value;
+        if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
         if (request.Address != null) contact.Address = request.Address;
         if (request.Phone != null) contact.Phone = request.Phone;
         if (request.Email != null) contact.Email = request.Email;

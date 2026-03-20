@@ -46,9 +46,10 @@ public class AccountingController : ControllerBase
 
     [HttpGet("journals")]
     public async Task<ActionResult<ApiResponse<PagedResponse<JournalEntryResponse>>>> GetJournalEntries(
-        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
+        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
+        [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
     {
-        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search));
+        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }
 
