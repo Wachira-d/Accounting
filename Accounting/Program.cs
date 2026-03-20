@@ -249,12 +249,10 @@ app.MapFallbackToFile("index.html");
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-    if (app.Environment.IsDevelopment())
-    {
-        db.Database.EnsureCreated();
-    }
-    // Seed default plan templates
+    db.Database.EnsureCreated();
+    // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
+    await SeedAdminUser.SeedAsync(db);
 }
 
 app.Run();

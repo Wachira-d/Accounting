@@ -9,6 +9,7 @@ public class User : BaseEntity
     public string FullName { get; set; } = null!;
     public string? Phone { get; set; }
     public UserStatus Status { get; set; } = UserStatus.Active;
+    public bool IsSystemAdmin { get; set; } = false;
     public DateTime? LastLoginAt { get; set; }
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiry { get; set; }
