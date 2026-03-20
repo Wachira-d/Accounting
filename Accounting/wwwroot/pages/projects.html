@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>โครงการ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">โครงการ</h2><p class="page-subtitle">จัดการโครงการและติดตามต้นทุน</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างโครงการ</button>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>ลูกค้า</th><th class="text-right">งบประมาณ</th><th class="text-right">ต้นทุนจริง</th><th>ความคืบหน้า</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">สร้างโครงการ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสโครงการ *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label">ชื่อโครงการ *</label><input type="text" class="form-input" id="fName"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEnd"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">งบประมาณ *</label><input type="number" class="form-input" id="fBudget" step="0.01"></div>
+            <div class="form-group"><label class="form-label">มูลค่าสัญญา</label><input type="number" class="form-input" id="fContract" step="0.01"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('projects')) return;
+        Layout.setTitle('โครงการ');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjects();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีโครงการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(p => `<tr>
+            <td class="font-medium">${p.code}</td>
+            <td>${p.name}</td>
+            <td>${p.contactName || '-'}</td>
+            <td class="text-right">${Layout.money(p.budgetAmount)}</td>
+            <td class="text-right">${Layout.money(p.actualCost)}</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="flex:1;background:var(--gray-200);border-radius:4px;height:8px;overflow:hidden">
+                  <div style="width:${p.completionPercent||0}%;background:var(--primary);height:100%;border-radius:4px"></div>
+                </div>
+                <span class="text-xs">${p.completionPercent||0}%</span>
+              </div>
+            </td>
+            <td>${Layout.statusBadge(p.status)}</td>
+            <td><button class="btn btn-sm btn-ghost">ดู</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() {
+        document.getElementById('fStart').value = new Date().toISOString().split('T')[0];
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createProject({
+            code: document.getElementById('fCode').value,
+            name: document.getElementById('fName').value,
+            description: document.getElementById('fDesc').value || null,
+            startDate: document.getElementById('fStart').value,
+            endDate: document.getElementById('fEnd').value || null,
+            budgetAmount: parseFloat(document.getElementById('fBudget').value),
+            contractAmount: parseFloat(document.getElementById('fContract').value) || null,
+          });
+          Layout.closeModal('formModal'); Layout.toast('สร้างโครงการสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

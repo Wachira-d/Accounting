@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เข้าสู่ระบบ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-left">
+      <div>
+        <a href="/" style="font-size:24px;font-weight:800;margin-bottom:48px;display:block">AcctPlatform</a>
+        <h2>ยินดีต้อนรับกลับ!</h2>
+        <p>เข้าสู่ระบบเพื่อจัดการบัญชีธุรกิจของคุณ</p>
+        <ul class="features-list">
+          <li>✓ ระบบบัญชีครบวงจร 47 โมดูล</li>
+          <li>✓ รองรับภาษีไทย 100%</li>
+          <li>✓ AI อัจฉริยะช่วยจัดหมวดหมู่</li>
+          <li>✓ รายงานเรียลไทม์</li>
+          <li>✓ ปลอดภัยด้วย JWT & 2FA</li>
+        </ul>
+      </div>
+    </div>
+    <div class="auth-right">
+      <div class="auth-form">
+        <h1>เข้าสู่ระบบ</h1>
+        <p class="subtitle">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</p>
+
+        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px"></div>
+
+        <form onsubmit="handleLogin(event)">
+          <div class="form-group">
+            <label class="form-label">อีเมล</label>
+            <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">รหัสผ่าน</label>
+            <input type="password" id="password" class="form-input" placeholder="กรอกรหัสผ่าน" required>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+            <label class="form-checkbox">
+              <input type="checkbox"> <span style="font-size:14px;color:var(--gray-600)">จดจำฉัน</span>
+            </label>
+            <a href="#" style="font-size:14px;color:var(--primary)">ลืมรหัสผ่าน?</a>
+          </div>
+          <button type="submit" class="btn btn-primary w-full btn-lg" id="loginBtn">
+            เข้าสู่ระบบ
+          </button>
+        </form>
+
+        <div class="auth-divider">หรือ</div>
+
+        <p style="text-align:center;font-size:14px;color:var(--gray-600)">
+          ยังไม่มีบัญชี? <a href="/register.html" style="color:var(--primary);font-weight:600">สมัครสมาชิกฟรี</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const errEl = document.getElementById('errorMsg');
+      errEl.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = 'กำลังเข้าสู่ระบบ...';
+
+      try {
+        const res = await API.login(
+          document.getElementById('email').value,
+          document.getElementById('password').value
+        );
+        if (res.success && res.data) {
+          const token = res.data.accessToken || res.data.token;
+          localStorage.setItem('token', token);
+          localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
+          API.token = token;
+          window.location.href = '/app.html';
+        } else {
+          throw new Error(res.message || 'เข้าสู่ระบบไม่สำเร็จ');
+        }
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'เข้าสู่ระบบ';
+      }
+    }
+
+    // Redirect if already logged in
+    if (localStorage.getItem('token')) {
+      window.location.href = '/app.html';
+    }
+  </script>
+</body>
+</html>

@@ -217,6 +217,10 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors();
 
+// Static files (frontend)
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
 
@@ -237,6 +241,9 @@ app.MapControllers();
 
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+
+// SPA fallback - serve app.html for non-API, non-file routes
+app.MapFallbackToFile("index.html");
 
 // ===== Auto-migrate in development =====
 if (app.Environment.IsDevelopment())

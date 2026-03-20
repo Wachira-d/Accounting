@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>แดชบอร์ด - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <!-- KPI Cards -->
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">แดชบอร์ด</h2>
+        <p class="page-subtitle">ภาพรวมธุรกิจ</p>
+      </div>
+      <div class="flex gap-2">
+        <input type="month" id="dashMonth" class="form-input" style="width:180px">
+        <button class="btn btn-primary" onclick="Dashboard.load()">โหลดข้อมูล</button>
+      </div>
+    </div>
+
+    <div class="grid grid-4 gap-4" id="kpiCards" style="margin-bottom:24px">
+      <div class="kpi-card"><div class="kpi-label">รายได้รวม</div><div class="kpi-value" id="kpiRevenue">-</div></div>
+      <div class="kpi-card"><div class="kpi-label">ค่าใช้จ่ายรวม</div><div class="kpi-value" id="kpiExpense">-</div></div>
+      <div class="kpi-card"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value" id="kpiNet">-</div></div>
+      <div class="kpi-card"><div class="kpi-label">เงินสดคงเหลือ</div><div class="kpi-value" id="kpiCash">-</div></div>
+    </div>
+
+    <div class="grid grid-4 gap-4" style="margin-bottom:24px">
+      <div class="kpi-card"><div class="kpi-label">ลูกหนี้ค้างชำระ</div><div class="kpi-value text-warning" id="kpiAR">-</div></div>
+      <div class="kpi-card"><div class="kpi-label">เจ้าหนี้ค้างชำระ</div><div class="kpi-value text-danger" id="kpiAP">-</div></div>
+      <div class="kpi-card"><div class="kpi-label">ใบแจ้งหนี้ทั้งหมด</div><div class="kpi-value" id="kpiInvoices">-</div></div>
+      <div class="kpi-card"><div class="kpi-label">รออนุมัติ</div><div class="kpi-value text-primary" id="kpiPending">-</div></div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid grid-2 gap-4" style="margin-bottom:24px">
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">แนวโน้มรายได้/ค่าใช้จ่าย</h3></div>
+        <div id="revenueTrendChart" style="height:280px;display:flex;align-items:flex-end;gap:4px;padding:20px 0"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">กระแสเงินสด</h3></div>
+        <div id="cashFlowChart" style="padding:20px 0">
+          <div class="grid grid-3 gap-4 text-center">
+            <div><div class="text-sm text-gray-500">ยอดเปิด</div><div class="text-xl font-bold" id="cfOpen">-</div></div>
+            <div><div class="text-sm text-gray-500">รับเข้า</div><div class="text-xl font-bold text-success" id="cfIn">-</div></div>
+            <div><div class="text-sm text-gray-500">จ่ายออก</div><div class="text-xl font-bold text-danger" id="cfOut">-</div></div>
+          </div>
+          <div style="margin-top:20px;background:var(--gray-100);border-radius:8px;padding:16px;text-align:center">
+            <div class="text-sm text-gray-500">ยอดปิด</div>
+            <div class="text-2xl font-bold text-primary" id="cfClose">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tables Row -->
+    <div class="grid grid-2 gap-4" style="margin-bottom:24px">
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">ลูกค้ารายใหญ่</h3></div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>ลูกค้า</th><th class="text-right">ยอดรวม</th><th class="text-right">จำนวนใบแจ้งหนี้</th></tr></thead>
+            <tbody id="topCustomers"><tr><td colspan="3" class="text-center text-gray-400">-</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">ค่าใช้จ่ายสูงสุด</h3></div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>หมวดหมู่</th><th class="text-right">จำนวนเงิน</th><th class="text-right">สัดส่วน</th></tr></thead>
+            <tbody id="topExpenses"><tr><td colspan="3" class="text-center text-gray-400">-</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Overdue & Upcoming -->
+    <div class="grid grid-2 gap-4">
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">ใบแจ้งหนี้เกินกำหนด</h3></div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>เลขที่</th><th>ลูกค้า</th><th class="text-right">ค้างชำระ</th><th>เกิน</th></tr></thead>
+            <tbody id="overdueInvoices"><tr><td colspan="4" class="text-center text-gray-400">ไม่มีรายการ</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">รายจ่ายที่ถึงกำหนด</h3></div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>เลขที่</th><th>ผู้จำหน่าย</th><th class="text-right">ค้างชำระ</th><th>อีก</th></tr></thead>
+            <tbody id="upcomingPayables"><tr><td colspan="4" class="text-center text-gray-400">ไม่มีรายการ</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bank Balances -->
+    <div class="card" style="margin-top:24px">
+      <div class="card-header"><h3 class="card-title">ยอดเงินในบัญชีธนาคาร</h3></div>
+      <div class="table-container" style="border:none">
+        <table class="table">
+          <thead><tr><th>บัญชี</th><th>ธนาคาร</th><th>สกุลเงิน</th><th class="text-right">ยอดคงเหลือ</th></tr></thead>
+          <tbody id="bankBalances"><tr><td colspan="4" class="text-center text-gray-400">-</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Dashboard = {
+      async load() {
+        if (!Layout.init('dashboard')) return;
+        Layout.setTitle('แดชบอร์ด');
+        const api = Layout.api();
+        if (!api) return;
+
+        try {
+          const month = document.getElementById('dashMonth')?.value;
+          let q = '?trendMonths=6';
+          if (month) {
+            const [y, m] = month.split('-');
+            q += `&fromDate=${y}-${m}-01&toDate=${y}-${m}-28`;
+          }
+          const res = await api.dashboard(q);
+          const d = res.data;
+          if (!d) return;
+
+          const k = d.kpis || {};
+          document.getElementById('kpiRevenue').textContent = Layout.money(k.totalRevenue);
+          document.getElementById('kpiExpense').textContent = Layout.money(k.totalExpenses);
+          document.getElementById('kpiNet').textContent = Layout.money(k.netIncome);
+          document.getElementById('kpiCash').textContent = Layout.money(k.cashBalance);
+          document.getElementById('kpiAR').textContent = Layout.money(k.totalReceivables);
+          document.getElementById('kpiAP').textContent = Layout.money(k.totalPayables);
+          document.getElementById('kpiInvoices').textContent = k.totalInvoices ?? '-';
+          document.getElementById('kpiPending').textContent = k.pendingApprovals ?? '-';
+
+          // Cash flow
+          const cf = d.cashFlow || {};
+          document.getElementById('cfOpen').textContent = Layout.money(cf.openingBalance);
+          document.getElementById('cfIn').textContent = '+' + Layout.money(cf.totalInflows);
+          document.getElementById('cfOut').textContent = '-' + Layout.money(cf.totalOutflows);
+          document.getElementById('cfClose').textContent = Layout.money(cf.closingBalance);
+
+          // Revenue trend chart (simple bar chart)
+          const trends = d.revenueTrends || [];
+          const expTrends = d.expenseTrends || [];
+          const maxVal = Math.max(...trends.map(t => t.amount), ...expTrends.map(t => t.amount), 1);
+          const chart = document.getElementById('revenueTrendChart');
+          chart.innerHTML = trends.map((t, i) => {
+            const revH = (t.amount / maxVal * 200);
+            const expH = (expTrends[i]?.amount || 0) / maxVal * 200;
+            return `<div style="flex:1;text-align:center">
+              <div style="display:flex;gap:2px;align-items:flex-end;justify-content:center;height:200px">
+                <div style="width:16px;height:${revH}px;background:var(--primary);border-radius:3px 3px 0 0" title="รายได้ ${Layout.money(t.amount)}"></div>
+                <div style="width:16px;height:${expH}px;background:var(--danger);border-radius:3px 3px 0 0;opacity:.6" title="ค่าใช้จ่าย ${Layout.money(expTrends[i]?.amount)}"></div>
+              </div>
+              <div class="text-xs text-gray-500" style="margin-top:6px">${t.monthName || t.month}</div>
+            </div>`;
+          }).join('') || '<div class="text-center text-gray-400 w-full" style="align-self:center">ไม่มีข้อมูล</div>';
+
+          // Top customers
+          const tc = d.topCustomers || [];
+          document.getElementById('topCustomers').innerHTML = tc.length ? tc.map(c =>
+            `<tr><td>${c.contactName}</td><td class="text-right">${Layout.money(c.totalAmount)}</td><td class="text-right">${c.invoiceCount}</td></tr>`
+          ).join('') : '<tr><td colspan="3" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+
+          // Top expenses
+          const te = d.topExpenseCategories || [];
+          document.getElementById('topExpenses').innerHTML = te.length ? te.map(e =>
+            `<tr><td>${e.accountName}</td><td class="text-right">${Layout.money(e.amount)}</td><td class="text-right">${(e.percentage || 0).toFixed(1)}%</td></tr>`
+          ).join('') : '<tr><td colspan="3" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+
+          // Overdue invoices
+          const oi = d.overdueInvoices || [];
+          document.getElementById('overdueInvoices').innerHTML = oi.length ? oi.map(o =>
+            `<tr><td>${o.documentNumber}</td><td>${o.contactName}</td><td class="text-right text-danger">${Layout.money(o.balanceDue)}</td><td><span class="badge badge-danger">${o.daysOverdue} วัน</span></td></tr>`
+          ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีรายการ</td></tr>';
+
+          // Upcoming payables
+          const up = d.upcomingPayables || [];
+          document.getElementById('upcomingPayables').innerHTML = up.length ? up.map(p =>
+            `<tr><td>${p.documentNumber}</td><td>${p.contactName}</td><td class="text-right">${Layout.money(p.balanceDue)}</td><td><span class="badge badge-warning">${p.daysUntilDue} วัน</span></td></tr>`
+          ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีรายการ</td></tr>';
+
+          // Bank balances
+          const bb = d.bankBalances?.accounts || [];
+          document.getElementById('bankBalances').innerHTML = bb.length ? bb.map(b =>
+            `<tr><td>${b.accountName}</td><td>${b.bankName}</td><td>${b.currency}</td><td class="text-right font-semibold">${Layout.money(b.balance)}</td></tr>`
+          ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+
+        } catch (e) {
+          console.error(e);
+          Layout.toast('โหลดข้อมูลแดชบอร์ดไม่สำเร็จ: ' + e.message, 'error');
+        }
+      }
+    };
+    Dashboard.load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่า - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ตั้งค่าบริษัท</h2><p class="page-subtitle">จัดการการตั้งค่าระบบ</p></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.showTab('general',this)">ทั่วไป</div>
+      <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
+      <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
+      <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
+      <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
+    </div>
+
+    <div id="tabGeneral" class="card">
+      <h3 class="card-title" style="margin-bottom:16px">ข้อมูลทั่วไป</h3>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">สีหลัก</label><input type="color" id="sPrimaryColor" value="#4F46E5" class="form-input" style="height:42px"></div>
+        <div class="form-group"><label class="form-label">สีรอง</label><input type="color" id="sSecondaryColor" value="#0EA5E9" class="form-input" style="height:42px"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">เงื่อนไขชำระเงินเริ่มต้น</label><input type="text" class="form-input" id="sPaymentTerms" placeholder="30 วัน"></div>
+        <div class="form-group"><label class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose"><label for="sAutoClose">ปิดงวดอัตโนมัติ</label></div>
+        <div class="form-group"><label class="form-label">วันปิดงวด</label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28"></div>
+      </div>
+    </div>
+
+    <div id="tabDocument" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าเอกสาร</h3>
+      <div class="form-group"><label class="form-label">หมายเหตุใบแจ้งหนี้</label><textarea class="form-textarea" id="sInvoiceNotes" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">หมายเหตุใบเสร็จ</label><textarea class="form-textarea" id="sReceiptNotes" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">ข้อความท้ายใบแจ้งหนี้</label><textarea class="form-textarea" id="sInvoiceFooter" rows="2"></textarea></div>
+    </div>
+
+    <div id="tabTax" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าภาษี</h3>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
+        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" checked><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
+      </div>
+    </div>
+
+    <div id="tabApproval" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">การอนุมัติ</h3>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sRequireApproval"><label for="sRequireApproval">ต้องอนุมัติเอกสารก่อนส่ง</label></div>
+      <div class="form-group"><label class="form-label">จำนวนเงินขั้นต่ำที่ต้องอนุมัติ</label><input type="number" class="form-input" id="sApprovalThreshold" step="0.01"></div>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sAllowFreelance"><label for="sAllowFreelance">อนุญาตนักบัญชีอิสระเข้าถึง</label></div>
+    </div>
+
+    <div id="tabNumbering" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">ลำดับเลขที่เอกสาร</h3>
+      <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</div></div>
+    </div>
+
+    <div style="margin-top:20px;display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" onclick="Page.save()">บันทึกการตั้งค่า</button>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('settings')) return;
+        Layout.setTitle('ตั้งค่า');
+        await this.loadSettings();
+      },
+      showTab(tab, el) {
+        ['tabGeneral','tabDocument','tabTax','tabApproval','tabNumbering'].forEach(id => document.getElementById(id).classList.add('hidden'));
+        document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        if (tab === 'numbering') this.loadNumberSeries();
+      },
+      async loadSettings() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getSettings();
+          const s = res.data;
+          if (!s) return;
+          if (s.primaryColor) document.getElementById('sPrimaryColor').value = s.primaryColor;
+          if (s.secondaryColor) document.getElementById('sSecondaryColor').value = s.secondaryColor;
+          document.getElementById('sPaymentTerms').value = s.defaultPaymentTerms || '';
+          document.getElementById('sPaymentDueDays').value = s.defaultPaymentDueDays || 30;
+          document.getElementById('sAutoClose').checked = s.autoCloseMonthEnd || false;
+          document.getElementById('sCloseDay').value = s.monthEndClosingDay || 5;
+          document.getElementById('sVatRate').value = s.defaultVatRate || 7;
+          document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
+          document.getElementById('sRequireApproval').checked = s.requireApprovalForDocuments || false;
+          document.getElementById('sApprovalThreshold').value = s.approvalThresholdAmount || '';
+          document.getElementById('sAllowFreelance').checked = s.allowFreelanceAccess || false;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadNumberSeries() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getNumberSeries();
+          const items = res.data?.items || res.data || [];
+          document.getElementById('numberSeriesContent').innerHTML = items.length ?
+            `<div class="table-container"><table class="table">
+              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th>รีเซ็ต</th><th>สถานะ</th></tr></thead>
+              <tbody>${items.map(n => `<tr>
+                <td>${Layout.docTypeLabel(n.documentType)}</td>
+                <td>${n.prefix}</td><td>${n.format}</td>
+                <td>${n.currentNumber}</td><td>${n.resetPeriod}</td>
+                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+              </tr>`).join('')}</tbody>
+            </table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
+        } catch (e) { document.getElementById('numberSeriesContent').innerHTML = '<p class="text-danger text-center">' + e.message + '</p>'; }
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updateSettings({
+            primaryColor: document.getElementById('sPrimaryColor').value,
+            secondaryColor: document.getElementById('sSecondaryColor').value,
+            defaultPaymentTerms: document.getElementById('sPaymentTerms').value || null,
+            defaultPaymentDueDays: parseInt(document.getElementById('sPaymentDueDays').value),
+            autoCloseMonthEnd: document.getElementById('sAutoClose').checked,
+            monthEndClosingDay: parseInt(document.getElementById('sCloseDay').value),
+            defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
+            vatRegistered: document.getElementById('sVatRegistered').checked,
+            requireApprovalForDocuments: document.getElementById('sRequireApproval').checked,
+            approvalThresholdAmount: parseFloat(document.getElementById('sApprovalThreshold').value) || null,
+            allowFreelanceAccess: document.getElementById('sAllowFreelance').checked,
+          });
+          Layout.toast('บันทึกการตั้งค่าสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

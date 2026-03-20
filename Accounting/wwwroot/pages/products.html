@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สินค้า/บริการ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สินค้า/บริการ</h2><p class="page-subtitle">จัดการรายการสินค้าและบริการ</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินค้า</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาสินค้า..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="typeFilter" onchange="Page.load()">
+        <option value="">ทุกประเภท</option>
+        <option value="Product">สินค้า</option>
+        <option value="Service">บริการ</option>
+        <option value="NonStock">ไม่ติดตามสต็อก</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>รหัส</th><th>ชื่อ</th><th>ประเภท</th><th>หมวด</th><th class="text-right">ราคาขาย</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสสินค้า *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="fType"><option value="Product">สินค้า</option><option value="Service">บริการ</option><option value="NonStock">ไม่ติดตามสต็อก</option></select>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อสินค้า (ไทย) *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อ (อังกฤษ)</label><input type="text" class="form-input" id="fNameEn"></div>
+            <div class="form-group"><label class="form-label">หมวดหมู่</label><input type="text" class="form-input" id="fCategory"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">หน่วย *</label><input type="text" class="form-input" id="fUnit" value="ชิ้น"></div>
+            <div class="form-group"><label class="form-label">SKU</label><input type="text" class="form-input" id="fSku"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ราคาขาย *</label><input type="number" class="form-input" id="fSellPrice" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ต้นทุน</label><input type="number" class="form-input" id="fCostPrice" step="0.01" value="0"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อัตรา VAT</label>
+              <select class="form-select" id="fVat"><option value="7">7%</option><option value="0">0% (ยกเว้น)</option></select>
+            </div>
+            <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="fVatIncl"><label for="fVatIncl">ราคารวม VAT แล้ว</label></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group form-checkbox"><input type="checkbox" id="fTrackStock" checked><label for="fTrackStock">ติดตามสต็อก</label></div>
+            <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ</label><input type="number" class="form-input" id="fMinStock" value="0"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      page: 1,
+      async init() {
+        if (!Layout.init('products')) return;
+        Layout.setTitle('สินค้า/บริการ');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value;
+        const type = document.getElementById('typeFilter').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (type) q += `&productType=${type}`;
+        try {
+          const res = await api.getProducts(q);
+          const data = res.data; const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(p => `<tr>
+            <td class="font-medium">${p.code}</td>
+            <td>${p.name}</td>
+            <td>${p.productType === 'Product' ? 'สินค้า' : p.productType === 'Service' ? 'บริการ' : 'อื่นๆ'}</td>
+            <td>${p.category || '-'}</td>
+            <td class="text-right">${Layout.money(p.sellingPrice)}</td>
+            <td class="text-right">${Layout.money(p.costPrice)}</td>
+            <td class="text-right ${(p.currentStock <= p.minimumStock && p.trackStock) ? 'text-danger font-semibold' : ''}">${p.trackStock ? p.currentStock : '-'}</td>
+            <td>${p.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick='Page.openEdit(${JSON.stringify(p).replace(/'/g,"&#39;")})'>แก้ไข</button></td>
+          </tr>`).join('');
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มสินค้า';
+        document.getElementById('editId').value = '';
+        ['fCode','fName','fNameEn','fCategory','fSku','fDesc'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('fUnit').value = 'ชิ้น';
+        document.getElementById('fSellPrice').value = '';
+        document.getElementById('fCostPrice').value = '0';
+        document.getElementById('fType').value = 'Product';
+        document.getElementById('fVat').value = '7';
+        document.getElementById('fVatIncl').checked = false;
+        document.getElementById('fTrackStock').checked = true;
+        document.getElementById('fMinStock').value = '0';
+        document.getElementById('fCode').disabled = false;
+        Layout.openModal('formModal');
+      },
+      openEdit(p) {
+        document.getElementById('formTitle').textContent = 'แก้ไขสินค้า';
+        document.getElementById('editId').value = p.id;
+        document.getElementById('fCode').value = p.code; document.getElementById('fCode').disabled = true;
+        document.getElementById('fName').value = p.name;
+        document.getElementById('fNameEn').value = p.nameEn || '';
+        document.getElementById('fCategory').value = p.category || '';
+        document.getElementById('fSku').value = p.sku || '';
+        document.getElementById('fUnit').value = p.unit || 'ชิ้น';
+        document.getElementById('fSellPrice').value = p.sellingPrice;
+        document.getElementById('fCostPrice').value = p.costPrice;
+        document.getElementById('fType').value = p.productType;
+        document.getElementById('fVat').value = p.vatRate == 0 ? '0' : '7';
+        document.getElementById('fVatIncl').checked = p.isVatIncluded;
+        document.getElementById('fTrackStock').checked = p.trackStock;
+        document.getElementById('fMinStock').value = p.minimumStock;
+        document.getElementById('fDesc').value = p.description || '';
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('editId').value;
+        try {
+          if (id) {
+            await api.updateProduct(id, {
+              name: document.getElementById('fName').value,
+              nameEn: document.getElementById('fNameEn').value || null,
+              category: document.getElementById('fCategory').value || null,
+              sellingPrice: parseFloat(document.getElementById('fSellPrice').value),
+              costPrice: parseFloat(document.getElementById('fCostPrice').value),
+              vatRate: parseFloat(document.getElementById('fVat').value),
+              isVatIncluded: document.getElementById('fVatIncl').checked,
+              minimumStock: parseInt(document.getElementById('fMinStock').value),
+              description: document.getElementById('fDesc').value || null,
+            });
+          } else {
+            await api.createProduct({
+              code: document.getElementById('fCode').value,
+              name: document.getElementById('fName').value,
+              nameEn: document.getElementById('fNameEn').value || null,
+              productType: document.getElementById('fType').value,
+              sku: document.getElementById('fSku').value || null,
+              category: document.getElementById('fCategory').value || null,
+              unit: document.getElementById('fUnit').value,
+              sellingPrice: parseFloat(document.getElementById('fSellPrice').value),
+              costPrice: parseFloat(document.getElementById('fCostPrice').value) || 0,
+              vatRate: parseFloat(document.getElementById('fVat').value),
+              isVatIncluded: document.getElementById('fVatIncl').checked,
+              trackStock: document.getElementById('fTrackStock').checked,
+              minimumStock: parseInt(document.getElementById('fMinStock').value) || 0,
+              description: document.getElementById('fDesc').value || null,
+            });
+          }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มสินค้าสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คลังสินค้า - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">คลังสินค้า</h2><p class="page-subtitle">จัดการคลังสินค้าและการโอนย้ายสต็อก</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มคลังสินค้า</button>
+    </div>
+    <div id="warehouseCards" class="grid grid-3 gap-4" style="margin-bottom:24px">
+      <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">สต็อกสินค้า</h3></div>
+      <div class="table-container" style="border:none">
+        <table class="table">
+          <thead><tr><th>คลัง</th><th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">จอง</th><th class="text-right">คงเหลือ</th><th>ตำแหน่ง</th></tr></thead>
+          <tbody id="stockBody"><tr><td colspan="6" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มคลังสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ที่อยู่</label><input type="text" class="form-input" id="fAddress"></div>
+          <div class="form-group"><label class="form-label">ผู้จัดการ</label><input type="text" class="form-input" id="fManager"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('warehouse')) return;
+        Layout.setTitle('คลังสินค้า');
+        await this.load();
+      },
+      async load() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.get(`/api/companies/${cid}/warehouse`);
+          const items = res.data?.items || res.data || [];
+          const container = document.getElementById('warehouseCards');
+          if (!items.length) { container.innerHTML = '<div class="card text-center" style="padding:40px;grid-column:1/-1"><p class="text-gray-500">ยังไม่มีคลังสินค้า</p></div>'; return; }
+          container.innerHTML = items.map(w => `
+            <div class="card"><div class="font-semibold">${w.name}</div><div class="text-xs text-gray-500">${w.code}</div>
+            <div class="text-sm" style="margin-top:8px">${w.address || '-'}</div>
+            <div class="text-xs text-gray-400" style="margin-top:4px">ผู้จัดการ: ${w.managerName || '-'}</div>
+            ${w.isActive ? '<span class="badge badge-success" style="margin-top:8px">ใช้งาน</span>' : '<span class="badge badge-gray" style="margin-top:8px">ปิด</span>'}</div>
+          `).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() { Layout.openModal('formModal'); },
+      async save() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          await API.post(`/api/companies/${cid}/warehouse`, {
+            code: document.getElementById('fCode').value,
+            name: document.getElementById('fName').value,
+            address: document.getElementById('fAddress').value || null,
+            managerName: document.getElementById('fManager').value || null,
+          });
+          Layout.closeModal('formModal'); Layout.toast('เพิ่มคลังสินค้าสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

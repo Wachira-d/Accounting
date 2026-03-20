@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ผังบัญชี - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ผังบัญชี</h2><p class="page-subtitle">จัดการรายการบัญชีทั้งหมด</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหารหัสหรือชื่อบัญชี..." id="searchInput" oninput="Page.filter()">
+      <select class="filter-select" id="typeFilter" onchange="Page.filter()">
+        <option value="">ทุกประเภท</option>
+        <option value="Asset">สินทรัพย์</option>
+        <option value="Liability">หนี้สิน</option>
+        <option value="Equity">ส่วนของเจ้าของ</option>
+        <option value="Revenue">รายได้</option>
+        <option value="Expense">ค่าใช้จ่าย</option>
+      </select>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead>
+          <tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th>ชื่ออังกฤษ</th><th>ประเภท</th><th>ระดับ</th><th>สถานะ</th><th>จัดการ</th></tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 class="modal-title" id="formTitle">เพิ่มบัญชี</h3>
+          <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">รหัสบัญชี *</label>
+              <input type="text" class="form-input" id="fCode" placeholder="เช่น 1100-01">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ประเภทบัญชี *</label>
+              <select class="form-select" id="fType">
+                <option value="Asset">สินทรัพย์</option>
+                <option value="Liability">หนี้สิน</option>
+                <option value="Equity">ส่วนของเจ้าของ</option>
+                <option value="Revenue">รายได้</option>
+                <option value="Expense">ค่าใช้จ่าย</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ชื่อบัญชี (ไทย) *</label>
+            <input type="text" class="form-input" id="fName" placeholder="ชื่อบัญชี">
+          </div>
+          <div class="form-group">
+            <label class="form-label">ชื่อบัญชี (อังกฤษ)</label>
+            <input type="text" class="form-input" id="fNameEn" placeholder="Account name">
+          </div>
+          <div class="form-group">
+            <label class="form-label">บัญชีแม่</label>
+            <select class="form-select" id="fParent"><option value="">-- ไม่มี (บัญชีหลัก) --</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบาย</label>
+            <textarea class="form-textarea" id="fDesc" rows="2"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      accounts: [],
+      async init() {
+        if (!Layout.init('accounts')) return;
+        Layout.setTitle('ผังบัญชี');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts();
+          this.accounts = res.data?.items || res.data || [];
+          this.renderTable(this.accounts);
+          this.populateParent();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      filter() {
+        const q = document.getElementById('searchInput').value.toLowerCase();
+        const t = document.getElementById('typeFilter').value;
+        const filtered = this.accounts.filter(a =>
+          (!q || a.accountCode.toLowerCase().includes(q) || a.accountName.toLowerCase().includes(q)) &&
+          (!t || a.accountType === t)
+        );
+        this.renderTable(filtered);
+      },
+      renderTable(items) {
+        const tbody = document.getElementById('tableBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบรายการ</td></tr>'; return; }
+        tbody.innerHTML = items.map(a => `<tr>
+          <td><span class="font-medium">${a.accountCode}</span></td>
+          <td>${'—'.repeat(Math.max(0,(a.level||1)-1))} ${a.accountName}</td>
+          <td class="text-gray-500">${a.accountNameEn || '-'}</td>
+          <td>${Layout.statusBadge(a.accountType === 'Asset' ? '' : '').replace(/<[^>]*>/g,'') || ''}<span class="badge badge-${a.accountType === 'Asset' ? 'info' : a.accountType === 'Revenue' ? 'success' : a.accountType === 'Expense' ? 'danger' : a.accountType === 'Liability' ? 'warning' : 'primary'}">${Layout.accountTypeLabel(a.accountType)}</span></td>
+          <td>${a.level || 1}</td>
+          <td>${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+          <td>${a.isSystemAccount ? '<span class="text-xs text-gray-400">ระบบ</span>' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')">แก้ไข</button>`}</td>
+        </tr>`).join('');
+      },
+      populateParent() {
+        const sel = document.getElementById('fParent');
+        sel.innerHTML = '<option value="">-- ไม่มี (บัญชีหลัก) --</option>';
+        this.accounts.forEach(a => {
+          sel.innerHTML += `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`;
+        });
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มบัญชี';
+        document.getElementById('editId').value = '';
+        document.getElementById('fCode').value = '';
+        document.getElementById('fCode').disabled = false;
+        document.getElementById('fName').value = '';
+        document.getElementById('fNameEn').value = '';
+        document.getElementById('fType').value = 'Asset';
+        document.getElementById('fParent').value = '';
+        document.getElementById('fDesc').value = '';
+        Layout.openModal('formModal');
+      },
+      openEdit(id) {
+        const a = this.accounts.find(x => x.id === id); if (!a) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขบัญชี';
+        document.getElementById('editId').value = a.id;
+        document.getElementById('fCode').value = a.accountCode;
+        document.getElementById('fCode').disabled = true;
+        document.getElementById('fName').value = a.accountName;
+        document.getElementById('fNameEn').value = a.accountNameEn || '';
+        document.getElementById('fType').value = a.accountType;
+        document.getElementById('fParent').value = a.parentAccountId || '';
+        document.getElementById('fDesc').value = a.description || '';
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('editId').value;
+        try {
+          if (id) {
+            await api.updateAccount(id, {
+              accountName: document.getElementById('fName').value,
+              accountNameEn: document.getElementById('fNameEn').value || null,
+              description: document.getElementById('fDesc').value || null,
+            });
+          } else {
+            await api.createAccount({
+              accountCode: document.getElementById('fCode').value,
+              accountName: document.getElementById('fName').value,
+              accountNameEn: document.getElementById('fNameEn').value || null,
+              accountType: document.getElementById('fType').value,
+              parentAccountId: document.getElementById('fParent').value || null,
+              description: document.getElementById('fDesc').value || null,
+            });
+          }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขบัญชีสำเร็จ' : 'เพิ่มบัญชีสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>อนุมัติ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">รออนุมัติ</h2><p class="page-subtitle">รายการที่รอการอนุมัติ</p></div>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>ประเภท</th><th>รหัส</th><th>ผู้ขอ</th><th>วันที่ขอ</th><th>ขั้นตอนปัจจุบัน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="actionModal">
+      <div class="modal" style="max-width:400px">
+        <div class="modal-header"><h3 class="modal-title">ดำเนินการอนุมัติ</h3><button class="modal-close" onclick="Layout.closeModal('actionModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="actionId">
+          <div class="form-group"><label class="form-label">ความคิดเห็น</label><textarea class="form-textarea" id="actionComments" rows="3"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-danger" onclick="Page.submitAction('Rejected')">ปฏิเสธ</button>
+          <button class="btn btn-success" onclick="Page.submitAction('Approved')">อนุมัติ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('approval')) return;
+        Layout.setTitle('รออนุมัติ');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPendingApprovals();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรออนุมัติ</td></tr>'; return; }
+          tbody.innerHTML = items.map(a => `<tr>
+            <td>${a.entityType}</td>
+            <td class="text-xs">${a.entityId ? a.entityId.substring(0,8)+'...' : '-'}</td>
+            <td>${a.requestedByName || '-'}</td>
+            <td>${Layout.date(a.requestedAt)}</td>
+            <td>ขั้นตอน ${a.currentStep || '-'}</td>
+            <td>${Layout.statusBadge(a.overallStatus)}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="Page.openAction('${a.id}')">ดำเนินการ</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openAction(id) {
+        document.getElementById('actionId').value = id;
+        document.getElementById('actionComments').value = '';
+        Layout.openModal('actionModal');
+      },
+      async submitAction(status) {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('actionId').value;
+        try {
+          await api.submitAction(id, { status, comments: document.getElementById('actionComments').value || null });
+          Layout.closeModal('actionModal');
+          Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

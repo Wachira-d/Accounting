@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายงานการเงิน - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">รายงานการเงิน</h2><p class="page-subtitle">งบทดลอง งบแสดงฐานะการเงิน งบกำไรขาดทุน กระแสเงินสด</p></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.showReport('trial',this)">งบทดลอง</div>
+      <div class="tab" onclick="Page.showReport('balance',this)">งบแสดงฐานะการเงิน</div>
+      <div class="tab" onclick="Page.showReport('pnl',this)">งบกำไรขาดทุน</div>
+      <div class="tab" onclick="Page.showReport('cashflow',this)">กระแสเงินสด</div>
+    </div>
+
+    <div class="toolbar">
+      <label class="text-sm font-medium">ณ วันที่:</label>
+      <input type="date" class="form-input" id="asOfDate" style="width:180px">
+      <label class="text-sm font-medium" style="margin-left:12px">จาก:</label>
+      <input type="date" class="form-input" id="fromDate" style="width:160px">
+      <label class="text-sm font-medium">ถึง:</label>
+      <input type="date" class="form-input" id="toDate" style="width:160px">
+      <button class="btn btn-primary" onclick="Page.loadReport()">แสดงรายงาน</button>
+    </div>
+
+    <div class="card" id="reportContent">
+      <div class="text-center text-gray-400" style="padding:60px">กดปุ่ม "แสดงรายงาน" เพื่อดูข้อมูล</div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentReport: 'trial',
+      init() {
+        if (!Layout.init('reports')) return;
+        Layout.setTitle('รายงานการเงิน');
+        const today = new Date().toISOString().split('T')[0];
+        const firstDay = today.substring(0,8) + '01';
+        document.getElementById('asOfDate').value = today;
+        document.getElementById('fromDate').value = firstDay;
+        document.getElementById('toDate').value = today;
+      },
+      showReport(type, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        this.currentReport = type;
+      },
+      async loadReport() {
+        const api = Layout.api(); if (!api) return;
+        const content = document.getElementById('reportContent');
+        content.innerHTML = '<div style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:12px">กำลังโหลดรายงาน...</p></div>';
+        try {
+          switch (this.currentReport) {
+            case 'trial': await this.loadTrial(api, content); break;
+            case 'balance': await this.loadBalance(api, content); break;
+            case 'pnl': await this.loadPnl(api, content); break;
+            case 'cashflow': await this.loadCashFlow(api, content); break;
+          }
+        } catch (e) { content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${e.message}</div>`; }
+      },
+      async loadTrial(api, el) {
+        const date = document.getElementById('asOfDate').value;
+        const res = await api.trialBalance(`?asOfDate=${date}`);
+        const d = res.data;
+        el.innerHTML = `
+          <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบทดลอง</h3>
+          <p class="text-sm text-gray-500" style="margin-bottom:16px">ณ วันที่ ${Layout.date(d.asOfDate)}</p>
+          <div class="table-container">
+            <table class="table">
+              <thead><tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th>ประเภท</th><th class="text-right">ยอดเดบิต</th><th class="text-right">ยอดเครดิต</th></tr></thead>
+              <tbody>${(d.items||[]).map(i => `<tr>
+                <td>${i.accountCode}</td><td>${i.accountName}</td>
+                <td>${Layout.accountTypeLabel(i.accountType)}</td>
+                <td class="text-right">${i.debitBalance > 0 ? Layout.money(i.debitBalance) : ''}</td>
+                <td class="text-right">${i.creditBalance > 0 ? Layout.money(i.creditBalance) : ''}</td>
+              </tr>`).join('')}</tbody>
+              <tfoot><tr style="background:var(--gray-100)"><td colspan="3" class="font-bold">รวมทั้งสิ้น</td><td class="text-right font-bold">${Layout.money(d.totalDebit)}</td><td class="text-right font-bold">${Layout.money(d.totalCredit)}</td></tr></tfoot>
+            </table>
+          </div>
+          ${Math.abs((d.totalDebit||0)-(d.totalCredit||0)) > 0.01 ? '<div class="text-danger text-sm" style="margin-top:8px">⚠ ยอดเดบิตและเครดิตไม่สมดุล</div>' : '<div class="text-success text-sm" style="margin-top:8px">✓ ยอดสมดุล</div>'}`;
+      },
+      async loadBalance(api, el) {
+        const date = document.getElementById('asOfDate').value;
+        const res = await api.balanceSheet(`?asOfDate=${date}`);
+        const d = res.data;
+        const renderSection = (items, indent = 0) => items ? items.map(s =>
+          `<tr><td style="padding-left:${16+indent*20}px">${s.accountCode || ''}</td><td style="padding-left:${indent*20}px">${s.accountName}</td><td class="text-right font-medium">${Layout.money(s.amount)}</td></tr>` +
+          (s.children ? renderSection(s.children, indent+1) : '')
+        ).join('') : '';
+        el.innerHTML = `
+          <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบแสดงฐานะการเงิน</h3>
+          <p class="text-sm text-gray-500" style="margin-bottom:16px">ณ วันที่ ${Layout.date(d.asOfDate)}</p>
+          <div class="grid grid-2 gap-4">
+            <div class="table-container"><table class="table">
+              <thead><tr><th colspan="2">สินทรัพย์</th><th class="text-right">จำนวน</th></tr></thead>
+              <tbody>${renderSection(d.assets)}</tbody>
+              <tfoot><tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมสินทรัพย์</td><td class="text-right font-bold">${Layout.money(d.totalAssets)}</td></tr></tfoot>
+            </table></div>
+            <div>
+              <div class="table-container" style="margin-bottom:16px"><table class="table">
+                <thead><tr><th colspan="2">หนี้สิน</th><th class="text-right">จำนวน</th></tr></thead>
+                <tbody>${renderSection(d.liabilities)}</tbody>
+                <tfoot><tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมหนี้สิน</td><td class="text-right font-bold">${Layout.money(d.totalLiabilities)}</td></tr></tfoot>
+              </table></div>
+              <div class="table-container"><table class="table">
+                <thead><tr><th colspan="2">ส่วนของเจ้าของ</th><th class="text-right">จำนวน</th></tr></thead>
+                <tbody>${renderSection(d.equity)}</tbody>
+                <tfoot><tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมส่วนของเจ้าของ</td><td class="text-right font-bold">${Layout.money(d.totalEquity)}</td></tr></tfoot>
+              </table></div>
+            </div>
+          </div>`;
+      },
+      async loadPnl(api, el) {
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        const res = await api.profitLoss(`?fromDate=${from}&toDate=${to}`);
+        const d = res.data;
+        const renderItems = (items) => items ? items.map(s =>
+          `<tr><td>${s.accountCode || ''}</td><td>${s.accountName}</td><td class="text-right">${Layout.money(s.amount)}</td></tr>`
+        ).join('') : '';
+        el.innerHTML = `
+          <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบกำไรขาดทุน</h3>
+          <p class="text-sm text-gray-500" style="margin-bottom:16px">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p>
+          <div class="table-container">
+            <table class="table">
+              <thead><tr><th>รหัส</th><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+              <tbody>
+                <tr style="background:#ECFDF5"><td colspan="3" class="font-semibold">รายได้</td></tr>
+                ${renderItems(d.revenue)}
+                <tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมรายได้</td><td class="text-right font-bold text-success">${Layout.money(d.totalRevenue)}</td></tr>
+                <tr style="background:#FEF2F2"><td colspan="3" class="font-semibold">ค่าใช้จ่าย</td></tr>
+                ${renderItems(d.expenses)}
+                <tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมค่าใช้จ่าย</td><td class="text-right font-bold text-danger">${Layout.money(d.totalExpenses)}</td></tr>
+              </tbody>
+              <tfoot><tr style="background:var(--primary);color:#fff"><td colspan="2" class="font-bold">กำไร(ขาดทุน)สุทธิ</td><td class="text-right font-bold">${Layout.money(d.netIncome)}</td></tr></tfoot>
+            </table>
+          </div>`;
+      },
+      async loadCashFlow(api, el) {
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        const res = await api.cashFlow(`?fromDate=${from}&toDate=${to}`);
+        const d = res.data;
+        const renderSection = (section) => section ? `
+          <tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold">${section.sectionName}</td><td></td></tr>
+          ${(section.items||[]).map(i => `<tr><td></td><td>${i.description}</td><td class="text-right">${Layout.money(i.amount)}</td></tr>`).join('')}
+          <tr><td></td><td class="font-medium">รวม</td><td class="text-right font-medium">${Layout.money(section.subTotal)}</td></tr>
+        ` : '';
+        el.innerHTML = `
+          <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบกระแสเงินสด</h3>
+          <p class="text-sm text-gray-500" style="margin-bottom:16px">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p>
+          <div class="table-container">
+            <table class="table">
+              <thead><tr><th></th><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+              <tbody>
+                ${renderSection(d.operatingActivities)}
+                ${renderSection(d.investingActivities)}
+                ${renderSection(d.financingActivities)}
+              </tbody>
+              <tfoot>
+                <tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">เงินสดเปลี่ยนแปลงสุทธิ</td><td class="text-right font-bold">${Layout.money(d.netCashChange)}</td></tr>
+                <tr><td colspan="2">เงินสดต้นงวด</td><td class="text-right">${Layout.money(d.openingCashBalance)}</td></tr>
+                <tr style="background:var(--primary);color:#fff"><td colspan="2" class="font-bold">เงินสดปลายงวด</td><td class="text-right font-bold">${Layout.money(d.closingCashBalance)}</td></tr>
+              </tfoot>
+            </table>
+          </div>`;
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

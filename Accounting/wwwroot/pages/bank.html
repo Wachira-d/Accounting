@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บัญชีธนาคาร - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">บัญชีธนาคาร</h2><p class="page-subtitle">จัดการบัญชีธนาคารและกระทบยอด</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+    </div>
+
+    <!-- Bank Account Cards -->
+    <div class="grid grid-3 gap-4" id="bankCards" style="margin-bottom:24px">
+      <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Transactions for selected account -->
+    <div class="card" id="transSection" style="display:none">
+      <div class="card-header">
+        <h3 class="card-title" id="transTitle">รายการเคลื่อนไหว</h3>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่อัตโนมัติ</button>
+        </div>
+      </div>
+      <div class="table-container" style="border:none">
+        <table class="table">
+          <thead><tr><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th>คำอธิบาย</th><th>สถานะ</th></tr></thead>
+          <tbody id="transBody"><tr><td colspan="6" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Create Bank Account Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มบัญชีธนาคาร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อบัญชี *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ธนาคาร *</label>
+              <select class="form-select" id="fBank">
+                <option value="กสิกรไทย">ธนาคารกสิกรไทย</option>
+                <option value="กรุงเทพ">ธนาคารกรุงเทพ</option>
+                <option value="ไทยพาณิชย์">ธนาคารไทยพาณิชย์</option>
+                <option value="กรุงไทย">ธนาคารกรุงไทย</option>
+                <option value="กรุงศรี">ธนาคารกรุงศรีอยุธยา</option>
+                <option value="ทหารไทยธนชาต">ธนาคารทหารไทยธนชาต</option>
+                <option value="อื่นๆ">อื่นๆ</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">เลขที่บัญชี *</label><input type="text" class="form-input" id="fAccNum"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทบัญชี</label>
+              <select class="form-select" id="fAccType"><option value="Savings">ออมทรัพย์</option><option value="Current">กระแสรายวัน</option><option value="Fixed">ฝากประจำ</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">สกุลเงิน</label><input type="text" class="form-input" id="fCurrency" value="THB"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">สาขา</label><input type="text" class="form-input" id="fBranch"></div>
+            <div class="form-group"><label class="form-label">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      selectedAccount: null,
+      async init() {
+        if (!Layout.init('bank')) return;
+        Layout.setTitle('บัญชีธนาคาร');
+        await this.loadAccounts();
+      },
+      async loadAccounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBankAccounts();
+          const accounts = res.data?.items || res.data || [];
+          const container = document.getElementById('bankCards');
+          if (!accounts.length) {
+            container.innerHTML = '<div class="card text-center" style="padding:40px;grid-column:1/-1"><p class="text-gray-500">ยังไม่มีบัญชีธนาคาร</p><button class="btn btn-primary" style="margin-top:12px" onclick="Page.openCreate()">+ เพิ่มบัญชี</button></div>';
+            return;
+          }
+          container.innerHTML = accounts.map(a => `
+            <div class="card" style="cursor:pointer;transition:all .2s;${this.selectedAccount?.id === a.id ? 'border-color:var(--primary);box-shadow:var(--shadow-md)' : ''}" onclick="Page.selectAccount('${a.id}','${a.accountName}')">
+              <div class="flex items-center justify-between" style="margin-bottom:12px">
+                <div class="font-semibold">${a.accountName}</div>
+                ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}
+              </div>
+              <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
+              <div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'}</div>
+            </div>
+          `).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async selectAccount(id, name) {
+        this.selectedAccount = { id, name };
+        document.getElementById('transSection').style.display = 'block';
+        document.getElementById('transTitle').textContent = `รายการเคลื่อนไหว - ${name}`;
+        await this.loadAccounts(); // refresh highlight
+        await this.loadTransactions();
+      },
+      async loadTransactions() {
+        if (!this.selectedAccount) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getTransactions(this.selectedAccount.id, '?pageSize=50');
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('transBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีรายการ</td></tr>'; return; }
+          const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+          tbody.innerHTML = items.map(t => `<tr>
+            <td>${Layout.date(t.transactionDate)}</td>
+            <td><span class="badge ${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
+            <td class="text-right ${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? 'text-success' : 'text-danger'} font-medium">${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? '+' : '-'}${Layout.money(t.amount)}</td>
+            <td class="text-right">${Layout.money(t.balanceAfter)}</td>
+            <td>${t.description || t.payee || '-'}</td>
+            <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async autoMatch() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.autoMatch(this.selectedAccount.id);
+          Layout.toast('จับคู่อัตโนมัติสำเร็จ');
+          await this.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() { Layout.openModal('formModal'); },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createBankAccount({
+            accountName: document.getElementById('fName').value,
+            bankName: document.getElementById('fBank').value,
+            accountNumber: document.getElementById('fAccNum').value,
+            branchName: document.getElementById('fBranch').value || null,
+            accountType: document.getElementById('fAccType').value,
+            currency: document.getElementById('fCurrency').value || 'THB',
+            openingBalance: parseFloat(document.getElementById('fOpening').value) || 0,
+          });
+          Layout.closeModal('formModal');
+          Layout.toast('เพิ่มบัญชีธนาคารสำเร็จ');
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

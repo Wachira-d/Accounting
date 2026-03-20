@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สมัครสมาชิก - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-left">
+      <div>
+        <a href="/" style="font-size:24px;font-weight:800;margin-bottom:48px;display:block">AcctPlatform</a>
+        <h2>เริ่มต้นใช้งานฟรี!</h2>
+        <p>ทดลองใช้งานเต็มรูปแบบ 14 วัน ไม่ต้องใช้บัตรเครดิต</p>
+        <ul class="features-list">
+          <li>✓ ทดลองใช้ฟรี 14 วัน</li>
+          <li>✓ ไม่ต้องผูกบัตรเครดิต</li>
+          <li>✓ เข้าถึงทุกฟีเจอร์</li>
+          <li>✓ ข้อมูลตัวอย่างพร้อมใช้</li>
+          <li>✓ ยกเลิกได้ทุกเมื่อ</li>
+        </ul>
+      </div>
+    </div>
+    <div class="auth-right">
+      <div class="auth-form">
+        <h1>สมัครสมาชิก</h1>
+        <p class="subtitle">กรอกข้อมูลเพื่อเริ่มต้นใช้งาน</p>
+
+        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px"></div>
+
+        <form onsubmit="handleRegister(event)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label class="form-label">ชื่อ</label>
+              <input type="text" id="firstName" class="form-input" placeholder="ชื่อ" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">นามสกุล</label>
+              <input type="text" id="lastName" class="form-input" placeholder="นามสกุล" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">อีเมล</label>
+            <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ชื่อบริษัท</label>
+            <input type="text" id="companyName" class="form-input" placeholder="ชื่อบริษัทหรือกิจการ" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">รหัสผ่าน</label>
+            <input type="password" id="password" class="form-input" placeholder="อย่างน้อย 8 ตัวอักษร" required minlength="8">
+          </div>
+          <div class="form-group">
+            <label class="form-label">ยืนยันรหัสผ่าน</label>
+            <input type="password" id="confirmPassword" class="form-input" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8">
+          </div>
+          <div style="margin-bottom:24px">
+            <label class="form-checkbox">
+              <input type="checkbox" id="agreeTerms" required>
+              <span style="font-size:14px;color:var(--gray-600)">ยอมรับ <a href="#" style="color:var(--primary)">ข้อกำหนดการใช้งาน</a> และ <a href="#" style="color:var(--primary)">นโยบายความเป็นส่วนตัว</a></span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary w-full btn-lg" id="registerBtn">
+            สมัครสมาชิกฟรี
+          </button>
+        </form>
+
+        <div class="auth-divider">หรือ</div>
+
+        <p style="text-align:center;font-size:14px;color:var(--gray-600)">
+          มีบัญชีอยู่แล้ว? <a href="/login.html" style="color:var(--primary);font-weight:600">เข้าสู่ระบบ</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    async function handleRegister(e) {
+      e.preventDefault();
+      const btn = document.getElementById('registerBtn');
+      const errEl = document.getElementById('errorMsg');
+      errEl.classList.add('hidden');
+
+      const password = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+
+      if (password !== confirmPassword) {
+        errEl.textContent = 'รหัสผ่านไม่ตรงกัน';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'กำลังสมัครสมาชิก...';
+
+      try {
+        const res = await API.register({
+          firstName: document.getElementById('firstName').value,
+          lastName: document.getElementById('lastName').value,
+          email: document.getElementById('email').value,
+          password: password,
+          companyName: document.getElementById('companyName').value
+        });
+
+        if (res.success && res.data) {
+          const token = res.data.accessToken || res.data.token;
+          localStorage.setItem('token', token);
+          localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
+          API.token = token;
+          window.location.href = '/app.html';
+        } else {
+          throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
+        }
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'สมัครสมาชิกฟรี';
+      }
+    }
+
+    if (localStorage.getItem('token')) {
+      window.location.href = '/app.html';
+    }
+  </script>
+</body>
+</html>

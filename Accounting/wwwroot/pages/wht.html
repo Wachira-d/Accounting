@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>หนังสือรับรองหัก ณ ที่จ่าย - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">หนังสือรับรองหัก ณ ที่จ่าย</h2><p class="page-subtitle">ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ ออกหนังสือรับรอง</button>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>เลขที่</th><th>ผู้ถูกหัก</th><th>แบบ</th><th>ปี/เดือน</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">ออกหนังสือรับรองหัก ณ ที่จ่าย</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ผู้ถูกหักภาษี (ผู้ติดต่อ) *</label>
+            <select class="form-select" id="fContact"><option value="">เลือกผู้ติดต่อ</option></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">แบบ *</label>
+              <select class="form-select" id="fFormType"><option value="PND3">ภ.ง.ด.3</option><option value="PND53">ภ.ง.ด.53</option><option value="PND1">ภ.ง.ด.1</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="fCertType"><option value="Withhold">หัก ณ ที่จ่าย</option><option value="PayAlways">ออกให้ตลอดไป</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ปีภาษี *</label><input type="number" class="form-input" id="fYear" value="2026"></div>
+            <div class="form-group"><label class="form-label">เดือนภาษี *</label><input type="number" class="form-input" id="fMonth" min="1" max="12"></div>
+          </div>
+          <h4 class="text-sm font-semibold" style="margin:16px 0 8px">รายการเงินได้</h4>
+          <div class="table-container"><table class="table">
+            <thead><tr><th>ประเภทเงินได้</th><th>วันจ่าย</th><th class="text-right">เงินได้</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th><th></th></tr></thead>
+            <tbody id="linesBody"></tbody>
+          </table></div>
+          <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.addLine()">+ เพิ่มรายการ</button>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('wht')) return;
+        Layout.setTitle('หนังสือรับรองหัก ณ ที่จ่าย');
+        const api = Layout.api(); if (!api) return;
+        try { const r = await api.getContacts('?pageSize=500'); const cs = r.data?.items || r.data || [];
+          const sel = document.getElementById('fContact'); cs.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.name}</option>`; }); } catch(e){}
+        await this.load();
+      },
+      async load() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.get(`/api/companies/${cid}/withholding-tax-cert`);
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(w => `<tr>
+            <td class="font-medium">${w.certificateNumber}</td>
+            <td>${w.payeeName}</td>
+            <td>${w.taxFormName || w.taxFormType}</td>
+            <td>${w.taxYear}/${w.taxMonth}</td>
+            <td class="text-right">${Layout.money(w.totalIncomeAmount)}</td>
+            <td class="text-right font-semibold">${Layout.money(w.totalTaxAmount)}</td>
+            <td>${Layout.statusBadge(w.status)}</td>
+            <td><button class="btn btn-sm btn-ghost">ดู</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      addLine() {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><select class="form-select" data-f="code" style="font-size:12px"><option value="1">40(1) เงินเดือน</option><option value="2">40(2) รับจ้าง</option><option value="3">40(3) ค่าลิขสิทธิ์</option><option value="5">40(5) ค่าเช่า</option><option value="6">40(6) วิชาชีพ</option><option value="8">40(8) อื่นๆ</option></select></td>
+          <td><input type="date" class="form-input" data-f="date" style="font-size:12px"></td>
+          <td><input type="number" class="form-input text-right" data-f="income" step="0.01" style="font-size:12px"></td>
+          <td><input type="number" class="form-input text-right" data-f="rate" value="3" step="0.01" style="font-size:12px;width:60px"></td>
+          <td><input type="number" class="form-input text-right" data-f="tax" step="0.01" style="font-size:12px" readonly></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove()">✕</button></td>`;
+        row.querySelector('[data-f="income"]').addEventListener('input', () => {
+          const inc = parseFloat(row.querySelector('[data-f="income"]').value) || 0;
+          const rate = parseFloat(row.querySelector('[data-f="rate"]').value) || 0;
+          row.querySelector('[data-f="tax"]').value = (inc * rate / 100).toFixed(2);
+        });
+        row.querySelector('[data-f="rate"]').addEventListener('input', () => {
+          const inc = parseFloat(row.querySelector('[data-f="income"]').value) || 0;
+          const rate = parseFloat(row.querySelector('[data-f="rate"]').value) || 0;
+          row.querySelector('[data-f="tax"]').value = (inc * rate / 100).toFixed(2);
+        });
+        document.getElementById('linesBody').appendChild(row);
+      },
+      openCreate() {
+        document.getElementById('linesBody').innerHTML = '';
+        this.addLine();
+        document.getElementById('fMonth').value = new Date().getMonth() + 1;
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const lines = [];
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          lines.push({
+            incomeTypeCode: row.querySelector('[data-f="code"]').value,
+            incomeDescription: '',
+            paymentDate: row.querySelector('[data-f="date"]').value,
+            incomeAmount: parseFloat(row.querySelector('[data-f="income"]').value) || 0,
+            taxRate: parseFloat(row.querySelector('[data-f="rate"]').value) || 0,
+            taxAmount: parseFloat(row.querySelector('[data-f="tax"]').value) || 0,
+          });
+        });
+        try {
+          await API.post(`/api/companies/${cid}/withholding-tax-cert`, {
+            payeeContactId: document.getElementById('fContact').value,
+            taxFormType: document.getElementById('fFormType').value,
+            taxYear: parseInt(document.getElementById('fYear').value),
+            taxMonth: parseInt(document.getElementById('fMonth').value),
+            certificateType: document.getElementById('fCertType').value,
+            lines
+          });
+          Layout.closeModal('formModal'); Layout.toast('ออกหนังสือรับรองสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

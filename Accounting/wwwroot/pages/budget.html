@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งบประมาณ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">งบประมาณ</h2><p class="page-subtitle">จัดการงบประมาณและเปรียบเทียบกับยอดจริง</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงบประมาณ</button>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>ชื่อ</th><th>ปีงบประมาณ</th><th class="text-right">งบประมาณรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Compare Modal -->
+    <div class="modal-overlay" id="compareModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title">เปรียบเทียบงบประมาณ vs ยอดจริง</h3><button class="modal-close" onclick="Layout.closeModal('compareModal')">&times;</button></div>
+        <div class="modal-body" id="compareContent"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">สร้างงบประมาณ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่องบประมาณ *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-group"><label class="form-label">ปีงบประมาณ *</label><input type="number" class="form-input" id="fYear" value="2026"></div>
+          <p class="text-sm text-gray-500">หมายเหตุ: เพิ่มรายละเอียดแต่ละบัญชีได้หลังจากสร้าง</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('budget')) return;
+        Layout.setTitle('งบประมาณ');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBudgets();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ไม่มีงบประมาณ</td></tr>'; return; }
+          tbody.innerHTML = items.map(b => `<tr>
+            <td class="font-medium">${b.name}</td>
+            <td>${b.fiscalYear}</td>
+            <td class="text-right font-semibold">${Layout.money(b.totalBudget)}</td>
+            <td>${b.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.compare('${b.id}')">เปรียบเทียบ</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async compare(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBudgetVsActual(id);
+          const d = res.data;
+          document.getElementById('compareContent').innerHTML = `
+            <p class="font-semibold" style="margin-bottom:16px">${d.budgetName} - ปี ${d.fiscalYear}</p>
+            <div class="table-container"><table class="table">
+              <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">งบประมาณ</th><th class="text-right">ยอดจริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th></tr></thead>
+              <tbody>${(d.lines||[]).map(l => `<tr>
+                <td>${l.accountCode}</td><td>${l.accountName}</td>
+                <td class="text-right">${Layout.money(l.budgetAmount)}</td>
+                <td class="text-right">${Layout.money(l.actualAmount)}</td>
+                <td class="text-right ${l.variance < 0 ? 'text-danger' : 'text-success'}">${Layout.money(l.variance)}</td>
+                <td class="text-right">${(l.variancePercent||0).toFixed(1)}%</td>
+              </tr>`).join('')}</tbody>
+            </table></div>`;
+          Layout.openModal('compareModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() { Layout.openModal('formModal'); },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createBudget({ name: document.getElementById('fName').value, fiscalYear: parseInt(document.getElementById('fYear').value), lines: [] });
+          Layout.closeModal('formModal'); Layout.toast('สร้างงบประมาณสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

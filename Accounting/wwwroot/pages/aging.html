@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายงานอายุลูกหนี้/เจ้าหนี้ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">รายงานอายุลูกหนี้/เจ้าหนี้</h2><p class="page-subtitle">วิเคราะห์หนี้ตามอายุ</p></div>
+    </div>
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setType('AccountsReceivable',this)">ลูกหนี้ (AR)</div>
+      <div class="tab" onclick="Page.setType('AccountsPayable',this)">เจ้าหนี้ (AP)</div>
+    </div>
+    <div class="toolbar">
+      <label class="text-sm font-medium">ณ วันที่:</label>
+      <input type="date" class="form-input" id="asOfDate" style="width:180px">
+      <button class="btn btn-primary" onclick="Page.load()">แสดงรายงาน</button>
+    </div>
+
+    <!-- Buckets -->
+    <div class="grid grid-4 gap-4" id="buckets" style="margin-bottom:24px"></div>
+
+    <!-- Details -->
+    <div class="card" id="reportContent">
+      <div class="text-center text-gray-400" style="padding:40px">กดปุ่ม "แสดงรายงาน" เพื่อดูข้อมูล</div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      reportType: 'AccountsReceivable',
+      init() {
+        if (!Layout.init('aging')) return;
+        Layout.setTitle('รายงานอายุลูกหนี้/เจ้าหนี้');
+        document.getElementById('asOfDate').value = new Date().toISOString().split('T')[0];
+      },
+      setType(type, el) {
+        this.reportType = type;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+      },
+      async load() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const date = document.getElementById('asOfDate').value;
+        try {
+          const res = await API.get(`/api/companies/${cid}/aging?reportType=${this.reportType}&asOfDate=${date}`);
+          const d = res.data;
+
+          // Buckets
+          const buckets = d.buckets || [];
+          document.getElementById('buckets').innerHTML = buckets.map(b => `
+            <div class="kpi-card">
+              <div class="kpi-label">${b.label}</div>
+              <div class="kpi-value">${Layout.money(b.totalAmount)}</div>
+              <div class="text-xs text-gray-400">${b.documentCount} เอกสาร</div>
+            </div>
+          `).join('');
+
+          // Totals
+          const t = d.totals || {};
+          const content = document.getElementById('reportContent');
+
+          // Details
+          const details = d.details || [];
+          content.innerHTML = `
+            <div class="card-header"><h3 class="card-title">${this.reportType === 'AccountsReceivable' ? 'ลูกหนี้' : 'เจ้าหนี้'} - รายละเอียด</h3></div>
+            <div class="table-container" style="border:none">
+              <table class="table">
+                <thead><tr><th>ผู้ติดต่อ</th><th class="text-right">ปัจจุบัน</th><th class="text-right">1-30 วัน</th><th class="text-right">31-60 วัน</th><th class="text-right">61-90 วัน</th><th class="text-right">>90 วัน</th><th class="text-right font-bold">รวม</th></tr></thead>
+                <tbody>${details.map(c => `<tr>
+                  <td class="font-medium">${c.contactName}</td>
+                  <td class="text-right">${Layout.money(c.current)}</td>
+                  <td class="text-right">${Layout.money(c.days1To30)}</td>
+                  <td class="text-right">${Layout.money(c.days31To60)}</td>
+                  <td class="text-right ${c.days61To90 > 0 ? 'text-warning' : ''}">${Layout.money(c.days61To90)}</td>
+                  <td class="text-right ${c.over90Days > 0 ? 'text-danger font-semibold' : ''}">${Layout.money(c.over90Days)}</td>
+                  <td class="text-right font-bold">${Layout.money(c.totalBalance)}</td>
+                </tr>`).join('')}</tbody>
+                <tfoot><tr style="background:var(--gray-100)">
+                  <td class="font-bold">รวมทั้งสิ้น</td>
+                  <td class="text-right font-bold">${Layout.money(t.current)}</td>
+                  <td class="text-right font-bold">${Layout.money(t.days1To30)}</td>
+                  <td class="text-right font-bold">${Layout.money(t.days31To60)}</td>
+                  <td class="text-right font-bold">${Layout.money(t.days61To90)}</td>
+                  <td class="text-right font-bold">${Layout.money(t.over90Days)}</td>
+                  <td class="text-right font-bold">${Layout.money(t.grandTotal)}</td>
+                </tr></tfoot>
+              </table>
+            </div>`;
+        } catch (e) {
+          document.getElementById('reportContent').innerHTML = `<div class="text-center text-danger" style="padding:40px">${e.message}</div>`;
+        }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

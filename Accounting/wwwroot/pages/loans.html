@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สินเชื่อ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สินเชื่อ</h2><p class="page-subtitle">จัดการสินเชื่อและตารางผ่อนชำระ</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินเชื่อ</button>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>เลขที่</th><th>ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th>สถานะ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มสินเชื่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เลขที่สินเชื่อ *</label><input type="text" class="form-input" id="fNum"></div>
+            <div class="form-group"><label class="form-label">ประเภท</label>
+              <select class="form-select" id="fType"><option value="BankLoan">สินเชื่อธนาคาร</option><option value="Mortgage">จำนอง</option><option value="LineOfCredit">วงเงินเบิกเกินบัญชี</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ผู้ให้กู้ *</label><input type="text" class="form-input" id="fLender"></div>
+            <div class="form-group"><label class="form-label">เงินต้น *</label><input type="number" class="form-input" id="fPrincipal" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อัตราดอกเบี้ย (%) *</label><input type="number" class="form-input" id="fRate" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ระยะเวลา (เดือน) *</label><input type="number" class="form-input" id="fTerm"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
+            <div class="form-group"><label class="form-label">วันครบกำหนด *</label><input type="date" class="form-input" id="fMaturity"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ความถี่ชำระ</label>
+            <select class="form-select" id="fFreq"><option value="Monthly">รายเดือน</option><option value="Quarterly">รายไตรมาส</option></select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('loans')) return;
+        Layout.setTitle('สินเชื่อ');
+        await this.load();
+      },
+      async load() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.get(`/api/companies/${cid}/loans`);
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีสินเชื่อ</td></tr>'; return; }
+          tbody.innerHTML = items.map(l => `<tr>
+            <td class="font-medium">${l.loanNumber}</td>
+            <td>${l.loanType}</td>
+            <td>${l.lenderName}</td>
+            <td class="text-right">${Layout.money(l.principalAmount)}</td>
+            <td class="text-right">${l.interestRate}%</td>
+            <td class="text-right font-semibold">${Layout.money(l.outstandingBalance)}</td>
+            <td>${Layout.date(l.maturityDate)}</td>
+            <td>${Layout.statusBadge(l.status)}</td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() { Layout.openModal('formModal'); },
+      async save() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          await API.post(`/api/companies/${cid}/loans`, {
+            loanNumber: document.getElementById('fNum').value,
+            loanType: document.getElementById('fType').value,
+            lenderName: document.getElementById('fLender').value,
+            principalAmount: parseFloat(document.getElementById('fPrincipal').value),
+            interestRate: parseFloat(document.getElementById('fRate').value),
+            interestType: 'Fixed',
+            termMonths: parseInt(document.getElementById('fTerm').value),
+            startDate: document.getElementById('fStart').value,
+            maturityDate: document.getElementById('fMaturity').value,
+            repaymentFrequency: document.getElementById('fFreq').value,
+          });
+          Layout.closeModal('formModal'); Layout.toast('เพิ่มสินเชื่อสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

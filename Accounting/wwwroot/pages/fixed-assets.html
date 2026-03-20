@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สินทรัพย์ถาวร - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สินทรัพย์ถาวร</h2><p class="page-subtitle">จัดการสินทรัพย์และค่าเสื่อมราคา</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินทรัพย์</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Active">ใช้งาน</option>
+        <option value="FullyDepreciated">หมดค่าเสื่อม</option>
+        <option value="Disposed">จำหน่าย</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>รหัส</th><th>ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">มูลค่าสุทธิ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มสินทรัพย์ถาวร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสสินทรัพย์ *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">หมวดหมู่</label><input type="text" class="form-input" id="fCategory" placeholder="เช่น อุปกรณ์สำนักงาน"></div>
+            <div class="form-group"><label class="form-label">ที่ตั้ง</label><input type="text" class="form-input" id="fLocation"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ซื้อ *</label><input type="date" class="form-input" id="fPurchaseDate"></div>
+            <div class="form-group"><label class="form-label">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
+          </div>
+          <div class="form-group"><label class="form-label">วิธีคิดค่าเสื่อม</label>
+            <select class="form-select" id="fMethod">
+              <option value="StraightLine">เส้นตรง (Straight Line)</option>
+              <option value="DecliningBalance">ยอดลดลง (Declining Balance)</option>
+              <option value="DoubleDecliningBalance">ยอดลดลงทวีคูณ</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเลขเครื่อง</label><input type="text" class="form-input" id="fSerial"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      page: 1,
+      async init() {
+        if (!Layout.init('fixed-assets')) return;
+        Layout.setTitle('สินทรัพย์ถาวร');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value;
+        const status = document.getElementById('statusFilter').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (status) q += `&status=${status}`;
+        try {
+          const res = await api.getAssets(q);
+          const data = res.data; const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(a => `<tr>
+            <td class="font-medium">${a.assetCode}</td>
+            <td>${a.name}</td>
+            <td>${a.category || '-'}</td>
+            <td>${Layout.date(a.purchaseDate)}</td>
+            <td class="text-right">${Layout.money(a.purchaseCost)}</td>
+            <td class="text-right">${Layout.money(a.accumulatedDepreciation)}</td>
+            <td class="text-right font-semibold">${Layout.money(a.netBookValue)}</td>
+            <td>${Layout.statusBadge(a.status)}</td>
+            <td><button class="btn btn-sm btn-ghost">ดู</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() {
+        document.getElementById('fPurchaseDate').value = new Date().toISOString().split('T')[0];
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createAsset({
+            assetCode: document.getElementById('fCode').value,
+            name: document.getElementById('fName').value,
+            category: document.getElementById('fCategory').value || null,
+            location: document.getElementById('fLocation').value || null,
+            serialNumber: document.getElementById('fSerial').value || null,
+            purchaseDate: document.getElementById('fPurchaseDate').value,
+            purchaseCost: parseFloat(document.getElementById('fCost').value),
+            salvageValue: parseFloat(document.getElementById('fSalvage').value) || 0,
+            usefulLifeMonths: parseInt(document.getElementById('fLife').value),
+            depreciationMethod: document.getElementById('fMethod').value,
+          });
+          Layout.closeModal('formModal'); Layout.toast('เพิ่มสินทรัพย์สำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

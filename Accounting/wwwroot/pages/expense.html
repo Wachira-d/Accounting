@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เบิกค่าใช้จ่าย - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">เบิกค่าใช้จ่าย</h2><p class="page-subtitle">จัดการใบเบิกค่าใช้จ่ายพนักงาน</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างใบเบิก</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Draft">ร่าง</option>
+        <option value="Submitted">ส่งแล้ว</option>
+        <option value="Approved">อนุมัติ</option>
+        <option value="Rejected">ปฏิเสธ</option>
+        <option value="Paid">จ่ายแล้ว</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>เลขที่</th><th>หัวข้อ</th><th>วันที่</th><th>ผู้เบิก</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:750px">
+        <div class="modal-header"><h3 class="modal-title">สร้างใบเบิกค่าใช้จ่าย</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">หัวข้อ *</label><input type="text" class="form-input" id="fTitle"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
+            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
+          </div>
+          <div style="margin-top:16px">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <label class="form-label" style="margin:0">รายการ</label>
+              <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่ม</button>
+            </div>
+            <div class="table-container"><table class="table">
+              <thead><tr><th>รายละเอียด</th><th style="width:120px">จำนวนเงิน</th><th style="width:80px">VAT%</th><th style="width:80px">WHT%</th><th style="width:30px"></th></tr></thead>
+              <tbody id="linesBody"></tbody>
+            </table></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('expense')) return;
+        Layout.setTitle('เบิกค่าใช้จ่าย');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        let q = '?page=1&pageSize=20';
+        if (status) q += `&status=${status}`;
+        try {
+          const res = await api.getExpenseClaims(q);
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(e => `<tr>
+            <td class="font-medium">${e.claimNumber}</td>
+            <td>${e.title}</td>
+            <td>${Layout.date(e.expenseDate)}</td>
+            <td>${e.submittedByName || '-'}</td>
+            <td class="text-right font-semibold">${Layout.money(e.totalAmount)}</td>
+            <td>${Layout.statusBadge(e.status)}</td>
+            <td><button class="btn btn-sm btn-ghost">ดู</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      lineCount: 0,
+      addLine() {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><input type="text" class="form-input" data-f="desc" style="font-size:13px"></td>
+          <td><input type="number" class="form-input text-right" data-f="amt" step="0.01"></td>
+          <td><select class="form-select" data-f="vat" style="font-size:13px"><option value="7">7%</option><option value="0">0%</option></select></td>
+          <td><input type="number" class="form-input text-right" data-f="wht" value="0" step="0.01"></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove()">✕</button></td>`;
+        document.getElementById('linesBody').appendChild(row);
+      },
+      openCreate() {
+        document.getElementById('fTitle').value = '';
+        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fDesc').value = '';
+        document.getElementById('linesBody').innerHTML = '';
+        this.addLine();
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const lines = [];
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          const amt = parseFloat(row.querySelector('[data-f="amt"]').value) || 0;
+          const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
+          const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
+          lines.push({
+            description: row.querySelector('[data-f="desc"]').value,
+            amount: amt, vatRate: vatR, vatAmount: amt * vatR / 100,
+            withholdingTaxRate: whtR, withholdingTaxAmount: amt * whtR / 100,
+            netAmount: amt + amt * vatR / 100 - amt * whtR / 100,
+          });
+        });
+        try {
+          await api.createExpenseClaim({
+            title: document.getElementById('fTitle').value,
+            description: document.getElementById('fDesc').value || null,
+            expenseDate: document.getElementById('fDate').value,
+            lines
+          });
+          Layout.closeModal('formModal'); Layout.toast('สร้างใบเบิกสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

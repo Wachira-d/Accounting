@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สมุดรายวัน - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สมุดรายวัน</h2><p class="page-subtitle">บันทึกรายการทางบัญชี</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Draft">ร่าง</option>
+        <option value="Posted">ผ่านรายการ</option>
+        <option value="Voided">ยกเลิก</option>
+      </select>
+      <input type="date" class="form-input" id="fromDate" style="width:160px" onchange="Page.load()">
+      <span class="text-gray-400">ถึง</span>
+      <input type="date" class="form-input" id="toDate" style="width:160px" onchange="Page.load()">
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>เลขที่</th><th>วันที่</th><th>คำอธิบาย</th><th>อ้างอิง</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="formTitle">บันทึกรายการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
+            <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
+
+          <div style="margin-top:16px">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <label class="form-label" style="margin:0">รายการ</label>
+              <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มบรรทัด</button>
+            </div>
+            <div class="table-container">
+              <table class="table" id="linesTable">
+                <thead><tr><th>บัญชี</th><th style="width:160px">เดบิต</th><th style="width:160px">เครดิต</th><th>คำอธิบาย</th><th style="width:40px"></th></tr></thead>
+                <tbody id="linesBody"></tbody>
+                <tfoot>
+                  <tr style="background:var(--gray-50)">
+                    <td class="font-semibold">รวม</td>
+                    <td class="text-right font-semibold" id="totalDebit">0.00</td>
+                    <td class="text-right font-semibold" id="totalCredit">0.00</td>
+                    <td colspan="2"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div id="balanceWarning" class="text-danger text-sm hidden" style="margin-top:8px">* ยอดเดบิตและเครดิตไม่เท่ากัน</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title">รายละเอียดรายการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer" id="detailActions"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      page: 1, accounts: [],
+      async init() {
+        if (!Layout.init('journals')) return;
+        Layout.setTitle('สมุดรายวัน');
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts();
+          this.accounts = res.data?.items || res.data || [];
+        } catch(e) {}
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (status) q += `&status=${status}`;
+        if (from) q += `&fromDate=${from}`;
+        if (to) q += `&toDate=${to}`;
+        try {
+          const res = await api.getJournals(q);
+          const data = res.data;
+          const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(j => `<tr>
+            <td class="font-medium">${j.entryNumber}</td>
+            <td>${Layout.date(j.entryDate)}</td>
+            <td>${j.description || '-'}</td>
+            <td class="text-gray-500">${j.reference || '-'}</td>
+            <td class="text-right">${Layout.money(j.totalDebit)}</td>
+            <td class="text-right">${Layout.money(j.totalCredit)}</td>
+            <td>${Layout.statusBadge(j.status)}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')">ดู</button></td>
+          </tr>`).join('');
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+      accountSelect(id) {
+        return `<select class="form-select" id="${id}" style="font-size:13px">
+          <option value="">เลือกบัญชี</option>
+          ${this.accounts.map(a => `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('')}
+        </select>`;
+      },
+      lineCount: 0,
+      addLine() {
+        const i = this.lineCount++;
+        const row = document.createElement('tr');
+        row.id = `line_${i}`;
+        row.innerHTML = `
+          <td>${this.accountSelect(`acc_${i}`)}</td>
+          <td><input type="number" class="form-input text-right line-debit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
+          <td><input type="number" class="form-input text-right line-credit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
+          <td><input type="text" class="form-input" id="ldesc_${i}" style="font-size:13px"></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotals()">✕</button></td>
+        `;
+        document.getElementById('linesBody').appendChild(row);
+      },
+      calcTotals() {
+        let d = 0, c = 0;
+        document.querySelectorAll('.line-debit').forEach(el => d += parseFloat(el.value) || 0);
+        document.querySelectorAll('.line-credit').forEach(el => c += parseFloat(el.value) || 0);
+        document.getElementById('totalDebit').textContent = Layout.money(d);
+        document.getElementById('totalCredit').textContent = Layout.money(c);
+        document.getElementById('balanceWarning').classList.toggle('hidden', Math.abs(d - c) < 0.01);
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'บันทึกรายการใหม่';
+        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fRef').value = '';
+        document.getElementById('fDesc').value = '';
+        document.getElementById('linesBody').innerHTML = '';
+        this.lineCount = 0;
+        this.addLine(); this.addLine();
+        this.calcTotals();
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const rows = document.querySelectorAll('#linesBody tr');
+        const lines = [];
+        rows.forEach((row, i) => {
+          const acc = row.querySelector('select')?.value;
+          const debit = parseFloat(row.querySelector('.line-debit')?.value) || 0;
+          const credit = parseFloat(row.querySelector('.line-credit')?.value) || 0;
+          if (acc && (debit > 0 || credit > 0)) {
+            lines.push({ accountId: acc, debitAmount: debit, creditAmount: credit, description: row.querySelector('input[type="text"]')?.value || null });
+          }
+        });
+        if (lines.length < 2) { Layout.toast('ต้องมีอย่างน้อย 2 รายการ', 'error'); return; }
+        try {
+          await api.createJournal({
+            entryDate: document.getElementById('fDate').value,
+            description: document.getElementById('fDesc').value || null,
+            reference: document.getElementById('fRef').value || null,
+            lines
+          });
+          Layout.closeModal('formModal');
+          Layout.toast('บันทึกรายการสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async detail(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getJournal(id);
+          const j = res.data;
+          document.getElementById('detailContent').innerHTML = `
+            <div class="detail-list" style="margin-bottom:20px">
+              <div class="detail-item"><span class="detail-label">เลขที่</span><span class="detail-value">${j.entryNumber}</span></div>
+              <div class="detail-item"><span class="detail-label">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
+              <div class="detail-item"><span class="detail-label">สถานะ</span><span class="detail-value">${Layout.statusBadge(j.status)}</span></div>
+              <div class="detail-item"><span class="detail-label">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
+            </div>
+            <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>
+            <div class="table-container">
+              <table class="table">
+                <thead><tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
+                <tbody>${(j.lines || []).map(l => `<tr>
+                  <td>${l.accountCode}</td><td>${l.accountName}</td>
+                  <td class="text-right">${l.debitAmount > 0 ? Layout.money(l.debitAmount) : ''}</td>
+                  <td class="text-right">${l.creditAmount > 0 ? Layout.money(l.creditAmount) : ''}</td>
+                </tr>`).join('')}</tbody>
+                <tfoot><tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold">รวม</td><td class="text-right font-semibold">${Layout.money(j.totalDebit)}</td><td class="text-right font-semibold">${Layout.money(j.totalCredit)}</td></tr></tfoot>
+              </table>
+            </div>`;
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          if (j.status === 'Draft') {
+            actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.voidEntry('${j.id}')">ยกเลิก</button>`;
+          }
+          document.getElementById('detailActions').innerHTML = actions;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async post(id) {
+        const api = Layout.api(); if (!api) return;
+        try { await api.postJournal(id); Layout.closeModal('detailModal'); Layout.toast('ผ่านรายการสำเร็จ'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async voidEntry(id) {
+        if (!confirm('ต้องการยกเลิกรายการนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.voidJournal(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกรายการสำเร็จ'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>
