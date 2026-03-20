@@ -59,6 +59,7 @@ public class DocumentLine : BaseEntity
     public decimal VatAmount { get; set; }
     public decimal WithholdingTaxRate { get; set; }
     public decimal WithholdingTaxAmount { get; set; }
+    public string? IncomeTypeCode { get; set; }  // รหัสประเภทเงินได้ สำหรับภาษีหัก ณ ที่จ่าย
 
     // Account mapping for auto-posting
     public Guid? AccountId { get; set; }

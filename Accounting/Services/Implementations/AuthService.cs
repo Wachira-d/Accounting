@@ -4,6 +4,7 @@ using Accounting.Models.DTOs.Auth;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace Accounting.Services.Implementations;
 
@@ -11,6 +12,10 @@ public class AuthService : IAuthService
 {
     private readonly AccountingDbContext _db;
     private readonly IConfiguration _config;
+
+    // Account lockout settings
+    private const int MaxFailedAttempts = 5;
+    private const int LockoutMinutes = 15;
 
     public AuthService(AccountingDbContext db, IConfiguration config)
     {
@@ -22,6 +27,8 @@ public class AuthService : IAuthService
     {
         if (await _db.Users.AnyAsync(u => u.Email == request.Email))
             throw new InvalidOperationException("อีเมลนี้ถูกใช้งานแล้ว");
+
+        ValidatePassword(request.Password);
 
         var user = new User
         {
@@ -42,9 +49,35 @@ public class AuthService : IAuthService
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email)
             ?? throw new UnauthorizedAccessException("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
 
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-            throw new UnauthorizedAccessException("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+        // Check account lockout
+        if (user.LockoutEnd.HasValue && user.LockoutEnd > DateTime.UtcNow)
+        {
+            var remaining = (int)(user.LockoutEnd.Value - DateTime.UtcNow).TotalMinutes + 1;
+            throw new UnauthorizedAccessException(
+                $"บัญชีถูกล็อคชั่วคราว กรุณาลองใหม่ในอีก {remaining} นาที");
+        }
 
+        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        {
+            // Increment failed attempts
+            user.FailedLoginAttempts = (user.FailedLoginAttempts ?? 0) + 1;
+
+            if (user.FailedLoginAttempts >= MaxFailedAttempts)
+            {
+                user.LockoutEnd = DateTime.UtcNow.AddMinutes(LockoutMinutes);
+                user.FailedLoginAttempts = 0;
+                await _db.SaveChangesAsync();
+                throw new UnauthorizedAccessException(
+                    $"เข้าสู่ระบบผิดพลาดเกินกำหนด บัญชีถูกล็อค {LockoutMinutes} นาที");
+            }
+
+            await _db.SaveChangesAsync();
+            throw new UnauthorizedAccessException("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+        }
+
+        // Reset failed attempts on successful login
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
         user.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
@@ -68,8 +101,31 @@ public class AuthService : IAuthService
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
             throw new UnauthorizedAccessException("รหัสผ่านเดิมไม่ถูกต้อง");
 
+        ValidatePassword(request.NewPassword);
+
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Password validation: min 8 chars, at least 1 uppercase, 1 lowercase, 1 digit, 1 special char
+    /// </summary>
+    private static void ValidatePassword(string password)
+    {
+        if (string.IsNullOrEmpty(password) || password.Length < 8)
+            throw new InvalidOperationException("รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร");
+
+        if (!Regex.IsMatch(password, @"[A-Z]"))
+            throw new InvalidOperationException("รหัสผ่านต้องมีตัวอักษรพิมพ์ใหญ่อย่างน้อย 1 ตัว");
+
+        if (!Regex.IsMatch(password, @"[a-z]"))
+            throw new InvalidOperationException("รหัสผ่านต้องมีตัวอักษรพิมพ์เล็กอย่างน้อย 1 ตัว");
+
+        if (!Regex.IsMatch(password, @"[0-9]"))
+            throw new InvalidOperationException("รหัสผ่านต้องมีตัวเลขอย่างน้อย 1 ตัว");
+
+        if (!Regex.IsMatch(password, @"[!@#$%^&*()_+\-=\[\]{};':""\\|,.<>\/?]"))
+            throw new InvalidOperationException("รหัสผ่านต้องมีอักขระพิเศษอย่างน้อย 1 ตัว");
     }
 
     private LoginResponse GenerateLoginResponse(User user)

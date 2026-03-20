@@ -10,16 +10,19 @@ namespace Accounting.Services.Implementations;
 public class NotificationService : INotificationService
 {
     private readonly AccountingDbContext _db;
+    private readonly ILogger<NotificationService> _logger;
 
-    public NotificationService(AccountingDbContext db)
+    public NotificationService(AccountingDbContext db, ILogger<NotificationService> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task SendAsync(Guid userId, Guid? companyId, NotificationType type,
         string title, string message, string? actionUrl = null,
         string? entityType = null, Guid? entityId = null)
     {
+        // InApp notification (always)
         var notification = new Notification
         {
             UserId = userId,
@@ -34,6 +37,16 @@ public class NotificationService : INotificationService
         };
 
         _db.Set<Notification>().Add(notification);
+
+        // Check user notification preferences
+        var preferences = await GetUserPreferencesAsync(userId);
+
+        // Email notification
+        if (preferences.EmailEnabled && ShouldSendEmail(type, preferences))
+        {
+            await QueueEmailNotificationAsync(userId, companyId, type, title, message, actionUrl);
+        }
+
         await _db.SaveChangesAsync();
     }
 
@@ -84,5 +97,78 @@ public class NotificationService : INotificationService
         }
 
         await _db.SaveChangesAsync();
+    }
+
+    // ===== Email Notification Support =====
+
+    private async Task QueueEmailNotificationAsync(Guid userId, Guid? companyId,
+        NotificationType type, string title, string message, string? actionUrl)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user?.Email == null) return;
+
+        // Create email notification record (to be processed by background job)
+        var emailNotification = new Notification
+        {
+            UserId = userId,
+            CompanyId = companyId,
+            Type = type,
+            Channel = NotificationChannel.Email,
+            Title = title,
+            Message = message,
+            ActionUrl = actionUrl,
+            IsRead = false // Unprocessed
+        };
+
+        _db.Set<Notification>().Add(emailNotification);
+        _logger.LogInformation("Email notification queued for user {UserId}: {Title}", userId, title);
+    }
+
+    private async Task<NotificationPreferences> GetUserPreferencesAsync(Guid userId)
+    {
+        // Check if user has custom preferences in settings
+        var setting = await _db.Set<CompanySetting>()
+            .FirstOrDefaultAsync(s => s.CreatedBy == userId.ToString() && s.SettingKey == "notification_preferences");
+
+        if (setting?.SettingValue != null)
+        {
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<NotificationPreferences>(setting.SettingValue)
+                    ?? NotificationPreferences.Default;
+            }
+            catch
+            {
+                return NotificationPreferences.Default;
+            }
+        }
+
+        return NotificationPreferences.Default;
+    }
+
+    private static bool ShouldSendEmail(NotificationType type, NotificationPreferences prefs)
+    {
+        // High-priority notifications always send email
+        return type switch
+        {
+            NotificationType.ApprovalRequired => prefs.EmailOnApproval,
+            NotificationType.PaymentReceived => prefs.EmailOnPayment,
+            NotificationType.InvoiceDue => prefs.EmailOnOverdue,
+            NotificationType.SecurityAlert => true, // Always
+            NotificationType.System => true, // Always
+            _ => false
+        };
+    }
+
+    private record NotificationPreferences(
+        bool EmailEnabled, bool EmailOnApproval, bool EmailOnPayment,
+        bool EmailOnOverdue, bool EmailDigest)
+    {
+        public static readonly NotificationPreferences Default = new(
+            EmailEnabled: true,
+            EmailOnApproval: true,
+            EmailOnPayment: true,
+            EmailOnOverdue: true,
+            EmailDigest: false);
     }
 }

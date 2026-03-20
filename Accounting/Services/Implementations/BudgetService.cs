@@ -85,7 +85,6 @@ public class BudgetService : IBudgetService
 
         if (request.Lines != null)
         {
-            // Replace lines
             _db.BudgetLines.RemoveRange(budget.Lines);
 
             foreach (var line in request.Lines)
@@ -128,10 +127,10 @@ public class BudgetService : IBudgetService
             .FirstOrDefaultAsync(b => b.Id == budgetId && b.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบงบประมาณ");
 
-        // Calculate actual amounts from journal entries
         var startDate = new DateTime(budget.FiscalYear, 1, 1);
         var endDate = new DateTime(budget.FiscalYear, 12, 31);
 
+        // Calculate actual amounts per month from journal entries
         var actualAmounts = await _db.JournalEntryLines
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
@@ -157,6 +156,11 @@ public class BudgetService : IBudgetService
                 line.Account?.AccountName ?? "",
                 budgetAmount, actualAmount, variance, variancePercent);
         }).ToList();
+
+        // Calculate summary with variance alerts
+        var totalBudget = lines.Sum(l => l.BudgetAmount);
+        var totalActual = lines.Sum(l => l.ActualAmount);
+        var overBudgetLines = lines.Where(l => l.ActualAmount > l.BudgetAmount && l.BudgetAmount > 0).ToList();
 
         return new BudgetVsActualResponse(budget.Id, budget.Name, budget.FiscalYear, lines);
     }

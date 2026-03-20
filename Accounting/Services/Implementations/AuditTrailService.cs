@@ -1,9 +1,12 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Audit;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using System.Text.Json;
 
 namespace Accounting.Services.Implementations;
 
@@ -94,7 +97,82 @@ public class AuditTrailService : IAuditTrailService
         return logs.Select(MapToResponse).ToList();
     }
 
-    private static AuditLogResponse MapToResponse(Models.Entities.AuditLog a) => new(
+    // ===== Static helper for SaveChanges audit logging =====
+
+    /// <summary>
+    /// Captures audit log entries from EF Core ChangeTracker before SaveChanges.
+    /// Call this from DbContext.SaveChangesAsync() override.
+    /// </summary>
+    public static List<AuditLog> CaptureAuditEntries(ChangeTracker changeTracker, Guid? userId, string? userEmail, string? ipAddress)
+    {
+        var auditEntries = new List<AuditLog>();
+
+        foreach (var entry in changeTracker.Entries()
+            .Where(e => e.Entity is TenantEntity or BaseEntity
+                && e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            var entityType = entry.Entity.GetType().Name;
+            var entityId = entry.Property("Id").CurrentValue?.ToString() ?? "";
+
+            // Skip audit log entities to prevent infinite recursion
+            if (entityType == "AuditLog" || entityType == "Notification") continue;
+
+            Guid? companyId = null;
+            if (entry.Entity is TenantEntity tenantEntity)
+            {
+                companyId = tenantEntity.CompanyId;
+            }
+
+            var auditLog = new AuditLog
+            {
+                CompanyId = companyId ?? Guid.Empty,
+                UserId = userId,
+                UserEmail = userEmail ?? "",
+                Action = entry.State switch
+                {
+                    EntityState.Added => AuditAction.Create,
+                    EntityState.Modified => AuditAction.Update,
+                    EntityState.Deleted => AuditAction.Delete,
+                    _ => AuditAction.Read
+                },
+                EntityType = entityType,
+                EntityId = entityId,
+                IpAddress = ipAddress,
+                Timestamp = DateTime.UtcNow
+            };
+
+            // Capture old and new values for updates
+            if (entry.State == EntityState.Modified)
+            {
+                var oldValues = new Dictionary<string, object?>();
+                var newValues = new Dictionary<string, object?>();
+
+                foreach (var prop in entry.Properties.Where(p => p.IsModified))
+                {
+                    oldValues[prop.Metadata.Name] = prop.OriginalValue;
+                    newValues[prop.Metadata.Name] = prop.CurrentValue;
+                }
+
+                auditLog.OldValues = JsonSerializer.Serialize(oldValues);
+                auditLog.NewValues = JsonSerializer.Serialize(newValues);
+            }
+            else if (entry.State == EntityState.Added)
+            {
+                var newValues = new Dictionary<string, object?>();
+                foreach (var prop in entry.Properties)
+                {
+                    newValues[prop.Metadata.Name] = prop.CurrentValue;
+                }
+                auditLog.NewValues = JsonSerializer.Serialize(newValues);
+            }
+
+            auditEntries.Add(auditLog);
+        }
+
+        return auditEntries;
+    }
+
+    private static AuditLogResponse MapToResponse(AuditLog a) => new(
         a.Id, a.CompanyId, a.UserId, a.UserEmail, a.Action, a.EntityType,
         a.EntityId, a.OldValues, a.NewValues, a.IpAddress, a.UserAgent, a.Timestamp);
 }

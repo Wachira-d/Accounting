@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -24,7 +25,11 @@ public class AiController : ControllerBase
 
     [HttpPost("categorize/{resultId:guid}/accept")]
     public async Task<ActionResult<ApiResponse<bool>>> Accept(Guid companyId, Guid resultId)
-    { await _service.AcceptCategorizationAsync(companyId, resultId, Guid.Empty); return Ok(new ApiResponse<bool>(true, true)); }
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _service.AcceptCategorizationAsync(companyId, resultId, userId);
+        return Ok(new ApiResponse<bool>(true, true));
+    }
 
     // Rules
     [HttpPost("rules")]

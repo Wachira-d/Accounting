@@ -109,6 +109,95 @@ public class FixedAssetService : IFixedAssetService
         asset.DisposalDate = request.DisposalDate;
         asset.DisposalAmount = request.DisposalAmount;
 
+        // Calculate gain/loss on disposal
+        var gainLoss = request.DisposalAmount - asset.NetBookValue;
+
+        // Auto-create journal entry for disposal if accounts are configured
+        if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
+        {
+            var entryNumber = $"DEP-DISP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
+
+            var journalEntry = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = request.DisposalDate,
+                Description = $"จำหน่ายสินทรัพย์: {asset.Name} ({asset.AssetCode})",
+                Status = JournalEntryStatus.Draft,
+                CreatedBy = performedBy
+            };
+
+            // Debit: Accumulated Depreciation (remove accumulated)
+            journalEntry.Lines.Add(new JournalEntryLine
+            {
+                AccountId = asset.AccumulatedDepreciationAccountId.Value,
+                DebitAmount = asset.AccumulatedDepreciation,
+                CreditAmount = 0,
+                Description = $"ค่าเสื่อมราคาสะสม - {asset.Name}"
+            });
+
+            // Credit: Asset account (remove asset at cost)
+            journalEntry.Lines.Add(new JournalEntryLine
+            {
+                AccountId = asset.AssetAccountId.Value,
+                DebitAmount = 0,
+                CreditAmount = asset.PurchaseCost,
+                Description = $"ตัดสินทรัพย์ - {asset.Name}"
+            });
+
+            // If disposal amount > 0, debit Bank/Cash
+            if (request.DisposalAmount > 0)
+            {
+                // Use the first active bank account's linked account or a default
+                var bankAccount = await _db.Set<BankAccount>()
+                    .Where(b => b.CompanyId == companyId && b.IsActive && b.LinkedAccountId.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (bankAccount?.LinkedAccountId != null)
+                {
+                    journalEntry.Lines.Add(new JournalEntryLine
+                    {
+                        AccountId = bankAccount.LinkedAccountId.Value,
+                        DebitAmount = request.DisposalAmount,
+                        CreditAmount = 0,
+                        Description = $"รับเงินจากจำหน่ายสินทรัพย์ - {asset.Name}"
+                    });
+                }
+            }
+
+            // Gain or loss balancing entry
+            if (gainLoss != 0)
+            {
+                // For now, use the depreciation expense account as a proxy for gain/loss
+                var balancingAccountId = asset.DepreciationExpenseAccountId ?? asset.AssetAccountId!.Value;
+                if (gainLoss > 0)
+                {
+                    journalEntry.Lines.Add(new JournalEntryLine
+                    {
+                        AccountId = balancingAccountId,
+                        DebitAmount = 0,
+                        CreditAmount = gainLoss,
+                        Description = $"กำไรจากการจำหน่ายสินทรัพย์ - {asset.Name}"
+                    });
+                }
+                else
+                {
+                    journalEntry.Lines.Add(new JournalEntryLine
+                    {
+                        AccountId = balancingAccountId,
+                        DebitAmount = Math.Abs(gainLoss),
+                        CreditAmount = 0,
+                        Description = $"ขาดทุนจากการจำหน่ายสินทรัพย์ - {asset.Name}"
+                    });
+                }
+            }
+
+            journalEntry.TotalDebit = journalEntry.Lines.Sum(l => l.DebitAmount);
+            journalEntry.TotalCredit = journalEntry.Lines.Sum(l => l.CreditAmount);
+
+            _db.JournalEntries.Add(journalEntry);
+        }
+
         await _db.SaveChangesAsync();
         return MapToResponse(asset);
     }
@@ -137,13 +226,17 @@ public class FixedAssetService : IFixedAssetService
             .ToListAsync();
 
         var results = new List<AssetDepreciation>();
+        var journalLines = new List<JournalEntryLine>();
 
         foreach (var asset in assets)
         {
-            // Skip if already calculated for this period
             var exists = await _db.AssetDepreciations
                 .AnyAsync(d => d.FixedAssetId == asset.Id && d.Year == request.Year && d.Month == request.Month);
             if (exists) continue;
+
+            // Check if asset purchase date is before this period
+            var periodStart = new DateTime(request.Year, request.Month, 1);
+            if (asset.PurchaseDate > periodStart) continue;
 
             var monthlyDepreciation = asset.DepreciationMethod switch
             {
@@ -182,6 +275,50 @@ public class FixedAssetService : IFixedAssetService
 
             _db.AssetDepreciations.Add(depreciation);
             results.Add(depreciation);
+
+            // Collect journal entry lines for batch posting
+            if (asset.DepreciationExpenseAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
+            {
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = asset.DepreciationExpenseAccountId.Value,
+                    DebitAmount = monthlyDepreciation,
+                    CreditAmount = 0,
+                    Description = $"ค่าเสื่อมราคา {request.Month}/{request.Year} - {asset.Name}"
+                });
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = asset.AccumulatedDepreciationAccountId.Value,
+                    DebitAmount = 0,
+                    CreditAmount = monthlyDepreciation,
+                    Description = $"ค่าเสื่อมราคาสะสม {request.Month}/{request.Year} - {asset.Name}"
+                });
+            }
+        }
+
+        // Create batch journal entry for all depreciation
+        if (journalLines.Count > 0)
+        {
+            var entryNumber = $"DEP-{request.Year}{request.Month:D2}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
+            var journalEntry = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = new DateTime(request.Year, request.Month, DateTime.DaysInMonth(request.Year, request.Month)),
+                Description = $"ค่าเสื่อมราคาประจำเดือน {request.Month}/{request.Year}",
+                Status = JournalEntryStatus.Draft,
+                TotalDebit = journalLines.Sum(l => l.DebitAmount),
+                TotalCredit = journalLines.Sum(l => l.CreditAmount),
+                CreatedBy = performedBy
+            };
+
+            foreach (var line in journalLines)
+            {
+                line.JournalEntryId = journalEntry.Id;
+                journalEntry.Lines.Add(line);
+            }
+
+            _db.JournalEntries.Add(journalEntry);
         }
 
         await _db.SaveChangesAsync();

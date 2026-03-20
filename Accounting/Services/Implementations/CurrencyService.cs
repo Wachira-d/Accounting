@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Models.DTOs.Currency;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,10 +10,12 @@ namespace Accounting.Services.Implementations;
 public class CurrencyService : ICurrencyService
 {
     private readonly AccountingDbContext _db;
+    private readonly ILogger<CurrencyService> _logger;
 
-    public CurrencyService(AccountingDbContext db)
+    public CurrencyService(AccountingDbContext db, ILogger<CurrencyService> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     // ==================== Company Currencies ====================
@@ -111,6 +114,100 @@ public class CurrencyService : ICurrencyService
         return rate != null ? MapRateToResponse(rate) : null;
     }
 
+    // ==================== Currency Conversion ====================
+
+    /// <summary>
+    /// Convert amount from one currency to another using the latest available rate
+    /// </summary>
+    public async Task<decimal> ConvertAsync(Guid companyId, string fromCurrency, string toCurrency, decimal amount, DateTime? asOfDate = null)
+    {
+        if (fromCurrency == toCurrency) return amount;
+
+        var date = asOfDate ?? DateTime.UtcNow;
+
+        // Try direct rate
+        var rate = await _db.CurrencyRates
+            .Where(r => r.CompanyId == companyId
+                && r.FromCurrency == fromCurrency
+                && r.ToCurrency == toCurrency
+                && r.EffectiveDate <= date)
+            .OrderByDescending(r => r.EffectiveDate)
+            .FirstOrDefaultAsync();
+
+        if (rate != null)
+            return amount * rate.MidRate;
+
+        // Try inverse rate
+        var inverseRate = await _db.CurrencyRates
+            .Where(r => r.CompanyId == companyId
+                && r.FromCurrency == toCurrency
+                && r.ToCurrency == fromCurrency
+                && r.EffectiveDate <= date)
+            .OrderByDescending(r => r.EffectiveDate)
+            .FirstOrDefaultAsync();
+
+        if (inverseRate != null && inverseRate.MidRate != 0)
+            return amount / inverseRate.MidRate;
+
+        _logger.LogWarning("No exchange rate found for {From}/{To} as of {Date}", fromCurrency, toCurrency, date);
+        throw new InvalidOperationException($"ไม่พบอัตราแลกเปลี่ยน {fromCurrency}/{toCurrency}");
+    }
+
+    /// <summary>
+    /// Calculate unrealized gain/loss for foreign currency accounts at month-end
+    /// </summary>
+    public async Task<List<UnrealizedGainLossItem>> CalculateUnrealizedGainLossAsync(
+        Guid companyId, string baseCurrency, DateTime asOfDate)
+    {
+        var result = new List<UnrealizedGainLossItem>();
+
+        // Get all foreign currency bank accounts
+        var bankAccounts = await _db.Set<BankAccount>()
+            .Where(b => b.CompanyId == companyId && b.IsActive && !b.IsDeleted
+                && b.Currency != baseCurrency)
+            .ToListAsync();
+
+        foreach (var account in bankAccounts)
+        {
+            var currentRate = await _db.CurrencyRates
+                .Where(r => r.CompanyId == companyId
+                    && r.FromCurrency == account.Currency
+                    && r.ToCurrency == baseCurrency
+                    && r.EffectiveDate <= asOfDate)
+                .OrderByDescending(r => r.EffectiveDate)
+                .FirstOrDefaultAsync();
+
+            if (currentRate == null) continue;
+
+            var revaluedBalance = account.CurrentBalance * currentRate.MidRate;
+
+            // Get previous revaluation or original booking rate balance
+            var previousRate = await _db.CurrencyRates
+                .Where(r => r.CompanyId == companyId
+                    && r.FromCurrency == account.Currency
+                    && r.ToCurrency == baseCurrency
+                    && r.EffectiveDate <= asOfDate.AddMonths(-1))
+                .OrderByDescending(r => r.EffectiveDate)
+                .FirstOrDefaultAsync();
+
+            var previousBalance = previousRate != null
+                ? account.CurrentBalance * previousRate.MidRate
+                : account.CurrentBalance;
+
+            var gainLoss = revaluedBalance - previousBalance;
+
+            if (gainLoss != 0)
+            {
+                result.Add(new UnrealizedGainLossItem(
+                    account.Id, account.AccountName, account.Currency,
+                    account.CurrentBalance, currentRate.MidRate,
+                    revaluedBalance, gainLoss));
+            }
+        }
+
+        return result;
+    }
+
     // ==================== Private Helpers ====================
 
     private static CompanyCurrencyResponse MapCurrencyToResponse(CompanyCurrency c) =>
@@ -120,3 +217,8 @@ public class CurrencyService : ICurrencyService
         new(r.Id, r.FromCurrency, r.ToCurrency, r.EffectiveDate,
             r.BuyRate, r.SellRate, r.MidRate, r.Source, r.CreatedAt);
 }
+
+public record UnrealizedGainLossItem(
+    Guid BankAccountId, string AccountName, string Currency,
+    decimal ForeignBalance, decimal ExchangeRate,
+    decimal BaseAmount, decimal GainLoss);

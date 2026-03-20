@@ -13,6 +13,10 @@ public class User : BaseEntity
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiry { get; set; }
 
+    // Security
+    public int? FailedLoginAttempts { get; set; }
+    public DateTime? LockoutEnd { get; set; }
+
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();
 }

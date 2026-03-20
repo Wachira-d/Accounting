@@ -108,51 +108,52 @@ public class ConsolidationService : IConsolidationService
     {
         var group = await _db.Set<ConsolidationGroup>()
             .Include(g => g.Members).ThenInclude(m => m.Company)
+            .Include(g => g.ParentCompany)
             .FirstOrDefaultAsync(g => g.Id == groupId && !g.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบกลุ่มบริษัท");
 
         var reportData = new Dictionary<string, object>();
+        var minorityInterestData = new Dictionary<string, decimal>();
+        var eliminationData = new List<object>();
 
         foreach (var member in group.Members.Where(m => m.IsActive))
         {
-            var balances = await _db.JournalEntryLines
-                .Include(l => l.JournalEntry)
-                .Include(l => l.Account)
-                .Where(l => l.JournalEntry.CompanyId == member.CompanyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.EntryDate <= asOfDate)
-                .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
-                .Select(g => new
-                {
-                    g.Key.AccountCode,
-                    g.Key.AccountName,
-                    g.Key.AccountType,
-                    Balance = g.Sum(l => l.DebitAmount - l.CreditAmount)
-                })
-                .ToListAsync();
+            var balances = await GetAccountBalances(member.CompanyId, null, asOfDate);
 
-            var multiplier = member.Method == ConsolidationMethod.Full ? 1m
-                : member.Method == ConsolidationMethod.Proportionate ? member.OwnershipPercent / 100m
-                : 0m; // Equity and Cost methods handled differently
+            var (consolidatedBalances, minorityInterest) = ApplyConsolidationMethod(
+                member, balances, asOfDate);
 
-            var companyData = balances.Select(b => new
+            reportData[member.Company.Name] = consolidatedBalances;
+
+            if (minorityInterest != 0)
             {
-                b.AccountCode,
-                b.AccountName,
-                AccountType = b.AccountType.ToString(),
-                ConsolidatedBalance = b.Balance * multiplier
-            }).ToList();
-
-            reportData[member.Company.Name] = companyData;
+                minorityInterestData[member.Company.Name] = minorityInterest;
+            }
         }
 
-        // Save consolidated report
+        // Generate elimination entries
+        var eliminations = await GenerateEliminationEntries(group, asOfDate);
+        if (eliminations.Count > 0)
+        {
+            eliminationData.AddRange(eliminations.Select(e => new
+            {
+                e.Description, e.SourceCompany, e.TargetCompany,
+                e.Amount, e.AccountCode, e.AccountName
+            }));
+        }
+
         var report = new ConsolidationReport
         {
             ConsolidationGroupId = groupId,
             ReportType = "BalanceSheet",
             AsOfDate = asOfDate,
             ReportDataJson = JsonSerializer.Serialize(reportData),
+            EliminationEntriesJson = eliminationData.Count > 0
+                ? JsonSerializer.Serialize(eliminationData)
+                : null,
+            MinorityInterestJson = minorityInterestData.Count > 0
+                ? JsonSerializer.Serialize(minorityInterestData)
+                : null,
             Status = "Completed"
         };
 
@@ -173,6 +174,7 @@ public class ConsolidationService : IConsolidationService
             ?? throw new KeyNotFoundException("ไม่พบกลุ่มบริษัท");
 
         var reportData = new Dictionary<string, object>();
+        var minorityInterestData = new Dictionary<string, decimal>();
 
         foreach (var member in group.Members.Where(m => m.IsActive))
         {
@@ -195,9 +197,12 @@ public class ConsolidationService : IConsolidationService
                 })
                 .ToListAsync();
 
-            var multiplier = member.Method == ConsolidationMethod.Full ? 1m
-                : member.Method == ConsolidationMethod.Proportionate ? member.OwnershipPercent / 100m
-                : 0m;
+            var netIncome = pnlData.Sum(b =>
+                b.AccountType == AccountType.Revenue
+                    ? -(b.Balance) // Revenue is credit-positive
+                    : -(b.Balance)); // Expense is debit-positive
+
+            var (multiplier, miPercent) = GetConsolidationMultiplier(member);
 
             var companyPnl = pnlData.Select(b => new
             {
@@ -208,6 +213,13 @@ public class ConsolidationService : IConsolidationService
             }).ToList();
 
             reportData[member.Company.Name] = companyPnl;
+
+            // Minority interest in net income
+            if (miPercent > 0)
+            {
+                var totalNetIncome = pnlData.Sum(b => b.Balance);
+                minorityInterestData[member.Company.Name] = totalNetIncome * miPercent;
+            }
         }
 
         var report = new ConsolidationReport
@@ -218,6 +230,9 @@ public class ConsolidationService : IConsolidationService
             FromDate = fromDate,
             ToDate = toDate,
             ReportDataJson = JsonSerializer.Serialize(reportData),
+            MinorityInterestJson = minorityInterestData.Count > 0
+                ? JsonSerializer.Serialize(minorityInterestData)
+                : null,
             Status = "Completed"
         };
 
@@ -237,12 +252,143 @@ public class ConsolidationService : IConsolidationService
             .FirstOrDefaultAsync(g => g.Id == groupId && !g.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบกลุ่มบริษัท");
 
+        return await GenerateEliminationEntries(group, asOfDate);
+    }
+
+    // ===== Consolidation Method Logic =====
+
+    /// <summary>
+    /// Returns (multiplier, minorityInterestPercent) based on consolidation method
+    /// </summary>
+    private static (decimal multiplier, decimal minorityInterestPercent) GetConsolidationMultiplier(ConsolidationMember member)
+    {
+        return member.Method switch
+        {
+            // Full Consolidation: include 100% of subsidiary's accounts
+            // Minority interest = (100% - ownership%) of net assets
+            ConsolidationMethod.Full => (1m, (100m - member.OwnershipPercent) / 100m),
+
+            // Proportionate Consolidation: include ownership% of each account
+            ConsolidationMethod.Proportionate => (member.OwnershipPercent / 100m, 0m),
+
+            // Equity Method: only include share of net income as single line
+            // Investment recorded at cost + share of post-acquisition profits
+            ConsolidationMethod.Equity => (member.OwnershipPercent / 100m, 0m),
+
+            // Cost Method: investment recorded at cost, only dividend income recognized
+            ConsolidationMethod.Cost => (0m, 0m),
+
+            _ => (0m, 0m)
+        };
+    }
+
+    private (List<object> consolidatedBalances, decimal minorityInterest) ApplyConsolidationMethod(
+        ConsolidationMember member,
+        List<(string AccountCode, string AccountName, string AccountType, decimal Balance)> balances,
+        DateTime asOfDate)
+    {
+        var (multiplier, miPercent) = GetConsolidationMultiplier(member);
+
+        if (member.Method == ConsolidationMethod.Equity)
+        {
+            // Equity method: show investment as single line with share of net income
+            var totalEquity = balances
+                .Where(b => b.AccountType == "Equity")
+                .Sum(b => b.Balance);
+
+            var shareOfEquity = totalEquity * (member.OwnershipPercent / 100m);
+
+            var result = new List<object>
+            {
+                new
+                {
+                    AccountCode = "INVEST-EQ",
+                    AccountName = $"Investment in {member.Company.Name} (Equity Method)",
+                    AccountType = "Asset",
+                    ConsolidatedBalance = shareOfEquity
+                }
+            };
+
+            return (result, 0m);
+        }
+
+        if (member.Method == ConsolidationMethod.Cost)
+        {
+            // Cost method: investment at original cost (use total equity as proxy)
+            var investmentCost = balances
+                .Where(b => b.AccountType == "Equity")
+                .Sum(b => b.Balance) * (member.OwnershipPercent / 100m);
+
+            var result = new List<object>
+            {
+                new
+                {
+                    AccountCode = "INVEST-COST",
+                    AccountName = $"Investment in {member.Company.Name} (Cost Method)",
+                    AccountType = "Asset",
+                    ConsolidatedBalance = investmentCost
+                }
+            };
+
+            return (result, 0m);
+        }
+
+        // Full or Proportionate consolidation
+        var consolidatedBalances = balances.Select(b => (object)new
+        {
+            b.AccountCode,
+            b.AccountName,
+            b.AccountType,
+            ConsolidatedBalance = b.Balance * multiplier
+        }).ToList();
+
+        // Calculate minority interest for Full consolidation
+        decimal minorityInterest = 0;
+        if (member.Method == ConsolidationMethod.Full && miPercent > 0)
+        {
+            var totalNetAssets = balances
+                .Where(b => b.AccountType == "Equity")
+                .Sum(b => b.Balance);
+            minorityInterest = totalNetAssets * miPercent;
+        }
+
+        return (consolidatedBalances, minorityInterest);
+    }
+
+    private async Task<List<(string AccountCode, string AccountName, string AccountType, decimal Balance)>> GetAccountBalances(
+        Guid companyId, DateTime? fromDate, DateTime asOfDate)
+    {
+        var query = _db.JournalEntryLines
+            .Include(l => l.JournalEntry)
+            .Include(l => l.Account)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate <= asOfDate);
+
+        if (fromDate.HasValue)
+            query = query.Where(l => l.JournalEntry.EntryDate >= fromDate.Value);
+
+        return await query
+            .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
+            .Select(g => new
+            {
+                g.Key.AccountCode,
+                g.Key.AccountName,
+                AccountType = g.Key.AccountType.ToString(),
+                Balance = g.Sum(l => l.DebitAmount - l.CreditAmount)
+            })
+            .ToListAsync()
+            .ContinueWith(t => t.Result.Select(b =>
+                (b.AccountCode, b.AccountName, b.AccountType, b.Balance)).ToList());
+    }
+
+    private async Task<List<EliminationEntryResponse>> GenerateEliminationEntries(ConsolidationGroup group, DateTime asOfDate)
+    {
         var memberCompanyIds = group.Members
             .Where(m => m.IsActive)
             .Select(m => m.CompanyId)
             .ToList();
 
-        // Find intercompany transactions that need elimination
         var icTxns = await _db.Set<IntercompanyTransaction>()
             .Where(t => memberCompanyIds.Contains(t.SourceCompanyId)
                 && memberCompanyIds.Contains(t.TargetCompanyId)
@@ -261,11 +407,34 @@ public class ConsolidationService : IConsolidationService
             var sourceName = companies.GetValueOrDefault(txn.SourceCompanyId, "Unknown");
             var targetName = companies.GetValueOrDefault(txn.TargetCompanyId, "Unknown");
 
-            // Elimination of intercompany receivable/payable
+            // Eliminate intercompany receivable/payable
             eliminations.Add(new EliminationEntryResponse(
                 $"ตัดรายการระหว่างกัน: {txn.TransactionNumber}",
                 sourceName, targetName, txn.Amount,
-                "IC-ELIM", "Intercompany Elimination"));
+                "IC-ELIM-AR", "ลูกหนี้ระหว่างกัน (Intercompany AR Elimination)"));
+
+            eliminations.Add(new EliminationEntryResponse(
+                $"ตัดรายการระหว่างกัน: {txn.TransactionNumber}",
+                targetName, sourceName, txn.Amount,
+                "IC-ELIM-AP", "เจ้าหนี้ระหว่างกัน (Intercompany AP Elimination)"));
+        }
+
+        // Eliminate intercompany revenue/expense
+        var icRevenue = await _db.Documents
+            .Where(d => memberCompanyIds.Contains(d.CompanyId)
+                && d.Status != DocumentStatus.Voided
+                && d.DocumentDate <= asOfDate
+                && d.Contact != null
+                && memberCompanyIds.Contains(d.Contact.CompanyId))
+            .ToListAsync();
+
+        foreach (var doc in icRevenue)
+        {
+            var sourceName = companies.GetValueOrDefault(doc.CompanyId, "Unknown");
+            eliminations.Add(new EliminationEntryResponse(
+                $"ตัดรายได้/ค่าใช้จ่ายระหว่างกัน: {doc.DocumentNumber}",
+                sourceName, "", doc.TotalAmount,
+                "IC-ELIM-REV", "รายได้ระหว่างกัน (Intercompany Revenue Elimination)"));
         }
 
         return eliminations;

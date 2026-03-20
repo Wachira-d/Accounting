@@ -12,6 +12,9 @@ public class ApprovalService : IApprovalService
     private readonly AccountingDbContext _db;
     private readonly INotificationService _notificationService;
 
+    // Escalation timeout in hours
+    private const int EscalationTimeoutHours = 48;
+
     public ApprovalService(AccountingDbContext db, INotificationService notificationService)
     {
         _db = db;
@@ -73,7 +76,6 @@ public class ApprovalService : IApprovalService
         rule.MinAmount = request.MinAmount;
         rule.MaxAmount = request.MaxAmount;
 
-        // Replace steps
         _db.ApprovalSteps.RemoveRange(rule.Steps);
         foreach (var step in request.Steps)
         {
@@ -106,12 +108,15 @@ public class ApprovalService : IApprovalService
     public async Task<ApprovalRequestResponse> SubmitForApprovalAsync(
         Guid companyId, string entityType, Guid entityId, Guid requestedByUserId)
     {
-        // Find matching rule
-        var rule = await _db.ApprovalRules
+        // Find the most specific matching rule (by document type and amount range)
+        var rules = await _db.ApprovalRules
             .Include(r => r.Steps).ThenInclude(s => s.ApproverUser)
             .Where(r => r.CompanyId == companyId && r.IsActive)
-            .FirstOrDefaultAsync(r => r.DocumentType == null ||
-                (entityType == "Document" && r.DocumentType != null))
+            .OrderByDescending(r => r.MinAmount) // Most specific first
+            .ToListAsync();
+
+        var rule = rules.FirstOrDefault(r => r.DocumentType == null ||
+            (entityType == "Document" && r.DocumentType != null))
             ?? throw new InvalidOperationException("ไม่พบกฎการอนุมัติที่เหมาะสม");
 
         var request = new ApprovalRequest
@@ -127,7 +132,6 @@ public class ApprovalService : IApprovalService
 
         _db.ApprovalRequests.Add(request);
 
-        // Create actions for each step
         foreach (var step in rule.Steps.OrderBy(s => s.StepOrder))
         {
             _db.ApprovalActions.Add(new ApprovalAction
@@ -226,7 +230,6 @@ public class ApprovalService : IApprovalService
             {
                 request.CurrentStep++;
 
-                // Notify next approver
                 var nextAction = request.Actions.FirstOrDefault(a => a.StepOrder == request.CurrentStep);
                 if (nextAction != null)
                 {
@@ -242,6 +245,44 @@ public class ApprovalService : IApprovalService
 
         await _db.SaveChangesAsync();
         return MapRequestToResponse(request);
+    }
+
+    // ==================== Escalation (called by background job) ====================
+
+    /// <summary>
+    /// Check for pending approvals that have exceeded timeout and escalate them
+    /// </summary>
+    public async Task<int> EscalateOverdueApprovalsAsync()
+    {
+        var cutoffTime = DateTime.UtcNow.AddHours(-EscalationTimeoutHours);
+
+        var overdueRequests = await _db.ApprovalRequests
+            .Include(r => r.Actions).ThenInclude(a => a.ApproverUser)
+            .Where(r => r.OverallStatus == ApprovalStatus.Pending
+                && r.RequestedAt < cutoffTime)
+            .ToListAsync();
+
+        var escalatedCount = 0;
+
+        foreach (var request in overdueRequests)
+        {
+            var currentAction = request.Actions
+                .FirstOrDefault(a => a.StepOrder == request.CurrentStep && a.Status == ApprovalStatus.Pending);
+
+            if (currentAction == null) continue;
+
+            // Send reminder notification
+            await _notificationService.SendAsync(currentAction.ApproverUserId, request.CompanyId,
+                NotificationType.SystemAlert,
+                "แจ้งเตือน: คำขออนุมัติค้าง",
+                $"คำขออนุมัติ {request.EntityType} รอการดำเนินการเกิน {EscalationTimeoutHours} ชั่วโมง",
+                $"/approvals/{request.Id}",
+                request.EntityType, request.EntityId);
+
+            escalatedCount++;
+        }
+
+        return escalatedCount;
     }
 
     // ==================== Private Helpers ====================

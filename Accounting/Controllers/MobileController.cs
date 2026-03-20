@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -15,11 +16,18 @@ public class MobileController : ControllerBase
 
     [HttpPost("devices")]
     public async Task<ActionResult<ApiResponse<DeviceRegistrationResponse>>> RegisterDevice([FromBody] RegisterDeviceRequest request)
-        => Ok(new ApiResponse<DeviceRegistrationResponse>(true, await _service.RegisterDeviceAsync(Guid.Empty, request)));
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return Ok(new ApiResponse<DeviceRegistrationResponse>(true, await _service.RegisterDeviceAsync(userId, request)));
+    }
 
     [HttpDelete("devices/{deviceToken}")]
     public async Task<ActionResult<ApiResponse<bool>>> UnregisterDevice(string deviceToken)
-    { await _service.UnregisterDeviceAsync(Guid.Empty, deviceToken); return Ok(new ApiResponse<bool>(true, true)); }
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _service.UnregisterDeviceAsync(userId, deviceToken);
+        return Ok(new ApiResponse<bool>(true, true));
+    }
 
     [HttpGet("companies/{companyId:guid}/dashboard")]
     public async Task<ActionResult<ApiResponse<MobileDashboardResponse>>> GetDashboard(Guid companyId)
@@ -31,9 +39,15 @@ public class MobileController : ControllerBase
 
     [HttpPost("companies/{companyId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<MobileApprovalResponse>>> QuickApprove(Guid companyId, [FromQuery] Guid entityId, [FromQuery] string entityType, [FromQuery] string action)
-        => Ok(new ApiResponse<MobileApprovalResponse>(true, await _service.QuickApproveAsync(companyId, entityId, entityType, action, Guid.Empty)));
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return Ok(new ApiResponse<MobileApprovalResponse>(true, await _service.QuickApproveAsync(companyId, entityId, entityType, action, userId)));
+    }
 
     [HttpPost("companies/{companyId:guid}/sync")]
     public async Task<ActionResult<ApiResponse<SyncResponse>>> Sync(Guid companyId, [FromBody] SyncRequest request)
-        => Ok(new ApiResponse<SyncResponse>(true, await _service.SyncAsync(companyId, Guid.Empty, request)));
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return Ok(new ApiResponse<SyncResponse>(true, await _service.SyncAsync(companyId, userId, request)));
+    }
 }

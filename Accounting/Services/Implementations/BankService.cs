@@ -98,6 +98,11 @@ public class BankService : IBankService
         var query = _db.Set<BankTransaction>()
             .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId);
 
+        if (!string.IsNullOrEmpty(request.Search))
+            query = query.Where(t => (t.Description != null && t.Description.Contains(request.Search))
+                || (t.Reference != null && t.Reference.Contains(request.Search))
+                || (t.Payee != null && t.Payee.Contains(request.Search)));
+
         var total = await query.CountAsync();
         var items = await query.OrderByDescending(t => t.TransactionDate)
             .Skip((request.Page - 1) * request.PageSize)
@@ -149,23 +154,66 @@ public class BankService : IBankService
             .Where(p => p.CompanyId == companyId && p.PaymentMethod == PaymentMethod.BankTransfer)
             .ToListAsync();
 
+        // Get already matched payment IDs to prevent double-matching
+        var alreadyMatchedPaymentIds = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.MatchedPaymentId.HasValue)
+            .Select(t => t.MatchedPaymentId!.Value)
+            .ToListAsync();
+
         var matched = new List<BankTransactionResponse>();
 
         foreach (var txn in unmatched)
         {
-            // Match by amount and approximate date
-            var match = payments.FirstOrDefault(p =>
-                p.Amount == txn.Amount
-                && Math.Abs((p.PaymentDate - txn.TransactionDate).TotalDays) <= 3
-                && !unmatched.Any(u => u.MatchedPaymentId == p.Id));
+            // Smart matching: amount + date proximity + reference similarity
+            var candidates = payments
+                .Where(p => !alreadyMatchedPaymentIds.Contains(p.Id)
+                    && !matched.Any(m => m.MatchedPaymentId == p.Id))
+                .ToList();
 
-            if (match != null)
+            Payment? bestMatch = null;
+            decimal bestScore = 0;
+
+            foreach (var payment in candidates)
+            {
+                decimal score = 0;
+
+                // Exact amount match = 50 points
+                if (payment.Amount == txn.Amount)
+                    score += 50;
+                // Close amount (within 1%) = 30 points
+                else if (Math.Abs(payment.Amount - txn.Amount) / Math.Max(txn.Amount, 1) < 0.01m)
+                    score += 30;
+                else
+                    continue; // Amount must be close
+
+                // Date proximity: same day = 30 points, within 3 days = 20, within 7 days = 10
+                var daysDiff = Math.Abs((payment.PaymentDate - txn.TransactionDate).TotalDays);
+                if (daysDiff <= 0) score += 30;
+                else if (daysDiff <= 3) score += 20;
+                else if (daysDiff <= 7) score += 10;
+                else continue; // Too far apart
+
+                // Reference match = 20 points
+                if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(payment.Reference)
+                    && txn.Reference.Contains(payment.Reference, StringComparison.OrdinalIgnoreCase))
+                    score += 20;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestMatch = payment;
+                }
+            }
+
+            // Only match if confidence is high enough (at least amount match + date proximity)
+            if (bestMatch != null && bestScore >= 60)
             {
                 txn.ReconciliationStatus = ReconciliationStatus.Matched;
-                txn.MatchedPaymentId = match.Id;
+                txn.MatchedPaymentId = bestMatch.Id;
                 txn.ReconciledAt = DateTime.UtcNow;
                 txn.ReconciledBy = "AutoMatch";
                 matched.Add(MapTransactionToResponse(txn));
+                alreadyMatchedPaymentIds.Add(bestMatch.Id);
             }
         }
 
