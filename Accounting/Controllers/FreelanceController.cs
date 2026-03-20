@@ -9,6 +9,7 @@ namespace Accounting.Controllers;
 
 [ApiController]
 [Authorize]
+[Route("api/companies/{companyId:guid}/freelance")]
 public class FreelanceController : ControllerBase
 {
     private readonly IFreelanceService _freelanceService;
@@ -20,7 +21,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Invitations (Company Owner) =====
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/invite")]
+    [HttpPost("invite")]
     public async Task<ActionResult<ApiResponse<InvitationResponse>>> Invite(Guid companyId, [FromBody] InviteFreelanceRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -28,14 +29,14 @@ public class FreelanceController : ControllerBase
         return Ok(new ApiResponse<InvitationResponse>(true, result, "ส่งคำเชิญสำเร็จ"));
     }
 
-    [HttpGet("api/companies/{companyId:guid}/freelance/invitations")]
+    [HttpGet("invitations")]
     public async Task<ActionResult<ApiResponse<List<InvitationResponse>>>> GetInvitations(Guid companyId)
     {
         var result = await _freelanceService.GetInvitationsAsync(companyId);
         return Ok(new ApiResponse<List<InvitationResponse>>(true, result));
     }
 
-    [HttpDelete("api/companies/{companyId:guid}/freelance/invitations/{invitationId:guid}")]
+    [HttpDelete("invitations/{invitationId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> RevokeInvitation(Guid companyId, Guid invitationId)
     {
         await _freelanceService.RevokeInvitationAsync(companyId, invitationId);
@@ -44,7 +45,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Accept Invitation (Public - Freelance) =====
 
-    [HttpPost("api/freelance/accept-invitation")]
+    [HttpPost("/api/freelance/accept-invitation")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<InvitationResponse>>> AcceptInvitation([FromBody] AcceptInvitationRequest request)
     {
@@ -54,21 +55,21 @@ public class FreelanceController : ControllerBase
 
     // ===== Freelance Access Management (Company Owner) =====
 
-    [HttpGet("api/companies/{companyId:guid}/freelance")]
+    [HttpGet]
     public async Task<ActionResult<ApiResponse<List<FreelanceAccessResponse>>>> GetFreelancers(Guid companyId)
     {
         var result = await _freelanceService.GetCompanyFreelancersAsync(companyId);
         return Ok(new ApiResponse<List<FreelanceAccessResponse>>(true, result));
     }
 
-    [HttpGet("api/companies/{companyId:guid}/freelance/{accessId:guid}")]
+    [HttpGet("{accessId:guid}")]
     public async Task<ActionResult<ApiResponse<FreelanceAccessResponse>>> GetFreelanceAccess(Guid companyId, Guid accessId)
     {
         var result = await _freelanceService.GetFreelanceAccessAsync(companyId, accessId);
         return Ok(new ApiResponse<FreelanceAccessResponse>(true, result));
     }
 
-    [HttpPut("api/companies/{companyId:guid}/freelance/{accessId:guid}")]
+    [HttpPut("{accessId:guid}")]
     public async Task<ActionResult<ApiResponse<FreelanceAccessResponse>>> UpdateFreelanceAccess(
         Guid companyId, Guid accessId, [FromBody] UpdateFreelanceAccessRequest request)
     {
@@ -76,7 +77,7 @@ public class FreelanceController : ControllerBase
         return Ok(new ApiResponse<FreelanceAccessResponse>(true, result, "อัพเดทสิทธิ์สำเร็จ"));
     }
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/{accessId:guid}/deactivate")]
+    [HttpPost("{accessId:guid}/deactivate")]
     public async Task<ActionResult<ApiResponse<string>>> DeactivateFreelance(Guid companyId, Guid accessId)
     {
         await _freelanceService.DeactivateFreelanceAccessAsync(companyId, accessId);
@@ -85,7 +86,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Task Management =====
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/tasks")]
+    [HttpPost("tasks")]
     public async Task<ActionResult<ApiResponse<FreelanceTaskResponse>>> CreateTask(Guid companyId, [FromBody] CreateFreelanceTaskRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -93,21 +94,21 @@ public class FreelanceController : ControllerBase
         return Ok(new ApiResponse<FreelanceTaskResponse>(true, result, "สร้างงานสำเร็จ"));
     }
 
-    [HttpGet("api/companies/{companyId:guid}/freelance/tasks")]
+    [HttpGet("tasks")]
     public async Task<ActionResult<ApiResponse<List<FreelanceTaskSummary>>>> GetTasks(Guid companyId, [FromQuery] Guid? freelanceAccessId = null)
     {
         var result = await _freelanceService.GetTasksAsync(companyId, freelanceAccessId);
         return Ok(new ApiResponse<List<FreelanceTaskSummary>>(true, result));
     }
 
-    [HttpGet("api/companies/{companyId:guid}/freelance/tasks/{taskId:guid}")]
+    [HttpGet("tasks/{taskId:guid}")]
     public async Task<ActionResult<ApiResponse<FreelanceTaskResponse>>> GetTask(Guid companyId, Guid taskId)
     {
         var result = await _freelanceService.GetTaskAsync(companyId, taskId);
         return Ok(new ApiResponse<FreelanceTaskResponse>(true, result));
     }
 
-    [HttpPut("api/companies/{companyId:guid}/freelance/tasks/{taskId:guid}")]
+    [HttpPut("tasks/{taskId:guid}")]
     public async Task<ActionResult<ApiResponse<FreelanceTaskResponse>>> UpdateTask(
         Guid companyId, Guid taskId, [FromBody] UpdateFreelanceTaskRequest request)
     {
@@ -116,7 +117,7 @@ public class FreelanceController : ControllerBase
         return Ok(new ApiResponse<FreelanceTaskResponse>(true, result));
     }
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/tasks/{taskId:guid}/submit")]
+    [HttpPost("tasks/{taskId:guid}/submit")]
     public async Task<ActionResult<ApiResponse<FreelanceTaskResponse>>> SubmitTask(Guid companyId, Guid taskId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -124,7 +125,7 @@ public class FreelanceController : ControllerBase
         return Ok(new ApiResponse<FreelanceTaskResponse>(true, result, "ส่งงานสำเร็จ"));
     }
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/tasks/{taskId:guid}/review")]
+    [HttpPost("tasks/{taskId:guid}/review")]
     public async Task<ActionResult<ApiResponse<FreelanceTaskResponse>>> ReviewTask(
         Guid companyId, Guid taskId, [FromQuery] bool approve, [FromBody] string? notes)
     {
@@ -135,7 +136,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Comments & Time Logs =====
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/tasks/{taskId:guid}/comments")]
+    [HttpPost("tasks/{taskId:guid}/comments")]
     public async Task<ActionResult<ApiResponse<TaskCommentResponse>>> AddComment(
         Guid companyId, Guid taskId, [FromBody] AddTaskCommentRequest request)
     {
@@ -144,7 +145,7 @@ public class FreelanceController : ControllerBase
         return Ok(new ApiResponse<TaskCommentResponse>(true, result));
     }
 
-    [HttpPost("api/companies/{companyId:guid}/freelance/tasks/{taskId:guid}/time-logs")]
+    [HttpPost("tasks/{taskId:guid}/time-logs")]
     public async Task<ActionResult<ApiResponse<TimeLogResponse>>> AddTimeLog(
         Guid companyId, Guid taskId, [FromBody] CreateTimeLogRequest request)
     {
@@ -155,7 +156,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Activity Logs =====
 
-    [HttpGet("api/companies/{companyId:guid}/freelance/activity-logs")]
+    [HttpGet("activity-logs")]
     public async Task<ActionResult<ApiResponse<PagedResponse<FreelanceActivityLogResponse>>>> GetActivityLogs(
         Guid companyId, [FromQuery] Guid? freelanceAccessId,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
@@ -166,7 +167,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Freelance Dashboard (for Freelancer) =====
 
-    [HttpGet("api/freelance/dashboard")]
+    [HttpGet("/api/freelance/dashboard")]
     public async Task<ActionResult<ApiResponse<FreelanceDashboardResponse>>> GetDashboard()
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

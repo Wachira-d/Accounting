@@ -740,6 +740,589 @@ public class AccountingDbContext : DbContext
             e.Property(l => l.Action).HasMaxLength(200);
             e.HasOne(l => l.FreelanceAccess).WithMany(fa => fa.ActivityLogs).HasForeignKey(l => l.FreelanceAccessId);
         });
+
+        // ======================================================================
+        // Advanced Operations & World-Class Features
+        // ======================================================================
+
+        // ===== Employee =====
+        modelBuilder.Entity<Employee>(e =>
+        {
+            e.HasIndex(emp => new { emp.CompanyId, emp.EmployeeCode }).IsUnique();
+            e.Property(emp => emp.EmployeeCode).HasMaxLength(50);
+            e.Property(emp => emp.TitleTh).HasMaxLength(20);
+            e.Property(emp => emp.FirstNameTh).HasMaxLength(200);
+            e.Property(emp => emp.LastNameTh).HasMaxLength(200);
+            e.Property(emp => emp.FirstNameEn).HasMaxLength(200);
+            e.Property(emp => emp.LastNameEn).HasMaxLength(200);
+            e.Property(emp => emp.CitizenId).HasMaxLength(13);
+            e.Property(emp => emp.TaxId).HasMaxLength(13);
+            e.Property(emp => emp.BaseSalary).HasPrecision(18, 2);
+            e.Property(emp => emp.ProvidentFundEmployeePercent).HasPrecision(5, 2);
+            e.Property(emp => emp.ProvidentFundEmployerPercent).HasPrecision(5, 2);
+            e.HasOne(emp => emp.User).WithMany().HasForeignKey(emp => emp.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(emp => !emp.IsDeleted);
+        });
+
+        // ===== PayrollRun =====
+        modelBuilder.Entity<PayrollRun>(e =>
+        {
+            e.HasIndex(pr => new { pr.CompanyId, pr.PayrollNumber }).IsUnique();
+            e.Property(pr => pr.PayrollNumber).HasMaxLength(50);
+            e.Property(pr => pr.Name).HasMaxLength(256);
+            e.Property(pr => pr.TotalGrossSalary).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalDeductions).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalNetPay).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalSocialSecurityEmployee).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalSocialSecurityEmployer).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalWithholdingTax).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalProvidentFundEmployee).HasPrecision(18, 2);
+            e.Property(pr => pr.TotalProvidentFundEmployer).HasPrecision(18, 2);
+            e.HasQueryFilter(pr => !pr.IsDeleted);
+        });
+
+        // ===== PayrollDetail =====
+        modelBuilder.Entity<PayrollDetail>(e =>
+        {
+            e.HasOne(pd => pd.PayrollRun).WithMany(pr => pr.Details).HasForeignKey(pd => pd.PayrollRunId);
+            e.HasOne(pd => pd.Employee).WithMany().HasForeignKey(pd => pd.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(pd => pd.BaseSalary).HasPrecision(18, 2);
+            e.Property(pd => pd.OvertimePay).HasPrecision(18, 2);
+            e.Property(pd => pd.Allowances).HasPrecision(18, 2);
+            e.Property(pd => pd.Commission).HasPrecision(18, 2);
+            e.Property(pd => pd.Bonus).HasPrecision(18, 2);
+            e.Property(pd => pd.OtherIncome).HasPrecision(18, 2);
+            e.Property(pd => pd.GrossIncome).HasPrecision(18, 2);
+            e.Property(pd => pd.SocialSecurityEmployee).HasPrecision(18, 2);
+            e.Property(pd => pd.SocialSecurityEmployer).HasPrecision(18, 2);
+            e.Property(pd => pd.WithholdingTax).HasPrecision(18, 2);
+            e.Property(pd => pd.ProvidentFundEmployee).HasPrecision(18, 2);
+            e.Property(pd => pd.ProvidentFundEmployer).HasPrecision(18, 2);
+            e.Property(pd => pd.LoanDeduction).HasPrecision(18, 2);
+            e.Property(pd => pd.OtherDeductions).HasPrecision(18, 2);
+            e.Property(pd => pd.TotalDeductions).HasPrecision(18, 2);
+            e.Property(pd => pd.NetPay).HasPrecision(18, 2);
+            e.Property(pd => pd.CumulativeIncomeYTD).HasPrecision(18, 2);
+            e.Property(pd => pd.CumulativeTaxYTD).HasPrecision(18, 2);
+            e.Property(pd => pd.EstimatedAnnualIncome).HasPrecision(18, 2);
+            e.Property(pd => pd.EstimatedAnnualTax).HasPrecision(18, 2);
+            e.Property(pd => pd.OvertimeHours).HasPrecision(8, 2);
+        });
+
+        // ===== EmployeeLeave =====
+        modelBuilder.Entity<EmployeeLeave>(e =>
+        {
+            e.HasOne(el => el.Employee).WithMany(emp => emp.Leaves).HasForeignKey(el => el.EmployeeId);
+            e.Property(el => el.TotalDays).HasPrecision(5, 1);
+            e.HasQueryFilter(el => !el.IsDeleted);
+        });
+
+        // ===== PayrollItem =====
+        modelBuilder.Entity<PayrollItem>(e =>
+        {
+            e.HasIndex(pi => new { pi.CompanyId, pi.Code }).IsUnique();
+            e.Property(pi => pi.Code).HasMaxLength(50);
+            e.Property(pi => pi.Name).HasMaxLength(256);
+            e.Property(pi => pi.FixedAmount).HasPrecision(18, 2);
+            e.Property(pi => pi.Percentage).HasPrecision(5, 2);
+            e.HasQueryFilter(pi => !pi.IsDeleted);
+        });
+
+        // ===== AccountingDimension =====
+        modelBuilder.Entity<AccountingDimension>(e =>
+        {
+            e.HasIndex(d => new { d.CompanyId, d.Code }).IsUnique();
+            e.Property(d => d.Code).HasMaxLength(50);
+            e.Property(d => d.Name).HasMaxLength(256);
+            e.Property(d => d.AnnualBudget).HasPrecision(18, 2);
+            e.HasOne(d => d.Parent).WithMany(d => d.Children).HasForeignKey(d => d.ParentId);
+            e.HasQueryFilter(d => !d.IsDeleted);
+        });
+
+        // ===== Branch =====
+        modelBuilder.Entity<Branch>(e =>
+        {
+            e.HasIndex(b => new { b.CompanyId, b.Code }).IsUnique();
+            e.Property(b => b.Code).HasMaxLength(50);
+            e.Property(b => b.Name).HasMaxLength(256);
+            e.Property(b => b.TaxBranchCode).HasMaxLength(10);
+            e.HasQueryFilter(b => !b.IsDeleted);
+        });
+
+        // ===== JournalLineDimension =====
+        modelBuilder.Entity<JournalLineDimension>(e =>
+        {
+            e.HasOne(jld => jld.JournalEntryLine).WithMany().HasForeignKey(jld => jld.JournalEntryLineId);
+            e.HasOne(jld => jld.Dimension).WithMany().HasForeignKey(jld => jld.DimensionId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(jld => jld.AllocatedAmount).HasPrecision(18, 2);
+            e.Property(jld => jld.AllocatedPercent).HasPrecision(5, 2);
+        });
+
+        // ===== IntercompanyTransaction =====
+        modelBuilder.Entity<IntercompanyTransaction>(e =>
+        {
+            e.HasIndex(ic => new { ic.CompanyId, ic.TransactionNumber }).IsUnique();
+            e.Property(ic => ic.TransactionNumber).HasMaxLength(50);
+            e.Property(ic => ic.Amount).HasPrecision(18, 2);
+            e.Property(ic => ic.Currency).HasMaxLength(3);
+            e.HasOne(ic => ic.TargetCompany).WithMany().HasForeignKey(ic => ic.TargetCompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(ic => !ic.IsDeleted);
+        });
+
+        // ===== IntercompanyTransactionLine =====
+        modelBuilder.Entity<IntercompanyTransactionLine>(e =>
+        {
+            e.HasOne(l => l.IntercompanyTransaction).WithMany(ic => ic.Lines).HasForeignKey(l => l.IntercompanyTransactionId);
+            e.Property(l => l.Amount).HasPrecision(18, 2);
+            e.Property(l => l.VatRate).HasPrecision(5, 2);
+            e.Property(l => l.VatAmount).HasPrecision(18, 2);
+        });
+
+        // ===== ConsolidationGroup =====
+        modelBuilder.Entity<ConsolidationGroup>(e =>
+        {
+            e.Property(cg => cg.Name).HasMaxLength(256);
+            e.Property(cg => cg.Currency).HasMaxLength(3);
+            e.HasOne(cg => cg.ParentCompany).WithMany().HasForeignKey(cg => cg.ParentCompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== ConsolidationMember =====
+        modelBuilder.Entity<ConsolidationMember>(e =>
+        {
+            e.HasIndex(cm => new { cm.ConsolidationGroupId, cm.CompanyId }).IsUnique();
+            e.HasOne(cm => cm.Group).WithMany(cg => cg.Members).HasForeignKey(cm => cm.ConsolidationGroupId);
+            e.HasOne(cm => cm.Company).WithMany().HasForeignKey(cm => cm.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(cm => cm.OwnershipPercent).HasPrecision(5, 2);
+        });
+
+        // ===== ConsolidationReport =====
+        modelBuilder.Entity<ConsolidationReport>(e =>
+        {
+            e.HasOne(cr => cr.Group).WithMany().HasForeignKey(cr => cr.ConsolidationGroupId);
+        });
+
+        // ===== Project =====
+        modelBuilder.Entity<Project>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.Code }).IsUnique();
+            e.Property(p => p.Code).HasMaxLength(50);
+            e.Property(p => p.Name).HasMaxLength(500);
+            e.Property(p => p.BudgetAmount).HasPrecision(18, 2);
+            e.Property(p => p.ContractAmount).HasPrecision(18, 2);
+            e.Property(p => p.ActualCost).HasPrecision(18, 2);
+            e.Property(p => p.ActualRevenue).HasPrecision(18, 2);
+            e.Property(p => p.BilledAmount).HasPrecision(18, 2);
+            e.Property(p => p.CompletionPercent).HasPrecision(5, 2);
+            e.HasOne(p => p.Contact).WithMany().HasForeignKey(p => p.ContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        // ===== ProjectTask =====
+        modelBuilder.Entity<ProjectTask>(e =>
+        {
+            e.HasOne(pt => pt.Project).WithMany(p => p.Tasks).HasForeignKey(pt => pt.ProjectId);
+            e.Property(pt => pt.Name).HasMaxLength(500);
+            e.Property(pt => pt.EstimatedHours).HasPrecision(8, 2);
+            e.Property(pt => pt.ActualHours).HasPrecision(8, 2);
+            e.Property(pt => pt.EstimatedCost).HasPrecision(18, 2);
+            e.Property(pt => pt.ActualCost).HasPrecision(18, 2);
+            e.Property(pt => pt.CompletionPercent).HasPrecision(5, 2);
+        });
+
+        // ===== ProjectCostEntry =====
+        modelBuilder.Entity<ProjectCostEntry>(e =>
+        {
+            e.HasOne(pce => pce.Project).WithMany(p => p.CostEntries).HasForeignKey(pce => pce.ProjectId);
+            e.Property(pce => pce.Quantity).HasPrecision(18, 4);
+            e.Property(pce => pce.UnitCost).HasPrecision(18, 2);
+            e.Property(pce => pce.Amount).HasPrecision(18, 2);
+        });
+
+        // ===== RevenueContract =====
+        modelBuilder.Entity<RevenueContract>(e =>
+        {
+            e.HasIndex(rc => new { rc.CompanyId, rc.ContractNumber }).IsUnique();
+            e.Property(rc => rc.ContractNumber).HasMaxLength(50);
+            e.Property(rc => rc.Name).HasMaxLength(500);
+            e.Property(rc => rc.TotalContractValue).HasPrecision(18, 2);
+            e.HasOne(rc => rc.Contact).WithMany().HasForeignKey(rc => rc.ContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(rc => !rc.IsDeleted);
+        });
+
+        // ===== PerformanceObligation =====
+        modelBuilder.Entity<PerformanceObligation>(e =>
+        {
+            e.HasOne(po => po.Contract).WithMany(rc => rc.Obligations).HasForeignKey(po => po.RevenueContractId);
+            e.Property(po => po.Name).HasMaxLength(500);
+            e.Property(po => po.StandaloneSellingPrice).HasPrecision(18, 2);
+            e.Property(po => po.AllocatedPrice).HasPrecision(18, 2);
+            e.Property(po => po.CompletionPercent).HasPrecision(5, 2);
+            e.Property(po => po.RecognizedRevenue).HasPrecision(18, 2);
+            e.Property(po => po.DeferredRevenue).HasPrecision(18, 2);
+        });
+
+        // ===== RevenueSchedule =====
+        modelBuilder.Entity<RevenueSchedule>(e =>
+        {
+            e.HasOne(rs => rs.Contract).WithMany(rc => rc.Schedules).HasForeignKey(rs => rs.RevenueContractId);
+            e.Property(rs => rs.Amount).HasPrecision(18, 2);
+        });
+
+        // ===== Warehouse =====
+        modelBuilder.Entity<Warehouse>(e =>
+        {
+            e.HasIndex(w => new { w.CompanyId, w.Code }).IsUnique();
+            e.Property(w => w.Code).HasMaxLength(50);
+            e.Property(w => w.Name).HasMaxLength(256);
+            e.HasQueryFilter(w => !w.IsDeleted);
+        });
+
+        // ===== WarehouseStock =====
+        modelBuilder.Entity<WarehouseStock>(e =>
+        {
+            e.HasIndex(ws => new { ws.WarehouseId, ws.ProductId, ws.LotNumber }).IsUnique();
+            e.HasOne(ws => ws.Warehouse).WithMany(w => w.Stocks).HasForeignKey(ws => ws.WarehouseId);
+            e.HasOne(ws => ws.Product).WithMany().HasForeignKey(ws => ws.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(ws => ws.Quantity).HasPrecision(18, 4);
+            e.Property(ws => ws.ReservedQuantity).HasPrecision(18, 4);
+            e.Property(ws => ws.AvailableQuantity).HasPrecision(18, 4);
+        });
+
+        // ===== StockTransfer =====
+        modelBuilder.Entity<StockTransfer>(e =>
+        {
+            e.HasIndex(st => new { st.CompanyId, st.TransferNumber }).IsUnique();
+            e.Property(st => st.TransferNumber).HasMaxLength(50);
+            e.HasOne(st => st.FromWarehouse).WithMany().HasForeignKey(st => st.FromWarehouseId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(st => st.ToWarehouse).WithMany().HasForeignKey(st => st.ToWarehouseId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(st => !st.IsDeleted);
+        });
+
+        // ===== StockTransferLine =====
+        modelBuilder.Entity<StockTransferLine>(e =>
+        {
+            e.HasOne(l => l.StockTransfer).WithMany(st => st.Lines).HasForeignKey(l => l.StockTransferId);
+            e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(l => l.Quantity).HasPrecision(18, 4);
+            e.Property(l => l.ReceivedQuantity).HasPrecision(18, 4);
+        });
+
+        // ===== Loan =====
+        modelBuilder.Entity<Loan>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.LoanNumber }).IsUnique();
+            e.Property(l => l.LoanNumber).HasMaxLength(50);
+            e.Property(l => l.Name).HasMaxLength(500);
+            e.Property(l => l.PrincipalAmount).HasPrecision(18, 2);
+            e.Property(l => l.InterestRate).HasPrecision(8, 4);
+            e.Property(l => l.MonthlyPayment).HasPrecision(18, 2);
+            e.Property(l => l.OutstandingPrincipal).HasPrecision(18, 2);
+            e.Property(l => l.TotalInterestPaid).HasPrecision(18, 2);
+            e.Property(l => l.TotalPrincipalPaid).HasPrecision(18, 2);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+
+        // ===== LoanSchedule =====
+        modelBuilder.Entity<LoanSchedule>(e =>
+        {
+            e.HasOne(ls => ls.Loan).WithMany(l => l.Schedules).HasForeignKey(ls => ls.LoanId);
+            e.Property(ls => ls.PaymentAmount).HasPrecision(18, 2);
+            e.Property(ls => ls.PrincipalPortion).HasPrecision(18, 2);
+            e.Property(ls => ls.InterestPortion).HasPrecision(18, 2);
+            e.Property(ls => ls.RemainingBalance).HasPrecision(18, 2);
+        });
+
+        // ===== LoanPayment =====
+        modelBuilder.Entity<LoanPayment>(e =>
+        {
+            e.HasOne(lp => lp.Loan).WithMany(l => l.Payments).HasForeignKey(lp => lp.LoanId);
+            e.Property(lp => lp.PrincipalPaid).HasPrecision(18, 2);
+            e.Property(lp => lp.InterestPaid).HasPrecision(18, 2);
+            e.Property(lp => lp.TotalPaid).HasPrecision(18, 2);
+            e.Property(lp => lp.LateFee).HasPrecision(18, 2);
+        });
+
+        // ===== CommissionPlan =====
+        modelBuilder.Entity<CommissionPlan>(e =>
+        {
+            e.Property(cp => cp.Name).HasMaxLength(256);
+            e.Property(cp => cp.FlatRate).HasPrecision(5, 2);
+            e.HasQueryFilter(cp => !cp.IsDeleted);
+        });
+
+        // ===== CommissionTier =====
+        modelBuilder.Entity<CommissionTier>(e =>
+        {
+            e.HasOne(ct => ct.Plan).WithMany(cp => cp.Tiers).HasForeignKey(ct => ct.CommissionPlanId);
+            e.Property(ct => ct.FromAmount).HasPrecision(18, 2);
+            e.Property(ct => ct.ToAmount).HasPrecision(18, 2);
+            e.Property(ct => ct.Rate).HasPrecision(8, 4);
+        });
+
+        // ===== CommissionAssignment =====
+        modelBuilder.Entity<CommissionAssignment>(e =>
+        {
+            e.HasOne(ca => ca.Plan).WithMany(cp => cp.Assignments).HasForeignKey(ca => ca.CommissionPlanId);
+            e.HasOne(ca => ca.Employee).WithMany().HasForeignKey(ca => ca.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== CommissionCalculation =====
+        modelBuilder.Entity<CommissionCalculation>(e =>
+        {
+            e.HasIndex(cc => new { cc.CompanyId, cc.Year, cc.Month, cc.EmployeeId });
+            e.Property(cc => cc.BasisAmount).HasPrecision(18, 2);
+            e.Property(cc => cc.CommissionAmount).HasPrecision(18, 2);
+        });
+
+        // ===== TaxCalendarEvent =====
+        modelBuilder.Entity<TaxCalendarEvent>(e =>
+        {
+            e.HasIndex(tce => new { tce.CompanyId, tce.TaxFormCode, tce.Year, tce.Month });
+            e.Property(tce => tce.TaxFormCode).HasMaxLength(20);
+            e.Property(tce => tce.TaxFormName).HasMaxLength(200);
+            e.Property(tce => tce.TaxAmount).HasPrecision(18, 2);
+        });
+
+        // ===== ContactCreditSetting =====
+        modelBuilder.Entity<ContactCreditSetting>(e =>
+        {
+            e.HasIndex(ccs => new { ccs.CompanyId, ccs.ContactId }).IsUnique();
+            e.HasOne(ccs => ccs.Contact).WithMany().HasForeignKey(ccs => ccs.ContactId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(ccs => ccs.CreditLimit).HasPrecision(18, 2);
+            e.Property(ccs => ccs.CurrentBalance).HasPrecision(18, 2);
+            e.Property(ccs => ccs.AvailableCredit).HasPrecision(18, 2);
+        });
+
+        // ===== DunningLetter =====
+        modelBuilder.Entity<DunningLetter>(e =>
+        {
+            e.HasIndex(dl => new { dl.CompanyId, dl.LetterNumber }).IsUnique();
+            e.Property(dl => dl.LetterNumber).HasMaxLength(50);
+            e.Property(dl => dl.TotalOverdueAmount).HasPrecision(18, 2);
+            e.HasOne(dl => dl.Contact).WithMany().HasForeignKey(dl => dl.ContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(dl => !dl.IsDeleted);
+        });
+
+        // ===== DunningLetterLine =====
+        modelBuilder.Entity<DunningLetterLine>(e =>
+        {
+            e.HasOne(l => l.DunningLetter).WithMany(dl => dl.Lines).HasForeignKey(l => l.DunningLetterId);
+            e.HasOne(l => l.Document).WithMany().HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(l => l.Amount).HasPrecision(18, 2);
+            e.Property(l => l.PaidAmount).HasPrecision(18, 2);
+            e.Property(l => l.OverdueAmount).HasPrecision(18, 2);
+        });
+
+        // ===== PaymentReminder =====
+        modelBuilder.Entity<PaymentReminder>(e =>
+        {
+            e.HasOne(pr => pr.Document).WithMany().HasForeignKey(pr => pr.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(pr => !pr.IsDeleted);
+        });
+
+        // ===== AutoCategorizationRule =====
+        modelBuilder.Entity<AutoCategorizationRule>(e =>
+        {
+            e.Property(r => r.RuleName).HasMaxLength(256);
+            e.Property(r => r.MatchPattern).HasMaxLength(500);
+            e.Property(r => r.MinAmount).HasPrecision(18, 2);
+            e.Property(r => r.MaxAmount).HasPrecision(18, 2);
+            e.Property(r => r.ConfidenceThreshold).HasPrecision(5, 2);
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+
+        // ===== CategorizationResult =====
+        modelBuilder.Entity<CategorizationResult>(e =>
+        {
+            e.HasIndex(cr => new { cr.EntityType, cr.EntityId });
+            e.Property(cr => cr.Confidence).HasPrecision(5, 2);
+        });
+
+        // ===== AnomalyDetection =====
+        modelBuilder.Entity<AnomalyDetection>(e =>
+        {
+            e.HasIndex(ad => new { ad.CompanyId, ad.DetectedAt });
+            e.HasIndex(ad => new { ad.EntityType, ad.EntityId });
+            e.Property(ad => ad.ExpectedValue).HasPrecision(18, 2);
+            e.Property(ad => ad.ActualValue).HasPrecision(18, 2);
+            e.Property(ad => ad.DeviationPercent).HasPrecision(8, 2);
+        });
+
+        // ===== CashFlowForecast =====
+        modelBuilder.Entity<CashFlowForecast>(e =>
+        {
+            e.Property(f => f.Name).HasMaxLength(256);
+            e.Property(f => f.OpeningBalance).HasPrecision(18, 2);
+            e.Property(f => f.ProjectedInflows).HasPrecision(18, 2);
+            e.Property(f => f.ProjectedOutflows).HasPrecision(18, 2);
+            e.Property(f => f.ProjectedClosingBalance).HasPrecision(18, 2);
+            e.Property(f => f.ActualClosingBalance).HasPrecision(18, 2);
+            e.Property(f => f.AccuracyPercent).HasPrecision(5, 2);
+            e.HasQueryFilter(f => !f.IsDeleted);
+        });
+
+        // ===== CashFlowForecastLine =====
+        modelBuilder.Entity<CashFlowForecastLine>(e =>
+        {
+            e.HasOne(l => l.Forecast).WithMany(f => f.Lines).HasForeignKey(l => l.CashFlowForecastId);
+            e.Property(l => l.ProjectedAmount).HasPrecision(18, 2);
+            e.Property(l => l.ActualAmount).HasPrecision(18, 2);
+            e.Property(l => l.Confidence).HasPrecision(5, 2);
+        });
+
+        // ===== OcrScanResult =====
+        modelBuilder.Entity<OcrScanResult>(e =>
+        {
+            e.Property(o => o.OriginalFileName).HasMaxLength(500);
+            e.Property(o => o.Confidence).HasPrecision(5, 2);
+            e.Property(o => o.ExtractedVendorTaxId).HasMaxLength(13);
+            e.Property(o => o.ExtractedSubTotal).HasPrecision(18, 2);
+            e.Property(o => o.ExtractedVatAmount).HasPrecision(18, 2);
+            e.Property(o => o.ExtractedTotalAmount).HasPrecision(18, 2);
+        });
+
+        // ===== CustomReport =====
+        modelBuilder.Entity<CustomReport>(e =>
+        {
+            e.Property(cr => cr.Name).HasMaxLength(256);
+            e.HasQueryFilter(cr => !cr.IsDeleted);
+        });
+
+        // ===== PortalAccess =====
+        modelBuilder.Entity<PortalAccess>(e =>
+        {
+            e.HasIndex(pa => new { pa.CompanyId, pa.ContactId, pa.Email }).IsUnique();
+            e.Property(pa => pa.Email).HasMaxLength(256);
+            e.HasOne(pa => pa.Contact).WithMany().HasForeignKey(pa => pa.ContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(pa => !pa.IsDeleted);
+        });
+
+        // ===== PortalActivity =====
+        modelBuilder.Entity<PortalActivity>(e =>
+        {
+            e.HasIndex(a => new { a.PortalAccessId, a.ActivityAt });
+            e.HasOne(a => a.PortalAccess).WithMany().HasForeignKey(a => a.PortalAccessId);
+        });
+
+        // ===== FinancialScenario =====
+        modelBuilder.Entity<FinancialScenario>(e =>
+        {
+            e.Property(fs => fs.Name).HasMaxLength(256);
+            e.HasQueryFilter(fs => !fs.IsDeleted);
+        });
+
+        // ===== ScenarioAssumption =====
+        modelBuilder.Entity<ScenarioAssumption>(e =>
+        {
+            e.HasOne(sa => sa.Scenario).WithMany(fs => fs.Assumptions).HasForeignKey(sa => sa.FinancialScenarioId);
+            e.Property(sa => sa.AdjustmentValue).HasPrecision(18, 4);
+        });
+
+        // ===== ScenarioResult =====
+        modelBuilder.Entity<ScenarioResult>(e =>
+        {
+            e.HasOne(sr => sr.Scenario).WithMany(fs => fs.Results).HasForeignKey(sr => sr.FinancialScenarioId);
+            e.Property(sr => sr.BaselineAmount).HasPrecision(18, 2);
+            e.Property(sr => sr.ScenarioAmount).HasPrecision(18, 2);
+            e.Property(sr => sr.Variance).HasPrecision(18, 2);
+            e.Property(sr => sr.VariancePercent).HasPrecision(8, 2);
+        });
+
+        // ===== FinancialKpi =====
+        modelBuilder.Entity<FinancialKpi>(e =>
+        {
+            e.HasIndex(k => new { k.CompanyId, k.Code }).IsUnique();
+            e.Property(k => k.Code).HasMaxLength(50);
+            e.Property(k => k.Name).HasMaxLength(256);
+            e.Property(k => k.TargetValue).HasPrecision(18, 4);
+            e.Property(k => k.WarningThreshold).HasPrecision(18, 4);
+            e.Property(k => k.CriticalThreshold).HasPrecision(18, 4);
+        });
+
+        // ===== KpiSnapshot =====
+        modelBuilder.Entity<KpiSnapshot>(e =>
+        {
+            e.HasIndex(ks => new { ks.FinancialKpiId, ks.Year, ks.Month }).IsUnique();
+            e.HasOne(ks => ks.Kpi).WithMany().HasForeignKey(ks => ks.FinancialKpiId);
+            e.Property(ks => ks.Value).HasPrecision(18, 4);
+        });
+
+        // ===== BankConnection =====
+        modelBuilder.Entity<BankConnection>(e =>
+        {
+            e.Property(bc => bc.BankCode).HasMaxLength(20);
+            e.Property(bc => bc.BankName).HasMaxLength(100);
+            e.HasQueryFilter(bc => !bc.IsDeleted);
+        });
+
+        // ===== BankFeedImport =====
+        modelBuilder.Entity<BankFeedImport>(e =>
+        {
+            e.HasOne(bfi => bfi.Connection).WithMany().HasForeignKey(bfi => bfi.BankConnectionId);
+        });
+
+        // ===== ComplianceFiling =====
+        modelBuilder.Entity<ComplianceFiling>(e =>
+        {
+            e.HasIndex(cf => new { cf.CompanyId, cf.FilingType, cf.Year, cf.Month });
+            e.Property(cf => cf.FormCode).HasMaxLength(50);
+            e.Property(cf => cf.TaxAmount).HasPrecision(18, 2);
+            e.Property(cf => cf.PenaltyAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(cf => !cf.IsDeleted);
+        });
+
+        // ===== TimeEntry =====
+        modelBuilder.Entity<TimeEntry>(e =>
+        {
+            e.HasIndex(te => new { te.CompanyId, te.EntryDate, te.EmployeeId });
+            e.Property(te => te.Hours).HasPrecision(8, 2);
+            e.Property(te => te.BillingRate).HasPrecision(18, 2);
+            e.Property(te => te.BillableAmount).HasPrecision(18, 2);
+            e.HasOne(te => te.Employee).WithMany().HasForeignKey(te => te.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(te => te.Project).WithMany().HasForeignKey(te => te.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== BillingRate =====
+        modelBuilder.Entity<BillingRate>(e =>
+        {
+            e.Property(br => br.Name).HasMaxLength(256);
+            e.Property(br => br.HourlyRate).HasPrecision(18, 2);
+            e.Property(br => br.DailyRate).HasPrecision(18, 2);
+            e.Property(br => br.Currency).HasMaxLength(3);
+        });
+
+        // ===== WebhookRegistration =====
+        modelBuilder.Entity<WebhookRegistration>(e =>
+        {
+            e.Property(wr => wr.Name).HasMaxLength(256);
+            e.Property(wr => wr.Url).HasMaxLength(2000);
+            e.HasQueryFilter(wr => !wr.IsDeleted);
+        });
+
+        // ===== WebhookDelivery =====
+        modelBuilder.Entity<WebhookDelivery>(e =>
+        {
+            e.HasIndex(wd => new { wd.WebhookRegistrationId, wd.DeliveredAt });
+            e.HasOne(wd => wd.Registration).WithMany().HasForeignKey(wd => wd.WebhookRegistrationId);
+            e.Property(wd => wd.DurationMs).HasPrecision(10, 2);
+        });
+
+        // ===== UserDevice =====
+        modelBuilder.Entity<UserDevice>(e =>
+        {
+            e.HasIndex(ud => new { ud.UserId, ud.DeviceToken }).IsUnique();
+            e.HasOne(ud => ud.User).WithMany().HasForeignKey(ud => ud.UserId);
+            e.Property(ud => ud.DeviceToken).HasMaxLength(500);
+            e.Property(ud => ud.Platform).HasMaxLength(20);
+        });
+
+        // ===== SyncQueue =====
+        modelBuilder.Entity<SyncQueue>(e =>
+        {
+            e.HasIndex(sq => new { sq.CompanyId, sq.IsProcessed, sq.QueuedAt });
+            e.Property(sq => sq.EntityType).HasMaxLength(100);
+            e.Property(sq => sq.OperationType).HasMaxLength(20);
+        });
     }
 
     public override int SaveChanges()
