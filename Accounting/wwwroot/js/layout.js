@@ -49,6 +49,7 @@ const Layout = {
     { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html' },
     { section: 'ระบบ' },
     { id: 'approval', label: 'อนุมัติ', icon: '✅', href: '/pages/approval.html' },
+    { id: 'subscription', label: 'แพ็กเกจ/สมัครสมาชิก', icon: '💎', href: '/pages/subscription.html' },
     { id: 'settings', label: 'ตั้งค่า', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍', href: '/pages/audit.html' },
   ],
