@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>นำเข้า/ส่งออก - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('import')">นำเข้าข้อมูล</button>
+      <button class="tab" onclick="Page.switchTab('export')">ส่งออกข้อมูล</button>
+      <button class="tab" onclick="Page.switchTab('smart')">Smart Import (AI)</button>
+    </div>
+
+    <!-- Import Tab -->
+    <div id="tab-import">
+      <div class="page-header">
+        <div><h2 class="page-title">นำเข้าข้อมูล</h2><p class="page-subtitle">นำเข้าข้อมูลจากไฟล์ CSV หรือ Excel</p></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <!-- Upload Section -->
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">อัพโหลดไฟล์</h3>
+          <div class="form-group"><label class="form-label">ประเภทข้อมูล *</label>
+            <select class="form-select" id="importEntity" onchange="Page.updateTemplateLink()">
+              <option value="">-- เลือกประเภท --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลือกไฟล์ (CSV, Excel)</label>
+            <input type="file" class="form-input" id="importFile" accept=".csv,.xlsx,.xls" style="padding:8px">
+          </div>
+          <div id="templateLink" style="margin-bottom:16px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" onclick="Page.validateImport()">ตรวจสอบข้อมูล</button>
+            <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+          </div>
+        </div>
+
+        <!-- Result Section -->
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">ผลการนำเข้า</h3>
+          <div id="importResult">
+            <p class="text-gray-400 text-center" style="padding:40px">เลือกประเภทข้อมูลและอัพโหลดไฟล์เพื่อเริ่มต้น</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Templates -->
+      <div class="card" style="padding:24px;margin-top:24px">
+        <h3 style="margin-bottom:16px">เทมเพลตนำเข้า</h3>
+        <p class="text-sm text-gray-500" style="margin-bottom:16px">ดาวน์โหลดเทมเพลตเพื่อเตรียมข้อมูลในรูปแบบที่ถูกต้อง</p>
+        <div id="templateList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px"></div>
+      </div>
+    </div>
+
+    <!-- Export Tab -->
+    <div id="tab-export" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">ส่งออกข้อมูล</h2><p class="page-subtitle">ส่งออกข้อมูลเป็นไฟล์ CSV หรือ Excel</p></div>
+      </div>
+      <div class="card" style="padding:24px;max-width:600px">
+        <div class="form-group"><label class="form-label">ประเภทข้อมูล *</label>
+          <select class="form-select" id="exportEntity">
+            <option value="">-- เลือกประเภท --</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">วันที่เริ่มต้น</label><input type="date" class="form-input" id="exportFrom"></div>
+          <div class="form-group"><label class="form-label">วันที่สิ้นสุด</label><input type="date" class="form-input" id="exportTo"></div>
+        </div>
+        <div class="form-group"><label class="form-label">รูปแบบไฟล์</label>
+          <select class="form-select" id="exportFormat">
+            <option value="csv">CSV</option>
+            <option value="xlsx">Excel (XLSX)</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="Page.doExport()">ส่งออก</button>
+      </div>
+    </div>
+
+    <!-- Smart Import Tab -->
+    <div id="tab-smart" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">Smart Import (AI)</h2><p class="page-subtitle">ใช้ AI จับคู่คอลัมน์อัตโนมัติจากไฟล์ที่ไม่ตรงเทมเพลต</p></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">อัพโหลดไฟล์</h3>
+          <div class="form-group"><label class="form-label">ประเภทข้อมูล *</label>
+            <select class="form-select" id="smartEntity">
+              <option value="">-- เลือกประเภท --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลือกไฟล์</label>
+            <input type="file" class="form-input" id="smartFile" accept=".csv,.xlsx,.xls" style="padding:8px">
+          </div>
+          <button class="btn btn-primary" onclick="Page.smartUpload()">วิเคราะห์ด้วย AI</button>
+        </div>
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">ผลการวิเคราะห์</h3>
+          <div id="smartResult">
+            <p class="text-gray-400 text-center" style="padding:40px">อัพโหลดไฟล์เพื่อให้ AI วิเคราะห์คอลัมน์</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  importableEntities: [],
+  exportableEntities: [],
+  smartSessionId: null,
+
+  init() {
+    if (!Layout.init('import-export')) return;
+    Layout.setTitle('นำเข้า/ส่งออก');
+    this.loadEntities();
+  },
+
+  switchTab(tab) {
+    ['import','export','smart'].forEach(t => {
+      const el = document.getElementById('tab-'+t);
+      if (el) el.style.display = t === tab ? '' : 'none';
+    });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['import','export','smart'][i] === tab));
+  },
+
+  async loadEntities() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const [impRes, expRes] = await Promise.allSettled([api.getImportableEntities(), api.getExportableEntities()]);
+      if (impRes.status === 'fulfilled') {
+        this.importableEntities = impRes.value.data || [];
+        const sel1 = document.getElementById('importEntity');
+        const sel3 = document.getElementById('smartEntity');
+        this.importableEntities.forEach(e => {
+          const name = e.name || e.entityType || e;
+          const label = e.displayName || e.label || name;
+          sel1.innerHTML += `<option value="${name}">${label}</option>`;
+          sel3.innerHTML += `<option value="${name}">${label}</option>`;
+        });
+        this.renderTemplates();
+      }
+      if (expRes.status === 'fulfilled') {
+        this.exportableEntities = expRes.value.data || [];
+        const sel2 = document.getElementById('exportEntity');
+        this.exportableEntities.forEach(e => {
+          const name = e.name || e.entityType || e;
+          const label = e.displayName || e.label || name;
+          sel2.innerHTML += `<option value="${name}">${label}</option>`;
+        });
+      }
+    } catch (err) {
+      // Fallback entities if API doesn't return them
+      const defaults = ['Contacts','Products','Documents','JournalEntries','Employees','ChartOfAccounts'];
+      const labels = {'Contacts':'ผู้ติดต่อ','Products':'สินค้า','Documents':'เอกสาร','JournalEntries':'สมุดรายวัน','Employees':'พนักงาน','ChartOfAccounts':'ผังบัญชี'};
+      ['importEntity','exportEntity','smartEntity'].forEach(selId => {
+        const sel = document.getElementById(selId);
+        defaults.forEach(d => sel.innerHTML += `<option value="${d}">${labels[d]||d}</option>`);
+      });
+    }
+  },
+
+  renderTemplates() {
+    const api = Layout.api(); if (!api) return;
+    const container = document.getElementById('templateList');
+    const entities = this.importableEntities.length ? this.importableEntities : [{name:'Contacts',displayName:'ผู้ติดต่อ'},{name:'Products',displayName:'สินค้า'},{name:'Documents',displayName:'เอกสาร'},{name:'JournalEntries',displayName:'สมุดรายวัน'}];
+    container.innerHTML = entities.map(e => {
+      const name = e.name || e.entityType || e;
+      const label = e.displayName || e.label || name;
+      const url = api.getImportTemplate(name);
+      return `<a href="${url}" class="card" style="padding:16px;text-align:center;text-decoration:none;color:inherit;cursor:pointer" download>
+        <div style="font-size:24px;margin-bottom:4px">📄</div>
+        <div class="text-sm font-medium">${label}</div>
+        <div class="text-xs text-gray-500">ดาวน์โหลดเทมเพลต</div>
+      </a>`;
+    }).join('');
+  },
+
+  updateTemplateLink() {
+    const api = Layout.api(); if (!api) return;
+    const entity = document.getElementById('importEntity').value;
+    const container = document.getElementById('templateLink');
+    if (entity) {
+      const url = api.getImportTemplate(entity);
+      container.innerHTML = `<a href="${url}" download class="text-sm text-primary">ดาวน์โหลดเทมเพลต ${entity}</a>`;
+    } else {
+      container.innerHTML = '';
+    }
+  },
+
+  async validateImport() {
+    const api = Layout.api(); if (!api) return;
+    const entity = document.getElementById('importEntity').value;
+    const fileInput = document.getElementById('importFile');
+    if (!entity) { Layout.toast('กรุณาเลือกประเภทข้อมูล', 'error'); return; }
+    if (!fileInput.files.length) { Layout.toast('กรุณาเลือกไฟล์', 'error'); return; }
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('entityType', entity);
+    const result = document.getElementById('importResult');
+    result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">กำลังตรวจสอบ...</p></div>';
+    try {
+      const res = await api.validateImport(formData);
+      const d = res.data || {};
+      result.innerHTML = `
+        <div style="margin-bottom:12px">${d.isValid || d.valid ? '<span class="badge badge-success">ข้อมูลถูกต้อง</span>' : '<span class="badge badge-danger">พบข้อผิดพลาด</span>'}</div>
+        <div class="text-sm"><strong>แถวทั้งหมด:</strong> ${d.totalRows || 0}</div>
+        <div class="text-sm"><strong>ถูกต้อง:</strong> ${d.validRows || 0}</div>
+        ${d.errors && d.errors.length ? `<div style="margin-top:12px"><strong class="text-sm">ข้อผิดพลาด:</strong><ul style="margin:8px 0;padding-left:20px">${d.errors.slice(0,10).map(e => `<li class="text-sm text-danger">${e.row ? 'แถว '+e.row+': ' : ''}${e.message || e}</li>`).join('')}</ul>${d.errors.length > 10 ? `<p class="text-sm text-gray-500">...และอีก ${d.errors.length-10} ข้อผิดพลาด</p>` : ''}</div>` : ''}`;
+    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+  },
+
+  async doImport() {
+    const api = Layout.api(); if (!api) return;
+    const entity = document.getElementById('importEntity').value;
+    const fileInput = document.getElementById('importFile');
+    if (!entity) { Layout.toast('กรุณาเลือกประเภทข้อมูล', 'error'); return; }
+    if (!fileInput.files.length) { Layout.toast('กรุณาเลือกไฟล์', 'error'); return; }
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('entityType', entity);
+    const result = document.getElementById('importResult');
+    result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">กำลังนำเข้า...</p></div>';
+    try {
+      const res = await api.importData(formData);
+      const d = res.data || {};
+      result.innerHTML = `
+        <div style="margin-bottom:12px"><span class="badge badge-success">นำเข้าสำเร็จ</span></div>
+        <div class="text-sm"><strong>นำเข้า:</strong> ${d.importedCount || d.successCount || 0} รายการ</div>
+        <div class="text-sm"><strong>ข้ามไป:</strong> ${d.skippedCount || 0} รายการ</div>
+        ${d.errors && d.errors.length ? `<div class="text-sm text-danger" style="margin-top:8px"><strong>ข้อผิดพลาด:</strong> ${d.errors.length} รายการ</div>` : ''}`;
+      Layout.toast('นำเข้าข้อมูลสำเร็จ');
+    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+  },
+
+  async doExport() {
+    const api = Layout.api(); if (!api) return;
+    const entity = document.getElementById('exportEntity').value;
+    if (!entity) { Layout.toast('กรุณาเลือกประเภทข้อมูล', 'error'); return; }
+    try {
+      const data = {
+        entityType: entity,
+        format: document.getElementById('exportFormat').value,
+        fromDate: document.getElementById('exportFrom').value || null,
+        toDate: document.getElementById('exportTo').value || null,
+      };
+      const res = await api.exportData(data);
+      if (res.data?.downloadUrl || res.data?.url) {
+        window.open(res.data.downloadUrl || res.data.url, '_blank');
+        Layout.toast('ส่งออกสำเร็จ');
+      } else {
+        Layout.toast('กำลังเตรียมไฟล์...', 'info');
+      }
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async smartUpload() {
+    const api = Layout.api(); if (!api) return;
+    const entity = document.getElementById('smartEntity').value;
+    const fileInput = document.getElementById('smartFile');
+    if (!entity || !fileInput.files.length) { Layout.toast('กรุณาเลือกประเภทและไฟล์', 'error'); return; }
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('entityType', entity);
+    const result = document.getElementById('smartResult');
+    result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">AI กำลังวิเคราะห์...</p></div>';
+    try {
+      const res = await api.smartImportUpload(formData);
+      const d = res.data || {};
+      this.smartSessionId = d.sessionId || d.id;
+      const mappings = d.columnMappings || d.mappings || [];
+      result.innerHTML = `
+        <div style="margin-bottom:12px"><span class="badge badge-success">วิเคราะห์สำเร็จ</span></div>
+        <div class="text-sm" style="margin-bottom:12px"><strong>คอลัมน์ที่จับคู่ได้:</strong></div>
+        <table class="table"><thead><tr><th>คอลัมน์ไฟล์</th><th>ฟิลด์ระบบ</th><th>ความมั่นใจ</th></tr></thead>
+        <tbody>${mappings.map(m => `<tr>
+          <td>${m.sourceColumn || m.source}</td>
+          <td>${m.targetField || m.target}</td>
+          <td><span class="badge ${(m.confidence||0)>0.7?'badge-success':'badge-warning'}">${Math.round((m.confidence||0)*100)}%</span></td>
+        </tr>`).join('')}</tbody></table>
+        <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button></div>`;
+    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+  },
+
+  async confirmSmartImport() {
+    if (!this.smartSessionId) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.smartImportConfirm({ sessionId: this.smartSessionId });
+      Layout.toast('นำเข้าข้อมูลสำเร็จ');
+      document.getElementById('smartResult').innerHTML = '<p class="text-success text-center" style="padding:20px">นำเข้าข้อมูลเรียบร้อยแล้ว</p>';
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

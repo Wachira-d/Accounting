@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายการประจำ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">รายการประจำ</h2><p class="page-subtitle">จัดการรายการเอกสารที่เกิดซ้ำอัตโนมัติ (ใบแจ้งหนี้, ค่าใช้จ่าย)</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างรายการประจำ</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Active">ใช้งาน</option>
+        <option value="Paused">หยุดชั่วคราว</option>
+        <option value="Completed">เสร็จสิ้น</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>ชื่อรายการ</th><th>ประเภท</th><th>ความถี่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอด</th><th>ครั้งถัดไป</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างรายการประจำ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-group"><label class="form-label">ชื่อรายการ *</label><input type="text" class="form-input" id="fName" placeholder="เช่น ค่าเช่าสำนักงาน"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
+              <select class="form-select" id="fDocType">
+                <option value="Invoice">ใบแจ้งหนี้</option>
+                <option value="TaxInvoice">ใบกำกับภาษี</option>
+                <option value="Expense">ค่าใช้จ่าย</option>
+                <option value="PurchaseOrder">ใบสั่งซื้อ</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">ความถี่ *</label>
+              <select class="form-select" id="fFrequency">
+                <option value="Daily">รายวัน</option>
+                <option value="Weekly">รายสัปดาห์</option>
+                <option value="Monthly" selected>รายเดือน</option>
+                <option value="Quarterly">รายไตรมาส</option>
+                <option value="Yearly">รายปี</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่มต้น *</label><input type="date" class="form-input" id="fStartDate"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEndDate"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><select class="form-select" id="fContact"><option value="">-- เลือก --</option></select></div>
+            <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
+          </div>
+          <div class="form-group"><label class="form-label">รายละเอียด</label><textarea class="form-input" id="fDescription" rows="2" placeholder="รายละเอียดที่จะปรากฏในเอกสาร"></textarea></div>
+          <div class="form-group">
+            <label class="form-label"><input type="checkbox" id="fAutoApprove"> อนุมัติอัตโนมัติ</label>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.save()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  page: 1,
+  items: [],
+
+  init() {
+    if (!Layout.init('recurring')) return;
+    Layout.setTitle('รายการประจำ');
+    this.load();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    const search = document.getElementById('searchInput')?.value || '';
+    const status = document.getElementById('statusFilter')?.value || '';
+    try {
+      let q = `?page=${this.page}&pageSize=20`;
+      if (search) q += '&search=' + encodeURIComponent(search);
+      if (status) q += '&status=' + status;
+      const res = await api.getRecurring(q);
+      const items = res.data?.items || res.data || [];
+      this.items = items;
+      const tbody = document.getElementById('tableBody');
+      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
+      tbody.innerHTML = items.map(r => `<tr>
+        <td><span class="font-medium">${r.name || r.title || '-'}</span></td>
+        <td>${Layout.docTypeLabel(r.documentType || r.type || '-')}</td>
+        <td>${freqMap[r.frequency] || r.frequency || '-'}</td>
+        <td>${r.contactName || '-'}</td>
+        <td class="text-right">${Layout.money(r.amount || r.totalAmount)}</td>
+        <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
+        <td>${Layout.statusBadge(r.status || 'Active')}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.view('${r.id}')">ดู</button>
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${r.id}')">หยุด</button>` : ''}
+          ${r.status === 'Paused' ? `<button class="btn btn-sm btn-success" onclick="Page.resume('${r.id}')">เริ่มต่อ</button>` : ''}
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.runNow('${r.id}')">สร้างทันที</button>` : ''}
+        </td>
+      </tr>`).join('');
+      const totalPages = res.data?.totalPages || 1;
+      document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.gotoPage');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  gotoPage(p) { Page.page = p; Page.load(); },
+
+  async openCreate() {
+    document.getElementById('formTitle').textContent = 'สร้างรายการประจำ';
+    document.getElementById('fId').value = '';
+    ['fName','fStartDate','fEndDate','fAmount','fDescription'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fFrequency').value = 'Monthly';
+    document.getElementById('fAutoApprove').checked = false;
+    await this.loadContacts();
+    Layout.openModal('formModal');
+  },
+
+  async loadContacts() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getContacts('?pageSize=200');
+      const items = res.data?.items || res.data || [];
+      const sel = document.getElementById('fContact');
+      sel.innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    } catch (err) { /* ignore */ }
+  },
+
+  async save() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('fId').value;
+    const data = {
+      name: document.getElementById('fName').value,
+      documentType: document.getElementById('fDocType').value,
+      frequency: document.getElementById('fFrequency').value,
+      startDate: document.getElementById('fStartDate').value,
+      endDate: document.getElementById('fEndDate').value || null,
+      contactId: document.getElementById('fContact').value || null,
+      amount: parseFloat(document.getElementById('fAmount').value) || 0,
+      description: document.getElementById('fDescription').value,
+      autoApprove: document.getElementById('fAutoApprove').checked,
+    };
+    if (!data.name || !data.startDate || !data.amount) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try {
+      if (id) await api.updateRecurring(id, data);
+      else await api.createRecurring(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
+      Layout.closeModal('formModal');
+      this.load();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async view(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getRecurringItem(id);
+      const r = res.data;
+      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
+      document.getElementById('detailTitle').textContent = r.name || 'รายละเอียด';
+      document.getElementById('detailContent').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${Layout.docTypeLabel(r.documentType||r.type)}</strong></div>
+          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${freqMap[r.frequency]||r.frequency}</strong></div>
+          <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
+          <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
+          <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${r.contactName||'-'}</strong></div>
+          <div><span class="text-gray-500 text-sm">ยอดเงิน:</span><br><strong>${Layout.money(r.amount||r.totalAmount)}</strong></div>
+          <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
+          <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
+          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.executionCount || r.runCount || 0} ครั้ง</strong></div>
+          <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
+        </div>
+        ${r.description ? `<div style="margin-top:16px"><span class="text-gray-500 text-sm">รายละเอียด:</span><br>${r.description}</div>` : ''}`;
+      document.getElementById('detailFooter').innerHTML = `
+        <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')">ปิด</button>
+        <button class="btn btn-danger" onclick="Page.del('${r.id}')">ลบ</button>
+        <button class="btn btn-primary" onclick="Page.editFromDetail('${r.id}')">แก้ไข</button>`;
+      Layout.openModal('detailModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async editFromDetail(id) {
+    Layout.closeModal('detailModal');
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getRecurringItem(id);
+      const r = res.data;
+      document.getElementById('formTitle').textContent = 'แก้ไขรายการประจำ';
+      document.getElementById('fId').value = r.id;
+      document.getElementById('fName').value = r.name || '';
+      document.getElementById('fDocType').value = r.documentType || r.type || 'Invoice';
+      document.getElementById('fFrequency').value = r.frequency || 'Monthly';
+      document.getElementById('fStartDate').value = Layout.dateInput(r.startDate);
+      document.getElementById('fEndDate').value = Layout.dateInput(r.endDate);
+      document.getElementById('fAmount').value = r.amount || r.totalAmount || '';
+      document.getElementById('fDescription').value = r.description || '';
+      document.getElementById('fAutoApprove').checked = r.autoApprove || false;
+      await this.loadContacts();
+      if (r.contactId) document.getElementById('fContact').value = r.contactId;
+      Layout.openModal('formModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async pause(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.pauseRecurring(id); Layout.toast('หยุดชั่วคราวสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async resume(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.resumeRecurring(id); Layout.toast('เริ่มต่อสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async runNow(id) {
+    if (!confirm('สร้างเอกสารจากรายการนี้ทันที?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.runRecurringNow(id); Layout.toast('สร้างเอกสารสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async del(id) {
+    if (!confirm('ลบรายการประจำนี้?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.deleteRecurring(id); Layout.toast('ลบสำเร็จ'); Layout.closeModal('detailModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

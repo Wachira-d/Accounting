@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ปฏิทินภาษี - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ปฏิทินภาษี</h2><p class="page-subtitle">ติดตามกำหนดยื่นภาษีและเตือนล่วงหน้า</p></div>
+      <button class="btn btn-primary" onclick="Page.initYear()">เริ่มต้นปฏิทินปีนี้</button>
+    </div>
+
+    <!-- Summary Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:24px">
+      <div class="card" style="padding:20px;border-left:4px solid var(--danger)">
+        <div class="text-xs text-gray-500">เกินกำหนด</div>
+        <div class="text-2xl font-bold text-danger" id="overdueCount">0</div>
+      </div>
+      <div class="card" style="padding:20px;border-left:4px solid var(--warning)">
+        <div class="text-xs text-gray-500">ใกล้ถึงกำหนด (30 วัน)</div>
+        <div class="text-2xl font-bold text-warning" id="upcomingCount">0</div>
+      </div>
+      <div class="card" style="padding:20px;border-left:4px solid var(--success)">
+        <div class="text-xs text-gray-500">ยื่นแล้ว</div>
+        <div class="text-2xl font-bold text-success" id="filedCount">0</div>
+      </div>
+      <div class="card" style="padding:20px;border-left:4px solid var(--gray-300)">
+        <div class="text-xs text-gray-500">ทั้งหมด</div>
+        <div class="text-2xl font-bold" id="totalCount">0</div>
+      </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="toolbar">
+      <select class="filter-select" id="yearFilter" onchange="Page.load()"></select>
+      <select class="filter-select" id="monthFilter" onchange="Page.load()">
+        <option value="">ทุกเดือน</option>
+        <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+        <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+        <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+        <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+      </select>
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Pending">รอยื่น</option>
+        <option value="Filed">ยื่นแล้ว</option>
+        <option value="Overdue">เกินกำหนด</option>
+      </select>
+    </div>
+
+    <!-- Events Table -->
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>แบบภาษี</th><th>รายละเอียด</th><th>กำหนดยื่น</th><th>วันที่ยื่น</th><th class="text-right">ยอดภาษี</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Update Event Modal -->
+    <div class="modal-overlay" id="eventModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title" id="eventTitle">อัพเดตรายการภาษี</h3><button class="modal-close" onclick="Layout.closeModal('eventModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="eventId">
+          <div class="form-group"><label class="form-label">สถานะ</label>
+            <select class="form-select" id="eventStatus">
+              <option value="Pending">รอยื่น</option>
+              <option value="Filed">ยื่นแล้ว</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">วันที่ยื่น</label><input type="date" class="form-input" id="eventFiledDate"></div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="eventRef" placeholder="เลขอ้างอิงการยื่น"></div>
+          <div class="form-group"><label class="form-label">ยอดภาษี</label><input type="number" class="form-input" id="eventAmount" step="0.01"></div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-input" id="eventNotes" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('eventModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEvent()">บันทึก</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  events: [],
+
+  init() {
+    if (!Layout.init('tax-calendar')) return;
+    Layout.setTitle('ปฏิทินภาษี');
+    const y = new Date().getFullYear();
+    const sel = document.getElementById('yearFilter');
+    for (let i = y+1; i >= y-2; i--) {
+      const opt = document.createElement('option');
+      opt.value = i; opt.textContent = i + 543;
+      if (i === y) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    this.loadSummary();
+    this.load();
+  },
+
+  async loadSummary() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const [upRes, odRes] = await Promise.all([api.getUpcomingTax(30), api.getOverdueTax()]);
+      const upcoming = upRes.data || [];
+      const overdue = odRes.data || [];
+      document.getElementById('upcomingCount').textContent = upcoming.length;
+      document.getElementById('overdueCount').textContent = overdue.length;
+    } catch (err) { /* ignore */ }
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('yearFilter').value;
+    const month = document.getElementById('monthFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    try {
+      const q = `?year=${year}${month ? '&month='+month : ''}`;
+      const res = await api.getTaxEvents(q);
+      let items = res.data?.items || res.data || [];
+      this.events = items;
+
+      // Client-side status filter
+      if (status) {
+        const now = new Date();
+        items = items.filter(e => {
+          if (status === 'Overdue') return e.status !== 'Filed' && new Date(e.dueDate) < now;
+          return e.status === status;
+        });
+      }
+
+      // Update counts
+      const filed = this.events.filter(e => e.status === 'Filed').length;
+      document.getElementById('filedCount').textContent = filed;
+      document.getElementById('totalCount').textContent = this.events.length;
+
+      const tbody = document.getElementById('tableBody');
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบรายการ กดปุ่ม "เริ่มต้นปฏิทินปีนี้" เพื่อสร้าง</td></tr>'; return; }
+
+      const now = new Date();
+      tbody.innerHTML = items.map(e => {
+        const due = new Date(e.dueDate);
+        const isOverdue = e.status !== 'Filed' && due < now;
+        const isUpcoming = e.status !== 'Filed' && !isOverdue && (due - now) < 30*24*60*60*1000;
+        let badge = Layout.statusBadge(e.status || 'Pending');
+        if (isOverdue) badge = '<span class="badge badge-danger">เกินกำหนด</span>';
+        else if (isUpcoming) badge = '<span class="badge badge-warning">ใกล้ถึงกำหนด</span>';
+
+        return `<tr style="${isOverdue ? 'background:#FEF2F2' : isUpcoming ? 'background:#FFFBEB' : ''}">
+          <td><span class="font-medium">${e.formName || e.taxFormName || '-'}</span></td>
+          <td>${e.description || '-'}</td>
+          <td>${Layout.date(e.dueDate)}</td>
+          <td>${e.filedDate ? Layout.date(e.filedDate) : '-'}</td>
+          <td class="text-right">${e.taxAmount ? Layout.money(e.taxAmount) : '-'}</td>
+          <td>${badge}</td>
+          <td><button class="btn btn-sm btn-secondary" onclick="Page.editEvent('${e.id}')">อัพเดต</button></td>
+        </tr>`;
+      }).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async initYear() {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('yearFilter').value;
+    if (!confirm(`เริ่มต้นปฏิทินภาษีสำหรับปี ${parseInt(year)+543}?`)) return;
+    try {
+      await api.initTaxCalendar(year);
+      Layout.toast('สร้างปฏิทินภาษีสำเร็จ');
+      this.load();
+      this.loadSummary();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  editEvent(id) {
+    const e = this.events.find(x => x.id === id);
+    if (!e) return;
+    document.getElementById('eventId').value = e.id;
+    document.getElementById('eventTitle').textContent = `อัพเดต: ${e.formName || e.taxFormName}`;
+    document.getElementById('eventStatus').value = e.status || 'Pending';
+    document.getElementById('eventFiledDate').value = Layout.dateInput(e.filedDate);
+    document.getElementById('eventRef').value = e.filingReference || '';
+    document.getElementById('eventAmount').value = e.taxAmount || '';
+    document.getElementById('eventNotes').value = e.notes || '';
+    Layout.openModal('eventModal');
+  },
+
+  async saveEvent() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('eventId').value;
+    const data = {
+      status: document.getElementById('eventStatus').value,
+      filedDate: document.getElementById('eventFiledDate').value || null,
+      filingReference: document.getElementById('eventRef').value,
+      taxAmount: parseFloat(document.getElementById('eventAmount').value) || null,
+      notes: document.getElementById('eventNotes').value,
+    };
+    try {
+      await api.updateTaxEvent(id, data);
+      Layout.toast('อัพเดตสำเร็จ');
+      Layout.closeModal('eventModal');
+      this.load();
+      this.loadSummary();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>
