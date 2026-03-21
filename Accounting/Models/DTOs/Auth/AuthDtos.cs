@@ -41,3 +41,12 @@ public record RefreshTokenRequest(string RefreshToken);
 public record ChangePasswordRequest(
     string CurrentPassword,
     string NewPassword);
+
+public record ForgotPasswordRequest(
+    [Required(ErrorMessage = "กรุณากรอกอีเมล")]
+    [EmailAddress(ErrorMessage = "รูปแบบอีเมลไม่ถูกต้อง")]
+    string Email);
+
+public record ResetPasswordRequest(
+    [Required] string Token,
+    [Required] [MinLength(8)] string NewPassword);

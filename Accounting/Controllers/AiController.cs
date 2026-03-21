@@ -43,7 +43,7 @@ public class AiController : ControllerBase
     // Rules
     [HttpPost("rules")]
     public async Task<ActionResult<ApiResponse<AutoCatRuleResponse>>> CreateRule(Guid companyId, [FromBody] CreateAutoCatRuleRequest request)
-        => Ok(new ApiResponse<AutoCatRuleResponse>(true, await _service.CreateRuleAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<AutoCatRuleResponse>(true, await _service.CreateRuleAsync(companyId, request)));
 
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<AutoCatRuleResponse>>>> GetRules(Guid companyId)
@@ -55,7 +55,7 @@ public class AiController : ControllerBase
 
     [HttpDelete("rules/{ruleId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteRule(Guid companyId, Guid ruleId)
-    { await _service.DeleteRuleAsync(companyId, ruleId); return Ok(new ApiResponse<bool>(true, true)); }
+    { await _service.DeleteRuleAsync(companyId, ruleId); return NoContent(); }
 
     [HttpPost("rules/learn")]
     public async Task<ActionResult<ApiResponse<List<AutoCatRuleResponse>>>> LearnRules(Guid companyId)

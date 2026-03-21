@@ -20,11 +20,12 @@ public class BudgetController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<List<BudgetResponse>>>> GetAll(
-        Guid companyId, [FromQuery] int? fiscalYear = null)
+    public async Task<ActionResult<ApiResponse<PagedResponse<BudgetResponse>>>> GetAll(
+        Guid companyId, [FromQuery] int? fiscalYear = null,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
     {
-        var result = await _budgetService.GetAllAsync(companyId, fiscalYear);
-        return Ok(new ApiResponse<List<BudgetResponse>>(true, result));
+        var result = await _budgetService.GetAllPagedAsync(companyId, fiscalYear, new PagedRequest(page, pageSize, search));
+        return Ok(new ApiResponse<PagedResponse<BudgetResponse>>(true, result));
     }
 
     [HttpGet("{budgetId:guid}")]
@@ -40,7 +41,7 @@ public class BudgetController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _budgetService.CreateAsync(companyId, request, userId);
-        return Ok(new ApiResponse<BudgetResponse>(true, result, "สร้างงบประมาณสำเร็จ"));
+        return StatusCode(201, new ApiResponse<BudgetResponse>(true, result, "สร้างงบประมาณสำเร็จ"));
     }
 
     [HttpPut("{budgetId:guid}")]
@@ -55,7 +56,7 @@ public class BudgetController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid budgetId)
     {
         await _budgetService.DeleteAsync(companyId, budgetId);
-        return Ok(new ApiResponse<string>(true, null, "ลบงบประมาณสำเร็จ"));
+        return NoContent();
     }
 
     [HttpGet("{budgetId:guid}/vs-actual")]

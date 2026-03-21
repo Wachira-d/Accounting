@@ -26,7 +26,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.InviteFreelanceAsync(companyId, request, userId);
-        return Ok(new ApiResponse<InvitationResponse>(true, result, "ส่งคำเชิญสำเร็จ"));
+        return StatusCode(201, new ApiResponse<InvitationResponse>(true, result, "ส่งคำเชิญสำเร็จ"));
     }
 
     [HttpGet("invitations")]
@@ -40,7 +40,7 @@ public class FreelanceController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> RevokeInvitation(Guid companyId, Guid invitationId)
     {
         await _freelanceService.RevokeInvitationAsync(companyId, invitationId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิกคำเชิญสำเร็จ"));
+        return NoContent();
     }
 
     // ===== Accept Invitation (Public - Freelance) =====
@@ -91,7 +91,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.CreateTaskAsync(companyId, request, userId);
-        return Ok(new ApiResponse<FreelanceTaskResponse>(true, result, "สร้างงานสำเร็จ"));
+        return StatusCode(201, new ApiResponse<FreelanceTaskResponse>(true, result, "สร้างงานสำเร็จ"));
     }
 
     [HttpGet("tasks")]

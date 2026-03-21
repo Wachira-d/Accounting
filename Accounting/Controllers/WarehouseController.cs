@@ -16,7 +16,7 @@ public class WarehouseController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<WarehouseResponse>>> Create(Guid companyId, [FromBody] CreateWarehouseRequest request)
-        => Ok(new ApiResponse<WarehouseResponse>(true, await _service.CreateAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<WarehouseResponse>(true, await _service.CreateAsync(companyId, request)));
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<WarehouseResponse>>>> GetAll(Guid companyId)
@@ -48,7 +48,7 @@ public class WarehouseController : ControllerBase
     // Transfers
     [HttpPost("transfers")]
     public async Task<ActionResult<ApiResponse<StockTransferResponse>>> CreateTransfer(Guid companyId, [FromBody] CreateStockTransferRequest request)
-        => Ok(new ApiResponse<StockTransferResponse>(true, await _service.CreateTransferAsync(companyId, request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<StockTransferResponse>(true, await _service.CreateTransferAsync(companyId, request, User.Identity?.Name ?? "")));
 
     [HttpGet("transfers/{transferId:guid}")]
     public async Task<ActionResult<ApiResponse<StockTransferResponse>>> GetTransfer(Guid companyId, Guid transferId)

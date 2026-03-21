@@ -29,7 +29,7 @@ public class BankController : ControllerBase
     public async Task<ActionResult<ApiResponse<BankAccountResponse>>> CreateAccount(Guid companyId, [FromBody] CreateBankAccountRequest request)
     {
         var result = await _bankService.CreateBankAccountAsync(companyId, request);
-        return Ok(new ApiResponse<BankAccountResponse>(true, result, "สร้างบัญชีธนาคารสำเร็จ"));
+        return StatusCode(201, new ApiResponse<BankAccountResponse>(true, result, "สร้างบัญชีธนาคารสำเร็จ"));
     }
 
     [HttpPut("accounts/{accountId:guid}")]
@@ -51,7 +51,7 @@ public class BankController : ControllerBase
     public async Task<ActionResult<ApiResponse<BankTransactionResponse>>> CreateTransaction(Guid companyId, [FromBody] CreateBankTransactionRequest request)
     {
         var result = await _bankService.CreateTransactionAsync(companyId, request);
-        return Ok(new ApiResponse<BankTransactionResponse>(true, result));
+        return StatusCode(201, new ApiResponse<BankTransactionResponse>(true, result));
     }
 
     [HttpPost("reconcile")]
@@ -73,5 +73,13 @@ public class BankController : ControllerBase
     {
         var result = await _bankService.AutoMatchAsync(companyId, accountId);
         return Ok(new ApiResponse<List<BankTransactionResponse>>(true, result, $"จับคู่อัตโนมัติได้ {result.Count} รายการ"));
+    }
+
+    [HttpPost("import-statement")]
+    public async Task<ActionResult<ApiResponse<int>>> ImportStatement(
+        Guid companyId, [FromBody] ImportBankStatementRequest request)
+    {
+        var count = await _bankService.ImportBankStatementAsync(companyId, request);
+        return Ok(new ApiResponse<int>(true, count, $"นำเข้า {count} รายการสำเร็จ"));
     }
 }

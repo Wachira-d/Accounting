@@ -48,7 +48,7 @@ public class SettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<NumberSeriesResponse>>> CreateNumberSeries(Guid companyId, [FromBody] CreateNumberSeriesRequest request)
     {
         var result = await _settingsService.CreateNumberSeriesAsync(companyId, request);
-        return Ok(new ApiResponse<NumberSeriesResponse>(true, result, "สร้าง number series สำเร็จ"));
+        return StatusCode(201, new ApiResponse<NumberSeriesResponse>(true, result, "สร้าง number series สำเร็จ"));
     }
 
     [HttpPut("number-series/{seriesId:guid}")]
@@ -72,13 +72,13 @@ public class SettingsController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _settingsService.CreateApiKeyAsync(companyId, userId, request);
-        return Ok(new ApiResponse<ApiKeyCreatedResponse>(true, result, "สร้าง API key สำเร็จ (เก็บ key นี้ไว้ จะแสดงครั้งเดียว)"));
+        return StatusCode(201, new ApiResponse<ApiKeyCreatedResponse>(true, result, "สร้าง API key สำเร็จ (เก็บ key นี้ไว้ จะแสดงครั้งเดียว)"));
     }
 
     [HttpDelete("api-keys/{apiKeyId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> RevokeApiKey(Guid companyId, Guid apiKeyId)
     {
         await _settingsService.RevokeApiKeyAsync(companyId, apiKeyId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิก API key สำเร็จ"));
+        return NoContent();
     }
 }

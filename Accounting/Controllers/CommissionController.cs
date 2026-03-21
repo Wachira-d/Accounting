@@ -16,7 +16,7 @@ public class CommissionController : ControllerBase
 
     [HttpPost("plans")]
     public async Task<ActionResult<ApiResponse<CommissionPlanResponse>>> CreatePlan(Guid companyId, [FromBody] CreateCommissionPlanRequest request)
-        => Ok(new ApiResponse<CommissionPlanResponse>(true, await _service.CreatePlanAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<CommissionPlanResponse>(true, await _service.CreatePlanAsync(companyId, request)));
 
     [HttpGet("plans")]
     public async Task<ActionResult<ApiResponse<List<CommissionPlanResponse>>>> GetPlans(Guid companyId)

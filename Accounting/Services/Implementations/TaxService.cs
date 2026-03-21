@@ -132,7 +132,7 @@ public class TaxService : ITaxService
                     TransactionDate = doc.DocumentDate,
                     Description = doc.DocumentNumber,
                     IncomeAmount = doc.SubTotal,
-                    TaxRate = doc.Lines.Any() ? doc.Lines.Max(l => l.VatRate) : 7,
+                    TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
                     DocumentId = doc.Id
                 });
@@ -152,7 +152,7 @@ public class TaxService : ITaxService
                     TransactionDate = doc.DocumentDate,
                     Description = $"[ภาษีซื้อ] {doc.DocumentNumber}",
                     IncomeAmount = doc.SubTotal,
-                    TaxRate = doc.Lines.Any() ? doc.Lines.Max(l => l.VatRate) : 7,
+                    TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
                     DocumentId = doc.Id,
                     IncomeTypeCode = "INPUT"

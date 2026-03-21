@@ -16,7 +16,7 @@ public class RevenueRecognitionController : ControllerBase
 
     [HttpPost("contracts")]
     public async Task<ActionResult<ApiResponse<RevenueContractResponse>>> CreateContract(Guid companyId, [FromBody] CreateRevenueContractRequest request)
-        => Ok(new ApiResponse<RevenueContractResponse>(true, await _service.CreateContractAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<RevenueContractResponse>(true, await _service.CreateContractAsync(companyId, request)));
 
     [HttpGet("contracts/{contractId:guid}")]
     public async Task<ActionResult<ApiResponse<RevenueContractResponse>>> GetContract(Guid companyId, Guid contractId)

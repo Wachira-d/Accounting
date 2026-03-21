@@ -17,7 +17,7 @@ public class FpaController : ControllerBase
     // Scenarios
     [HttpPost("scenarios")]
     public async Task<ActionResult<ApiResponse<ScenarioResponse>>> CreateScenario(Guid companyId, [FromBody] CreateScenarioRequest request)
-        => Ok(new ApiResponse<ScenarioResponse>(true, await _service.CreateScenarioAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<ScenarioResponse>(true, await _service.CreateScenarioAsync(companyId, request)));
 
     [HttpGet("scenarios")]
     public async Task<ActionResult<ApiResponse<List<ScenarioResponse>>>> GetScenarios(Guid companyId, [FromQuery] int? fiscalYear)
@@ -60,7 +60,7 @@ public class FpaController : ControllerBase
     // KPIs
     [HttpPost("kpis")]
     public async Task<ActionResult<ApiResponse<FinancialKpiResponse>>> CreateKpi(Guid companyId, [FromBody] CreateFinancialKpiRequest request)
-        => Ok(new ApiResponse<FinancialKpiResponse>(true, await _service.CreateKpiAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<FinancialKpiResponse>(true, await _service.CreateKpiAsync(companyId, request)));
 
     [HttpGet("kpis")]
     public async Task<ActionResult<ApiResponse<List<FinancialKpiResponse>>>> GetKpis(Guid companyId)

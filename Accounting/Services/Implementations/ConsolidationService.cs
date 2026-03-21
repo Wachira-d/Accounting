@@ -276,8 +276,8 @@ public class ConsolidationService : IConsolidationService
             // Investment recorded at cost + share of post-acquisition profits
             ConsolidationMethod.Equity => (member.OwnershipPercent / 100m, 0m),
 
-            // Cost Method: investment recorded at cost, only dividend income recognized
-            ConsolidationMethod.Cost => (0m, 0m),
+            // Cost Method: investment at original cost (use ownership% for initial recognition)
+            ConsolidationMethod.Cost => (member.OwnershipPercent / 100m, 0m),
 
             _ => (0m, 0m)
         };

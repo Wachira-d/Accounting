@@ -43,7 +43,7 @@ public class DocumentController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _documentService.CreateDocumentAsync(companyId, request, userId);
-        return Ok(new ApiResponse<DocumentResponse>(true, result, "สร้างเอกสารสำเร็จ"));
+        return StatusCode(201, new ApiResponse<DocumentResponse>(true, result, "สร้างเอกสารสำเร็จ"));
     }
 
     [HttpPut("{documentId:guid}")]
@@ -90,7 +90,7 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<ContactResponse>>> CreateContact(Guid companyId, [FromBody] CreateContactRequest request)
     {
         var result = await _documentService.CreateContactAsync(companyId, request);
-        return Ok(new ApiResponse<ContactResponse>(true, result, "สร้างผู้ติดต่อสำเร็จ"));
+        return StatusCode(201, new ApiResponse<ContactResponse>(true, result, "สร้างผู้ติดต่อสำเร็จ"));
     }
 
     [HttpPut("contacts/{contactId:guid}")]
@@ -114,6 +114,6 @@ public class DocumentController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _documentService.CreatePaymentAsync(companyId, request, userId);
-        return Ok(new ApiResponse<PaymentResponse>(true, result, "บันทึกการชำระเงินสำเร็จ"));
+        return StatusCode(201, new ApiResponse<PaymentResponse>(true, result, "บันทึกการชำระเงินสำเร็จ"));
     }
 }

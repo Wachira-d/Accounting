@@ -56,6 +56,9 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.WithholdingTaxAmount = claim.Lines.Sum(l => l.WithholdingTaxAmount);
         claim.TotalAmount = claim.SubTotal + claim.VatAmount - claim.WithholdingTaxAmount;
 
+        // Policy compliance checks
+        ValidateExpensePolicy(claim);
+
         _db.ExpenseClaims.Add(claim);
         await _db.SaveChangesAsync();
 
@@ -232,6 +235,48 @@ public class ExpenseClaimService : IExpenseClaimService
             .ToListAsync();
 
         return claims.Select(MapToResponse).ToList();
+    }
+
+    // Expense policy compliance
+    private static readonly Dictionary<string, decimal> CategoryLimits = new()
+    {
+        { "transportation", 5000m },
+        { "meal", 2000m },
+        { "accommodation", 10000m },
+        { "entertainment", 5000m },
+        { "supplies", 3000m }
+    };
+    private const decimal MaxSingleClaimAmount = 100000m;
+    private const decimal MaxSingleLineAmount = 50000m;
+
+    private static void ValidateExpensePolicy(ExpenseClaim claim)
+    {
+        var violations = new List<string>();
+
+        if (claim.TotalAmount > MaxSingleClaimAmount)
+            violations.Add($"ยอดรวมเกินวงเงินสูงสุด ({MaxSingleClaimAmount:N0} บาท)");
+
+        foreach (var line in claim.Lines)
+        {
+            if (line.Amount > MaxSingleLineAmount)
+                violations.Add($"รายการ '{line.Description}' เกินวงเงินต่อรายการ ({MaxSingleLineAmount:N0} บาท)");
+
+            if (!string.IsNullOrEmpty(line.Category) &&
+                CategoryLimits.TryGetValue(line.Category.ToLowerInvariant(), out var limit) &&
+                line.Amount > limit)
+            {
+                violations.Add($"รายการ '{line.Description}' เกินวงเงินหมวด {line.Category} ({limit:N0} บาท)");
+            }
+        }
+
+        if (claim.ExpenseDate > DateTime.UtcNow.AddDays(1))
+            violations.Add("วันที่ค่าใช้จ่ายไม่สามารถเป็นวันในอนาคตได้");
+
+        if (claim.ExpenseDate < DateTime.UtcNow.AddDays(-90))
+            violations.Add("ค่าใช้จ่ายเก่าเกิน 90 วัน ไม่สามารถเบิกได้");
+
+        if (violations.Count > 0)
+            throw new InvalidOperationException($"ไม่ผ่านนโยบายค่าใช้จ่าย: {string.Join("; ", violations)}");
     }
 
     private static ExpenseClaimResponse MapToResponse(ExpenseClaim e) => new(

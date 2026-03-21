@@ -40,7 +40,7 @@ public class FixedAssetController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.CreateAsync(companyId, request, userId);
-        return Ok(new ApiResponse<FixedAssetResponse>(true, result, "สร้างสินทรัพย์ถาวรสำเร็จ"));
+        return StatusCode(201, new ApiResponse<FixedAssetResponse>(true, result, "สร้างสินทรัพย์ถาวรสำเร็จ"));
     }
 
     [HttpPut("{assetId:guid}")]
@@ -74,5 +74,14 @@ public class FixedAssetController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.CalculateDepreciationAsync(companyId, request, userId);
         return Ok(new ApiResponse<List<DepreciationResponse>>(true, result, $"คำนวณค่าเสื่อมราคาสำเร็จ {result.Count} รายการ"));
+    }
+
+    [HttpPost("{assetId:guid}/revalue")]
+    public async Task<ActionResult<ApiResponse<RevaluationResponse>>> Revalue(
+        Guid companyId, Guid assetId, [FromBody] RevalueAssetRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.RevalueAsync(companyId, assetId, request, userId);
+        return Ok(new ApiResponse<RevaluationResponse>(true, result, "ตีราคาสินทรัพย์ใหม่สำเร็จ"));
     }
 }

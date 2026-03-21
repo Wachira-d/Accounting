@@ -17,7 +17,7 @@ public class IntercompanyController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<IntercompanyTxnResponse>>> Create(Guid companyId, [FromBody] CreateIntercompanyTxnRequest request)
-        => Ok(new ApiResponse<IntercompanyTxnResponse>(true, await _service.CreateAsync(companyId, request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<IntercompanyTxnResponse>(true, await _service.CreateAsync(companyId, request, User.Identity?.Name ?? "")));
 
     [HttpGet("{transactionId:guid}")]
     public async Task<ActionResult<ApiResponse<IntercompanyTxnResponse>>> GetById(Guid companyId, Guid transactionId)

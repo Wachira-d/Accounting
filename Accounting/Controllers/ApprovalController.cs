@@ -33,7 +33,7 @@ public class ApprovalController : ControllerBase
         Guid companyId, [FromBody] CreateApprovalRuleRequest request)
     {
         var result = await _approvalService.CreateRuleAsync(companyId, request);
-        return Ok(new ApiResponse<ApprovalRuleResponse>(true, result, "สร้างกฎการอนุมัติสำเร็จ"));
+        return StatusCode(201, new ApiResponse<ApprovalRuleResponse>(true, result, "สร้างกฎการอนุมัติสำเร็จ"));
     }
 
     [HttpPut("rules/{ruleId:guid}")]
@@ -48,7 +48,7 @@ public class ApprovalController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> DeleteRule(Guid companyId, Guid ruleId)
     {
         await _approvalService.DeleteRuleAsync(companyId, ruleId);
-        return Ok(new ApiResponse<string>(true, null, "ลบกฎการอนุมัติสำเร็จ"));
+        return NoContent();
     }
 
     // ===== Requests =====

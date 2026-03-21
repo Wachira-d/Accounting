@@ -65,3 +65,17 @@ public record DisposeAssetRequest(
 public record CalculateDepreciationRequest(
     int Year,
     int Month);
+
+public record RevalueAssetRequest(
+    decimal NewFairValue,
+    DateTime RevaluationDate,
+    string? Notes);
+
+public record RevaluationResponse(
+    Guid AssetId,
+    string AssetCode,
+    string AssetName,
+    decimal OldNetBookValue,
+    decimal NewFairValue,
+    decimal RevaluationSurplus,
+    DateTime RevaluationDate);

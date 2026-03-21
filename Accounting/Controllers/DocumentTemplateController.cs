@@ -28,7 +28,7 @@ public class DocumentTemplateController : ControllerBase
         Guid companyId, [FromBody] CreateDocumentTemplateRequest request)
     {
         var result = await _templateService.CreateAsync(companyId, request);
-        return Ok(new ApiResponse<DocumentTemplateResponse>(true, result, "สร้างเทมเพลตสำเร็จ"));
+        return StatusCode(201, new ApiResponse<DocumentTemplateResponse>(true, result, "สร้างเทมเพลตสำเร็จ"));
     }
 
     [HttpGet("{templateId:guid}")]
@@ -58,7 +58,7 @@ public class DocumentTemplateController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid templateId)
     {
         await _templateService.DeleteAsync(companyId, templateId);
-        return Ok(new ApiResponse<bool>(true, true, "ลบเทมเพลตสำเร็จ"));
+        return NoContent();
     }
 
     [HttpGet("default/{documentType}")]

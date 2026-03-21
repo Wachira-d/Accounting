@@ -28,7 +28,7 @@ public class OcrController : ControllerBase
 
     [HttpPost("{scanId:guid}/create-document")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
 
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchContact(Guid companyId, Guid scanId, Guid contactId)

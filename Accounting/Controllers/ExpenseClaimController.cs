@@ -26,7 +26,7 @@ public class ExpenseClaimController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _expenseService.CreateAsync(companyId, request, userId);
-        return Ok(new ApiResponse<ExpenseClaimResponse>(true, result, "สร้างใบเบิกค่าใช้จ่ายสำเร็จ"));
+        return StatusCode(201, new ApiResponse<ExpenseClaimResponse>(true, result, "สร้างใบเบิกค่าใช้จ่ายสำเร็จ"));
     }
 
     [HttpGet("{claimId:guid}")]

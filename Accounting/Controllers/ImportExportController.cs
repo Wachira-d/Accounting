@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Import;
 using Accounting.Services.Interfaces;
@@ -23,7 +23,7 @@ public class ImportExportController : ControllerBase
     public async Task<ActionResult<ApiResponse<ImportResult>>> Import(
         Guid companyId, [FromBody] ImportRequest request)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _importExportService.ImportAsync(companyId, request, userId);
         return Ok(new ApiResponse<ImportResult>(true, result,
             $"นำเข้าสำเร็จ {result.SuccessCount}/{result.TotalRows} รายการ"));
@@ -65,7 +65,7 @@ public class ImportExportController : ControllerBase
     public async Task<ActionResult<ApiResponse<SmartImportSessionResponse>>> SmartUpload(
         Guid companyId, [FromBody] SmartImportUploadRequest request)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _importExportService.UploadAndAnalyzeAsync(companyId, request, userId);
         return Ok(new ApiResponse<SmartImportSessionResponse>(true, result,
             result.RequiresManualMapping
@@ -87,7 +87,7 @@ public class ImportExportController : ControllerBase
     public async Task<ActionResult<ApiResponse<SmartImportSessionResponse>>> SubmitManualMapping(
         Guid companyId, [FromBody] ManualMappingRequest request)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _importExportService.SubmitManualMappingAsync(companyId, request, userId);
         return Ok(new ApiResponse<SmartImportSessionResponse>(true, result,
             result.RequiresManualMapping
@@ -100,7 +100,7 @@ public class ImportExportController : ControllerBase
     public async Task<ActionResult<ApiResponse<SmartImportResult>>> ConfirmImport(
         Guid companyId, [FromBody] SmartImportConfirmRequest request)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _importExportService.ConfirmAndImportAsync(companyId, request, userId);
         return Ok(new ApiResponse<SmartImportResult>(true, result,
             $"นำเข้าสำเร็จ {result.SuccessCount}/{result.TotalRows} รายการ"));

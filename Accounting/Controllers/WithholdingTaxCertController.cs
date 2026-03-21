@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Enums;
@@ -24,9 +24,9 @@ public class WithholdingTaxCertController : ControllerBase
     public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Create(
         Guid companyId, [FromBody] CreateWithholdingTaxCertRequest request)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _whtService.CreateAsync(companyId, request, userId);
-        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
+        return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
     }
 
     [HttpGet("{certId:guid}")]

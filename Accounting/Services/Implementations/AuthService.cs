@@ -135,6 +135,40 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
     }
 
+    public async Task<string> ForgotPasswordAsync(string email)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user == null)
+            return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
+
+        var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray())
+            + Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+        user.PasswordResetToken = token;
+        user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
+        await _db.SaveChangesAsync();
+
+        // TODO: Send email with reset link containing token
+        // EmailService.SendPasswordResetEmail(user.Email, token);
+
+        return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
+    }
+
+    public async Task ResetPasswordAsync(string token, string newPassword)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u =>
+            u.PasswordResetToken == token && u.PasswordResetTokenExpiry > DateTime.UtcNow)
+            ?? throw new InvalidOperationException("ลิงก์รีเซ็ตรหัสผ่านไม่ถูกต้องหรือหมดอายุ");
+
+        ValidatePassword(newPassword);
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiry = null;
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
+        await _db.SaveChangesAsync();
+    }
+
     /// <summary>
     /// Password validation: min 8 chars, at least 1 uppercase, 1 lowercase, 1 digit, 1 special char
     /// </summary>

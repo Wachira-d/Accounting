@@ -17,7 +17,7 @@ public class TimeBillingController : ControllerBase
     // Time entries
     [HttpPost("entries")]
     public async Task<ActionResult<ApiResponse<TimeEntryResponse>>> CreateEntry(Guid companyId, [FromBody] CreateTimeEntryRequest request)
-        => Ok(new ApiResponse<TimeEntryResponse>(true, await _service.CreateTimeEntryAsync(companyId, request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<TimeEntryResponse>(true, await _service.CreateTimeEntryAsync(companyId, request, User.Identity?.Name ?? "")));
 
     [HttpGet("entries/{entryId:guid}")]
     public async Task<ActionResult<ApiResponse<TimeEntryResponse>>> GetEntry(Guid companyId, Guid entryId)
@@ -43,13 +43,13 @@ public class TimeBillingController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> DeleteEntry(Guid companyId, Guid entryId)
     {
         await _service.DeleteAsync(companyId, entryId);
-        return Ok(new ApiResponse<bool>(true, true));
+        return NoContent();
     }
 
     // Billing rates
     [HttpPost("rates")]
     public async Task<ActionResult<ApiResponse<BillingRateResponse>>> CreateRate(Guid companyId, [FromBody] CreateBillingRateRequest request)
-        => Ok(new ApiResponse<BillingRateResponse>(true, await _service.CreateRateAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<BillingRateResponse>(true, await _service.CreateRateAsync(companyId, request)));
 
     [HttpGet("rates")]
     public async Task<ActionResult<ApiResponse<List<BillingRateResponse>>>> GetRates(Guid companyId)

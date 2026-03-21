@@ -32,7 +32,7 @@ public class AccountingController : ControllerBase
     public async Task<ActionResult<ApiResponse<AccountResponse>>> CreateAccount(Guid companyId, [FromBody] CreateAccountRequest request)
     {
         var result = await _accountingService.CreateAccountAsync(companyId, request);
-        return Ok(new ApiResponse<AccountResponse>(true, result, "สร้างบัญชีสำเร็จ"));
+        return StatusCode(201, new ApiResponse<AccountResponse>(true, result, "สร้างบัญชีสำเร็จ"));
     }
 
     [HttpPut("accounts/{accountId:guid}")]
@@ -65,7 +65,7 @@ public class AccountingController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _accountingService.CreateJournalEntryAsync(companyId, request, userId);
-        return Ok(new ApiResponse<JournalEntryResponse>(true, result, "สร้างใบสำคัญสำเร็จ"));
+        return StatusCode(201, new ApiResponse<JournalEntryResponse>(true, result, "สร้างใบสำคัญสำเร็จ"));
     }
 
     [HttpPost("journals/{entryId:guid}/post")]
@@ -127,7 +127,7 @@ public class AccountingController : ControllerBase
     public async Task<ActionResult<ApiResponse<FiscalPeriodResponse>>> CreateFiscalPeriod(Guid companyId, [FromBody] CreateFiscalPeriodRequest request)
     {
         var result = await _accountingService.CreateFiscalPeriodAsync(companyId, request);
-        return Ok(new ApiResponse<FiscalPeriodResponse>(true, result, "สร้างงวดบัญชีสำเร็จ"));
+        return StatusCode(201, new ApiResponse<FiscalPeriodResponse>(true, result, "สร้างงวดบัญชีสำเร็จ"));
     }
 
     [HttpPost("fiscal-periods/{periodId:guid}/close")]

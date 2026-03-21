@@ -16,7 +16,7 @@ public class ProjectController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<ProjectResponse>>> Create(Guid companyId, [FromBody] CreateProjectRequest request)
-        => Ok(new ApiResponse<ProjectResponse>(true, await _service.CreateAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<ProjectResponse>(true, await _service.CreateAsync(companyId, request)));
 
     [HttpGet("{projectId:guid}")]
     public async Task<ActionResult<ApiResponse<ProjectResponse>>> GetById(Guid companyId, Guid projectId)
@@ -37,7 +37,7 @@ public class ProjectController : ControllerBase
     // Tasks
     [HttpPost("{projectId:guid}/tasks")]
     public async Task<ActionResult<ApiResponse<ProjectTaskResponse>>> CreateTask(Guid companyId, Guid projectId, [FromBody] CreateProjectTaskRequest request)
-        => Ok(new ApiResponse<ProjectTaskResponse>(true, await _service.CreateTaskAsync(companyId, projectId, request)));
+        => StatusCode(201, new ApiResponse<ProjectTaskResponse>(true, await _service.CreateTaskAsync(companyId, projectId, request)));
 
     [HttpGet("{projectId:guid}/tasks")]
     public async Task<ActionResult<ApiResponse<List<ProjectTaskResponse>>>> GetTasks(Guid companyId, Guid projectId)
@@ -46,7 +46,7 @@ public class ProjectController : ControllerBase
     // Cost entries
     [HttpPost("{projectId:guid}/costs")]
     public async Task<ActionResult<ApiResponse<ProjectCostEntryResponse>>> AddCost(Guid companyId, Guid projectId, [FromBody] CreateProjectCostEntryRequest request)
-        => Ok(new ApiResponse<ProjectCostEntryResponse>(true, await _service.AddCostEntryAsync(companyId, projectId, request)));
+        => StatusCode(201, new ApiResponse<ProjectCostEntryResponse>(true, await _service.AddCostEntryAsync(companyId, projectId, request)));
 
     [HttpGet("{projectId:guid}/costs")]
     public async Task<ActionResult<ApiResponse<PagedResponse<ProjectCostEntryResponse>>>> GetCosts(Guid companyId, Guid projectId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)

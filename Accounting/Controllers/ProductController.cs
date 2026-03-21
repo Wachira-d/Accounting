@@ -38,7 +38,7 @@ public class ProductController : ControllerBase
     public async Task<ActionResult<ApiResponse<ProductResponse>>> Create(Guid companyId, [FromBody] CreateProductRequest request)
     {
         var result = await _productService.CreateAsync(companyId, request);
-        return Ok(new ApiResponse<ProductResponse>(true, result, "สร้างสินค้า/บริการสำเร็จ"));
+        return StatusCode(201, new ApiResponse<ProductResponse>(true, result, "สร้างสินค้า/บริการสำเร็จ"));
     }
 
     [HttpPut("{productId:guid}")]
@@ -52,7 +52,7 @@ public class ProductController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid productId)
     {
         await _productService.DeleteAsync(companyId, productId);
-        return Ok(new ApiResponse<string>(true, null, "ลบสินค้าสำเร็จ"));
+        return NoContent();
     }
 
     // Stock

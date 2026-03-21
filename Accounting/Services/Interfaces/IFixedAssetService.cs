@@ -12,4 +12,5 @@ public interface IFixedAssetService
     Task<FixedAssetResponse> DisposeAsync(Guid companyId, Guid assetId, DisposeAssetRequest request, string performedBy);
     Task<List<DepreciationResponse>> GetDepreciationsAsync(Guid companyId, Guid assetId);
     Task<List<DepreciationResponse>> CalculateDepreciationAsync(Guid companyId, CalculateDepreciationRequest request, string performedBy);
+    Task<RevaluationResponse> RevalueAsync(Guid companyId, Guid assetId, RevalueAssetRequest request, string performedBy);
 }

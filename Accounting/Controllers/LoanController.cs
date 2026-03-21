@@ -16,7 +16,7 @@ public class LoanController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<LoanResponse>>> Create(Guid companyId, [FromBody] CreateLoanRequest request)
-        => Ok(new ApiResponse<LoanResponse>(true, await _service.CreateAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<LoanResponse>(true, await _service.CreateAsync(companyId, request)));
 
     [HttpGet("{loanId:guid}")]
     public async Task<ActionResult<ApiResponse<LoanResponse>>> GetById(Guid companyId, Guid loanId)

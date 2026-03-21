@@ -17,7 +17,7 @@ public class PayrollController : ControllerBase
     // Employees
     [HttpPost("employees")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> CreateEmployee(Guid companyId, [FromBody] CreateEmployeeRequest request)
-        => Ok(new ApiResponse<EmployeeResponse>(true, await _service.CreateEmployeeAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<EmployeeResponse>(true, await _service.CreateEmployeeAsync(companyId, request)));
 
     [HttpGet("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetEmployee(Guid companyId, Guid employeeId)
@@ -38,7 +38,7 @@ public class PayrollController : ControllerBase
     // Payroll Items
     [HttpPost("items")]
     public async Task<ActionResult<ApiResponse<PayrollItemResponse>>> CreateItem(Guid companyId, [FromBody] CreatePayrollItemRequest request)
-        => Ok(new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
 
     [HttpGet("items")]
     public async Task<ActionResult<ApiResponse<List<PayrollItemResponse>>>> GetItems(Guid companyId)
@@ -47,7 +47,7 @@ public class PayrollController : ControllerBase
     // Payroll Runs
     [HttpPost("runs")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> CreateRun(Guid companyId, [FromBody] CreatePayrollRunRequest request)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
 
     [HttpGet("runs/{runId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> GetRun(Guid companyId, Guid runId)
@@ -80,7 +80,7 @@ public class PayrollController : ControllerBase
     // Leave
     [HttpPost("leaves")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CreateLeave(Guid companyId, [FromBody] CreateLeaveRequest request)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
 
     [HttpPost("leaves/{leaveId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> ApproveLeave(Guid companyId, Guid leaveId)

@@ -16,7 +16,7 @@ public class WebhookController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<WebhookRegistrationResponse>>> Register(Guid companyId, [FromBody] CreateWebhookRequest request)
-        => Ok(new ApiResponse<WebhookRegistrationResponse>(true, await _service.RegisterAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<WebhookRegistrationResponse>(true, await _service.RegisterAsync(companyId, request)));
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<WebhookRegistrationResponse>>>> GetAll(Guid companyId)
@@ -28,7 +28,7 @@ public class WebhookController : ControllerBase
 
     [HttpDelete("{webhookId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid webhookId)
-    { await _service.DeleteAsync(companyId, webhookId); return Ok(new ApiResponse<bool>(true, true)); }
+    { await _service.DeleteAsync(companyId, webhookId); return NoContent(); }
 
     [HttpPost("{webhookId:guid}/test")]
     public async Task<ActionResult<ApiResponse<WebhookRegistrationResponse>>> Test(Guid companyId, Guid webhookId)

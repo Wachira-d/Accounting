@@ -32,7 +32,7 @@ public class CurrencyController : ControllerBase
         Guid companyId, [FromBody] CreateCompanyCurrencyRequest request)
     {
         var result = await _currencyService.AddCurrencyAsync(companyId, request);
-        return Ok(new ApiResponse<CompanyCurrencyResponse>(true, result, "เพิ่มสกุลเงินสำเร็จ"));
+        return StatusCode(201, new ApiResponse<CompanyCurrencyResponse>(true, result, "เพิ่มสกุลเงินสำเร็จ"));
     }
 
     [HttpPut("{currencyId:guid}")]
@@ -58,7 +58,7 @@ public class CurrencyController : ControllerBase
         Guid companyId, [FromBody] CreateCurrencyRateRequest request)
     {
         var result = await _currencyService.AddRateAsync(companyId, request);
-        return Ok(new ApiResponse<CurrencyRateResponse>(true, result, "เพิ่มอัตราแลกเปลี่ยนสำเร็จ"));
+        return StatusCode(201, new ApiResponse<CurrencyRateResponse>(true, result, "เพิ่มอัตราแลกเปลี่ยนสำเร็จ"));
     }
 
     [HttpGet("rates/latest")]

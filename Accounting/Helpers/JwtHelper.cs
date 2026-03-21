@@ -43,7 +43,8 @@ public static class JwtHelper
 
     public static Guid GetUserIdFromClaims(ClaimsPrincipal user)
     {
-        var claim = user.FindFirst(ClaimTypes.NameIdentifier);
-        return claim != null ? Guid.Parse(claim.Value) : Guid.Empty;
+        var claim = user.FindFirst(ClaimTypes.NameIdentifier)
+            ?? throw new UnauthorizedAccessException("ไม่พบข้อมูลผู้ใช้ใน Token กรุณาเข้าสู่ระบบใหม่");
+        return Guid.Parse(claim.Value);
     }
 }
