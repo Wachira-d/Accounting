@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Payroll;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;

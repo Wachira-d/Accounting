@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Ai;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
