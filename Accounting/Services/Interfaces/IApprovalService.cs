@@ -15,4 +15,7 @@ public interface IApprovalService
     Task<ApprovalRequestResponse> GetApprovalRequestAsync(Guid companyId, Guid requestId);
     Task<List<ApprovalRequestResponse>> GetPendingApprovalsAsync(Guid companyId, Guid userId);
     Task<ApprovalRequestResponse> SubmitActionAsync(Guid companyId, Guid requestId, Guid userId, SubmitApprovalActionRequest request);
+
+    // Escalation
+    Task<int> EscalateOverdueApprovalsAsync();
 }

@@ -218,7 +218,3 @@ public class CurrencyService : ICurrencyService
             r.BuyRate, r.SellRate, r.MidRate, r.Source, r.CreatedAt);
 }
 
-public record UnrealizedGainLossItem(
-    Guid BankAccountId, string AccountName, string Currency,
-    decimal ForeignBalance, decimal ExchangeRate,
-    decimal BaseAmount, decimal GainLoss);
