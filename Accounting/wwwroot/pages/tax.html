@@ -14,11 +14,33 @@
       <button class="btn btn-primary" onclick="Page.openGenerate()">+ สร้างรายงาน</button>
     </div>
 
+    <!-- Summary Cards -->
+    <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+      <div class="card"><div class="text-gray-500 text-xs">รายงานทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs">ร่าง</div><div class="text-2xl font-bold text-warning" id="statDraft">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs">ยื่นแล้ว</div><div class="text-2xl font-bold text-success" id="statFiled">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs">ภาษีสุทธิ (เดือนล่าสุด)</div><div class="text-2xl font-bold" id="statNetTax">-</div></div>
+    </div>
+
     <div class="tabs">
       <div class="tab active" data-type="" onclick="Page.setType(this)">ทั้งหมด</div>
       <div class="tab" data-type="VAT" onclick="Page.setType(this)">ภาษีมูลค่าเพิ่ม</div>
       <div class="tab" data-type="WithholdingTax3" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.3)</div>
       <div class="tab" data-type="WithholdingTax53" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.53)</div>
+      <div class="tab" data-type="CorporateIncomeTax" onclick="Page.setType(this)">ภาษีนิติบุคคล</div>
+    </div>
+
+    <!-- Filters -->
+    <div class="toolbar" style="margin-bottom:16px">
+      <select class="filter-select" id="yearFilter" onchange="Page.load()">
+        <option value="">ทุกปี</option>
+      </select>
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Draft">ร่าง</option>
+        <option value="Generated">สร้างแล้ว</option>
+        <option value="Filed">ยื่นแล้ว</option>
+      </select>
     </div>
 
     <div class="table-container">
@@ -29,6 +51,7 @@
     </div>
     <div id="pagination"></div>
 
+    <!-- Generate Modal -->
     <div class="modal-overlay" id="genModal">
       <div class="modal" style="max-width:400px">
         <div class="modal-header"><h3 class="modal-title">สร้างรายงานภาษี</h3><button class="modal-close" onclick="Layout.closeModal('genModal')">&times;</button></div>
@@ -61,6 +84,15 @@
         </div>
       </div>
     </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">รายละเอียดรายงานภาษี</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -68,9 +100,16 @@
   <script>
     const Page = {
       page: 1, taxType: '',
+      allReports: [],
+      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล' },
+      monthNames: ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'],
       async init() {
         if (!Layout.init('tax')) return;
         Layout.setTitle('รายงานภาษี');
+        // populate year filter
+        const sel = document.getElementById('yearFilter');
+        const curYear = new Date().getFullYear();
+        for (let y = curYear; y >= curYear - 3; y--) { sel.innerHTML += `<option value="${y}">${y}</option>`; }
         await this.load();
       },
       setType(el) {
@@ -84,24 +123,98 @@
         const api = Layout.api(); if (!api) return;
         let q = `?page=${this.page}&pageSize=20`;
         if (this.taxType) q += `&taxType=${this.taxType}`;
+        const year = document.getElementById('yearFilter').value;
+        if (year) q += `&year=${year}`;
         try {
           const res = await api.getTaxReports(q);
-          const data = res.data; const items = data?.items || data || [];
-          const tbody = document.getElementById('tableBody');
-          const typeMap = { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล' };
-          const monthNames = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>'; return; }
-          tbody.innerHTML = items.map(r => `<tr>
-            <td class="font-medium">${typeMap[r.taxType] || r.taxType}</td>
-            <td>${r.year}</td>
-            <td>${monthNames[r.month]}</td>
-            <td class="text-right">${Layout.money(r.outputVat)}</td>
-            <td class="text-right">${Layout.money(r.inputVat)}</td>
-            <td class="text-right font-semibold ${r.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(r.netVat)}</td>
-            <td>${Layout.statusBadge(r.status)}</td>
-            <td>${Layout.date(r.filedDate)}</td>
-            <td><button class="btn btn-sm btn-ghost">ดู</button></td>
-          </tr>`).join('');
+          const data = res.data;
+          this.allReports = data?.items || data || [];
+          this.updateStats();
+          this.render();
+          const totalPages = data?.totalPages || 1;
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      updateStats() {
+        const items = this.allReports;
+        document.getElementById('statTotal').textContent = items.length;
+        document.getElementById('statDraft').textContent = items.filter(i => i.status === 'Draft' || i.status === 'Generated').length;
+        document.getElementById('statFiled').textContent = items.filter(i => i.status === 'Filed').length;
+        const latest = items.find(i => i.taxType === 'VAT');
+        document.getElementById('statNetTax').textContent = latest ? Layout.money(latest.netVat) : '-';
+      },
+      render() {
+        const statusF = document.getElementById('statusFilter').value;
+        let items = this.allReports;
+        if (statusF) items = items.filter(r => r.status === statusF);
+        const tbody = document.getElementById('tableBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>'; return; }
+        tbody.innerHTML = items.map(r => `<tr>
+          <td class="font-medium">${this.typeMap[r.taxType] || r.taxType}</td>
+          <td>${r.year}</td>
+          <td>${this.monthNames[r.month]}</td>
+          <td class="text-right">${Layout.money(r.outputVat)}</td>
+          <td class="text-right">${Layout.money(r.inputVat)}</td>
+          <td class="text-right font-semibold ${r.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(r.netVat)}</td>
+          <td>${Layout.statusBadge(r.status)}</td>
+          <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
+          <td class="flex gap-1">
+            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')">ดู</button>
+            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
+          </td>
+        </tr>`).join('');
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+      async viewDetail(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getTaxReport(id);
+          const d = res.data || {};
+          let html = `
+            <div class="grid grid-2 gap-4" style="margin-bottom:16px">
+              <div><span class="text-gray-500 text-xs">ประเภท</span><div class="font-semibold">${this.typeMap[d.taxType] || d.taxType}</div></div>
+              <div><span class="text-gray-500 text-xs">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
+              <div><span class="text-gray-500 text-xs">ปี/เดือน</span><div>${d.year} / ${this.monthNames[d.month]}</div></div>
+              <div><span class="text-gray-500 text-xs">วันที่ยื่น</span><div>${d.filedDate ? Layout.date(d.filedDate) : 'ยังไม่ยื่น'}</div></div>
+            </div>
+            <div class="card" style="background:var(--bg-secondary);margin-bottom:16px">
+              <div class="grid grid-3 gap-4">
+                <div><span class="text-gray-500 text-xs">ภาษีขาย (Output VAT)</span><div class="text-lg font-bold">${Layout.money(d.outputVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">ภาษีซื้อ (Input VAT)</span><div class="text-lg font-bold">${Layout.money(d.inputVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">ภาษีสุทธิ</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน'}</div></div>
+              </div>
+            </div>`;
+          if (d.details && d.details.length) {
+            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>รายการ</th><th>เลขที่เอกสาร</th><th>ผู้ติดต่อ</th><th class="text-right">มูลค่า</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
+            html += d.details.map(dt => `<tr>
+              <td>${dt.description || '-'}</td>
+              <td class="text-xs">${dt.documentNumber || '-'}</td>
+              <td>${dt.contactName || '-'}</td>
+              <td class="text-right">${Layout.money(dt.baseAmount)}</td>
+              <td class="text-right">${Layout.money(dt.taxAmount)}</td>
+            </tr>`).join('');
+            html += '</tbody></table></div>';
+          }
+          if (d.filingReference) {
+            html += `<div style="margin-top:12px"><span class="text-gray-500 text-xs">เลขอ้างอิงการยื่น</span><div class="font-medium">${d.filingReference}</div></div>`;
+          }
+          document.getElementById('detailContent').innerHTML = html;
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          if (d.status !== 'Filed') {
+            footer = `<button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
+          }
+          document.getElementById('detailFooter').innerHTML = footer;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async fileReport(id) {
+        if (!confirm('ยืนยันการยื่นรายงานภาษี?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.fileTaxReport(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ยื่นภาษีสำเร็จ');
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openGenerate() {

@@ -89,12 +89,32 @@ const API = {
       // Bank
       getBankAccounts: () => API.get(`${base}/bank/accounts`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),
+      updateBankAccount: (id, d) => API.put(`${base}/bank/accounts/${id}`, d),
       getTransactions: (id, q = '') => API.get(`${base}/bank/accounts/${id}/transactions${q}`),
+      createTransaction: (d) => API.post(`${base}/bank/transactions`, d),
       reconcile: (d) => API.post(`${base}/bank/reconcile`, d),
       autoMatch: (id) => API.post(`${base}/bank/accounts/${id}/auto-match`),
+      getUnreconciled: (id) => API.get(`${base}/bank/accounts/${id}/unreconciled`),
+      // Open Banking
+      getConnections: () => API.get(`${base}/open-banking/connections`),
+      createConnection: (d) => API.post(`${base}/open-banking/connections`, d),
+      updateConnection: (id, d) => API.put(`${base}/open-banking/connections/${id}`, d),
+      deleteConnection: (id) => API.del(`${base}/open-banking/connections/${id}`),
+      syncConnection: (id, q = '') => API.post(`${base}/open-banking/connections/${id}/sync${q}`),
+      getConnectionImports: (id) => API.get(`${base}/open-banking/connections/${id}/imports`),
+      importBankFile: (accountId, format, base64) => API.post(`${base}/open-banking/import-file?bankAccountId=${accountId}&fileFormat=${format}`, base64),
       // Tax
       getTaxReports: (q = '') => API.get(`${base}/tax${q}`),
+      getTaxReport: (id) => API.get(`${base}/tax/${id}`),
       generateTaxReport: (d) => API.post(`${base}/tax/generate`, d),
+      fileTaxReport: (id) => API.post(`${base}/tax/${id}/file`),
+      // WHT
+      getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),
+      getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
+      createWhtCert: (d) => API.post(`${base}/withholding-tax-certs`, d),
+      issueWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/issue`),
+      voidWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/void`),
+      getWhtByContact: (contactId, q = '') => API.get(`${base}/withholding-tax-certs/contacts/${contactId}${q}`),
       // Fixed Assets
       getAssets: (q = '') => API.get(`${base}/fixedasset${q}`),
       getAsset: (id) => API.get(`${base}/fixedasset/${id}`),
@@ -317,6 +337,10 @@ const API = {
       // Approval
       getApprovalRules: () => API.get(`${base}/approval/rules`),
       createApprovalRule: (d) => API.post(`${base}/approval/rules`, d),
+      updateApprovalRule: (id, d) => API.put(`${base}/approval/rules/${id}`, d),
+      deleteApprovalRule: (id) => API.del(`${base}/approval/rules/${id}`),
+      submitForApproval: (entityType, entityId) => API.post(`${base}/approval/submit?entityType=${entityType}&entityId=${entityId}`),
+      getApprovalRequest: (id) => API.get(`${base}/approval/requests/${id}`),
       getPendingApprovals: () => API.get(`${base}/approval/pending`),
       submitAction: (id, d) => API.post(`${base}/approval/requests/${id}/action`, d),
       // Settings
@@ -325,6 +349,9 @@ const API = {
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
       // Audit
       getAuditLogs: (q = '') => API.get(`${base}/audit/logs${q}`),
+      getAuditSummary: (q = '') => API.get(`${base}/audit/summary${q}`),
+      getEntityHistory: (entityType, entityId) => API.get(`${base}/audit/entity/${entityType}/${entityId}`),
+      getUserActivity: (userId, limit = 100) => API.get(`${base}/audit/users/${userId}/activity?limit=${limit}`),
       // Notifications
       getNotifications: () => API.get('/api/notification'),
       getNotificationCount: () => API.get('/api/notification/count'),

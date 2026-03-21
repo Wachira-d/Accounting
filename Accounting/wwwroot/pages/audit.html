@@ -11,29 +11,94 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">บันทึกกิจกรรม</h2><p class="page-subtitle">ประวัติการทำงานทั้งหมดในระบบ</p></div>
+      <button class="btn btn-secondary" onclick="Page.exportLogs()">ส่งออก CSV</button>
     </div>
-    <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput">
-      <select class="filter-select" id="actionFilter" onchange="Page.load()">
-        <option value="">ทุกการกระทำ</option>
-        <option value="Create">สร้าง</option>
-        <option value="Update">แก้ไข</option>
-        <option value="Delete">ลบ</option>
-        <option value="Login">เข้าสู่ระบบ</option>
-        <option value="Approve">อนุมัติ</option>
-        <option value="Export">ส่งออก</option>
-      </select>
-      <input type="date" class="form-input" id="fromDate" style="width:150px" onchange="Page.load()">
-      <span class="text-gray-400">ถึง</span>
-      <input type="date" class="form-input" id="toDate" style="width:150px" onchange="Page.load()">
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setTab('logs',this)">บันทึกทั้งหมด</div>
+      <div class="tab" onclick="Page.setTab('summary',this)">สรุป</div>
     </div>
-    <div class="table-container">
-      <table class="table">
-        <thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>ประเภท</th><th>รหัส</th><th>IP</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
-      </table>
+
+    <!-- Logs Tab -->
+    <div id="tabLogs">
+      <!-- Summary Cards -->
+      <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+        <div class="card"><div class="text-gray-500 text-xs">รายการวันนี้</div><div class="text-2xl font-bold" id="statToday">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">สร้าง</div><div class="text-2xl font-bold text-success" id="statCreate">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">แก้ไข</div><div class="text-2xl font-bold text-warning" id="statUpdate">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">ลบ</div><div class="text-2xl font-bold text-danger" id="statDelete">-</div></div>
+      </div>
+
+      <div class="toolbar">
+        <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.filterLogs()">
+        <select class="filter-select" id="actionFilter" onchange="Page.load()">
+          <option value="">ทุกการกระทำ</option>
+          <option value="Create">สร้าง</option>
+          <option value="Update">แก้ไข</option>
+          <option value="Delete">ลบ</option>
+          <option value="Login">เข้าสู่ระบบ</option>
+          <option value="Approve">อนุมัติ</option>
+          <option value="Reject">ปฏิเสธ</option>
+          <option value="Export">ส่งออก</option>
+          <option value="Print">พิมพ์</option>
+        </select>
+        <select class="filter-select" id="entityFilter" onchange="Page.load()">
+          <option value="">ทุกประเภท</option>
+          <option value="Document">เอกสาร</option>
+          <option value="Contact">ผู้ติดต่อ</option>
+          <option value="Product">สินค้า</option>
+          <option value="Account">บัญชี</option>
+          <option value="Journal">รายการบัญชี</option>
+          <option value="Payment">การชำระเงิน</option>
+          <option value="BankAccount">ธนาคาร</option>
+          <option value="User">ผู้ใช้</option>
+        </select>
+        <input type="date" class="form-input" id="fromDate" style="width:140px" onchange="Page.load()">
+        <span class="text-gray-400">ถึง</span>
+        <input type="date" class="form-input" id="toDate" style="width:140px" onchange="Page.load()">
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>ประเภท</th><th>รหัส</th><th>IP</th><th>จัดการ</th></tr></thead>
+          <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+      <div id="pagination"></div>
     </div>
-    <div id="pagination"></div>
+
+    <!-- Summary Tab -->
+    <div id="tabSummary" style="display:none">
+      <div class="toolbar" style="margin-bottom:16px">
+        <input type="date" class="form-input" id="sumFrom" style="width:140px">
+        <span class="text-gray-400">ถึง</span>
+        <input type="date" class="form-input" id="sumTo" style="width:140px">
+        <button class="btn btn-sm btn-primary" onclick="Page.loadSummary()">ดูสรุป</button>
+      </div>
+      <div id="summaryContent">
+        <div class="card text-center" style="padding:40px"><div class="text-gray-400">เลือกช่วงวันที่แล้วกดดูสรุป</div></div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">รายละเอียดกิจกรรม</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Page.viewEntityHistory()">ดูประวัติทั้งหมด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Entity History Modal -->
+    <div class="modal-overlay" id="historyModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="historyTitle">ประวัติเอนทิตี้</h3><button class="modal-close" onclick="Layout.closeModal('historyModal')">&times;</button></div>
+        <div class="modal-body" id="historyContent"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('historyModal')">ปิด</button></div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -41,38 +106,192 @@
   <script>
     const Page = {
       page: 1,
+      allLogs: [],
+      currentDetail: null,
+      actionMap: { Create: 'สร้าง', Update: 'แก้ไข', Delete: 'ลบ', Login: 'เข้าสู่ระบบ', Logout: 'ออกจากระบบ', Approve: 'อนุมัติ', Reject: 'ปฏิเสธ', Export: 'ส่งออก', Print: 'พิมพ์', View: 'ดู' },
       async init() {
         if (!Layout.init('audit')) return;
         Layout.setTitle('บันทึกกิจกรรม');
+        // default date range: last 30 days
+        const now = new Date();
+        const ago = new Date(); ago.setDate(ago.getDate() - 30);
+        document.getElementById('sumFrom').value = ago.toISOString().split('T')[0];
+        document.getElementById('sumTo').value = now.toISOString().split('T')[0];
         await this.load();
+      },
+      setTab(tab, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tabLogs').style.display = tab === 'logs' ? '' : 'none';
+        document.getElementById('tabSummary').style.display = tab === 'summary' ? '' : 'none';
       },
       async load() {
         const api = Layout.api(); if (!api) return;
         const action = document.getElementById('actionFilter').value;
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
+        const entityType = document.getElementById('entityFilter').value;
         let q = `?page=${this.page}&pageSize=30`;
         if (action) q += `&action=${action}`;
         if (from) q += `&fromDate=${from}`;
         if (to) q += `&toDate=${to}`;
+        if (entityType) q += `&entityType=${entityType}`;
         try {
           const res = await api.getAuditLogs(q);
-          const data = res.data; const items = data?.items || data || [];
-          const tbody = document.getElementById('tableBody');
-          const actionMap = { Create: 'สร้าง', Update: 'แก้ไข', Delete: 'ลบ', Login: 'เข้าสู่ระบบ', Logout: 'ออกจากระบบ', Approve: 'อนุมัติ', Reject: 'ปฏิเสธ', Export: 'ส่งออก', Print: 'พิมพ์', View: 'ดู' };
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่มีบันทึก</td></tr>'; return; }
-          tbody.innerHTML = items.map(a => `<tr>
-            <td class="text-xs">${new Date(a.timestamp).toLocaleString('th-TH')}</td>
-            <td>${a.userEmail || '-'}</td>
-            <td><span class="badge ${a.action === 'Create' ? 'badge-success' : a.action === 'Delete' ? 'badge-danger' : a.action === 'Update' ? 'badge-warning' : 'badge-info'}">${actionMap[a.action] || a.action}</span></td>
-            <td>${a.entityType || '-'}</td>
-            <td class="text-xs text-gray-500">${a.entityId ? a.entityId.substring(0,8) + '...' : '-'}</td>
-            <td class="text-xs text-gray-400">${a.ipAddress || '-'}</td>
-          </tr>`).join('');
-          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+          const data = res.data;
+          this.allLogs = data?.items || data || [];
+          this.updateStats();
+          this.renderLogs();
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data?.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      goPage(p) { Page.page = p; Page.load(); }
+      updateStats() {
+        const items = this.allLogs;
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('statToday').textContent = items.filter(i => (i.timestamp || '').startsWith(today)).length;
+        document.getElementById('statCreate').textContent = items.filter(i => i.action === 'Create').length;
+        document.getElementById('statUpdate').textContent = items.filter(i => i.action === 'Update').length;
+        document.getElementById('statDelete').textContent = items.filter(i => i.action === 'Delete').length;
+      },
+      filterLogs() { this.renderLogs(); },
+      renderLogs() {
+        const search = (document.getElementById('searchInput').value || '').toLowerCase();
+        let items = this.allLogs;
+        if (search) items = items.filter(a => (a.userEmail || '').toLowerCase().includes(search) || (a.entityType || '').toLowerCase().includes(search) || (a.description || '').toLowerCase().includes(search));
+        const tbody = document.getElementById('tableBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีบันทึก</td></tr>'; return; }
+        const actionBadge = (a) => {
+          const cls = a === 'Create' ? 'badge-success' : a === 'Delete' ? 'badge-danger' : a === 'Update' ? 'badge-warning' : a === 'Approve' ? 'badge-success' : a === 'Reject' ? 'badge-danger' : 'badge-info';
+          return `<span class="badge ${cls}">${this.actionMap[a] || a}</span>`;
+        };
+        tbody.innerHTML = items.map(a => `<tr>
+          <td class="text-xs">${new Date(a.timestamp).toLocaleString('th-TH')}</td>
+          <td>${a.userEmail || '-'}</td>
+          <td>${actionBadge(a.action)}</td>
+          <td>${a.entityType || '-'}</td>
+          <td class="text-xs text-gray-500">${a.entityId ? a.entityId.substring(0,8) + '...' : '-'}</td>
+          <td class="text-xs text-gray-400">${a.ipAddress || '-'}</td>
+          <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail(${JSON.stringify(a).replace(/"/g,'&quot;')})">ดู</button></td>
+        </tr>`).join('');
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+      viewDetail(log) {
+        this.currentDetail = log;
+        let html = `
+          <div class="grid grid-2 gap-4" style="margin-bottom:16px">
+            <div><span class="text-gray-500 text-xs">เวลา</span><div class="font-medium">${new Date(log.timestamp).toLocaleString('th-TH')}</div></div>
+            <div><span class="text-gray-500 text-xs">ผู้ใช้</span><div class="font-medium">${log.userEmail || '-'}</div></div>
+            <div><span class="text-gray-500 text-xs">การกระทำ</span><div>${this.actionMap[log.action] || log.action}</div></div>
+            <div><span class="text-gray-500 text-xs">ประเภท</span><div>${log.entityType || '-'}</div></div>
+            <div><span class="text-gray-500 text-xs">รหัส</span><div class="text-xs">${log.entityId || '-'}</div></div>
+            <div><span class="text-gray-500 text-xs">IP</span><div class="text-xs">${log.ipAddress || '-'}</div></div>
+          </div>`;
+        if (log.description) {
+          html += `<div style="margin-bottom:12px"><span class="text-gray-500 text-xs">คำอธิบาย</span><div>${log.description}</div></div>`;
+        }
+        if (log.oldValues || log.newValues) {
+          html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">การเปลี่ยนแปลง</h4>';
+          html += '<div class="grid grid-2 gap-4">';
+          if (log.oldValues) {
+            html += '<div><span class="text-gray-500 text-xs">ค่าเดิม</span><pre style="background:var(--bg-secondary);padding:8px;border-radius:4px;font-size:11px;overflow:auto;max-height:200px">' + (typeof log.oldValues === 'string' ? log.oldValues : JSON.stringify(log.oldValues, null, 2)) + '</pre></div>';
+          }
+          if (log.newValues) {
+            html += '<div><span class="text-gray-500 text-xs">ค่าใหม่</span><pre style="background:var(--bg-secondary);padding:8px;border-radius:4px;font-size:11px;overflow:auto;max-height:200px">' + (typeof log.newValues === 'string' ? log.newValues : JSON.stringify(log.newValues, null, 2)) + '</pre></div>';
+          }
+          html += '</div>';
+        }
+        if (log.changes && typeof log.changes === 'object') {
+          html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายละเอียดการเปลี่ยนแปลง</h4><div class="table-container"><table class="table"><thead><tr><th>ฟิลด์</th><th>ค่าเดิม</th><th>ค่าใหม่</th></tr></thead><tbody>';
+          for (const [key, val] of Object.entries(log.changes)) {
+            html += `<tr><td class="font-medium">${key}</td><td class="text-xs">${val.old ?? '-'}</td><td class="text-xs">${val.new ?? '-'}</td></tr>`;
+          }
+          html += '</tbody></table></div>';
+        }
+        document.getElementById('detailContent').innerHTML = html;
+        Layout.openModal('detailModal');
+      },
+      async viewEntityHistory() {
+        if (!this.currentDetail?.entityType || !this.currentDetail?.entityId) { Layout.toast('ไม่มีข้อมูลเอนทิตี้', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getEntityHistory(this.currentDetail.entityType, this.currentDetail.entityId);
+          const items = res.data?.items || res.data || [];
+          document.getElementById('historyTitle').textContent = `ประวัติ ${this.currentDetail.entityType} (${this.currentDetail.entityId.substring(0,8)}...)`;
+          if (!items.length) {
+            document.getElementById('historyContent').innerHTML = '<div class="text-center text-gray-400" style="padding:40px">ไม่พบประวัติ</div>';
+          } else {
+            let html = '<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>คำอธิบาย</th></tr></thead><tbody>';
+            html += items.map(h => `<tr>
+              <td class="text-xs">${new Date(h.timestamp).toLocaleString('th-TH')}</td>
+              <td>${h.userEmail || '-'}</td>
+              <td><span class="badge ${h.action === 'Create' ? 'badge-success' : h.action === 'Delete' ? 'badge-danger' : 'badge-warning'}">${this.actionMap[h.action] || h.action}</span></td>
+              <td class="text-xs">${h.description || '-'}</td>
+            </tr>`).join('');
+            html += '</tbody></table></div>';
+            document.getElementById('historyContent').innerHTML = html;
+          }
+          Layout.closeModal('detailModal');
+          Layout.openModal('historyModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadSummary() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('sumFrom').value;
+        const to = document.getElementById('sumTo').value;
+        let q = '?';
+        if (from) q += `fromDate=${from}&`;
+        if (to) q += `toDate=${to}`;
+        try {
+          const res = await api.getAuditSummary(q);
+          const d = res.data || {};
+          let html = '<div class="grid grid-3 gap-4" style="margin-bottom:16px">';
+          html += `<div class="card"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold">${d.totalLogs || d.total || 0}</div></div>`;
+          html += `<div class="card"><div class="text-gray-500 text-xs">ผู้ใช้ที่ใช้งาน</div><div class="text-2xl font-bold">${d.activeUsers || d.uniqueUsers || 0}</div></div>`;
+          html += `<div class="card"><div class="text-gray-500 text-xs">ประเภทที่เปลี่ยนแปลง</div><div class="text-2xl font-bold">${d.entityTypes || d.uniqueEntityTypes || 0}</div></div>`;
+          html += '</div>';
+          if (d.actionBreakdown || d.byAction) {
+            const breakdown = d.actionBreakdown || d.byAction;
+            html += '<div class="card"><h4 class="text-sm font-semibold" style="margin-bottom:12px">แยกตามการกระทำ</h4><div class="table-container"><table class="table"><thead><tr><th>การกระทำ</th><th class="text-right">จำนวน</th></tr></thead><tbody>';
+            if (Array.isArray(breakdown)) {
+              breakdown.forEach(b => { html += `<tr><td>${this.actionMap[b.action] || b.action}</td><td class="text-right font-medium">${b.count}</td></tr>`; });
+            } else {
+              for (const [action, count] of Object.entries(breakdown)) { html += `<tr><td>${this.actionMap[action] || action}</td><td class="text-right font-medium">${count}</td></tr>`; }
+            }
+            html += '</tbody></table></div></div>';
+          }
+          if (d.userBreakdown || d.byUser) {
+            const breakdown = d.userBreakdown || d.byUser;
+            html += '<div class="card" style="margin-top:16px"><h4 class="text-sm font-semibold" style="margin-bottom:12px">แยกตามผู้ใช้</h4><div class="table-container"><table class="table"><thead><tr><th>ผู้ใช้</th><th class="text-right">จำนวน</th></tr></thead><tbody>';
+            if (Array.isArray(breakdown)) {
+              breakdown.forEach(b => { html += `<tr><td>${b.userEmail || b.user}</td><td class="text-right font-medium">${b.count}</td></tr>`; });
+            } else {
+              for (const [user, count] of Object.entries(breakdown)) { html += `<tr><td>${user}</td><td class="text-right font-medium">${count}</td></tr>`; }
+            }
+            html += '</tbody></table></div></div>';
+          }
+          document.getElementById('summaryContent').innerHTML = html;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      exportLogs() {
+        if (!this.allLogs.length) { Layout.toast('ไม่มีข้อมูลส่งออก', 'error'); return; }
+        const headers = ['เวลา','ผู้ใช้','การกระทำ','ประเภท','รหัส','IP','คำอธิบาย'];
+        const rows = this.allLogs.map(a => [
+          new Date(a.timestamp).toLocaleString('th-TH'),
+          a.userEmail || '',
+          this.actionMap[a.action] || a.action,
+          a.entityType || '',
+          a.entityId || '',
+          a.ipAddress || '',
+          (a.description || '').replace(/,/g, ';')
+        ]);
+        const csv = '\ufeff' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `audit-logs-${new Date().toISOString().split('T')[0]}.csv`;
+        a.click(); URL.revokeObjectURL(url);
+        Layout.toast('ส่งออกสำเร็จ');
+      }
     };
     Page.init();
   </script>
