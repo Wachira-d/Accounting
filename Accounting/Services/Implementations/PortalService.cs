@@ -13,10 +13,12 @@ namespace Accounting.Services.Implementations;
 public class PortalService : IPortalService
 {
     private readonly AccountingDbContext _db;
+    private readonly IPdfGenerationService? _pdfService;
 
-    public PortalService(AccountingDbContext db)
+    public PortalService(AccountingDbContext db, IPdfGenerationService? pdfService = null)
     {
         _db = db;
+        _pdfService = pdfService;
     }
 
     // ===== Portal Access Management =====
@@ -223,9 +225,17 @@ public class PortalService : IPortalService
             await _db.SaveChangesAsync();
         }
 
-        // Generate a simple PDF placeholder (in production, use a real PDF library)
-        var content = $"Document: {doc.DocumentNumber}\nDate: {doc.DocumentDate:yyyy-MM-dd}\nTotal: {doc.TotalAmount:N2}";
-        return Encoding.UTF8.GetBytes(content);
+        // Delegate to PdfGenerationService if available
+        if (_pdfService != null)
+        {
+            var pdfResponse = await _pdfService.GenerateDocumentPdfAsync(companyId,
+                new Models.DTOs.DocumentTemplate.GeneratePdfRequest(documentId, null, null, null, null));
+            return pdfResponse.PdfData;
+        }
+
+        // Fallback: generate basic PDF
+        var html = $"<html><body><h2>{doc.DocumentNumber}</h2><p>Date: {doc.DocumentDate:dd/MM/yyyy}</p><p>Total: {doc.TotalAmount:N2}</p></body></html>";
+        return PdfGenerationService.ConvertHtmlToPdf(html, null);
     }
 
     public async Task<PortalStatementResponse> GetMyStatementAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate)

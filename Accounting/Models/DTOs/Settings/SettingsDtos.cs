@@ -38,7 +38,18 @@ public record UpdateCompanySettingsRequest(
     // Closing
     bool? AutoCloseMonthEnd,
     int? MonthEndClosingDay,
-    bool? PreventPostToClosedPeriod);
+    bool? PreventPostToClosedPeriod,
+
+    // e-Tax Invoice
+    bool? EtaxEnabled,
+    string? EtaxCertificatePath,
+    string? EtaxCertificatePassword,
+    string? EtaxRdApiKey,
+    string? EtaxRdApiSecret,
+    bool? EtaxTestMode,
+    bool? EtaxAutoSign,
+    bool? EtaxAutoSubmit,
+    string? EtaxServiceProvider);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -57,7 +68,15 @@ public record CompanySettingsResponse(
     int MaxApiKeys,
     bool AutoCloseMonthEnd,
     int MonthEndClosingDay,
-    bool PreventPostToClosedPeriod);
+    bool PreventPostToClosedPeriod,
+    // e-Tax
+    bool EtaxEnabled,
+    bool EtaxTestMode,
+    bool EtaxAutoSign,
+    bool EtaxAutoSubmit,
+    string? EtaxServiceProvider,
+    bool EtaxCertificateConfigured,
+    bool EtaxApiConfigured);
 
 // ===== Number Series =====
 public record CreateNumberSeriesRequest(

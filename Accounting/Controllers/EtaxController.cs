@@ -4,6 +4,7 @@ using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -105,15 +106,44 @@ public class EtaxController : ControllerBase
         return Ok(new ApiResponse<EtaxInvoiceResponse>(true, signed, "สร้างและลงนามสำเร็จ"));
     }
 
-    /// <summary>ดึงการตั้งค่า e-Tax (สำหรับ frontend แสดงสถานะ config)</summary>
+    /// <summary>ดึงการตั้งค่า e-Tax (รวมทั้ง global config และ per-company settings)</summary>
     [HttpGet("config-status")]
-    public ActionResult<ApiResponse<object>> GetConfigStatus(Guid companyId)
+    public async Task<ActionResult<ApiResponse<object>>> GetConfigStatus(Guid companyId)
     {
         var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-        var certPath = config["Etax:CertificatePath"];
-        var hasCert = !string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath);
-        var hasApiKey = !string.IsNullOrEmpty(config["Etax:RdApiKey"]);
-        var isTestMode = config.GetValue<bool>("Etax:RdTestMode");
+        var db = HttpContext.RequestServices.GetRequiredService<Data.AccountingDbContext>();
+
+        // Check per-company settings first
+        var companySettings = await db.CompanySettings
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+
+        var useCompanyConfig = companySettings?.EtaxEnabled == true;
+
+        // Determine effective config
+        string? certPath;
+        bool hasCert, hasApiKey, isTestMode, autoSign, autoSubmit;
+        string serviceProvider;
+
+        if (useCompanyConfig)
+        {
+            certPath = companySettings!.EtaxCertificatePath;
+            hasCert = !string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath);
+            hasApiKey = !string.IsNullOrEmpty(companySettings.EtaxRdApiKey);
+            isTestMode = companySettings.EtaxTestMode;
+            autoSign = companySettings.EtaxAutoSign;
+            autoSubmit = companySettings.EtaxAutoSubmit;
+            serviceProvider = companySettings.EtaxServiceProvider ?? "RD";
+        }
+        else
+        {
+            certPath = config["Etax:CertificatePath"];
+            hasCert = !string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath);
+            hasApiKey = !string.IsNullOrEmpty(config["Etax:RdApiKey"]);
+            isTestMode = config.GetValue<bool>("Etax:RdTestMode");
+            autoSign = config.GetValue<bool>("Etax:AutoSign");
+            autoSubmit = config.GetValue<bool>("Etax:AutoSubmit");
+            serviceProvider = config["Etax:ServiceProvider"] ?? "RD";
+        }
 
         return Ok(new ApiResponse<object>(true, new
         {
@@ -121,9 +151,11 @@ public class EtaxController : ControllerBase
             CertificatePath = hasCert ? certPath : null,
             RdApiConfigured = hasApiKey,
             TestMode = isTestMode,
-            AutoSign = config.GetValue<bool>("Etax:AutoSign"),
-            AutoSubmit = config.GetValue<bool>("Etax:AutoSubmit"),
-            ServiceProvider = config["Etax:ServiceProvider"] ?? "RD"
+            AutoSign = autoSign,
+            AutoSubmit = autoSubmit,
+            ServiceProvider = serviceProvider,
+            UsingCompanyConfig = useCompanyConfig,
+            CompanyEtaxEnabled = companySettings?.EtaxEnabled ?? false
         }));
     }
 }

@@ -80,6 +80,10 @@ public class TaxService : ITaxService
             {
                 await GenerateCitReport(companyId, request.Year, report);
             }
+            else if (request.TaxType == TaxType.PersonalIncomeTax91)
+            {
+                await GeneratePnd91Report(companyId, request.Year, report);
+            }
 
             _db.TaxReports.Add(report);
             await _db.SaveChangesAsync();
@@ -175,9 +179,36 @@ public class TaxService : ITaxService
             });
         }
 
+        // VAT credit carryforward from previous month
+        decimal vatCreditCarryforward = 0;
+        var previousMonth = startDate.AddMonths(-1);
+        var previousVatReport = await _db.TaxReports
+            .Where(t => t.CompanyId == companyId
+                && t.TaxType == TaxType.VAT
+                && t.Year == previousMonth.Year
+                && t.Month == previousMonth.Month
+                && t.Status == TaxReportStatus.Filed)
+            .FirstOrDefaultAsync();
+
+        if (previousVatReport != null && previousVatReport.NetVat < 0)
+        {
+            // Previous month had excess input VAT = credit to carry forward
+            vatCreditCarryforward = Math.Abs(previousVatReport.NetVat);
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = $"เครดิตภาษีซื้อยกมาจากเดือน {previousMonth.Month:D2}/{previousMonth.Year}",
+                IncomeAmount = vatCreditCarryforward,
+                TaxRate = 0,
+                TaxAmount = -vatCreditCarryforward,
+                IncomeTypeCode = "VAT_CREDIT_CF"
+            });
+        }
+
         report.OutputVat = outputVat;
-        report.InputVat = inputVat;
-        report.NetVat = outputVat - inputVat;
+        report.InputVat = inputVat + vatCreditCarryforward;
+        report.NetVat = outputVat - inputVat - vatCreditCarryforward;
     }
 
     private async Task GenerateWhtReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
@@ -378,6 +409,129 @@ public class TaxService : ITaxService
                 IncomeTypeCode = "TAX_CREDIT"
             });
         }
+    }
+
+    /// <summary>
+    /// ภ.ง.ด.91 — สรุปภาษีเงินได้บุคคลธรรมดา (annual personal income tax)
+    /// คำนวณจากข้อมูล Payroll ของพนักงานทุกคนในปีภาษี
+    /// </summary>
+    private async Task GeneratePnd91Report(Guid companyId, int year, TaxReport report)
+    {
+        // Get all payroll details for the year
+        var payrollDetails = await _db.Set<PayrollDetail>()
+            .Include(d => d.Employee)
+            .Include(d => d.PayrollRun)
+            .Where(d => d.CompanyId == companyId
+                && d.PayrollRun.Year == year
+                && (d.PayrollRun.Status == "Approved" || d.PayrollRun.Status == "Paid"))
+            .ToListAsync();
+
+        if (!payrollDetails.Any())
+        {
+            report.Notes = "ไม่พบข้อมูล Payroll สำหรับปีนี้";
+            return;
+        }
+
+        var lineOrder = 1;
+        decimal totalIncome = 0;
+        decimal totalTax = 0;
+        decimal totalSso = 0;
+
+        // Group by employee to summarize annual income
+        var employeeGroups = payrollDetails.GroupBy(d => d.EmployeeId);
+        foreach (var group in employeeGroups)
+        {
+            var emp = group.First().Employee;
+            var annualGross = group.Sum(d => d.GrossIncome);
+            var annualTax = group.Sum(d => d.WithholdingTax);
+            var annualSso = group.Sum(d => d.SocialSecurityEmployee);
+            var annualProvident = group.Sum(d => d.ProvidentFundEmployee);
+
+            // Calculate tax liability using progressive brackets
+            // Deductions: SSO + Provident Fund (up to 500K each) + personal allowance 60K
+            var personalAllowance = 60_000m;
+            var ssoDeduction = Math.Min(annualSso, 9_000m); // SSO max deduction
+            var providentDeduction = Math.Min(annualProvident, 500_000m);
+            var totalDeductions = personalAllowance + ssoDeduction + providentDeduction;
+            var taxableIncome = Math.Max(0, annualGross - totalDeductions);
+            var computedTax = CalculateThaiPersonalIncomeTax(taxableIncome);
+
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                TaxPayerId = emp.CitizenId,
+                TaxPayerName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}",
+                TransactionDate = new DateTime(year, 12, 31),
+                Description = $"รหัส {emp.EmployeeCode} | เงินได้รวม {annualGross:N2} | หักค่าลดหย่อน {totalDeductions:N2}",
+                IncomeAmount = annualGross,
+                TaxRate = taxableIncome > 0 ? (computedTax / taxableIncome) * 100 : 0,
+                TaxAmount = annualTax,
+                IncomeTypeCode = "40(1)"
+            });
+
+            // Tax difference line if computed != withheld
+            var taxDiff = computedTax - annualTax;
+            if (Math.Abs(taxDiff) > 1) // threshold of 1 baht
+            {
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id,
+                    LineOrder = lineOrder++,
+                    TaxPayerId = emp.CitizenId,
+                    TaxPayerName = $"{emp.FirstNameTh} {emp.LastNameTh}",
+                    TransactionDate = new DateTime(year, 12, 31),
+                    Description = taxDiff > 0
+                        ? $"ภาษีชำระเพิ่มเติม (ภาษีคำนวณ {computedTax:N2} - ภาษีหัก ณ ที่จ่าย {annualTax:N2})"
+                        : $"ภาษีชำระเกิน (ภาษีคำนวณ {computedTax:N2} - ภาษีหัก ณ ที่จ่าย {annualTax:N2})",
+                    IncomeAmount = 0,
+                    TaxRate = 0,
+                    TaxAmount = taxDiff,
+                    IncomeTypeCode = taxDiff > 0 ? "TAX_ADDITIONAL" : "TAX_REFUND"
+                });
+            }
+
+            totalIncome += annualGross;
+            totalTax += annualTax;
+            totalSso += annualSso;
+        }
+
+        report.TotalIncome = totalIncome;
+        report.TotalTaxWithheld = totalTax;
+        report.OutputVat = totalSso; // Reuse field for SSO total
+        report.Notes = $"จำนวนพนักงาน: {employeeGroups.Count()} คน | ปีภาษี: {year}";
+    }
+
+    /// <summary>Thai personal income tax (PIT) progressive rates</summary>
+    private static decimal CalculateThaiPersonalIncomeTax(decimal taxableIncome)
+    {
+        if (taxableIncome <= 0) return 0;
+
+        var brackets = new (decimal UpperBound, decimal Rate)[]
+        {
+            (150_000m, 0.00m),
+            (300_000m, 0.05m),
+            (500_000m, 0.10m),
+            (750_000m, 0.15m),
+            (1_000_000m, 0.20m),
+            (2_000_000m, 0.25m),
+            (5_000_000m, 0.30m),
+            (decimal.MaxValue, 0.35m)
+        };
+
+        decimal tax = 0;
+        decimal previousBound = 0;
+
+        foreach (var (upperBound, rate) in brackets)
+        {
+            if (taxableIncome <= previousBound) break;
+
+            var taxableInBracket = Math.Min(taxableIncome, upperBound) - previousBound;
+            tax += taxableInBracket * rate;
+            previousBound = upperBound;
+        }
+
+        return Math.Round(tax, 2);
     }
 
     /// <summary>

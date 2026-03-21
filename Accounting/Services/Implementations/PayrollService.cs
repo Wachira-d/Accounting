@@ -10,9 +10,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
+/// <summary>Payroll management including payslip PDF generation</summary>
 public class PayrollService : IPayrollService
 {
     private readonly AccountingDbContext _db;
+    private readonly IPdfGenerationService? _pdfService;
 
     // Thai personal income tax brackets (progressive)
     private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
@@ -32,9 +34,10 @@ public class PayrollService : IPayrollService
     private const decimal SsoMaxBase = 15_000m;     // max salary base per month
     private const decimal SsoMaxContribution = 750m; // max monthly contribution
 
-    public PayrollService(AccountingDbContext db)
+    public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null)
     {
         _db = db;
+        _pdfService = pdfService;
     }
 
     // ===== Employees =====
@@ -586,7 +589,10 @@ public class PayrollService : IPayrollService
 
         sb.AppendLine("</body></html>");
 
-        var pdfContent = Encoding.UTF8.GetBytes(sb.ToString());
+        var htmlContent = sb.ToString();
+        var pdfContent = _pdfService != null
+            ? _pdfService.ConvertHtmlToPdfBytes(htmlContent)
+            : PdfGenerationService.ConvertHtmlToPdf(htmlContent, null);
 
         return new PayslipResponse(
             employeeId, $"{emp.FirstNameTh} {emp.LastNameTh}",

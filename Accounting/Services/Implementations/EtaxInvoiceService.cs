@@ -39,6 +39,40 @@ public class EtaxInvoiceService : IEtaxInvoiceService
         _logger = logger;
     }
 
+    /// <summary>Get e-Tax config for a company: per-company settings override global config</summary>
+    private async Task<(string? CertPath, string? CertPassword, string? ApiKey, string? ApiSecret,
+        bool TestMode, bool AutoSign, bool AutoSubmit, string ServiceProvider)> GetEtaxConfig(Guid companyId)
+    {
+        var companySettings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+
+        // Per-company settings override global config
+        if (companySettings?.EtaxEnabled == true)
+        {
+            return (
+                companySettings.EtaxCertificatePath,
+                companySettings.EtaxCertificatePassword,
+                companySettings.EtaxRdApiKey,
+                companySettings.EtaxRdApiSecret,
+                companySettings.EtaxTestMode,
+                companySettings.EtaxAutoSign,
+                companySettings.EtaxAutoSubmit,
+                companySettings.EtaxServiceProvider ?? _config["Etax:ServiceProvider"] ?? "RD"
+            );
+        }
+
+        // Fallback to global appsettings.json
+        return (
+            _config["Etax:CertificatePath"],
+            _config["Etax:CertificatePassword"],
+            _config["Etax:RdApiKey"],
+            _config["Etax:RdApiSecret"],
+            _config.GetValue<bool>("Etax:RdTestMode"),
+            _config.GetValue<bool>("Etax:AutoSign"),
+            _config.GetValue<bool>("Etax:AutoSubmit"),
+            _config["Etax:ServiceProvider"] ?? "RD"
+        );
+    }
+
     public async Task<EtaxInvoiceResponse> GenerateAsync(Guid companyId, GenerateEtaxRequest request)
     {
         var document = await _db.Documents
@@ -98,8 +132,9 @@ public class EtaxInvoiceService : IEtaxInvoiceService
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
 
-            // Auto-sign if configured
-            if (_config.GetValue<bool>("Etax:AutoSign") && request.SignDigitally)
+            // Auto-sign if configured (per-company or global)
+            var etaxConfig = await GetEtaxConfig(companyId);
+            if (etaxConfig.AutoSign && request.SignDigitally)
             {
                 return await SignAsync(companyId, etax.Id);
             }
@@ -155,8 +190,9 @@ public class EtaxInvoiceService : IEtaxInvoiceService
         if (etax.Status != EtaxStatus.Generated && etax.Status != EtaxStatus.Error)
             throw new InvalidOperationException("สามารถลงนามได้เฉพาะ e-Tax ที่สร้างแล้วหรือที่เกิดข้อผิดพลาดเท่านั้น");
 
-        var certPath = _config["Etax:CertificatePath"];
-        var certPassword = _config["Etax:CertificatePassword"];
+        var etaxConfig = await GetEtaxConfig(companyId);
+        var certPath = etaxConfig.CertPath;
+        var certPassword = etaxConfig.CertPassword;
 
         try
         {
@@ -191,8 +227,8 @@ public class EtaxInvoiceService : IEtaxInvoiceService
 
             await _db.SaveChangesAsync();
 
-            // Auto-submit if configured
-            if (_config.GetValue<bool>("Etax:AutoSubmit"))
+            // Auto-submit if configured (per-company or global)
+            if (etaxConfig.AutoSubmit)
             {
                 return await SubmitToRevenueAsync(companyId, etax.Id);
             }
@@ -303,9 +339,10 @@ public class EtaxInvoiceService : IEtaxInvoiceService
         if (string.IsNullOrWhiteSpace(etax.DigitalSignature))
             throw new InvalidOperationException("ไม่พบลายเซ็นดิจิทัล กรุณาลงนามเอกสารก่อน");
 
-        var isTestMode = _config.GetValue<bool>("Etax:RdTestMode");
-        var apiKey = _config["Etax:RdApiKey"];
-        var apiSecret = _config["Etax:RdApiSecret"];
+        var etaxConfig = await GetEtaxConfig(companyId);
+        var isTestMode = etaxConfig.TestMode;
+        var apiKey = etaxConfig.ApiKey;
+        var apiSecret = etaxConfig.ApiSecret;
         var baseUrl = isTestMode
             ? _config["Etax:RdTestApiBaseUrl"]
             : _config["Etax:RdApiBaseUrl"];

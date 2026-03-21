@@ -52,6 +52,17 @@ public class SettingsService : ISettingsService
         if (request.MonthEndClosingDay.HasValue) settings.MonthEndClosingDay = request.MonthEndClosingDay.Value;
         if (request.PreventPostToClosedPeriod.HasValue) settings.PreventPostToClosedPeriod = request.PreventPostToClosedPeriod.Value;
 
+        // e-Tax settings
+        if (request.EtaxEnabled.HasValue) settings.EtaxEnabled = request.EtaxEnabled.Value;
+        if (request.EtaxCertificatePath != null) settings.EtaxCertificatePath = request.EtaxCertificatePath;
+        if (request.EtaxCertificatePassword != null) settings.EtaxCertificatePassword = request.EtaxCertificatePassword;
+        if (request.EtaxRdApiKey != null) settings.EtaxRdApiKey = request.EtaxRdApiKey;
+        if (request.EtaxRdApiSecret != null) settings.EtaxRdApiSecret = request.EtaxRdApiSecret;
+        if (request.EtaxTestMode.HasValue) settings.EtaxTestMode = request.EtaxTestMode.Value;
+        if (request.EtaxAutoSign.HasValue) settings.EtaxAutoSign = request.EtaxAutoSign.Value;
+        if (request.EtaxAutoSubmit.HasValue) settings.EtaxAutoSubmit = request.EtaxAutoSubmit.Value;
+        if (request.EtaxServiceProvider != null) settings.EtaxServiceProvider = request.EtaxServiceProvider;
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
     }
@@ -252,7 +263,12 @@ public class SettingsService : ISettingsService
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.AllowFreelanceAccess, s.MaxFreelanceUsers,
         s.EnableApiAccess, s.MaxApiKeys,
-        s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod);
+        s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod,
+        // e-Tax
+        s.EtaxEnabled, s.EtaxTestMode, s.EtaxAutoSign, s.EtaxAutoSubmit,
+        s.EtaxServiceProvider,
+        !string.IsNullOrEmpty(s.EtaxCertificatePath),
+        !string.IsNullOrEmpty(s.EtaxRdApiKey));
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

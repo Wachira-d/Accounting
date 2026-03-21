@@ -107,7 +107,8 @@ public enum TaxType
     WithholdingTax53 = 3, // ภงด.53
     WithholdingTax1 = 4,  // ภงด.1 (เงินเดือน)
     SocialSecurity = 5,   // ประกันสังคม
-    CorporateIncomeTax = 6 // ภงด.50/51
+    CorporateIncomeTax = 6, // ภงด.50/51
+    PersonalIncomeTax91 = 7 // ภงด.91 (ภาษีเงินได้บุคคลธรรมดา)
 }
 
 public enum VatRate
