@@ -1,7 +1,10 @@
+using System.Text;
+using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Payroll;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -38,6 +41,18 @@ public class PayrollService : IPayrollService
 
     public async Task<EmployeeResponse> CreateEmployeeAsync(Guid companyId, CreateEmployeeRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.EmployeeCode))
+            throw new InvalidOperationException("รหัสพนักงานห้ามว่าง");
+
+        if (request.BaseSalary < 0)
+            throw new InvalidOperationException("เงินเดือนฐานต้องไม่ติดลบ");
+
+        if (request.StartDate > DateTime.UtcNow.AddYears(1))
+            throw new InvalidOperationException("วันเริ่มงานต้องไม่เกิน 1 ปีข้างหน้า");
+
+        if (!string.IsNullOrEmpty(request.CitizenId) && !Regex.IsMatch(request.CitizenId, @"^\d{13}$"))
+            throw new InvalidOperationException("เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก");
+
         var existing = await _db.Set<Employee>()
             .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == request.EmployeeCode);
         if (existing)
@@ -192,6 +207,21 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> CreatePayrollRunAsync(Guid companyId, CreatePayrollRunRequest request, string createdBy)
     {
+        if (request.Month < 1 || request.Month > 12)
+            throw new InvalidOperationException("เดือนต้องอยู่ระหว่าง 1 ถึง 12");
+
+        if (request.Year < 2020 || request.Year > DateTime.UtcNow.Year + 1)
+            throw new InvalidOperationException("ปีต้องอยู่ระหว่าง 2020 ถึงปีปัจจุบัน+1");
+
+        if (request.PeriodStart >= request.PeriodEnd)
+            throw new InvalidOperationException("วันเริ่มต้นงวดต้องน้อยกว่าวันสิ้นสุดงวด");
+
+        var duplicateRun = await _db.Set<PayrollRun>()
+            .AnyAsync(r => r.CompanyId == companyId && r.Year == request.Year
+                && r.Month == request.Month && r.Status != "Voided" && !r.IsDeleted);
+        if (duplicateRun)
+            throw new InvalidOperationException($"รอบจ่ายเงินเดือน {request.Year}/{request.Month:D2} มีอยู่แล้ว");
+
         var count = await _db.Set<PayrollRun>()
             .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
         var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
@@ -253,117 +283,184 @@ public class PayrollService : IPayrollService
         if (run.Status != "Draft")
             throw new InvalidOperationException("สามารถคำนวณได้เฉพาะรอบที่เป็น Draft เท่านั้น");
 
-        // Remove existing details
-        _db.Set<PayrollDetail>().RemoveRange(run.Details);
-
-        // Get active employees
-        var employees = await _db.Set<Employee>()
-            .Where(e => e.CompanyId == companyId && e.IsActive && !e.IsDeleted
-                && e.StartDate <= run.PeriodEnd
-                && (e.EndDate == null || e.EndDate >= run.PeriodStart))
-            .ToListAsync();
-
-        decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
-        decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
-
-        foreach (var emp in employees)
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            // Get cumulative income for this year (prior months)
-            var priorDetails = await _db.Set<PayrollDetail>()
-                .Include(d => d.PayrollRun)
-                .Where(d => d.EmployeeId == emp.Id
-                    && d.PayrollRun.CompanyId == companyId
-                    && d.PayrollRun.Year == run.Year
-                    && d.PayrollRun.Month < run.Month
-                    && d.PayrollRun.Status != "Voided")
+            // Remove existing details
+            _db.Set<PayrollDetail>().RemoveRange(run.Details);
+
+            // Get active employees
+            var employees = await _db.Set<Employee>()
+                .Where(e => e.CompanyId == companyId && e.IsActive && !e.IsDeleted
+                    && e.StartDate <= run.PeriodEnd
+                    && (e.EndDate == null || e.EndDate >= run.PeriodStart))
                 .ToListAsync();
 
-            var cumulativeIncome = priorDetails.Sum(d => d.GrossIncome);
-            var cumulativeTax = priorDetails.Sum(d => d.WithholdingTax);
+            // Get payroll items for earnings/deductions calculation
+            var payrollItems = await _db.Set<PayrollItem>()
+                .Where(i => i.CompanyId == companyId && i.IsActive && !i.IsDeleted)
+                .ToListAsync();
 
-            // Calculate gross income
-            var grossIncome = emp.BaseSalary;
+            var earningItems = payrollItems.Where(i => i.ItemType == "Earning").ToList();
+            var deductionItems = payrollItems.Where(i => i.ItemType == "Deduction").ToList();
 
-            // Social security calculation
-            var ssoEmployee = 0m;
-            var ssoEmployer = 0m;
-            if (emp.IsSubjectToSocialSecurity)
+            decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
+            decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
+            decimal totalPvdEmp = 0, totalPvdEr = 0;
+
+            foreach (var emp in employees)
             {
-                var ssoBase = Math.Min(emp.BaseSalary, SsoMaxBase);
-                ssoEmployee = Math.Min(ssoBase * SsoRate, SsoMaxContribution);
-                ssoEmployer = ssoEmployee;
+                // Get cumulative income for this year (prior months)
+                var priorDetails = await _db.Set<PayrollDetail>()
+                    .Include(d => d.PayrollRun)
+                    .Where(d => d.EmployeeId == emp.Id
+                        && d.PayrollRun.CompanyId == companyId
+                        && d.PayrollRun.Year == run.Year
+                        && d.PayrollRun.Month < run.Month
+                        && d.PayrollRun.Status != "Voided")
+                    .ToListAsync();
+
+                var cumulativeIncome = priorDetails.Sum(d => d.GrossIncome);
+                var cumulativeTax = priorDetails.Sum(d => d.WithholdingTax);
+
+                // Calculate earnings from PayrollItems
+                var overtimePay = 0m;
+                var allowances = 0m;
+                var commission = 0m;
+                var bonus = 0m;
+                var otherIncome = 0m;
+
+                foreach (var item in earningItems)
+                {
+                    var amount = item.CalculationType == "Fixed"
+                        ? (item.FixedAmount ?? 0)
+                        : (item.Percentage ?? 0) / 100m * emp.BaseSalary;
+
+                    if (item.Code.StartsWith("OT", StringComparison.OrdinalIgnoreCase))
+                        overtimePay += amount;
+                    else if (item.Code.Equals("COM", StringComparison.OrdinalIgnoreCase))
+                        commission += amount;
+                    else if (item.Code.Equals("BONUS", StringComparison.OrdinalIgnoreCase))
+                        bonus += amount;
+                    else
+                        allowances += amount;
+                }
+
+                // Calculate leave deductions
+                var approvedLeaves = await _db.Set<EmployeeLeave>()
+                    .Where(l => l.EmployeeId == emp.Id && l.CompanyId == companyId
+                        && l.Status == "Approved"
+                        && l.StartDate <= run.PeriodEnd && l.EndDate >= run.PeriodStart)
+                    .ToListAsync();
+
+                var leaveDays = approvedLeaves.Sum(l => l.TotalDays);
+                var workDaysInMonth = DateTime.DaysInMonth(run.Year, run.Month);
+
+                // Calculate other deductions from PayrollItems
+                var otherDeductions = 0m;
+                foreach (var item in deductionItems)
+                {
+                    var amount = item.CalculationType == "Fixed"
+                        ? (item.FixedAmount ?? 0)
+                        : (item.Percentage ?? 0) / 100m * emp.BaseSalary;
+                    otherDeductions += amount;
+                }
+
+                var grossIncome = emp.BaseSalary + overtimePay + allowances + commission + bonus + otherIncome;
+
+                // Social security calculation
+                var ssoEmployee = 0m;
+                var ssoEmployer = 0m;
+                if (emp.IsSubjectToSocialSecurity)
+                {
+                    var ssoBase = Math.Min(grossIncome, SsoMaxBase);
+                    ssoEmployee = Math.Min(ssoBase * SsoRate, SsoMaxContribution);
+                    ssoEmployer = ssoEmployee;
+                }
+
+                // Provident fund calculation
+                var pvdEmployee = 0m;
+                var pvdEmployer = 0m;
+                if (emp.HasProvidentFund)
+                {
+                    pvdEmployee = emp.BaseSalary * emp.ProvidentFundEmployeePercent / 100m;
+                    pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
+                }
+
+                // Thai withholding tax calculation (annualized method) on full gross income
+                var estimatedAnnualIncome = cumulativeIncome + grossIncome * (13 - run.Month);
+                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedAnnualIncome);
+                var remainingMonths = 13 - run.Month;
+                var monthlyTax = remainingMonths > 0
+                    ? (estimatedAnnualTax - cumulativeTax) / remainingMonths
+                    : 0m;
+                monthlyTax = Math.Max(0, monthlyTax);
+
+                var totalDeductionsForEmp = ssoEmployee + monthlyTax + pvdEmployee + otherDeductions;
+                var netPay = grossIncome - totalDeductionsForEmp;
+
+                var detail = new PayrollDetail
+                {
+                    CompanyId = companyId,
+                    PayrollRunId = payrollRunId,
+                    EmployeeId = emp.Id,
+                    BaseSalary = emp.BaseSalary,
+                    OvertimePay = overtimePay,
+                    Allowances = allowances,
+                    Commission = commission,
+                    Bonus = bonus,
+                    OtherIncome = otherIncome,
+                    GrossIncome = grossIncome,
+                    SocialSecurityEmployee = ssoEmployee,
+                    SocialSecurityEmployer = ssoEmployer,
+                    WithholdingTax = monthlyTax,
+                    ProvidentFundEmployee = pvdEmployee,
+                    ProvidentFundEmployer = pvdEmployer,
+                    LoanDeduction = 0,
+                    OtherDeductions = otherDeductions,
+                    TotalDeductions = totalDeductionsForEmp,
+                    NetPay = netPay,
+                    CumulativeIncomeYTD = cumulativeIncome + grossIncome,
+                    CumulativeTaxYTD = cumulativeTax + monthlyTax,
+                    EstimatedAnnualIncome = estimatedAnnualIncome,
+                    EstimatedAnnualTax = estimatedAnnualTax,
+                    WorkDays = workDaysInMonth,
+                    LeaveDays = (int)leaveDays
+                };
+
+                _db.Set<PayrollDetail>().Add(detail);
+
+                totalGross += grossIncome;
+                totalDeductions += totalDeductionsForEmp;
+                totalNet += netPay;
+                totalWht += monthlyTax;
+                totalSsoEmp += ssoEmployee;
+                totalSsoEr += ssoEmployer;
+                totalPvdEmp += pvdEmployee;
+                totalPvdEr += pvdEmployer;
             }
 
-            // Provident fund calculation
-            var pvdEmployee = 0m;
-            var pvdEmployer = 0m;
-            if (emp.HasProvidentFund)
-            {
-                pvdEmployee = emp.BaseSalary * emp.ProvidentFundEmployeePercent / 100m;
-                pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
-            }
+            run.TotalGrossSalary = totalGross;
+            run.TotalDeductions = totalDeductions;
+            run.TotalNetPay = totalNet;
+            run.TotalWithholdingTax = totalWht;
+            run.TotalSocialSecurityEmployee = totalSsoEmp;
+            run.TotalSocialSecurityEmployer = totalSsoEr;
+            run.TotalProvidentFundEmployee = totalPvdEmp;
+            run.TotalProvidentFundEmployer = totalPvdEr;
+            run.EmployeeCount = employees.Count;
+            run.Status = "Calculated";
 
-            // Thai withholding tax calculation (annualized method)
-            var estimatedAnnualIncome = cumulativeIncome + grossIncome * (13 - run.Month);
-            var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedAnnualIncome);
-            var remainingMonths = 13 - run.Month;
-            var monthlyTax = remainingMonths > 0
-                ? (estimatedAnnualTax - cumulativeTax) / remainingMonths
-                : 0m;
-            monthlyTax = Math.Max(0, monthlyTax);
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
 
-            var totalDeductionsForEmp = ssoEmployee + monthlyTax + pvdEmployee;
-            var netPay = grossIncome - totalDeductionsForEmp;
-
-            var detail = new PayrollDetail
-            {
-                CompanyId = companyId,
-                PayrollRunId = payrollRunId,
-                EmployeeId = emp.Id,
-                BaseSalary = emp.BaseSalary,
-                OvertimePay = 0,
-                Allowances = 0,
-                Commission = 0,
-                Bonus = 0,
-                OtherIncome = 0,
-                GrossIncome = grossIncome,
-                SocialSecurityEmployee = ssoEmployee,
-                SocialSecurityEmployer = ssoEmployer,
-                WithholdingTax = monthlyTax,
-                ProvidentFundEmployee = pvdEmployee,
-                ProvidentFundEmployer = pvdEmployer,
-                LoanDeduction = 0,
-                OtherDeductions = 0,
-                TotalDeductions = totalDeductionsForEmp,
-                NetPay = netPay,
-                CumulativeIncomeYTD = cumulativeIncome + grossIncome,
-                CumulativeTaxYTD = cumulativeTax + monthlyTax,
-                EstimatedAnnualIncome = estimatedAnnualIncome,
-                EstimatedAnnualTax = estimatedAnnualTax,
-                WorkDays = DateTime.DaysInMonth(run.Year, run.Month)
-            };
-
-            _db.Set<PayrollDetail>().Add(detail);
-
-            totalGross += grossIncome;
-            totalDeductions += totalDeductionsForEmp;
-            totalNet += netPay;
-            totalWht += monthlyTax;
-            totalSsoEmp += ssoEmployee;
-            totalSsoEr += ssoEmployer;
+            return MapToPayrollRunResponse(run);
         }
-
-        run.TotalGrossSalary = totalGross;
-        run.TotalDeductions = totalDeductions;
-        run.TotalNetPay = totalNet;
-        run.TotalWithholdingTax = totalWht;
-        run.TotalSocialSecurityEmployee = totalSsoEmp;
-        run.TotalSocialSecurityEmployer = totalSsoEr;
-        run.EmployeeCount = employees.Count;
-        run.Status = "Calculated";
-
-        await _db.SaveChangesAsync();
-        return MapToPayrollRunResponse(run);
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy)
@@ -391,6 +488,13 @@ public class PayrollService : IPayrollService
 
         if (run.Status != "Approved")
             throw new InvalidOperationException("สามารถจ่ายได้เฉพาะรอบที่อนุมัติแล้วเท่านั้น");
+
+        // Prevent duplicate payments for same year/month
+        var alreadyPaid = await _db.Set<PayrollRun>()
+            .AnyAsync(r => r.CompanyId == companyId && r.Year == run.Year
+                && r.Month == run.Month && r.Status == "Paid" && r.Id != payrollRunId && !r.IsDeleted);
+        if (alreadyPaid)
+            throw new InvalidOperationException($"รอบจ่ายเงินเดือน {run.Year}/{run.Month:D2} ถูกจ่ายไปแล้ว");
 
         run.Status = "Paid";
         run.UpdatedBy = processedBy;
@@ -444,26 +548,72 @@ public class PayrollService : IPayrollService
                 && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายละเอียดเงินเดือน");
 
-        var employeeName = $"{detail.Employee.FirstNameTh} {detail.Employee.LastNameTh}";
-        var fileName = $"Payslip_{detail.Employee.EmployeeCode}_{detail.PayrollRun.Year}{detail.PayrollRun.Month:D2}.pdf";
+        var emp = detail.Employee;
+        var run = detail.PayrollRun;
+        var employeeName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}";
+        var fileName = $"Payslip_{emp.EmployeeCode}_{run.Year}{run.Month:D2}.pdf";
 
-        // Generate a placeholder PDF (actual PDF generation would use a PDF library)
-        var pdfContent = System.Text.Encoding.UTF8.GetBytes(
-            $"PAYSLIP - {employeeName} - {detail.PayrollRun.Year}/{detail.PayrollRun.Month:D2}");
+        // Generate HTML payslip content
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
+        sb.AppendLine("<style>body{font-family:'THSarabunNew',sans-serif;font-size:14px;margin:20px;} table{width:100%;border-collapse:collapse;margin:10px 0;} td,th{border:1px solid #ccc;padding:6px 8px;} th{background:#4472C4;color:#fff;} .right{text-align:right;} .title{text-align:center;font-size:20px;font-weight:bold;margin-bottom:10px;} .section{font-weight:bold;background:#f0f0f0;} .total{font-weight:bold;background:#e8f0fe;}</style>");
+        sb.AppendLine("</head><body>");
+        sb.AppendLine($"<div class='title'>ใบสลิปเงินเดือน / Payslip</div>");
+        sb.AppendLine($"<div style='text-align:center;margin-bottom:15px;'>งวดเดือน {run.Month:D2}/{run.Year} | วันจ่าย {run.PayDate:dd/MM/yyyy}</div>");
+
+        // Employee info
+        sb.AppendLine("<table><tr><td><strong>รหัส:</strong> " + emp.EmployeeCode + "</td>");
+        sb.AppendLine($"<td><strong>ชื่อ:</strong> {employeeName}</td></tr>");
+        sb.AppendLine($"<tr><td><strong>แผนก:</strong> {emp.Department ?? "-"}</td>");
+        sb.AppendLine($"<td><strong>ตำแหน่ง:</strong> {emp.Position ?? "-"}</td></tr></table>");
+
+        // Earnings & Deductions side by side
+        sb.AppendLine("<table><thead><tr><th colspan='2'>รายได้ (Earnings)</th><th colspan='2'>รายการหัก (Deductions)</th></tr></thead><tbody>");
+        sb.AppendLine($"<tr><td>เงินเดือน</td><td class='right'>{detail.BaseSalary:N2}</td><td>ประกันสังคม</td><td class='right'>{detail.SocialSecurityEmployee:N2}</td></tr>");
+        sb.AppendLine($"<tr><td>ค่าล่วงเวลา</td><td class='right'>{detail.OvertimePay:N2}</td><td>ภาษีหัก ณ ที่จ่าย</td><td class='right'>{detail.WithholdingTax:N2}</td></tr>");
+        sb.AppendLine($"<tr><td>เบี้ยเลี้ยง</td><td class='right'>{detail.Allowances:N2}</td><td>กองทุนสำรองเลี้ยงชีพ</td><td class='right'>{detail.ProvidentFundEmployee:N2}</td></tr>");
+        sb.AppendLine($"<tr><td>คอมมิชชั่น</td><td class='right'>{detail.Commission:N2}</td><td>หักเงินกู้</td><td class='right'>{detail.LoanDeduction:N2}</td></tr>");
+        sb.AppendLine($"<tr><td>โบนัส</td><td class='right'>{detail.Bonus:N2}</td><td>หักอื่นๆ</td><td class='right'>{detail.OtherDeductions:N2}</td></tr>");
+        sb.AppendLine($"<tr class='total'><td>รวมรายได้</td><td class='right'>{detail.GrossIncome:N2}</td><td>รวมรายการหัก</td><td class='right'>{detail.TotalDeductions:N2}</td></tr>");
+        sb.AppendLine("</tbody></table>");
+
+        // Net pay
+        sb.AppendLine($"<table><tr class='total'><td style='text-align:center;font-size:18px;'>เงินได้สุทธิ (Net Pay): {detail.NetPay:N2} บาท</td></tr></table>");
+
+        // YTD info
+        sb.AppendLine($"<table><tr><td>รายได้สะสม (YTD)</td><td class='right'>{detail.CumulativeIncomeYTD:N2}</td>");
+        sb.AppendLine($"<td>ภาษีสะสม (YTD)</td><td class='right'>{detail.CumulativeTaxYTD:N2}</td></tr></table>");
+
+        sb.AppendLine("</body></html>");
+
+        var pdfContent = Encoding.UTF8.GetBytes(sb.ToString());
 
         return new PayslipResponse(
-            employeeId, employeeName,
-            detail.PayrollRun.Year, detail.PayrollRun.Month,
-            pdfContent, fileName);
+            employeeId, $"{emp.FirstNameTh} {emp.LastNameTh}",
+            run.Year, run.Month, pdfContent, fileName);
     }
 
     // ===== Leave =====
 
     public async Task<LeaveResponse> CreateLeaveAsync(Guid companyId, CreateLeaveRequest request)
     {
+        if (request.StartDate > request.EndDate)
+            throw new InvalidOperationException("วันเริ่มต้นลาต้องไม่เกินวันสิ้นสุด");
+
+        if (request.TotalDays <= 0)
+            throw new InvalidOperationException("จำนวนวันลาต้องมากกว่า 0");
+
         var employee = await _db.Set<Employee>()
             .FirstOrDefaultAsync(e => e.Id == request.EmployeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        // Check for overlapping approved leaves
+        var overlapping = await _db.Set<EmployeeLeave>()
+            .AnyAsync(l => l.EmployeeId == request.EmployeeId && l.CompanyId == companyId
+                && l.Status == "Approved" && !l.IsDeleted
+                && l.StartDate <= request.EndDate && l.EndDate >= request.StartDate);
+        if (overlapping)
+            throw new InvalidOperationException("มีรายการลาที่ทับซ้อนกันในช่วงเวลาเดียวกัน");
 
         var leave = new EmployeeLeave
         {
@@ -585,6 +735,63 @@ public class PayrollService : IPayrollService
             TotalEmployeeContribution = lines.Sum(l => l.EmployeeContribution),
             TotalEmployerContribution = lines.Sum(l => l.EmployerContribution),
             TotalContribution = lines.Sum(l => l.EmployeeContribution + l.EmployerContribution),
+            Lines = lines
+        };
+    }
+
+    // ===== PND3 Report (ภ.ง.ด.3) =====
+
+    public async Task<object> GeneratePnd3Async(Guid companyId, int year, int month)
+    {
+        var startDate = new DateTime(year, month, 1);
+        var endDate = startDate.AddMonths(1).AddDays(-1);
+
+        var docs = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId
+                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.WithholdingTaxAmount > 0)
+            .ToListAsync();
+
+        var lines = docs.SelectMany(d => d.Lines
+            .Where(l => l.WithholdingTaxAmount > 0)
+            .Select(l => new
+            {
+                TaxPayerId = d.Contact?.TaxId,
+                TaxPayerName = d.Contact?.Name ?? "",
+                IncomeTypeCode = l.IncomeTypeCode ?? "40(8)",
+                IncomeAmount = l.Amount,
+                TaxRate = l.WithholdingTaxRate,
+                TaxWithheld = l.WithholdingTaxAmount,
+                DocumentNumber = d.DocumentNumber,
+                PaymentDate = d.DocumentDate
+            }))
+            .ToList();
+
+        // Group by vendor for summary
+        var vendorSummary = lines
+            .GroupBy(l => new { l.TaxPayerId, l.TaxPayerName })
+            .Select(g => new
+            {
+                g.Key.TaxPayerId,
+                g.Key.TaxPayerName,
+                TotalIncome = g.Sum(l => l.IncomeAmount),
+                TotalTaxWithheld = g.Sum(l => l.TaxWithheld),
+                TransactionCount = g.Count()
+            })
+            .ToList();
+
+        return new
+        {
+            FormCode = "ภ.ง.ด.3",
+            Year = year,
+            Month = month,
+            TotalVendors = vendorSummary.Count,
+            TotalIncome = lines.Sum(l => l.IncomeAmount),
+            TotalTaxWithheld = lines.Sum(l => l.TaxWithheld),
+            VendorSummary = vendorSummary,
             Lines = lines
         };
     }

@@ -37,41 +37,62 @@ public class TaxService : ITaxService
 
     public async Task<TaxReportResponse> GenerateTaxReportAsync(Guid companyId, CreateTaxReportRequest request)
     {
+        // Input validation
+        if (request.Year < 2020 || request.Year > DateTime.UtcNow.Year + 1)
+            throw new ArgumentException("ปีภาษีไม่ถูกต้อง (ต้องอยู่ระหว่าง 2020 ถึงปีปัจจุบัน+1)");
+
+        if (request.TaxType != TaxType.CorporateIncomeTax)
+        {
+            if (request.Month < 1 || request.Month > 12)
+                throw new ArgumentException("เดือนภาษีไม่ถูกต้อง (ต้องอยู่ระหว่าง 1 ถึง 12)");
+        }
+
         if (await _db.TaxReports.AnyAsync(t =>
             t.CompanyId == companyId && t.TaxType == request.TaxType &&
             t.Year == request.Year && t.Month == request.Month))
             throw new InvalidOperationException("รายงานภาษีเดือนนี้มีอยู่แล้ว");
 
-        var startDate = new DateTime(request.Year, request.Month, 1);
-        var endDate = startDate.AddMonths(1).AddDays(-1);
-
-        var report = new TaxReport
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            CompanyId = companyId,
-            TaxType = request.TaxType,
-            Year = request.Year,
-            Month = request.Month
-        };
+            var startDate = new DateTime(request.Year, request.TaxType == TaxType.CorporateIncomeTax ? 1 : request.Month, 1);
+            var endDate = startDate.AddMonths(1).AddDays(-1);
 
-        if (request.TaxType == TaxType.VAT)
-        {
-            await GenerateVatReport(companyId, startDate, endDate, report);
+            var report = new TaxReport
+            {
+                CompanyId = companyId,
+                TaxType = request.TaxType,
+                Year = request.Year,
+                Month = request.Month
+            };
+
+            if (request.TaxType == TaxType.VAT)
+            {
+                await GenerateVatReport(companyId, startDate, endDate, report);
+            }
+            else if (request.TaxType == TaxType.WithholdingTax3
+                  || request.TaxType == TaxType.WithholdingTax53
+                  || request.TaxType == TaxType.WithholdingTax1)
+            {
+                await GenerateWhtReport(companyId, startDate, endDate, report);
+            }
+            else if (request.TaxType == TaxType.CorporateIncomeTax)
+            {
+                await GenerateCitReport(companyId, request.Year, report);
+            }
+
+            _db.TaxReports.Add(report);
+            await _db.SaveChangesAsync();
+
+            await transaction.CommitAsync();
+
+            return await GetTaxReportAsync(companyId, report.Id);
         }
-        else if (request.TaxType == TaxType.WithholdingTax3
-              || request.TaxType == TaxType.WithholdingTax53
-              || request.TaxType == TaxType.WithholdingTax1)
+        catch
         {
-            await GenerateWhtReport(companyId, startDate, endDate, report);
+            await transaction.RollbackAsync();
+            throw;
         }
-        else if (request.TaxType == TaxType.CorporateIncomeTax)
-        {
-            await GenerateCitReport(companyId, request.Year, report);
-        }
-
-        _db.TaxReports.Add(report);
-        await _db.SaveChangesAsync();
-
-        return await GetTaxReportAsync(companyId, report.Id);
     }
 
     private async Task GenerateVatReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
@@ -86,10 +107,18 @@ public class TaxService : ITaxService
             .ToListAsync();
 
         decimal outputVat = 0, inputVat = 0;
+        decimal vatExemptAmount = 0;
         var lineOrder = 1;
 
         foreach (var doc in docs)
         {
+            // Check for VAT exempt lines (VatRate == -1)
+            var exemptLines = doc.Lines.Where(l => l.VatRate == -1).ToList();
+            if (exemptLines.Any())
+            {
+                vatExemptAmount += exemptLines.Sum(l => l.Amount);
+            }
+
             // Output VAT - from sales documents
             if (doc.DocumentType == DocumentType.Invoice || doc.DocumentType == DocumentType.TaxInvoice)
             {
@@ -129,6 +158,21 @@ public class TaxService : ITaxService
                     IncomeTypeCode = "INPUT"
                 });
             }
+        }
+
+        // Add summary line for VAT exempt sales/purchases
+        if (vatExemptAmount != 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "ยอดขาย/ซื้อยกเว้นภาษี",
+                IncomeAmount = vatExemptAmount,
+                TaxRate = 0,
+                TaxAmount = 0,
+                IncomeTypeCode = "EXEMPT"
+            });
         }
 
         report.OutputVat = outputVat;
@@ -174,8 +218,32 @@ public class TaxService : ITaxService
             }
         }
 
-        report.TotalIncome = report.Lines.Sum(l => l.IncomeAmount);
-        report.TotalTaxWithheld = report.Lines.Sum(l => l.TaxAmount);
+        // Group by vendor (TaxPayerId) and add summary lines
+        var vendorGroups = report.Lines
+            .Where(l => !string.IsNullOrEmpty(l.TaxPayerId))
+            .GroupBy(l => l.TaxPayerId)
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        foreach (var group in vendorGroups)
+        {
+            var vendorName = group.First().TaxPayerName;
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                TaxPayerId = group.Key,
+                TaxPayerName = vendorName,
+                Description = $"[สรุป] {vendorName}",
+                IncomeAmount = group.Sum(l => l.IncomeAmount),
+                TaxRate = 0,
+                TaxAmount = group.Sum(l => l.TaxAmount),
+                IncomeTypeCode = "SUMMARY"
+            });
+        }
+
+        report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
+        report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
     }
 
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
@@ -209,20 +277,58 @@ public class TaxService : ITaxService
 
         var totalExpenses = expenseLines.Sum(l => l.DebitAmount - l.CreditAmount);
 
+        // Query fixed assets for tax depreciation
+        var activeAssets = await _db.Set<FixedAsset>()
+            .Where(a => a.CompanyId == companyId && a.Status == AssetStatus.Active)
+            .Select(a => a.Id)
+            .ToListAsync();
+
+        var totalDepreciation = 0m;
+        if (activeAssets.Any())
+        {
+            totalDepreciation = await _db.Set<AssetDepreciation>()
+                .Where(d => activeAssets.Contains(d.FixedAssetId)
+                    && d.Year == year)
+                .SumAsync(d => d.Amount);
+        }
+
+        // Add depreciation to total expenses
+        totalExpenses += totalDepreciation;
+
         // Net profit before tax
         var netProfitBeforeTax = totalRevenue - totalExpenses;
+
+        // Query previous year's CIT report for tax credit carryforward
+        var previousYearCit = await _db.TaxReports
+            .Where(t => t.CompanyId == companyId
+                && t.TaxType == TaxType.CorporateIncomeTax
+                && t.Year == year - 1
+                && t.Status == TaxReportStatus.Filed)
+            .FirstOrDefaultAsync();
+
+        decimal taxCreditCarryforward = 0;
+        if (previousYearCit != null && previousYearCit.NetVat < 0)
+        {
+            // NetVat is reused for net profit; negative means overpayment
+            // TotalTaxWithheld has the CIT amount; if net profit was negative, there's a credit
+            taxCreditCarryforward = Math.Abs(previousYearCit.TotalTaxWithheld);
+        }
 
         // Thai CIT progressive rates (for SME companies)
         var citAmount = CalculateThaiCit(netProfitBeforeTax);
 
+        // Apply tax credit carryforward
+        var netCitAmount = Math.Max(0, citAmount - taxCreditCarryforward);
+
         report.TotalIncome = totalRevenue;
-        report.TotalTaxWithheld = citAmount;
+        report.TotalTaxWithheld = netCitAmount;
         report.NetVat = netProfitBeforeTax; // Reuse field for net profit
 
+        var lineOrder = 1;
         report.Lines.Add(new TaxReportLine
         {
             TaxReportId = report.Id,
-            LineOrder = 1,
+            LineOrder = lineOrder++,
             Description = "รายได้ทั้งปี",
             IncomeAmount = totalRevenue,
             TaxAmount = 0
@@ -230,20 +336,48 @@ public class TaxService : ITaxService
         report.Lines.Add(new TaxReportLine
         {
             TaxReportId = report.Id,
-            LineOrder = 2,
+            LineOrder = lineOrder++,
             Description = "ค่าใช้จ่ายทั้งปี",
-            IncomeAmount = totalExpenses,
+            IncomeAmount = totalExpenses - totalDepreciation,
             TaxAmount = 0
         });
+
+        // Depreciation line
+        if (totalDepreciation > 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "ค่าเสื่อมราคาทางภาษี",
+                IncomeAmount = totalDepreciation,
+                TaxAmount = 0
+            });
+        }
+
         report.Lines.Add(new TaxReportLine
         {
             TaxReportId = report.Id,
-            LineOrder = 3,
+            LineOrder = lineOrder++,
             Description = "กำไรสุทธิก่อนภาษี",
             IncomeAmount = netProfitBeforeTax,
             TaxAmount = citAmount,
             TaxRate = netProfitBeforeTax > 0 ? (citAmount / netProfitBeforeTax) * 100 : 0
         });
+
+        // Tax credit carryforward line
+        if (taxCreditCarryforward > 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "เครดิตภาษีจากปีก่อน",
+                IncomeAmount = taxCreditCarryforward,
+                TaxAmount = -taxCreditCarryforward,
+                IncomeTypeCode = "TAX_CREDIT"
+            });
+        }
     }
 
     /// <summary>
@@ -316,6 +450,12 @@ public class TaxService : ITaxService
             .Include(r => r.Lines)
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+
+        if (report.Status == TaxReportStatus.Filed)
+            throw new InvalidOperationException("รายงานภาษีนี้ถูกยื่นแล้ว");
+
+        if (report.TaxType != TaxType.CorporateIncomeTax && !report.Lines.Any())
+            throw new InvalidOperationException("รายงานภาษีต้องมีรายการอย่างน้อย 1 รายการ");
 
         report.Status = TaxReportStatus.Filed;
         report.FiledDate = DateTime.UtcNow;

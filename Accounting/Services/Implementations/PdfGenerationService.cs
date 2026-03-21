@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
@@ -362,13 +364,121 @@ public class PdfGenerationService : IPdfGenerationService
 
     private static byte[] ConvertHtmlToPdf(string html, DocumentTemplate? template)
     {
-        // NOTE: In production, integrate with a PDF library such as:
-        // - QuestPDF (recommended for .NET)
-        // - wkhtmltopdf
-        // - Puppeteer Sharp
-        // - iText/iTextSharp
-        // For now, return HTML as bytes (placeholder for PDF renderer integration)
-        return Encoding.UTF8.GetBytes(html);
+        // Generate a minimal valid PDF that embeds the HTML content as text
+        // This creates a real PDF file structure that can be opened by PDF readers
+        // For production, replace with QuestPDF, iText, or wkhtmltopdf
+
+        var content = StripHtmlTags(html);
+        var lines = WrapText(content, 80);
+
+        using var ms = new MemoryStream();
+        using var writer = new StreamWriter(ms, Encoding.ASCII, leaveOpen: true);
+
+        var offsets = new List<long>();
+
+        // PDF Header
+        writer.Write("%PDF-1.4\n");
+        writer.Flush();
+
+        // Object 1: Catalog
+        offsets.Add(ms.Position);
+        writer.Write("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        writer.Flush();
+
+        // Object 2: Pages
+        offsets.Add(ms.Position);
+        writer.Write("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+        writer.Flush();
+
+        // Object 4: Font
+        offsets.Add(ms.Position);
+        writer.Write("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+        writer.Flush();
+
+        // Build content stream
+        var contentSb = new StringBuilder();
+        contentSb.Append("BT\n/F1 10 Tf\n");
+        var pageHeight = template?.PaperSize == "A4" ? 842 : 792;
+        var y = pageHeight - 50;
+        var marginLeft = 50;
+
+        foreach (var line in lines)
+        {
+            if (y < 50) break; // Don't overflow page
+            var escapedLine = line.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+            contentSb.Append($"{marginLeft} {y} Td\n({escapedLine}) Tj\n0 0 Td\n");
+            y -= 14;
+        }
+        contentSb.Append("ET\n");
+
+        var contentBytes = Encoding.ASCII.GetBytes(contentSb.ToString());
+
+        // Object 5: Content Stream
+        offsets.Add(ms.Position);
+        writer.Write($"5 0 obj\n<< /Length {contentBytes.Length} >>\nstream\n");
+        writer.Flush();
+        ms.Write(contentBytes, 0, contentBytes.Length);
+        writer.Write("\nendstream\nendobj\n");
+        writer.Flush();
+
+        // Object 3: Page (must come after content stream for offset calc)
+        var pageObjOffset = ms.Position;
+        // Insert page object offset at index 2 (after catalog and pages)
+        offsets.Insert(2, pageObjOffset);
+        writer.Write($"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 {pageHeight}] /Contents 5 0 R /Resources << /Font << /F1 4 0 R >> >> >>\nendobj\n");
+        writer.Flush();
+
+        // Cross-reference table
+        var xrefOffset = ms.Position;
+        writer.Write("xref\n");
+        writer.Write($"0 6\n");
+        writer.Write("0000000000 65535 f \n");
+        // offsets: [0]=obj1, [1]=obj2, [2]=obj3, [3]=obj4, [4]=obj5
+        foreach (var offset in offsets)
+        {
+            writer.Write($"{offset:D10} 00000 n \n");
+        }
+        writer.Flush();
+
+        // Trailer
+        writer.Write($"trailer\n<< /Size 6 /Root 1 0 R >>\n");
+        writer.Write($"startxref\n{xrefOffset}\n%%EOF\n");
+        writer.Flush();
+
+        return ms.ToArray();
+    }
+
+    private static string StripHtmlTags(string html)
+    {
+        // Simple HTML tag stripper
+        var result = Regex.Replace(html, "<[^>]+>", " ");
+        result = Regex.Replace(result, @"\s+", " ");
+        return WebUtility.HtmlDecode(result).Trim();
+    }
+
+    private static List<string> WrapText(string text, int maxWidth)
+    {
+        var lines = new List<string>();
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var currentLine = new StringBuilder();
+
+        foreach (var word in words)
+        {
+            if (currentLine.Length + word.Length + 1 > maxWidth)
+            {
+                if (currentLine.Length > 0)
+                {
+                    lines.Add(currentLine.ToString());
+                    currentLine.Clear();
+                }
+            }
+            if (currentLine.Length > 0) currentLine.Append(' ');
+            currentLine.Append(word);
+        }
+        if (currentLine.Length > 0)
+            lines.Add(currentLine.ToString());
+
+        return lines;
     }
 
     private static DocumentTemplate CreateInMemoryDefaultTemplate(DocumentType docType) => new()

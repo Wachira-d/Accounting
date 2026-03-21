@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 using Accounting.Data;
@@ -36,40 +37,69 @@ public class EtaxInvoiceService : IEtaxInvoiceService
             && document.DocumentType != DocumentType.DebitNote && document.DocumentType != DocumentType.CreditNote)
             throw new InvalidOperationException("สามารถสร้าง e-Tax ได้เฉพาะใบกำกับภาษี, ใบเสร็จรับเงิน, ใบเพิ่มหนี้, ใบลดหนี้ เท่านั้น");
 
+        // Validate document status is Approved
+        if (document.Status == DocumentStatus.Draft)
+            throw new InvalidOperationException("ไม่สามารถสร้าง e-Tax จากเอกสารฉบับร่างได้ กรุณาอนุมัติเอกสารก่อน");
+
+        if (document.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException("ไม่สามารถสร้าง e-Tax จากเอกสารที่ยกเลิกแล้ว");
+
+        if (document.Status != DocumentStatus.Approved)
+            throw new InvalidOperationException("สามารถสร้าง e-Tax ได้เฉพาะเอกสารที่อนุมัติแล้วเท่านั้น");
+
         // Check if already exists
         if (await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == document.Id && e.CompanyId == companyId && e.Status != EtaxStatus.Error))
             throw new InvalidOperationException("เอกสารนี้มี e-Tax Invoice แล้ว");
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
-        // Generate e-Tax reference number
-        var count = await _db.EtaxInvoices.CountAsync(e => e.CompanyId == companyId);
-        var etaxRef = $"ETAX-{company.TaxId}-{DateTime.UtcNow:yyyyMMdd}-{(count + 1):D6}";
+        // Validate seller has TaxId
+        if (string.IsNullOrWhiteSpace(company.TaxId))
+            throw new InvalidOperationException("กรุณาตั้งค่าเลขประจำตัวผู้เสียภาษีของบริษัทก่อน");
 
-        // Build XML
-        var xml = BuildEtaxXml(document, company);
+        // Validate buyer/contact has TaxId (required for tax invoice)
+        if (string.IsNullOrWhiteSpace(document.Contact.TaxId))
+            throw new InvalidOperationException("กรุณาระบุเลขประจำตัวผู้เสียภาษีของผู้ซื้อ");
 
-        var etax = new EtaxInvoice
+        await using var dbTransaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            CompanyId = companyId,
-            DocumentId = document.Id,
-            EtaxRefNumber = etaxRef,
-            XmlContent = xml,
-            Status = EtaxStatus.Generated,
-            SellerName = company.Name,
-            SellerTaxId = company.TaxId,
-            SellerBranch = company.BranchCode,
-            SellerAddress = $"{company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}",
-            BuyerName = document.Contact.Name,
-            BuyerTaxId = document.Contact.TaxId,
-            BuyerBranch = document.Contact.BranchCode,
-            BuyerAddress = document.Contact.Address
-        };
+            // Generate e-Tax reference number
+            var count = await _db.EtaxInvoices.CountAsync(e => e.CompanyId == companyId);
+            var etaxRef = $"ETAX-{company.TaxId}-{DateTime.UtcNow:yyyyMMdd}-{(count + 1):D6}";
 
-        _db.EtaxInvoices.Add(etax);
-        await _db.SaveChangesAsync();
+            // Build XML
+            var xml = BuildEtaxXml(document, company);
 
-        return MapToResponse(etax);
+            var etax = new EtaxInvoice
+            {
+                CompanyId = companyId,
+                DocumentId = document.Id,
+                EtaxRefNumber = etaxRef,
+                XmlContent = xml,
+                Status = EtaxStatus.Generated,
+                SellerName = company.Name,
+                SellerTaxId = company.TaxId,
+                SellerBranch = company.BranchCode,
+                SellerAddress = $"{company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}",
+                BuyerName = document.Contact.Name,
+                BuyerTaxId = document.Contact.TaxId,
+                BuyerBranch = document.Contact.BranchCode,
+                BuyerAddress = document.Contact.Address
+            };
+
+            _db.EtaxInvoices.Add(etax);
+            await _db.SaveChangesAsync();
+
+            await dbTransaction.CommitAsync();
+
+            return MapToResponse(etax);
+        }
+        catch
+        {
+            await dbTransaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<EtaxInvoiceResponse> GetByIdAsync(Guid companyId, Guid etaxId)
@@ -120,17 +150,26 @@ public class EtaxInvoiceService : IEtaxInvoiceService
             throw new InvalidOperationException("กรุณาตั้งค่าใบรับรองดิจิทัลในเทมเพลต e-Tax ก่อน");
 
         // NOTE: In production, use X509Certificate2 for actual digital signing
-        // For now, create a placeholder signature
-        var signatureData = Convert.ToBase64String(
-            Encoding.UTF8.GetBytes($"SIGNED:{etax.EtaxRefNumber}:{DateTime.UtcNow:O}:{template.DigitalCertificatePath}"));
+        // Development signature using SHA256 hash of XML content
+        var signedAt = DateTime.UtcNow;
+        var xmlBytes = Encoding.UTF8.GetBytes(etax.XmlContent);
+        var hashBytes = SHA256.HashData(xmlBytes);
+        var xmlHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+        // Build signature data: SHA256 hash + timestamp + reference
+        var signaturePayload = $"{xmlHash}|{signedAt:O}|{etax.EtaxRefNumber}|{template.DigitalCertificatePath}";
+        var signatureData = Convert.ToBase64String(Encoding.UTF8.GetBytes(signaturePayload));
+
+        // Generate certificate serial number from hash
+        var certSerialNumber = xmlHash.Substring(0, 16).ToUpperInvariant();
 
         etax.DigitalSignature = signatureData;
-        etax.CertificateSerialNumber = "CERT-PLACEHOLDER";
-        etax.SignedAt = DateTime.UtcNow;
+        etax.CertificateSerialNumber = certSerialNumber;
+        etax.SignedAt = signedAt;
         etax.Status = EtaxStatus.Signed;
 
         // Insert signature into XML
-        etax.XmlContent = InsertSignatureIntoXml(etax.XmlContent, signatureData);
+        etax.XmlContent = InsertSignatureIntoXml(etax.XmlContent, signatureData, certSerialNumber, signedAt);
 
         await _db.SaveChangesAsync();
         return MapToResponse(etax);
@@ -143,6 +182,14 @@ public class EtaxInvoiceService : IEtaxInvoiceService
 
         if (etax.Status != EtaxStatus.Signed)
             throw new InvalidOperationException("ต้องลงนามดิจิทัลก่อนส่งกรมสรรพากร");
+
+        // Validate XML content is not empty
+        if (string.IsNullOrWhiteSpace(etax.XmlContent))
+            throw new InvalidOperationException("เนื้อหา XML ว่างเปล่า ไม่สามารถส่งกรมสรรพากรได้");
+
+        // Validate digital signature exists
+        if (string.IsNullOrWhiteSpace(etax.DigitalSignature))
+            throw new InvalidOperationException("ไม่พบลายเซ็นดิจิทัล กรุณาลงนามเอกสารก่อน");
 
         // NOTE: In production, call Revenue Department API
         // For now, simulate submission
@@ -293,10 +340,36 @@ public class EtaxInvoiceService : IEtaxInvoiceService
         return xml.ToString();
     }
 
-    private static string InsertSignatureIntoXml(string xmlContent, string signature)
+    private static string InsertSignatureIntoXml(string xmlContent, string signature, string certSerialNumber, DateTime signedAt)
     {
         // Insert digital signature element into XML
-        var signatureXml = $"\n<!-- Digital Signature -->\n<ds:Signature xmlns:ds='http://www.w3.org/2000/09/xmldsig#'><ds:SignatureValue>{signature}</ds:SignatureValue></ds:Signature>\n";
+        // NOTE: Development signature - ลายเซ็นสำหรับการพัฒนาเท่านั้น ไม่ใช่ลายเซ็นดิจิทัลจริง
+        var signatureXml = $@"
+<!-- Development Signature - NOT a production digital signature -->
+<ds:Signature xmlns:ds='http://www.w3.org/2000/09/xmldsig#'>
+  <ds:SignedInfo>
+    <ds:CanonicalizationMethod Algorithm='http://www.w3.org/2001/10/xml-exc-c14n#'/>
+    <ds:SignatureMethod Algorithm='http://www.w3.org/2001/04/xmldsig-more#rsa-sha256'/>
+    <ds:Reference>
+      <ds:DigestMethod Algorithm='http://www.w3.org/2001/04/xmlenc#sha256'/>
+      <ds:DigestValue>{signature}</ds:DigestValue>
+    </ds:Reference>
+  </ds:SignedInfo>
+  <ds:SignatureValue>{signature}</ds:SignatureValue>
+  <ds:KeyInfo>
+    <ds:X509Data>
+      <ds:X509SerialNumber>{certSerialNumber}</ds:X509SerialNumber>
+    </ds:X509Data>
+  </ds:KeyInfo>
+  <ds:Object>
+    <ds:SignatureProperties>
+      <ds:SignatureProperty>
+        <ds:SigningTime>{signedAt:O}</ds:SigningTime>
+      </ds:SignatureProperty>
+    </ds:SignatureProperties>
+  </ds:Object>
+</ds:Signature>
+";
         return xmlContent.Replace("</TaxInvoice_CrossIndustryInvoice>",
             signatureXml + "</TaxInvoice_CrossIndustryInvoice>");
     }

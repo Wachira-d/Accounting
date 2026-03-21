@@ -35,4 +35,5 @@ public interface IPayrollService
     // Tax: ภ.ง.ด.1 generation
     Task<object> GeneratePnd1Async(Guid companyId, int year, int month);
     Task<object> GenerateSsoReportAsync(Guid companyId, int year, int month);
+    Task<object> GeneratePnd3Async(Guid companyId, int year, int month);
 }

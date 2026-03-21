@@ -18,4 +18,7 @@ public interface IBankService
     Task<BankTransactionResponse> ReconcileAsync(Guid companyId, ReconcileRequest request);
     Task<List<BankTransactionResponse>> GetUnreconciledAsync(Guid companyId, Guid bankAccountId);
     Task<List<BankTransactionResponse>> AutoMatchAsync(Guid companyId, Guid bankAccountId);
+
+    // Bank Statement Import
+    Task<int> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request);
 }
