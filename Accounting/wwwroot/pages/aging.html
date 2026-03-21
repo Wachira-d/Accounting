@@ -49,8 +49,11 @@
       async load() {
         const api = Layout.api(); if (!api) return;
         const date = document.getElementById('asOfDate').value;
+        const q = date ? `?asOfDate=${date}` : '';
         try {
-          const res = await api.getAging(`?reportType=${this.reportType}&asOfDate=${date}`);
+          const res = this.reportType === 'AccountsReceivable'
+            ? await api.getAgingReceivables(q)
+            : await api.getAgingPayables(q);
           const d = res.data;
 
           // Buckets

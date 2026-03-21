@@ -293,9 +293,9 @@ const API = {
       getAiRules: () => API.get(`${base}/ai/rules`),
       createAiRule: (d) => API.post(`${base}/ai/rules`, d),
       aiLearnRules: () => API.post(`${base}/ai/rules/learn`),
-      aiDetectAnomalies: (d) => API.post(`${base}/ai/anomalies/detect`, d),
+      aiDetectAnomalies: (fromDate, toDate) => API.post(`${base}/ai/anomalies/detect?${fromDate ? 'fromDate='+fromDate+'&' : ''}${toDate ? 'toDate='+toDate : ''}`),
       getAnomalies: (q = '') => API.get(`${base}/ai/anomalies${q}`),
-      resolveAnomaly: (id) => API.post(`${base}/ai/anomalies/${id}/resolve`),
+      resolveAnomaly: (id, notes = '') => API.post(`${base}/ai/anomalies/${id}/resolve?notes=${encodeURIComponent(notes)}`),
       createForecast: (d) => API.post(`${base}/ai/forecast`, d),
       getForecasts: () => API.get(`${base}/ai/forecasts`),
       // OCR
@@ -348,7 +348,10 @@ const API = {
       updateSettings: (d) => API.put(`${base}/settings`, d),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
       // Aging
-      getAging: (q = '') => API.get(`${base}/aging${q}`),
+      getAgingReceivables: (q = '') => API.get(`${base}/aging/receivables${q}`),
+      getAgingPayables: (q = '') => API.get(`${base}/aging/payables${q}`),
+      getContactReceivables: (contactId, q = '') => API.get(`${base}/aging/contacts/${contactId}/receivables${q}`),
+      getContactPayables: (contactId, q = '') => API.get(`${base}/aging/contacts/${contactId}/payables${q}`),
       // Audit
       getAuditLogs: (q = '') => API.get(`${base}/audit/logs${q}`),
       getAuditSummary: (q = '') => API.get(`${base}/audit/summary${q}`),
@@ -358,6 +361,12 @@ const API = {
       getNotifications: () => API.get('/api/notification'),
       getNotificationCount: () => API.get('/api/notification/count'),
       markRead: (ids) => API.post('/api/notification/mark-read', { notificationIds: ids }),
+      markAllRead: () => API.post('/api/notification/mark-all-read'),
+      // Dimension allocations
+      addDimensionAllocation: (lineId, d) => API.post(`${base}/dimensions/journal-lines/${lineId}/allocations`, d),
+      getDimensionAllocations: (lineId) => API.get(`${base}/dimensions/journal-lines/${lineId}/allocations`),
+      // Product stock by warehouse
+      getProductStock: (productId) => API.get(`${base}/warehouses/products/${productId}/stock`),
     };
   },
 

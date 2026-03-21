@@ -181,12 +181,12 @@ const Page = {
   async detectAnomalies() {
     const api = Layout.api(); if (!api) return;
     Layout.toast('กำลังสแกน...', 'info');
-    try { await api.aiDetectAnomalies({}); Layout.toast('สแกนสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+    try { await api.aiDetectAnomalies(); Layout.toast('สแกนสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   async resolveAnomaly(id) {
     const api = Layout.api(); if (!api) return;
-    try { await api.resolveAnomaly(id); Layout.toast('อัพเดตสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+    try { await api.resolveAnomaly(id, 'แก้ไขแล้ว'); Layout.toast('อัพเดตสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   // ===== OCR =====
