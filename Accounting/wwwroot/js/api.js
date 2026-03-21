@@ -347,6 +347,8 @@ const API = {
       getSettings: () => API.get(`${base}/settings`),
       updateSettings: (d) => API.put(`${base}/settings`, d),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
+      // Aging
+      getAging: (q = '') => API.get(`${base}/aging${q}`),
       // Audit
       getAuditLogs: (q = '') => API.get(`${base}/audit/logs${q}`),
       getAuditSummary: (q = '') => API.get(`${base}/audit/summary${q}`),

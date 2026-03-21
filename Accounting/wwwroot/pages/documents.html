@@ -245,16 +245,53 @@
         document.getElementById('sumWht').textContent = Layout.money(wht);
         document.getElementById('sumTotal').textContent = Layout.money(sub + vat - wht);
       },
+      editingId: null,
       openCreate() {
+        this.editingId = null;
+        document.querySelector('#formModal .modal-title').textContent = 'สร้างเอกสาร';
+        document.getElementById('fDocType').disabled = false;
         document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
+        document.getElementById('fContact').value = '';
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
         this.addLine();
         this.calcSum();
         Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDocument(id);
+          const d = res.data;
+          this.editingId = id;
+          Layout.closeModal('detailModal');
+          document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
+          document.getElementById('fDocType').value = d.documentType;
+          document.getElementById('fDocType').disabled = true;
+          document.getElementById('fContact').value = d.contactId || d.contact?.id || '';
+          document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
+          document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
+          document.getElementById('fRef').value = d.reference || '';
+          document.getElementById('fNotes').value = d.notes || '';
+          document.getElementById('linesBody').innerHTML = '';
+          this.lineCount = 0;
+          (d.lines || []).forEach(l => {
+            this.addLine();
+            const row = document.getElementById('linesBody').lastElementChild;
+            row.querySelector('[data-f="desc"]').value = l.description || '';
+            row.querySelector('[data-f="qty"]').value = l.quantity || 1;
+            row.querySelector('[data-f="price"]').value = l.unitPrice || 0;
+            row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
+            row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
+            row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+          });
+          if (!d.lines?.length) this.addLine();
+          this.calcSum();
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async save() {
         const api = Layout.api(); if (!api) return;
@@ -269,18 +306,25 @@
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           });
         });
+        const payload = {
+          documentType: document.getElementById('fDocType').value,
+          documentDate: document.getElementById('fDate').value,
+          dueDate: document.getElementById('fDueDate').value || null,
+          contactId: document.getElementById('fContact').value,
+          reference: document.getElementById('fRef').value || null,
+          notes: document.getElementById('fNotes').value || null,
+          lines
+        };
         try {
-          await api.createDocument({
-            documentType: document.getElementById('fDocType').value,
-            documentDate: document.getElementById('fDate').value,
-            dueDate: document.getElementById('fDueDate').value || null,
-            contactId: document.getElementById('fContact').value,
-            reference: document.getElementById('fRef').value || null,
-            notes: document.getElementById('fNotes').value || null,
-            lines
-          });
+          if (this.editingId) {
+            await api.updateDocument(this.editingId, payload);
+            Layout.toast('แก้ไขเอกสารสำเร็จ');
+          } else {
+            await api.createDocument(payload);
+            Layout.toast('สร้างเอกสารสำเร็จ');
+          }
           Layout.closeModal('formModal');
-          Layout.toast('สร้างเอกสารสำเร็จ');
+          this.editingId = null;
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -318,6 +362,7 @@
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
           if (d.status === 'Draft') {
+            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
           }

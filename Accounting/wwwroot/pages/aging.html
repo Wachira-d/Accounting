@@ -47,10 +47,10 @@
         el.classList.add('active');
       },
       async load() {
-        const cid = Layout.getCompanyId(); if (!cid) return;
+        const api = Layout.api(); if (!api) return;
         const date = document.getElementById('asOfDate').value;
         try {
-          const res = await API.get(`/api/companies/${cid}/aging?reportType=${this.reportType}&asOfDate=${date}`);
+          const res = await api.getAging(`?reportType=${this.reportType}&asOfDate=${date}`);
           const d = res.data;
 
           // Buckets

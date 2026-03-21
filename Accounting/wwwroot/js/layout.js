@@ -302,8 +302,8 @@ const Layout = {
         } else {
           list.innerHTML = items.map(n => `
             <div style="padding:12px 0;border-bottom:1px solid var(--gray-100);${n.isRead ? '' : 'background:#F5F3FF;margin:0 -24px;padding:12px 24px'}">
-              <div class="text-sm font-medium">${n.title}</div>
-              <div class="text-xs text-gray-500" style="margin-top:2px">${n.message}</div>
+              <div class="text-sm font-medium">${(n.title||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+              <div class="text-xs text-gray-500" style="margin-top:2px">${(n.message||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
               <div class="text-xs text-gray-400" style="margin-top:4px">${new Date(n.createdAt).toLocaleString('th-TH')}</div>
             </div>
           `).join('');
