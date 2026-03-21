@@ -66,7 +66,7 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
-      page: 1, filterType: 'all',
+      page: 1, filterType: 'all', _cache: {},
       async init() {
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
@@ -91,6 +91,7 @@
           const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีผู้ติดต่อ</td></tr>'; return; }
+          items.forEach(c => Page._cache[c.id] = c);
           tbody.innerHTML = items.map(c => `<tr>
             <td class="font-medium">${c.name}</td>
             <td>${c.taxId || '-'}</td>
@@ -98,7 +99,7 @@
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick='Page.openEdit(${JSON.stringify(c).replace(/'/g,"&#39;")})'>แก้ไข</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')">แก้ไข</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -112,7 +113,8 @@
         document.getElementById('fIsSupplier').checked = false;
         Layout.openModal('formModal');
       },
-      openEdit(c) {
+      openEdit(id) {
+        const c = this._cache[id]; if (!c) return;
         document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
         document.getElementById('editId').value = c.id;
         document.getElementById('fName').value = c.name;

@@ -172,8 +172,8 @@
       },
       populateContacts() {
         const sel = document.getElementById('fContact');
-        sel.innerHTML = '<option value="">เลือกผู้ติดต่อ</option>';
-        this.contacts.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.name}${c.taxId ? ` (${c.taxId})` : ''}</option>`; });
+        sel.innerHTML = '<option value="">เลือกผู้ติดต่อ</option>' +
+          this.contacts.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ` (${c.taxId})` : ''}</option>`).join('');
       },
       setType(el) {
         document.querySelectorAll('#docTabs .tab').forEach(t => t.classList.remove('active'));
@@ -306,11 +306,15 @@
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           });
         });
+        const contactId = document.getElementById('fContact').value;
+        if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
+        if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
+        if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
         const payload = {
           documentType: document.getElementById('fDocType').value,
           documentDate: document.getElementById('fDate').value,
           dueDate: document.getElementById('fDueDate').value || null,
-          contactId: document.getElementById('fContact').value,
+          contactId,
           reference: document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
           lines

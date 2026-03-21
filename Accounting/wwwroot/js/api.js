@@ -8,6 +8,8 @@ const API = {
   },
 
   async request(method, url, data = null, isFormData = false) {
+    // Re-read token from localStorage on each request (handles token refresh by other tabs)
+    this.token = localStorage.getItem('token');
     const headers = {};
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     if (!isFormData) headers['Content-Type'] = 'application/json';
@@ -23,6 +25,9 @@ const API = {
         localStorage.removeItem('user');
         window.location.href = '/login.html';
         return;
+      }
+      if (res.status === 403) {
+        throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
       }
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || json.title || `Error ${res.status}`);

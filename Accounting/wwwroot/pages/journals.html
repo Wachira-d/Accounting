@@ -187,6 +187,9 @@
           }
         });
         if (lines.length < 2) { Layout.toast('ต้องมีอย่างน้อย 2 รายการ', 'error'); return; }
+        const totalD = lines.reduce((s, l) => s + l.debitAmount, 0);
+        const totalC = lines.reduce((s, l) => s + l.creditAmount, 0);
+        if (Math.abs(totalD - totalC) >= 0.01) { Layout.toast('ยอดเดบิตและเครดิตไม่เท่ากัน', 'error'); return; }
         try {
           await api.createJournal({
             entryDate: document.getElementById('fDate').value,

@@ -397,15 +397,15 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async manualReconcile() {
-        const checked = document.querySelectorAll('.recon-check:checked');
+        const checked = [...document.querySelectorAll('.recon-check:checked')];
         if (!checked.length) { Layout.toast('เลือกรายการที่ต้องการจับคู่', 'error'); return; }
         if (checked.length === 1) { this.openReconcileOne(checked[0].value); return; }
+        // For multiple items, use auto-match on the selected account
+        if (!this.selectedAccount) { Layout.toast('กรุณาเลือกบัญชีธนาคาร', 'error'); return; }
         const api = Layout.api(); if (!api) return;
         try {
-          for (const cb of checked) {
-            await api.reconcile({ bankTransactionId: cb.value, journalEntryId: null });
-          }
-          Layout.toast(`จับคู่สำเร็จ ${checked.length} รายการ`);
+          await api.autoMatch(this.selectedAccount.id);
+          Layout.toast('จับคู่อัตโนมัติสำเร็จ');
           await this.loadUnreconciled();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

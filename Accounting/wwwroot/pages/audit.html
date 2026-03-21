@@ -171,11 +171,12 @@
           <td>${a.entityType || '-'}</td>
           <td class="text-xs text-gray-500">${a.entityId ? a.entityId.substring(0,8) + '...' : '-'}</td>
           <td class="text-xs text-gray-400">${a.ipAddress || '-'}</td>
-          <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail(${JSON.stringify(a).replace(/"/g,'&quot;')})">ดู</button></td>
+          <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')">ดู</button></td>
         </tr>`).join('');
       },
       goPage(p) { Page.page = p; Page.load(); },
-      viewDetail(log) {
+      viewDetail(id) {
+        const log = this.allLogs.find(l => l.id === id); if (!log) return;
         this.currentDetail = log;
         let html = `
           <div class="grid grid-2 gap-4" style="margin-bottom:16px">

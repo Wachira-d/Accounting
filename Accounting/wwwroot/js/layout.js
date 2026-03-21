@@ -346,18 +346,24 @@ const Layout = {
 
   // Format helpers
   money(n) {
-    if (n == null) return '0.00';
-    return Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (n == null || n === '') return '0.00';
+    const num = Number(n);
+    if (isNaN(num)) return '0.00';
+    return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
   date(d) {
     if (!d) return '-';
-    return new Date(d).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return '-';
+    return dt.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
   },
 
   dateInput(d) {
     if (!d) return '';
-    return new Date(d).toISOString().split('T')[0];
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return '';
+    return dt.toISOString().split('T')[0];
   },
 
   statusBadge(status) {
@@ -372,6 +378,10 @@ const Layout = {
       'Trial': ['badge-warning', 'ทดลอง'], 'Expired': ['badge-danger', 'หมดอายุ'],
       'Submitted': ['badge-info', 'ส่งแล้ว'], 'Filed': ['badge-success', 'ยื่นแล้ว'],
       'Disposed': ['badge-gray', 'จำหน่าย'], 'FullyDepreciated': ['badge-warning', 'หมดค่าเสื่อม'],
+      'Cancelled': ['badge-danger', 'ยกเลิก'], 'Completed': ['badge-success', 'เสร็จสิ้น'],
+      'InProgress': ['badge-info', 'กำลังดำเนินการ'], 'Running': ['badge-info', 'กำลังประมวลผล'],
+      'Matched': ['badge-success', 'จับคู่แล้ว'], 'Unmatched': ['badge-warning', 'ยังไม่จับคู่'],
+      'Reconciled': ['badge-success', 'กระทบยอดแล้ว'], 'Processing': ['badge-info', 'กำลังประมวลผล'],
     };
     const [cls, label] = map[status] || ['badge-gray', status];
     return `<span class="badge ${cls}">${label}</span>`;

@@ -254,10 +254,13 @@
           });
         });
         if (!lines.length) { Layout.toast('กรุณาเพิ่มสินค้าอย่างน้อย 1 รายการ', 'error'); return; }
+        const fromId = document.getElementById('tFrom').value;
+        const toId = document.getElementById('tTo').value;
+        if (fromId === toId) { Layout.toast('คลังต้นทางและปลายทางต้องไม่เป็นคลังเดียวกัน', 'error'); return; }
         try {
           await api.createTransfer({
-            fromWarehouseId: document.getElementById('tFrom').value,
-            toWarehouseId: document.getElementById('tTo').value,
+            fromWarehouseId: fromId,
+            toWarehouseId: toId,
             notes: document.getElementById('tNotes').value || null,
             lines
           });

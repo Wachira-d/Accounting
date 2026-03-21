@@ -81,7 +81,7 @@
   <script>
     const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', Cheque:'เช็ค', PromptPay:'พร้อมเพย์', DirectDebit:'หักบัญชี', EWallet:'E-Wallet' };
     const Page = {
-      page: 1,
+      page: 1, _cache: {},
       async init() {
         if (!Layout.init('payments')) return;
         Layout.setTitle('การชำระเงิน');
@@ -99,6 +99,7 @@
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          items.forEach(p => Page._cache[p.id] = p);
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.paymentNumber}</td>
             <td class="text-xs">${p.documentNumber || (p.documentId ? p.documentId.substring(0,8)+'...' : '-')}</td>
@@ -106,14 +107,15 @@
             <td><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></td>
             <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
             <td class="text-gray-500">${p.reference || '-'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">ดู</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')">ดู</button></td>
           </tr>`).join('');
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
-      viewDetail(id, p) {
+      viewDetail(id) {
+        const p = this._cache[id]; if (!p) return;
         document.getElementById('detailContent').innerHTML = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${p.paymentNumber}</div></div>
