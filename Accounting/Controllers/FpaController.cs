@@ -27,9 +27,27 @@ public class FpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<ScenarioResponse>>> GetScenario(Guid companyId, Guid scenarioId)
         => Ok(new ApiResponse<ScenarioResponse>(true, await _service.GetScenarioAsync(companyId, scenarioId)));
 
+    [HttpPut("scenarios/{scenarioId:guid}")]
+    public async Task<ActionResult<ApiResponse<ScenarioResponse>>> UpdateScenario(Guid companyId, Guid scenarioId, [FromBody] UpdateScenarioRequest request)
+        => Ok(new ApiResponse<ScenarioResponse>(true, await _service.UpdateScenarioAsync(companyId, scenarioId, request)));
+
+    [HttpDelete("scenarios/{scenarioId:guid}")]
+    public async Task<IActionResult> DeleteScenario(Guid companyId, Guid scenarioId)
+    {
+        await _service.DeleteScenarioAsync(companyId, scenarioId);
+        return NoContent();
+    }
+
     [HttpPost("scenarios/{scenarioId:guid}/assumptions")]
     public async Task<ActionResult<ApiResponse<ScenarioResponse>>> AddAssumption(Guid companyId, Guid scenarioId, [FromBody] CreateAssumptionRequest request)
         => Ok(new ApiResponse<ScenarioResponse>(true, await _service.AddAssumptionAsync(companyId, scenarioId, request)));
+
+    [HttpDelete("assumptions/{assumptionId:guid}")]
+    public async Task<IActionResult> RemoveAssumption(Guid companyId, Guid assumptionId)
+    {
+        await _service.RemoveAssumptionAsync(companyId, assumptionId);
+        return NoContent();
+    }
 
     [HttpPost("scenarios/{scenarioId:guid}/calculate")]
     public async Task<ActionResult<ApiResponse<ScenarioResultsResponse>>> Calculate(Guid companyId, Guid scenarioId)
@@ -51,6 +69,13 @@ public class FpaController : ControllerBase
     [HttpGet("kpis/{kpiId:guid}/history")]
     public async Task<ActionResult<ApiResponse<List<KpiSnapshotResponse>>>> GetKpiHistory(Guid companyId, Guid kpiId, [FromQuery] int months = 12)
         => Ok(new ApiResponse<List<KpiSnapshotResponse>>(true, await _service.GetKpiHistoryAsync(companyId, kpiId, months)));
+
+    [HttpPost("kpis/snapshots/{year:int}/{month:int}")]
+    public async Task<IActionResult> CalculateKpiSnapshots(Guid companyId, int year, int month)
+    {
+        await _service.CalculateKpiSnapshotsAsync(companyId, year, month);
+        return NoContent();
+    }
 
     // Ratios
     [HttpGet("ratios")]

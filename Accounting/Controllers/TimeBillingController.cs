@@ -39,6 +39,13 @@ public class TimeBillingController : ControllerBase
     public async Task<ActionResult<ApiResponse<TimeEntryResponse>>> Approve(Guid companyId, Guid entryId)
         => Ok(new ApiResponse<TimeEntryResponse>(true, await _service.ApproveAsync(companyId, entryId, User.Identity?.Name ?? "")));
 
+    [HttpDelete("entries/{entryId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteEntry(Guid companyId, Guid entryId)
+    {
+        await _service.DeleteAsync(companyId, entryId);
+        return Ok(new ApiResponse<bool>(true, true));
+    }
+
     // Billing rates
     [HttpPost("rates")]
     public async Task<ActionResult<ApiResponse<BillingRateResponse>>> CreateRate(Guid companyId, [FromBody] CreateBillingRateRequest request)
@@ -47,6 +54,14 @@ public class TimeBillingController : ControllerBase
     [HttpGet("rates")]
     public async Task<ActionResult<ApiResponse<List<BillingRateResponse>>>> GetRates(Guid companyId)
         => Ok(new ApiResponse<List<BillingRateResponse>>(true, await _service.GetRatesAsync(companyId)));
+
+    [HttpPut("rates/{rateId:guid}")]
+    public async Task<ActionResult<ApiResponse<BillingRateResponse>>> UpdateRate(Guid companyId, Guid rateId, [FromBody] UpdateBillingRateRequest request)
+        => Ok(new ApiResponse<BillingRateResponse>(true, await _service.UpdateRateAsync(companyId, rateId, request)));
+
+    [HttpGet("rates/effective")]
+    public async Task<ActionResult<ApiResponse<decimal>>> GetEffectiveRate(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] Guid? contactId, [FromQuery] Guid? projectId)
+        => Ok(new ApiResponse<decimal>(true, await _service.GetEffectiveRateAsync(companyId, employeeId, contactId, projectId)));
 
     // Invoice
     [HttpPost("generate-invoice")]
