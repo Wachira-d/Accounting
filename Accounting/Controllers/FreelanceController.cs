@@ -142,7 +142,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.AddCommentAsync(taskId, userId, request);
-        return Ok(new ApiResponse<TaskCommentResponse>(true, result));
+        return StatusCode(201, new ApiResponse<TaskCommentResponse>(true, result));
     }
 
     [HttpPost("tasks/{taskId:guid}/time-logs")]
@@ -151,7 +151,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.AddTimeLogAsync(taskId, userId, request);
-        return Ok(new ApiResponse<TimeLogResponse>(true, result));
+        return StatusCode(201, new ApiResponse<TimeLogResponse>(true, result));
     }
 
     // ===== Activity Logs =====

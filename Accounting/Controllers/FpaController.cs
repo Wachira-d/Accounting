@@ -40,7 +40,7 @@ public class FpaController : ControllerBase
 
     [HttpPost("scenarios/{scenarioId:guid}/assumptions")]
     public async Task<ActionResult<ApiResponse<ScenarioResponse>>> AddAssumption(Guid companyId, Guid scenarioId, [FromBody] CreateAssumptionRequest request)
-        => Ok(new ApiResponse<ScenarioResponse>(true, await _service.AddAssumptionAsync(companyId, scenarioId, request)));
+        => StatusCode(201, new ApiResponse<ScenarioResponse>(true, await _service.AddAssumptionAsync(companyId, scenarioId, request)));
 
     [HttpDelete("assumptions/{assumptionId:guid}")]
     public async Task<IActionResult> RemoveAssumption(Guid companyId, Guid assumptionId)

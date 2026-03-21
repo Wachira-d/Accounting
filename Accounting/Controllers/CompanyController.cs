@@ -56,7 +56,7 @@ public class CompanyController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _companyService.AddUserAsync(companyId, userId, request);
-        return Ok(new ApiResponse<string>(true, null, "เพิ่มผู้ใช้สำเร็จ"));
+        return StatusCode(201, new ApiResponse<string>(true, null, "เพิ่มผู้ใช้สำเร็จ"));
     }
 
     [HttpDelete("{companyId:guid}/users/{targetUserId:guid}")]

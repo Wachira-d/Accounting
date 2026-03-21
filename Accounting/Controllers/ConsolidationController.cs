@@ -29,7 +29,7 @@ public class ConsolidationController : ControllerBase
 
     [HttpPost("groups/{groupId:guid}/members")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> AddMember(Guid groupId, [FromBody] AddConsolidationMemberRequest request)
-        => Ok(new ApiResponse<ConsolidationGroupResponse>(true, await _service.AddMemberAsync(groupId, request)));
+        => StatusCode(201, new ApiResponse<ConsolidationGroupResponse>(true, await _service.AddMemberAsync(groupId, request)));
 
     [HttpDelete("groups/{groupId:guid}/members/{memberId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveMember(Guid groupId, Guid memberId)

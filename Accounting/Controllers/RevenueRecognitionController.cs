@@ -32,7 +32,7 @@ public class RevenueRecognitionController : ControllerBase
 
     [HttpPost("contracts/{contractId:guid}/obligations")]
     public async Task<ActionResult<ApiResponse<PerformanceObligationResponse>>> AddObligation(Guid companyId, Guid contractId, [FromBody] CreateObligationRequest request)
-        => Ok(new ApiResponse<PerformanceObligationResponse>(true, await _service.AddObligationAsync(companyId, contractId, request)));
+        => StatusCode(201, new ApiResponse<PerformanceObligationResponse>(true, await _service.AddObligationAsync(companyId, contractId, request)));
 
     [HttpPut("obligations/{obligationId:guid}/progress")]
     public async Task<ActionResult<ApiResponse<PerformanceObligationResponse>>> UpdateProgress(Guid companyId, Guid obligationId, [FromQuery] decimal percent)
