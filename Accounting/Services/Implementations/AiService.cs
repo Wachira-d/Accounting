@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.DTOs.Ai;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
