@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.AdvancedArAp;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
