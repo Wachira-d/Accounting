@@ -42,6 +42,7 @@ const Layout = {
     { id: 'tax', label: 'รายงานภาษี', icon: '🏛️', href: '/pages/tax.html' },
     { id: 'wht', label: 'หนังสือรับรองหัก ณ ที่จ่าย', icon: '📜', href: '/pages/wht.html' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html' },
+    { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html' },
     { section: 'รายงาน' },
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },

@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Services.Interfaces;
@@ -74,5 +75,55 @@ public class EtaxController : ControllerBase
     {
         await _etaxService.VoidAsync(companyId, etaxId);
         return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
+    }
+
+    /// <summary>ลงนาม + ส่งสรรพากร ในขั้นตอนเดียว</summary>
+    [HttpPost("{etaxId:guid}/sign-and-submit")]
+    public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> SignAndSubmit(Guid companyId, Guid etaxId)
+    {
+        var signed = await _etaxService.SignAsync(companyId, etaxId);
+        if (signed.Status == EtaxStatus.Signed)
+        {
+            var submitted = await _etaxService.SubmitToRevenueAsync(companyId, etaxId);
+            return Ok(new ApiResponse<EtaxInvoiceResponse>(true, submitted, "ลงนามและส่งกรมสรรพากรสำเร็จ"));
+        }
+        return Ok(new ApiResponse<EtaxInvoiceResponse>(true, signed, "ลงนามสำเร็จ แต่ยังไม่ได้ส่ง"));
+    }
+
+    /// <summary>สร้าง + ลงนาม + ส่ง ในขั้นตอนเดียว (Quick Submit)</summary>
+    [HttpPost("quick-submit")]
+    public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> QuickSubmit(
+        Guid companyId, [FromBody] GenerateEtaxRequest request)
+    {
+        var etax = await _etaxService.GenerateAsync(companyId, request);
+        var signed = await _etaxService.SignAsync(companyId, etax.Id);
+        if (signed.Status == EtaxStatus.Signed)
+        {
+            var submitted = await _etaxService.SubmitToRevenueAsync(companyId, etax.Id);
+            return Ok(new ApiResponse<EtaxInvoiceResponse>(true, submitted, "สร้าง ลงนาม ส่งสรรพากรสำเร็จ"));
+        }
+        return Ok(new ApiResponse<EtaxInvoiceResponse>(true, signed, "สร้างและลงนามสำเร็จ"));
+    }
+
+    /// <summary>ดึงการตั้งค่า e-Tax (สำหรับ frontend แสดงสถานะ config)</summary>
+    [HttpGet("config-status")]
+    public ActionResult<ApiResponse<object>> GetConfigStatus(Guid companyId)
+    {
+        var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var certPath = config["Etax:CertificatePath"];
+        var hasCert = !string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath);
+        var hasApiKey = !string.IsNullOrEmpty(config["Etax:RdApiKey"]);
+        var isTestMode = config.GetValue<bool>("Etax:RdTestMode");
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            CertificateConfigured = hasCert,
+            CertificatePath = hasCert ? certPath : null,
+            RdApiConfigured = hasApiKey,
+            TestMode = isTestMode,
+            AutoSign = config.GetValue<bool>("Etax:AutoSign"),
+            AutoSubmit = config.GetValue<bool>("Etax:AutoSubmit"),
+            ServiceProvider = config["Etax:ServiceProvider"] ?? "RD"
+        }));
     }
 }
