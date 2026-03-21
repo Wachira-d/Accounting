@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Webhook;
 
 namespace Accounting.Services.Interfaces;
 
@@ -19,10 +20,3 @@ public interface IWebhookService
     // Available events
     Task<List<WebhookEventTypeResponse>> GetEventTypesAsync();
 }
-
-public record CreateWebhookRequest(string Name, string Url, string? Secret, string EventTypes, int MaxRetries, int TimeoutSeconds, string? HeadersJson);
-public record UpdateWebhookRequest(string? Name, string? Url, string? Secret, string? EventTypes, bool? IsActive, int? MaxRetries, int? TimeoutSeconds);
-public record WebhookRegistrationResponse(Guid Id, string Name, string Url, string EventTypes, bool IsActive, int MaxRetries, int FailureCount, DateTime? LastTriggeredAt, DateTime? LastSuccessAt, string? LastError);
-
-public record WebhookDeliveryResponse(Guid Id, string EventType, int HttpStatusCode, bool IsSuccess, int AttemptNumber, decimal DurationMs, DateTime DeliveredAt, string? ErrorMessage);
-public record WebhookEventTypeResponse(string EventType, string Description, string? SamplePayloadJson);

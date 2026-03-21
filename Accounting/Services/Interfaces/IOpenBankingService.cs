@@ -1,4 +1,4 @@
-using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.OpenBanking;
 
 namespace Accounting.Services.Interfaces;
 
@@ -18,9 +18,3 @@ public interface IOpenBankingService
     // File import (OFX, QIF, CSV)
     Task<BankFeedImportResponse> ImportFileAsync(Guid companyId, Guid bankAccountId, string fileFormat, string base64Content);
 }
-
-public record CreateBankConnectionRequest(string BankCode, string BankName, string ConnectionType, string? ApiEndpoint, string? ClientId, string? Credentials, bool AutoSync, int SyncIntervalMinutes, Guid? LinkedBankAccountId);
-public record UpdateBankConnectionRequest(bool? AutoSync, int? SyncIntervalMinutes, string? Credentials);
-public record BankConnectionResponse(Guid Id, string BankCode, string BankName, string ConnectionType, string Status, bool AutoSync, int SyncIntervalMinutes, DateTime? LastSyncAt, string? LastSyncStatus, Guid? LinkedBankAccountId);
-
-public record BankFeedImportResponse(Guid Id, DateTime ImportDate, DateTime PeriodStart, DateTime PeriodEnd, int TotalTransactions, int NewTransactions, int DuplicateSkipped, int AutoMatched, string Status, string? ErrorMessage);

@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Commission;
 
 namespace Accounting.Services.Interfaces;
 
@@ -18,11 +19,3 @@ public interface ICommissionService
     Task<List<CommissionCalcResponse>> GetCalculationsAsync(Guid companyId, int year, int month);
     Task ApproveCalculationsAsync(Guid companyId, int year, int month, string approvedBy);
 }
-
-public record CreateCommissionPlanRequest(string Name, string? Description, string CalculationBasis, string CalculationMethod, decimal? FlatRate, List<CommissionTierRequest>? Tiers);
-public record UpdateCommissionPlanRequest(string? Name, string? Description, decimal? FlatRate, bool? IsActive);
-public record CommissionTierRequest(decimal FromAmount, decimal? ToAmount, decimal Rate);
-public record CommissionPlanResponse(Guid Id, string Name, string? Description, string CalculationBasis, string CalculationMethod, decimal? FlatRate, bool IsActive, List<CommissionTierResponse> Tiers);
-public record CommissionTierResponse(decimal FromAmount, decimal? ToAmount, decimal Rate);
-public record AssignCommissionRequest(Guid? EmployeeId, Guid? UserId, DateTime StartDate, DateTime? EndDate);
-public record CommissionCalcResponse(Guid? EmployeeId, string? EmployeeName, int Year, int Month, decimal BasisAmount, decimal CommissionAmount, string Status);
