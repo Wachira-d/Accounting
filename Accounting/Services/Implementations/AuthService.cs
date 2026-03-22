@@ -71,7 +71,7 @@ public class AuthService : IAuthService
             await _db.SaveChangesAsync();
         }
 
-        return GenerateLoginResponse(user);
+        return await GenerateLoginResponse(user);
     }
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
@@ -111,7 +111,7 @@ public class AuthService : IAuthService
         user.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return GenerateLoginResponse(user);
+        return await GenerateLoginResponse(user);
     }
 
     public async Task<LoginResponse> RefreshTokenAsync(string refreshToken)
@@ -120,7 +120,7 @@ public class AuthService : IAuthService
             u.RefreshToken == refreshToken && u.RefreshTokenExpiry > DateTime.UtcNow)
             ?? throw new UnauthorizedAccessException("Refresh token ไม่ถูกต้องหรือหมดอายุ");
 
-        return GenerateLoginResponse(user);
+        return await GenerateLoginResponse(user);
     }
 
     public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request)
@@ -192,7 +192,7 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("รหัสผ่านต้องมีอักขระพิเศษอย่างน้อย 1 ตัว");
     }
 
-    private LoginResponse GenerateLoginResponse(User user)
+    private async Task<LoginResponse> GenerateLoginResponse(User user)
     {
         var accessToken = JwtHelper.GenerateToken(user.Id, user.Email, user.FullName, _config, user.IsSystemAdmin);
         var refreshToken = JwtHelper.GenerateRefreshToken();
@@ -200,7 +200,7 @@ public class AuthService : IAuthService
 
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshDays);
-        _db.SaveChanges();
+        await _db.SaveChangesAsync();
 
         return new LoginResponse(
             accessToken,
