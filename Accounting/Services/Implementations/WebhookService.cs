@@ -154,7 +154,7 @@ public class WebhookService : IWebhookService
             d.HttpStatusCode,
             d.IsSuccess,
             d.AttemptNumber,
-            d.DurationMs,
+            (int)d.DurationMs,
             d.DeliveredAt,
             d.ErrorMessage
         )).ToList();
