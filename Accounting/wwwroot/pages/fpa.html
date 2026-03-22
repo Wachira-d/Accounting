@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>วิเคราะห์การเงิน (FP&A) - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">วิเคราะห์การเงิน (FP&A)</h2><p class="page-subtitle">Scenario Planning, KPIs, อัตราส่วนทางการเงิน, Break-even</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreateScenario()">+ สร้าง Scenario</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.showTab('scenarios',this)">Scenarios</div>
+      <div class="tab" onclick="Page.showTab('kpis',this)">KPIs</div>
+      <div class="tab" onclick="Page.showTab('ratios',this)">อัตราส่วนการเงิน</div>
+      <div class="tab" onclick="Page.showTab('breakeven',this)">Break-even</div>
+    </div>
+
+    <!-- Scenarios Tab -->
+    <div id="tab-scenarios">
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ชื่อ Scenario</th><th>ประเภท</th><th>ปีงบ</th><th>สมมติฐาน</th><th>จัดการ</th></tr></thead>
+          <tbody id="scenarioTable"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- KPIs Tab -->
+    <div id="tab-kpis" style="display:none">
+      <div class="flex gap-2" style="margin-bottom:16px">
+        <button class="btn btn-primary" onclick="Page.openCreateKpi()">+ สร้าง KPI</button>
+        <button class="btn btn-secondary" onclick="Page.calculateSnapshots()">คำนวณ Snapshot</button>
+      </div>
+      <div class="grid grid-3 gap-4" id="kpiGrid"></div>
+    </div>
+
+    <!-- Ratios Tab -->
+    <div id="tab-ratios" style="display:none">
+      <div class="toolbar">
+        <label class="text-sm font-medium">ปีงบ:</label>
+        <select class="form-select" id="ratioYear" style="width:120px" onchange="Page.loadRatios()"></select>
+      </div>
+      <div class="grid grid-2 gap-4" id="ratioGrid"></div>
+    </div>
+
+    <!-- Break-even Tab -->
+    <div id="tab-breakeven" style="display:none">
+      <div class="toolbar">
+        <label class="text-sm font-medium">ปีงบ:</label>
+        <select class="form-select" id="beYear" style="width:120px" onchange="Page.loadBreakEven()"></select>
+      </div>
+      <div id="breakEvenContent"></div>
+    </div>
+
+    <!-- Create Scenario Modal -->
+    <div class="modal-overlay" id="scenarioModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title" id="scenarioFormTitle">สร้าง Scenario</h3><button class="modal-close" onclick="Layout.closeModal('scenarioModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="sId">
+          <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="sName" placeholder="เช่น Best Case"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภท</label>
+              <select class="form-select" id="sType"><option value="BestCase">Best Case</option><option value="WorstCase">Worst Case</option><option value="MostLikely">Most Likely</option><option value="Custom">Custom</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">ปีงบ *</label><input type="number" class="form-input" id="sYear" value="2026"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-input" id="sDesc" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('scenarioModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveScenario()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Assumption Modal -->
+    <div class="modal-overlay" id="assumptionModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มสมมติฐาน</h3><button class="modal-close" onclick="Layout.closeModal('assumptionModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="aScenarioId">
+          <div class="form-group"><label class="form-label">หมวด</label><input type="text" class="form-input" id="aCategory" placeholder="เช่น Revenue, Cost"></div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="aDescription" placeholder="เช่น Revenue growth +10%"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทการปรับ</label>
+              <select class="form-select" id="aAdjType"><option value="Percentage">เปอร์เซ็นต์</option><option value="FixedAmount">จำนวนเงิน</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">ค่า</label><input type="number" class="form-input" id="aValue" step="0.01" placeholder="10"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('assumptionModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveAssumption()">เพิ่ม</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create KPI Modal -->
+    <div class="modal-overlay" id="kpiModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">สร้าง KPI</h3><button class="modal-close" onclick="Layout.closeModal('kpiModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อ KPI *</label><input type="text" class="form-input" id="kName" placeholder="เช่น Gross Margin"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัส</label><input type="text" class="form-input" id="kCode" placeholder="GM"></div>
+            <div class="form-group"><label class="form-label">หมวด</label><input type="text" class="form-input" id="kCategory" placeholder="Profitability"></div>
+          </div>
+          <div class="form-group"><label class="form-label">สูตร</label><input type="text" class="form-input" id="kFormula" placeholder="(Revenue-COGS)/Revenue*100"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เป้าหมาย</label><input type="number" class="form-input" id="kTarget" step="0.01"></div>
+            <div class="form-group"><label class="form-label">Warning</label><input type="number" class="form-input" id="kWarn" step="0.01"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('kpiModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveKpi()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scenario Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียด Scenario</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')">ปิด</button>
+          <button class="btn btn-primary" id="calcBtn" onclick="Page.calculateCurrentScenario()">คำนวณ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentTab: 'scenarios',
+      currentDetailId: null,
+      init() {
+        if (!Layout.init('fpa')) return;
+        Layout.setTitle('วิเคราะห์การเงิน (FP&A)');
+        const y = new Date().getFullYear();
+        [document.getElementById('ratioYear'), document.getElementById('beYear')].forEach(sel => {
+          for (let i = y; i >= y - 5; i--) sel.innerHTML += `<option value="${i}">${i}</option>`;
+        });
+        this.loadScenarios();
+      },
+      showTab(tab, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        ['scenarios','kpis','ratios','breakeven'].forEach(t => {
+          document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none';
+        });
+        this.currentTab = tab;
+        if (tab === 'kpis') this.loadKpis();
+        if (tab === 'ratios') this.loadRatios();
+        if (tab === 'breakeven') this.loadBreakEven();
+      },
+      async loadScenarios() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getScenarios();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('scenarioTable');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มี Scenario</td></tr>'; return; }
+          tbody.innerHTML = items.map(s => `<tr>
+            <td class="font-medium">${s.name}</td>
+            <td>${s.scenarioType || '-'}</td>
+            <td>${s.fiscalYear}</td>
+            <td>${(s.assumptions || []).length} รายการ</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewScenario('${s.id}')">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openAddAssumption('${s.id}')">+สมมติฐาน</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteScenario('${s.id}')">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreateScenario() {
+        document.getElementById('sId').value = '';
+        document.getElementById('sName').value = '';
+        document.getElementById('sType').value = 'MostLikely';
+        document.getElementById('sYear').value = new Date().getFullYear();
+        document.getElementById('sDesc').value = '';
+        document.getElementById('scenarioFormTitle').textContent = 'สร้าง Scenario';
+        Layout.openModal('scenarioModal');
+      },
+      async saveScenario() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('sId').value;
+        const data = { name: document.getElementById('sName').value, scenarioType: document.getElementById('sType').value, fiscalYear: parseInt(document.getElementById('sYear').value), description: document.getElementById('sDesc').value || null };
+        try {
+          if (id) await api.updateScenario(id, data);
+          else await api.createScenario(data);
+          Layout.closeModal('scenarioModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้าง Scenario สำเร็จ'); this.loadScenarios();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteScenario(id) {
+        if (!confirm('ลบ Scenario นี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.deleteScenario(id); Layout.toast('ลบสำเร็จ'); this.loadScenarios(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async viewScenario(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getScenario(id);
+          const s = res.data;
+          this.currentDetailId = id;
+          document.getElementById('detailTitle').textContent = s.name;
+          let html = `<div class="grid grid-3 gap-4" style="margin-bottom:16px">
+            <div><div class="text-xs text-gray-500">ประเภท</div><div class="font-medium">${s.scenarioType||'-'}</div></div>
+            <div><div class="text-xs text-gray-500">ปีงบ</div><div class="font-medium">${s.fiscalYear}</div></div>
+            <div><div class="text-xs text-gray-500">คำอธิบาย</div><div>${s.description||'-'}</div></div>
+          </div>`;
+          const assumptions = s.assumptions || [];
+          html += `<h4 style="margin-bottom:8px">สมมติฐาน (${assumptions.length})</h4>`;
+          if (assumptions.length) {
+            html += '<table class="table"><thead><tr><th>หมวด</th><th>คำอธิบาย</th><th>ประเภท</th><th class="text-right">ค่า</th><th></th></tr></thead><tbody>';
+            html += assumptions.map(a => `<tr><td>${a.category||'-'}</td><td>${a.description||'-'}</td><td>${a.adjustmentType}</td><td class="text-right">${a.adjustmentValue}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeAssumption('${a.id}')">ลบ</button></td></tr>`).join('');
+            html += '</tbody></table>';
+          } else html += '<p class="text-gray-400 text-sm">ยังไม่มีสมมติฐาน</p>';
+          const results = s.results || [];
+          if (results.length) {
+            html += '<h4 style="margin:16px 0 8px">ผลลัพธ์</h4><table class="table"><thead><tr><th>เดือน</th><th class="text-right">Baseline</th><th class="text-right">Scenario</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th></tr></thead><tbody>';
+            html += results.map(r => `<tr><td>${r.month}</td><td class="text-right">${Layout.money(r.baselineAmount)}</td><td class="text-right">${Layout.money(r.scenarioAmount)}</td><td class="text-right ${r.variance>=0?'text-success':'text-danger'}">${Layout.money(r.variance)}</td><td class="text-right">${(r.variancePercent||0).toFixed(1)}%</td></tr>`).join('');
+            html += '</tbody></table>';
+          }
+          document.getElementById('detailContent').innerHTML = html;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async calculateCurrentScenario() {
+        if (!this.currentDetailId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.calculateScenario(this.currentDetailId);
+          Layout.toast('คำนวณสำเร็จ');
+          this.viewScenario(this.currentDetailId);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openAddAssumption(scenarioId) {
+        document.getElementById('aScenarioId').value = scenarioId;
+        document.getElementById('aCategory').value = '';
+        document.getElementById('aDescription').value = '';
+        document.getElementById('aAdjType').value = 'Percentage';
+        document.getElementById('aValue').value = '';
+        Layout.openModal('assumptionModal');
+      },
+      async saveAssumption() {
+        const api = Layout.api(); if (!api) return;
+        const sid = document.getElementById('aScenarioId').value;
+        try {
+          await api.addAssumption(sid, {
+            category: document.getElementById('aCategory').value,
+            description: document.getElementById('aDescription').value,
+            adjustmentType: document.getElementById('aAdjType').value,
+            adjustmentValue: parseFloat(document.getElementById('aValue').value)
+          });
+          Layout.closeModal('assumptionModal'); Layout.toast('เพิ่มสมมติฐานสำเร็จ'); this.loadScenarios();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async removeAssumption(id) {
+        const api = Layout.api(); if (!api) return;
+        try { await api.removeAssumption(id); Layout.toast('ลบสำเร็จ'); if (this.currentDetailId) this.viewScenario(this.currentDetailId); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // KPIs
+      async loadKpis() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getKpis();
+          const items = res.data?.items || res.data || [];
+          const grid = document.getElementById('kpiGrid');
+          if (!items.length) { grid.innerHTML = '<div class="text-gray-400 text-center" style="grid-column:1/-1;padding:40px">ยังไม่มี KPI กดปุ่ม "+ สร้าง KPI" เพื่อเริ่มต้น</div>'; return; }
+          grid.innerHTML = items.map(k => {
+            const statusColor = k.status === 'Good' ? 'var(--success)' : k.status === 'Warning' ? 'var(--warning)' : 'var(--danger)';
+            return `<div class="card" style="padding:20px;border-left:4px solid ${statusColor}">
+              <div class="text-xs text-gray-500">${k.category||'General'}</div>
+              <div class="font-semibold" style="font-size:16px;margin:4px 0">${k.name}</div>
+              <div style="font-size:28px;font-weight:700;color:${statusColor}">${k.value != null ? k.value.toFixed(2) : '-'}</div>
+              <div class="text-xs text-gray-400 mt-1">เป้าหมาย: ${k.targetValue != null ? k.targetValue.toFixed(2) : '-'}</div>
+              <button class="btn btn-sm btn-ghost mt-2" onclick="Page.viewKpiHistory('${k.id}')">ดูประวัติ</button>
+            </div>`;
+          }).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreateKpi() {
+        ['kName','kCode','kCategory','kFormula','kTarget','kWarn'].forEach(id => document.getElementById(id).value = '');
+        Layout.openModal('kpiModal');
+      },
+      async saveKpi() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createKpi({
+            name: document.getElementById('kName').value,
+            code: document.getElementById('kCode').value || null,
+            category: document.getElementById('kCategory').value || null,
+            formula: document.getElementById('kFormula').value || null,
+            targetValue: parseFloat(document.getElementById('kTarget').value) || null,
+            warningThreshold: parseFloat(document.getElementById('kWarn').value) || null
+          });
+          Layout.closeModal('kpiModal'); Layout.toast('สร้าง KPI สำเร็จ'); this.loadKpis();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async calculateSnapshots() {
+        const api = Layout.api(); if (!api) return;
+        const now = new Date();
+        try { await api.calculateKpiSnapshots(now.getFullYear(), now.getMonth()+1); Layout.toast('คำนวณ Snapshot สำเร็จ'); this.loadKpis(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async viewKpiHistory(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getKpiHistory(id);
+          const items = res.data?.items || res.data || [];
+          let html = '<h4>ประวัติ KPI</h4>';
+          if (items.length) {
+            html += '<table class="table"><thead><tr><th>ปี</th><th>เดือน</th><th class="text-right">ค่า</th><th>สถานะ</th></tr></thead><tbody>';
+            html += items.map(h => `<tr><td>${h.year}</td><td>${h.month}</td><td class="text-right">${h.value?.toFixed(2)||'-'}</td><td>${Layout.statusBadge(h.status||'Pending')}</td></tr>`).join('');
+            html += '</tbody></table>';
+          } else html = '<p class="text-gray-400">ยังไม่มีประวัติ</p>';
+          document.getElementById('detailTitle').textContent = 'ประวัติ KPI';
+          document.getElementById('detailContent').innerHTML = html;
+          document.getElementById('calcBtn').style.display = 'none';
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // Ratios
+      async loadRatios() {
+        const api = Layout.api(); if (!api) return;
+        const y = document.getElementById('ratioYear').value;
+        try {
+          const res = await api.getFinancialRatios(`?fiscalYear=${y}`);
+          const d = res.data;
+          if (!d) { document.getElementById('ratioGrid').innerHTML = '<p class="text-gray-400" style="grid-column:1/-1;text-align:center;padding:40px">ไม่มีข้อมูล</p>'; return; }
+          const render = (title, items) => `<div class="card" style="padding:20px"><h4 style="margin-bottom:12px">${title}</h4>${items.map(([label, val]) => `<div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-100)"><span class="text-sm">${label}</span><span class="font-semibold">${val != null ? (typeof val === 'number' ? val.toFixed(2) : val) : '-'}</span></div>`).join('')}</div>`;
+          document.getElementById('ratioGrid').innerHTML =
+            render('Liquidity', [['Current Ratio', d.currentRatio], ['Quick Ratio', d.quickRatio], ['Cash Ratio', d.cashRatio]]) +
+            render('Profitability', [['Gross Margin %', d.grossMargin], ['Net Margin %', d.netMargin], ['ROA %', d.returnOnAssets], ['ROE %', d.returnOnEquity]]) +
+            render('Efficiency', [['Asset Turnover', d.assetTurnover], ['Receivable Days', d.receivableDays], ['Payable Days', d.payableDays], ['Inventory Days', d.inventoryDays]]) +
+            render('Leverage', [['Debt/Equity', d.debtToEquity], ['Debt/Assets', d.debtToAssets], ['Interest Coverage', d.interestCoverage]]);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // Break-even
+      async loadBreakEven() {
+        const api = Layout.api(); if (!api) return;
+        const y = document.getElementById('beYear').value;
+        try {
+          const res = await api.getBreakEven(y);
+          const d = res.data;
+          if (!d) { document.getElementById('breakEvenContent').innerHTML = '<p class="text-gray-400 text-center" style="padding:40px">ไม่มีข้อมูล</p>'; return; }
+          document.getElementById('breakEvenContent').innerHTML = `
+            <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+              <div class="kpi-card"><div class="kpi-label">จุดคุ้มทุน (บาท)</div><div class="kpi-value">${Layout.money(d.breakEvenRevenue)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนคงที่</div><div class="kpi-value">${Layout.money(d.fixedCosts)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนผันแปร</div><div class="kpi-value">${Layout.money(d.variableCosts)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">Contribution Margin %</div><div class="kpi-value">${(d.contributionMarginRatio||0).toFixed(1)}%</div></div>
+            </div>
+            <div class="card" style="padding:20px">
+              <h4 style="margin-bottom:12px">สรุป</h4>
+              <p>รายได้ปัจจุบัน: <strong>${Layout.money(d.actualRevenue)}</strong></p>
+              <p>Margin of Safety: <strong class="${(d.marginOfSafety||0)>=0?'text-success':'text-danger'}">${(d.marginOfSafety||0).toFixed(1)}%</strong></p>
+              <p>${(d.marginOfSafety||0)>=0 ? 'บริษัทมีรายได้เหนือจุดคุ้มทุน' : 'บริษัทยังไม่ถึงจุดคุ้มทุน'}</p>
+            </div>`;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

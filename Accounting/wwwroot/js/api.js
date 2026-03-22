@@ -374,6 +374,41 @@ const API = {
       getDimensionAllocations: (lineId) => API.get(`${base}/dimensions/journal-lines/${lineId}/allocations`),
       // Product stock by warehouse
       getProductStock: (productId) => API.get(`${base}/warehouses/products/${productId}/stock`),
+      // Fixed Asset Revaluation
+      revalueAsset: (id, d) => API.post(`${base}/fixedasset/${id}/revalue`, d),
+      // FPA - Financial Planning & Analysis
+      getScenarios: () => API.get(`${base}/fpa/scenarios`),
+      getScenario: (id) => API.get(`${base}/fpa/scenarios/${id}`),
+      createScenario: (d) => API.post(`${base}/fpa/scenarios`, d),
+      updateScenario: (id, d) => API.put(`${base}/fpa/scenarios/${id}`, d),
+      deleteScenario: (id) => API.del(`${base}/fpa/scenarios/${id}`),
+      addAssumption: (id, d) => API.post(`${base}/fpa/scenarios/${id}/assumptions`, d),
+      removeAssumption: (id) => API.del(`${base}/fpa/assumptions/${id}`),
+      calculateScenario: (id) => API.post(`${base}/fpa/scenarios/${id}/calculate`),
+      compareScenarios: (d) => API.post(`${base}/fpa/scenarios/compare`, d),
+      createKpi: (d) => API.post(`${base}/fpa/kpis`, d),
+      getKpis: () => API.get(`${base}/fpa/kpis`),
+      getKpiHistory: (id) => API.get(`${base}/fpa/kpis/${id}/history`),
+      calculateKpiSnapshots: (y, m) => API.post(`${base}/fpa/kpis/snapshots/${y}/${m}`),
+      getFinancialRatios: (q = '') => API.get(`${base}/fpa/ratios${q}`),
+      getBreakEven: (fy) => API.get(`${base}/fpa/break-even/${fy}`),
+      // Custom Report Builder
+      getCustomReports: () => API.get(`${base}/reports`),
+      getCustomReport: (id) => API.get(`${base}/reports/${id}`),
+      createCustomReport: (d) => API.post(`${base}/reports`, d),
+      updateCustomReport: (id, d) => API.put(`${base}/reports/${id}`, d),
+      deleteCustomReport: (id) => API.del(`${base}/reports/${id}`),
+      duplicateCustomReport: (id) => API.post(`${base}/reports/${id}/duplicate`),
+      executeCustomReport: (id, d) => API.post(`${base}/reports/${id}/execute`, d),
+      getReportDataSources: () => API.get(`${base}/reports/data-sources`),
+      getReportColumns: (ds) => API.get(`${base}/reports/data-sources/${ds}/columns`),
+      // Compliance
+      getComplianceFilings: (q = '') => API.get(`${base}/compliance/filings${q}`),
+      createComplianceFiling: (d) => API.post(`${base}/compliance/filings`, d),
+      submitComplianceFiling: (id) => API.post(`${base}/compliance/filings/${id}/submit`),
+      // e-Tax extended
+      etaxSignAndSubmit: (id) => API.post(`${base}/etax/${id}/sign-and-submit`),
+      etaxQuickSubmit: (d) => API.post(`${base}/etax/quick-submit`, d),
     };
   },
 

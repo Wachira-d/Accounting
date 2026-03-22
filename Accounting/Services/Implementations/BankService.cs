@@ -165,6 +165,25 @@ public class BankService : IBankService
             .FirstOrDefaultAsync(t => t.Id == request.BankTransactionId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการธนาคาร");
 
+        // Validate mutual exclusivity: match to Payment XOR JournalEntry, not both
+        if (request.MatchedPaymentId.HasValue && request.MatchedJournalEntryId.HasValue)
+            throw new InvalidOperationException("ไม่สามารถจับคู่กับทั้งการชำระเงินและสมุดรายวันพร้อมกันได้ กรุณาเลือกอย่างใดอย่างหนึ่ง");
+
+        if (!request.MatchedPaymentId.HasValue && !request.MatchedJournalEntryId.HasValue)
+            throw new InvalidOperationException("กรุณาระบุการชำระเงินหรือสมุดรายวันที่ต้องการจับคู่");
+
+        // Validate referenced entities exist
+        if (request.MatchedPaymentId.HasValue)
+        {
+            var paymentExists = await _db.Payments.AnyAsync(p => p.Id == request.MatchedPaymentId.Value && p.CompanyId == companyId);
+            if (!paymentExists) throw new KeyNotFoundException("ไม่พบรายการชำระเงินที่ระบุ");
+        }
+        if (request.MatchedJournalEntryId.HasValue)
+        {
+            var jeExists = await _db.JournalEntries.AnyAsync(j => j.Id == request.MatchedJournalEntryId.Value && j.CompanyId == companyId);
+            if (!jeExists) throw new KeyNotFoundException("ไม่พบสมุดรายวันที่ระบุ");
+        }
+
         transaction.ReconciliationStatus = ReconciliationStatus.Matched;
         transaction.MatchedPaymentId = request.MatchedPaymentId;
         transaction.MatchedJournalEntryId = request.MatchedJournalEntryId;
@@ -277,6 +296,56 @@ public class BankService : IBankService
                     txn.ReconciledBy = "AutoMatch";
                     matched.Add(MapTransactionToResponse(txn));
                     alreadyMatchedPaymentIds.Add(bestMatch.Id);
+                    processedKeySet.Add(txnKey);
+                    continue;
+                }
+
+                // Try matching against JournalEntries if no Payment match found
+                var journalEntries = await _db.JournalEntries
+                    .Include(j => j.Lines)
+                    .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+                    .Where(j => Math.Abs((j.EntryDate - txn.TransactionDate).TotalDays) <= 7)
+                    .ToListAsync();
+
+                var alreadyMatchedJeIds = await _db.Set<BankTransaction>()
+                    .Where(t => t.CompanyId == companyId && t.MatchedJournalEntryId.HasValue)
+                    .Select(t => t.MatchedJournalEntryId!.Value)
+                    .ToListAsync();
+
+                JournalEntry? bestJeMatch = null;
+                decimal bestJeScore = 0;
+
+                foreach (var je in journalEntries.Where(j => !alreadyMatchedJeIds.Contains(j.Id)))
+                {
+                    decimal jeScore = 0;
+
+                    // Match on total debit or credit amount
+                    if (je.TotalDebit == txn.Amount || je.TotalCredit == txn.Amount)
+                        jeScore += 50;
+                    else
+                        continue;
+
+                    // Date proximity
+                    var jeDaysDiff = Math.Abs((je.EntryDate - txn.TransactionDate).TotalDays);
+                    if (jeDaysDiff <= 0) jeScore += 30;
+                    else if (jeDaysDiff <= 3) jeScore += 20;
+                    else if (jeDaysDiff <= 7) jeScore += 10;
+
+                    // Reference match
+                    if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(je.Reference)
+                        && txn.Reference.Contains(je.Reference, StringComparison.OrdinalIgnoreCase))
+                        jeScore += 20;
+
+                    if (jeScore > bestJeScore) { bestJeScore = jeScore; bestJeMatch = je; }
+                }
+
+                if (bestJeMatch != null && bestJeScore >= 60)
+                {
+                    txn.ReconciliationStatus = ReconciliationStatus.Matched;
+                    txn.MatchedJournalEntryId = bestJeMatch.Id;
+                    txn.ReconciledAt = DateTime.UtcNow;
+                    txn.ReconciledBy = "AutoMatch";
+                    matched.Add(MapTransactionToResponse(txn));
                     processedKeySet.Add(txnKey);
                 }
             }

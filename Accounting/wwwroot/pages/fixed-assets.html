@@ -86,6 +86,23 @@
       </div>
     </div>
 
+    <!-- Revalue Modal -->
+    <div class="modal-overlay" id="revalueModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">ตีราคาสินทรัพย์ใหม่</h3><button class="modal-close" onclick="Layout.closeModal('revalueModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="rvId">
+          <div class="form-group"><label class="form-label">มูลค่าใหม่ *</label><input type="number" class="form-input" id="rvNewValue" step="0.01"></div>
+          <div class="form-group"><label class="form-label">วันที่ตีราคา *</label><input type="date" class="form-input" id="rvDate"></div>
+          <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="rvReason" placeholder="เช่น ตีราคาตามราคาตลาด"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('revalueModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.confirmRevalue()">ตีราคาใหม่</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Dispose Modal -->
     <div class="modal-overlay" id="disposeModal">
       <div class="modal" style="max-width:450px">
@@ -250,6 +267,7 @@
 
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
           if (a.status === 'Active') {
+            footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${a.id}', ${a.netBookValue})">ตีราคาใหม่</button>`;
             footer += ` <button class="btn btn-danger" onclick="Page.openDispose('${a.id}')">จำหน่าย</button>`;
           }
           document.getElementById('detailFooter').innerHTML = footer;
@@ -274,6 +292,26 @@
             reason: document.getElementById('dReason').value || null,
           });
           Layout.closeModal('disposeModal'); Layout.toast('จำหน่ายสินทรัพย์สำเร็จ'); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openRevalue(id, currentValue) {
+        document.getElementById('rvId').value = id;
+        document.getElementById('rvNewValue').value = currentValue || '';
+        document.getElementById('rvDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('rvReason').value = '';
+        Layout.closeModal('detailModal');
+        Layout.openModal('revalueModal');
+      },
+      async confirmRevalue() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('rvId').value;
+        try {
+          await api.revalueAsset(id, {
+            newValue: parseFloat(document.getElementById('rvNewValue').value),
+            revaluationDate: document.getElementById('rvDate').value,
+            reason: document.getElementById('rvReason').value || null,
+          });
+          Layout.closeModal('revalueModal'); Layout.toast('ตีราคาสินทรัพย์ใหม่สำเร็จ'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async runDepreciation() {

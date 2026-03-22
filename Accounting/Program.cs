@@ -1,5 +1,6 @@
 using System.Text;
 using Accounting.Data;
+using Accounting.Hubs;
 using Accounting.Middleware;
 using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
@@ -17,6 +18,10 @@ builder.Services.AddDbContext<AccountingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // ===== Authentication (JWT) =====
+// JWT secret: prefer environment variable, fallback to config
+var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET")
+    ?? builder.Configuration["Jwt:Secret"]!;
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -29,8 +34,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!)),
+                Encoding.UTF8.GetBytes(jwtSecret)),
             ClockSkew = TimeSpan.FromMinutes(1)
+        };
+
+        // Support SignalR token via query string
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -104,6 +124,15 @@ builder.Services.AddScoped<ITimeBillingService, TimeBillingService>();
 builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddHttpClient();
+
+// Email service
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+// SignalR for real-time notifications
+builder.Services.AddSignalR();
+
+// Background job scheduler
+builder.Services.AddHostedService<BackgroundJobService>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
@@ -258,6 +287,9 @@ app.UseMiddleware<AuditMiddleware>();
 
 app.MapControllers();
 
+// SignalR hubs
+app.MapHub<NotificationHub>("/hubs/notifications");
+
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
@@ -269,7 +301,17 @@ try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-    db.Database.EnsureCreated();
+
+    // Use Migrate() if migrations exist, fallback to EnsureCreated()
+    if (db.Database.GetPendingMigrations().Any())
+    {
+        db.Database.Migrate();
+    }
+    else
+    {
+        db.Database.EnsureCreated();
+    }
+
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
     await SeedAdminUser.SeedAsync(db);

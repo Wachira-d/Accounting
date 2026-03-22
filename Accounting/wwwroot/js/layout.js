@@ -15,7 +15,55 @@ const Layout = {
     this.render();
     this.bindEvents();
     this.loadNotificationCount();
+    this.initServiceWorker();
+    this.initSignalR();
     return true;
+  },
+
+  // PWA Service Worker
+  initServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  },
+
+  // SignalR real-time notifications
+  signalRConnection: null,
+  initSignalR() {
+    if (typeof signalR === 'undefined') {
+      // Dynamically load SignalR client if not already loaded
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js';
+      script.onload = () => this.connectSignalR();
+      document.head.appendChild(script);
+    } else {
+      this.connectSignalR();
+    }
+  },
+
+  connectSignalR() {
+    const token = localStorage.getItem('token');
+    if (!token || typeof signalR === 'undefined') return;
+    try {
+      this.signalRConnection = new signalR.HubConnectionBuilder()
+        .withUrl('/hubs/notifications', { accessTokenFactory: () => token })
+        .withAutomaticReconnect()
+        .build();
+
+      this.signalRConnection.on('ReceiveNotification', (notification) => {
+        this.toast(notification.title || notification.message || 'การแจ้งเตือนใหม่', 'info');
+        this.loadNotificationCount();
+      });
+
+      this.signalRConnection.on('RefreshData', () => {
+        if (typeof Page !== 'undefined' && Page.load) Page.load();
+      });
+
+      this.signalRConnection.start().then(() => {
+        const cid = this.getCompanyId();
+        if (cid) this.signalRConnection.invoke('JoinCompanyGroup', cid).catch(() => {});
+      }).catch(() => {});
+    } catch (e) { /* SignalR optional */ }
   },
 
   navItems: [
@@ -47,6 +95,7 @@ const Layout = {
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },
     { id: 'aging', label: 'รายงานอายุลูกหนี้', icon: '⏳', href: '/pages/aging.html' },
+    { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html' },
     { section: 'สินทรัพย์' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
     { section: 'โครงการ' },
@@ -419,5 +468,58 @@ const Layout = {
       DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล'
     };
     return map[type] || type;
+  },
+
+  // Export table to CSV
+  exportTableCSV(tableEl, filename = 'export.csv') {
+    if (typeof tableEl === 'string') tableEl = document.querySelector(tableEl);
+    if (!tableEl) return;
+    const rows = [...tableEl.querySelectorAll('tr')];
+    const csv = rows.map(row =>
+      [...row.querySelectorAll('th, td')].map(cell => {
+        let text = cell.textContent.trim().replace(/"/g, '""');
+        return `"${text}"`;
+      }).join(',')
+    ).join('\n');
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    this.toast('ส่งออก CSV สำเร็จ', 'success');
+  },
+
+  // Export table to Excel (simple HTML table format)
+  exportTableExcel(tableEl, filename = 'export.xlsx') {
+    if (typeof tableEl === 'string') tableEl = document.querySelector(tableEl);
+    if (!tableEl) return;
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+      <x:Name>Sheet1</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+      </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+      <body><table>${tableEl.innerHTML}</table></body></html>`;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    this.toast('ส่งออก Excel สำเร็จ', 'success');
+  },
+
+  // Print specific element
+  printElement(selector, title = 'AcctPlatform') {
+    const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+    if (!el) return;
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="/css/style.css">
+      <style>body{padding:20px;font-family:'Noto Sans Thai',sans-serif} .no-print{display:none}</style>
+      </head><body>${el.outerHTML}</body></html>`);
+    win.document.close();
+    win.onload = () => { win.print(); win.close(); };
   },
 };

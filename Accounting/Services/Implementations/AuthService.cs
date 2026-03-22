@@ -12,15 +12,17 @@ public class AuthService : IAuthService
 {
     private readonly AccountingDbContext _db;
     private readonly IConfiguration _config;
+    private readonly IEmailService _emailService;
 
     // Account lockout settings
     private const int MaxFailedAttempts = 5;
     private const int LockoutMinutes = 15;
 
-    public AuthService(AccountingDbContext db, IConfiguration config)
+    public AuthService(AccountingDbContext db, IConfiguration config, IEmailService emailService)
     {
         _db = db;
         _config = config;
+        _emailService = emailService;
     }
 
     public async Task<LoginResponse> RegisterAsync(RegisterRequest request)
@@ -147,8 +149,8 @@ public class AuthService : IAuthService
         user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
         await _db.SaveChangesAsync();
 
-        // TODO: Send email with reset link containing token
-        // EmailService.SendPasswordResetEmail(user.Email, token);
+        // Send password reset email
+        await _emailService.SendPasswordResetAsync(user.Email, user.FullName, token);
 
         return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
     }
