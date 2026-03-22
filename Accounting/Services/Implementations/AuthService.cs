@@ -196,16 +196,18 @@ public class AuthService : IAuthService
     {
         var accessToken = JwtHelper.GenerateToken(user.Id, user.Email, user.FullName, _config, user.IsSystemAdmin);
         var refreshToken = JwtHelper.GenerateRefreshToken();
-        var refreshDays = int.Parse(_config["Jwt:RefreshTokenDays"] ?? "7");
+        var refreshDays = int.TryParse(_config["Jwt:RefreshTokenDays"], out var rd) ? rd : 7;
 
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshDays);
         await _db.SaveChangesAsync();
 
+        var expireMinutes = int.TryParse(_config["Jwt:ExpireMinutes"], out var em) ? em : 60;
+
         return new LoginResponse(
             accessToken,
             refreshToken,
-            DateTime.UtcNow.AddMinutes(int.Parse(_config["Jwt:ExpireMinutes"] ?? "60")),
+            DateTime.UtcNow.AddMinutes(expireMinutes),
             new UserInfo(user.Id, user.Email, user.FullName, user.Phone, user.IsSystemAdmin));
     }
 }

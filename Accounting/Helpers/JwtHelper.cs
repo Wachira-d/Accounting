@@ -9,9 +9,11 @@ public static class JwtHelper
 {
     public static string GenerateToken(Guid userId, string email, string fullName, IConfiguration config, bool isSystemAdmin = false)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Secret"]!));
+        var secret = config["Jwt:Secret"]
+            ?? throw new InvalidOperationException("JWT:Secret is not configured");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expireMinutes = int.Parse(config["Jwt:ExpireMinutes"] ?? "60");
+        var expireMinutes = int.TryParse(config["Jwt:ExpireMinutes"], out var mins) ? mins : 60;
 
         var claimsList = new List<Claim>
         {
@@ -45,6 +47,8 @@ public static class JwtHelper
     {
         var claim = user.FindFirst(ClaimTypes.NameIdentifier)
             ?? throw new UnauthorizedAccessException("ไม่พบข้อมูลผู้ใช้ใน Token กรุณาเข้าสู่ระบบใหม่");
-        return Guid.Parse(claim.Value);
+        if (!Guid.TryParse(claim.Value, out var userId))
+            throw new UnauthorizedAccessException("Token ไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่");
+        return userId;
     }
 }

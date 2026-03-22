@@ -49,6 +49,8 @@ public class ExceptionMiddleware
                     UnauthorizedAccessException => 401,
                     KeyNotFoundException => 404,
                     InvalidOperationException => 400,
+                    ArgumentException => 400,
+                    FormatException => 400,
                     _ => 500
                 },
                 ExceptionType = exception.GetType().FullName ?? exception.GetType().Name,
@@ -81,6 +83,8 @@ public class ExceptionMiddleware
             UnauthorizedAccessException => (HttpStatusCode.Unauthorized, exception.Message),
             KeyNotFoundException => (HttpStatusCode.NotFound, exception.Message),
             InvalidOperationException => (HttpStatusCode.BadRequest, exception.Message),
+            ArgumentException => (HttpStatusCode.BadRequest, exception.Message),
+            FormatException => (HttpStatusCode.BadRequest, "ข้อมูลไม่ถูกต้อง"),
             _ => (HttpStatusCode.InternalServerError, "เกิดข้อผิดพลาดภายในระบบ")
         };
 
