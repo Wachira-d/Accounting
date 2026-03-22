@@ -67,6 +67,50 @@ public class SettingsService : ISettingsService
         return MapToResponse(companyId, settings);
     }
 
+    // ===== Logo Management =====
+
+    public async Task<CompanySettingsResponse> UploadLogoAsync(Guid companyId, Stream fileStream, string fileName, string contentType)
+    {
+        var settings = await GetOrCreateSettingsAsync(companyId);
+
+        // Validate content type
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
+        if (!allowedTypes.Contains(contentType.ToLower()))
+            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น");
+
+        // Create upload directory
+        var uploadDir = Path.Combine("uploads", "logos", companyId.ToString());
+        Directory.CreateDirectory(uploadDir);
+
+        // Delete old logo if exists
+        if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
+            File.Delete(settings.LogoPath);
+
+        // Save new logo
+        var ext = Path.GetExtension(fileName);
+        var savedFileName = $"logo_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
+        var filePath = Path.Combine(uploadDir, savedFileName);
+
+        using (var fs = new FileStream(filePath, FileMode.Create))
+            await fileStream.CopyToAsync(fs);
+
+        settings.LogoPath = filePath;
+        settings.LogoUrl = $"/uploads/logos/{companyId}/{savedFileName}";
+        await _db.SaveChangesAsync();
+
+        return MapToResponse(companyId, settings);
+    }
+
+    public async Task DeleteLogoAsync(Guid companyId)
+    {
+        var settings = await GetOrCreateSettingsAsync(companyId);
+        if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
+            File.Delete(settings.LogoPath);
+        settings.LogoPath = null;
+        settings.LogoUrl = null;
+        await _db.SaveChangesAsync();
+    }
+
     // ===== Number Series =====
 
     public async Task<NumberSeriesResponse> CreateNumberSeriesAsync(Guid companyId, CreateNumberSeriesRequest request)
@@ -259,10 +303,18 @@ public class SettingsService : ISettingsService
 
     private static CompanySettingsResponse MapToResponse(Guid companyId, CompanySettings s) => new(
         companyId, s.LogoUrl, s.PrimaryColor, s.SecondaryColor,
-        s.DefaultPaymentTerms, s.DefaultPaymentDueDays, s.DefaultVatRate, s.VatRegistered,
+        s.DefaultPaymentTerms, s.DefaultPaymentDueDays,
+        // Document notes/footer
+        s.InvoiceNotes, s.ReceiptNotes, s.QuotationNotes, s.InvoiceFooter, s.ReceiptFooter,
+        // Email
+        s.EmailFromName, s.EmailReplyTo, s.InvoiceEmailSubject, s.InvoiceEmailBody,
+        // Tax
+        s.DefaultVatRate, s.VatRegistered,
+        // Security
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.AllowFreelanceAccess, s.MaxFreelanceUsers,
         s.EnableApiAccess, s.MaxApiKeys,
+        // Closing
         s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod,
         // e-Tax
         s.EtaxEnabled, s.EtaxTestMode, s.EtaxAutoSign, s.EtaxAutoSubmit,

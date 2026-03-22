@@ -58,14 +58,28 @@ public record CompanySettingsResponse(
     string? SecondaryColor,
     string? DefaultPaymentTerms,
     int DefaultPaymentDueDays,
+    // Document Notes/Footer
+    string? InvoiceNotes,
+    string? ReceiptNotes,
+    string? QuotationNotes,
+    string? InvoiceFooter,
+    string? ReceiptFooter,
+    // Email
+    string? EmailFromName,
+    string? EmailReplyTo,
+    string? InvoiceEmailSubject,
+    string? InvoiceEmailBody,
+    // Tax
     decimal DefaultVatRate,
     bool VatRegistered,
+    // Security
     bool RequireApprovalForDocuments,
     decimal? ApprovalThresholdAmount,
     bool AllowFreelanceAccess,
     int MaxFreelanceUsers,
     bool EnableApiAccess,
     int MaxApiKeys,
+    // Closing
     bool AutoCloseMonthEnd,
     int MonthEndClosingDay,
     bool PreventPostToClosedPeriod,

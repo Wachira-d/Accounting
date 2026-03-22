@@ -35,6 +35,27 @@ public class SettingsController : ControllerBase
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพเดทการตั้งค่าสำเร็จ"));
     }
 
+    // ===== Logo Upload =====
+
+    [HttpPost("logo")]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
+    public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UploadLogo(Guid companyId, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาเลือกไฟล์โลโก้"));
+
+        using var stream = file.OpenReadStream();
+        var result = await _settingsService.UploadLogoAsync(companyId, stream, file.FileName, file.ContentType);
+        return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพโหลดโลโก้สำเร็จ"));
+    }
+
+    [HttpDelete("logo")]
+    public async Task<IActionResult> DeleteLogo(Guid companyId)
+    {
+        await _settingsService.DeleteLogoAsync(companyId);
+        return NoContent();
+    }
+
     // ===== Number Series =====
 
     [HttpGet("number-series")]

@@ -351,6 +351,8 @@ const API = {
       // Settings
       getSettings: () => API.get(`${base}/settings`),
       updateSettings: (d) => API.put(`${base}/settings`, d),
+      uploadLogo: (formData) => API.upload(`${base}/settings/logo`, formData),
+      deleteLogo: () => API.del(`${base}/settings/logo`),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
       // Aging
       getAgingReceivables: (q = '') => API.get(`${base}/aging/receivables${q}`),
