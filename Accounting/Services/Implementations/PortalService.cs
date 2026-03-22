@@ -309,7 +309,7 @@ public class PortalService : IPortalService
 
     // ===== JWT Token Helpers =====
 
-    private static string GenerateJwtToken(Guid portalAccessId, Guid contactId, Guid companyId, TimeSpan expiry)
+    private string GenerateJwtToken(Guid portalAccessId, Guid contactId, Guid companyId, TimeSpan expiry)
     {
         // Build a simple base64-encoded JWT-like token containing the claims and expiry
         // In production, use Microsoft.IdentityModel.Tokens with proper signing keys
