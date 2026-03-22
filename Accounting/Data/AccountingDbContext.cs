@@ -38,6 +38,7 @@ public class AccountingDbContext : DbContext
 
     // Audit
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
 
     // Products & Inventory
     public DbSet<Product> Products => Set<Product>();
@@ -420,6 +421,15 @@ public class AccountingDbContext : DbContext
             e.HasIndex(a => a.Timestamp);
             e.HasIndex(a => new { a.CompanyId, a.Timestamp });
             e.Property(a => a.EntityType).HasMaxLength(100);
+        });
+
+        // ===== ErrorLog =====
+        modelBuilder.Entity<ErrorLog>(e =>
+        {
+            e.HasIndex(l => l.Timestamp);
+            e.Property(l => l.ExceptionType).HasMaxLength(500);
+            e.Property(l => l.RequestPath).HasMaxLength(2000);
+            e.Property(l => l.HttpMethod).HasMaxLength(10);
         });
 
         // ===== Product =====

@@ -87,7 +87,7 @@ public class PortalService : IPortalService
 
         await _db.SaveChangesAsync();
 
-        return MapToAccessResponse(access, access.Contact.Name);
+        return MapToAccessResponse(access, access.Contact?.Name ?? access.DisplayName ?? access.Email);
     }
 
     public async Task DeactivateAccessAsync(Guid companyId, Guid accessId)
@@ -106,9 +106,11 @@ public class PortalService : IPortalService
     {
         var access = await _db.Set<PortalAccess>()
             .Include(p => p.Contact)
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(p => p.CompanyId == request.CompanyId
                                    && p.Email == request.Email
-                                   && p.IsActive)
+                                   && p.IsActive
+                                   && !p.IsDeleted)
             ?? throw new InvalidOperationException("Invalid email or password.");
 
         if (!VerifyPassword(request.Password, access.PasswordHash))
@@ -140,7 +142,7 @@ public class PortalService : IPortalService
             accessToken,
             refreshToken,
             access.ContactId,
-            access.Contact.Name,
+            access.Contact?.Name ?? access.DisplayName ?? access.Email,
             company.Id,
             company.Name);
     }
@@ -167,7 +169,7 @@ public class PortalService : IPortalService
             newAccessToken,
             newRefreshToken,
             access.ContactId,
-            access.Contact.Name,
+            access.Contact?.Name ?? access.DisplayName ?? access.Email,
             company.Id,
             company.Name);
     }
