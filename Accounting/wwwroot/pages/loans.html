@@ -13,13 +13,26 @@
       <div><h2 class="page-title">สินเชื่อ</h2><p class="page-subtitle">จัดการสินเชื่อและตารางผ่อนชำระ</p></div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินเชื่อ</button>
     </div>
+
+    <!-- Summary Cards -->
+    <div id="summaryCards" class="grid grid-3 gap-4" style="margin-bottom:24px"></div>
+
+    <div class="toolbar">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Active">ใช้งาน</option>
+        <option value="PaidOff">ชำระครบ</option>
+        <option value="Defaulted">ค้างชำระ</option>
+      </select>
+    </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th>สถานะ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
+    <!-- Create Modal -->
     <div class="modal-overlay" id="formModal">
       <div class="modal" style="max-width:700px">
         <div class="modal-header"><h3 class="modal-title">เพิ่มสินเชื่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
@@ -42,8 +55,13 @@
             <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
             <div class="form-group"><label class="form-label">วันครบกำหนด *</label><input type="date" class="form-input" id="fMaturity"></div>
           </div>
-          <div class="form-group"><label class="form-label">ความถี่ชำระ</label>
-            <select class="form-select" id="fFreq"><option value="Monthly">รายเดือน</option><option value="Quarterly">รายไตรมาส</option></select>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ความถี่ชำระ</label>
+              <select class="form-select" id="fFreq"><option value="Monthly">รายเดือน</option><option value="Quarterly">รายไตรมาส</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">ประเภทดอกเบี้ย</label>
+              <select class="form-select" id="fIntType"><option value="Fixed">คงที่</option><option value="Floating">ลอยตัว</option></select>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -52,53 +70,216 @@
         </div>
       </div>
     </div>
+
+    <!-- Detail Modal (Schedule + Payments) -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดสินเชื่อ</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="detailInfo" style="margin-bottom:16px"></div>
+          <div class="tabs" style="margin-bottom:0">
+            <div class="tab active" onclick="Page.detailTab('schedule',this)">ตารางผ่อนชำระ</div>
+            <div class="tab" onclick="Page.detailTab('payments',this)">ประวัติชำระ</div>
+          </div>
+          <div id="scheduleTab" style="max-height:400px;overflow-y:auto"></div>
+          <div id="paymentsTab" class="hidden" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div class="modal-overlay" id="payModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">บันทึกการชำระ</h3><button class="modal-close" onclick="Layout.closeModal('payModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="payLoanId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ชำระ *</label><input type="date" class="form-input" id="payDate"></div>
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="payAmount" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เงินต้น</label><input type="number" class="form-input" id="payPrincipal" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ดอกเบี้ย</label><input type="number" class="form-input" id="payInterest" step="0.01"></div>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="payNotes"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('payModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.savePayment()">บันทึกชำระ</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    const typeMap = { BankLoan:'สินเชื่อธนาคาร', Mortgage:'จำนอง', LineOfCredit:'วงเงิน OD', PersonalLoan:'สินเชื่อส่วนบุคคล' };
     const Page = {
+      currentLoanId: null,
       async init() {
         if (!Layout.init('loans')) return;
         Layout.setTitle('สินเชื่อ');
-        await this.load();
+        await Promise.all([this.loadSummary(), this.load()]);
+      },
+      async loadSummary() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getLoanSummary();
+          const s = res.data;
+          if (!s) return;
+          document.getElementById('summaryCards').innerHTML = `
+            <div class="kpi-card"><div class="kpi-label">สินเชื่อทั้งหมด</div><div class="kpi-value">${s.totalLoans || 0}</div></div>
+            <div class="kpi-card"><div class="kpi-label">ยอดคงเหลือรวม</div><div class="kpi-value text-danger">${Layout.money(s.totalOutstanding)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">ชำระเดือนนี้</div><div class="kpi-value text-warning">${Layout.money(s.monthlyPayment || s.nextPaymentDue)}</div></div>`;
+        } catch (e) { /* ignore */ }
       },
       async load() {
-        const cid = Layout.getCompanyId(); if (!cid) return;
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        let q = '?page=1&pageSize=30';
+        if (status) q += `&status=${status}`;
         try {
-          const res = await API.get(`/api/companies/${cid}/loans`);
+          const res = await api.getLoans(q);
           const items = res.data?.items || res.data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีสินเชื่อ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีสินเชื่อ</td></tr>'; return; }
           tbody.innerHTML = items.map(l => `<tr>
             <td class="font-medium">${l.loanNumber}</td>
-            <td>${l.loanType}</td>
+            <td>${typeMap[l.loanType] || l.loanType}</td>
             <td>${l.lenderName}</td>
             <td class="text-right">${Layout.money(l.principalAmount)}</td>
             <td class="text-right">${l.interestRate}%</td>
             <td class="text-right font-semibold">${Layout.money(l.outstandingBalance)}</td>
             <td>${Layout.date(l.maturityDate)}</td>
             <td>${Layout.statusBadge(l.status)}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${l.id}')">ดู</button>
+              ${l.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.openPayment('${l.id}')">ชำระ</button>` : ''}
+            </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openCreate() { Layout.openModal('formModal'); },
+      openCreate() {
+        document.getElementById('fStart').value = new Date().toISOString().split('T')[0];
+        Layout.openModal('formModal');
+      },
       async save() {
-        const cid = Layout.getCompanyId(); if (!cid) return;
+        const api = Layout.api(); if (!api) return;
         try {
-          await API.post(`/api/companies/${cid}/loans`, {
+          await api.createLoan({
             loanNumber: document.getElementById('fNum').value,
             loanType: document.getElementById('fType').value,
             lenderName: document.getElementById('fLender').value,
             principalAmount: parseFloat(document.getElementById('fPrincipal').value),
             interestRate: parseFloat(document.getElementById('fRate').value),
-            interestType: 'Fixed',
+            interestType: document.getElementById('fIntType').value,
             termMonths: parseInt(document.getElementById('fTerm').value),
             startDate: document.getElementById('fStart').value,
             maturityDate: document.getElementById('fMaturity').value,
             repaymentFrequency: document.getElementById('fFreq').value,
           });
-          Layout.closeModal('formModal'); Layout.toast('เพิ่มสินเชื่อสำเร็จ'); await this.load();
+          Layout.closeModal('formModal'); Layout.toast('เพิ่มสินเชื่อสำเร็จ'); await this.load(); this.loadSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async viewDetail(id) {
+        this.currentLoanId = id;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getLoan(id);
+          const l = res.data;
+          document.getElementById('detailTitle').textContent = `สินเชื่อ ${l.loanNumber}`;
+          document.getElementById('detailInfo').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+              <div><div class="text-xs text-gray-500">ผู้ให้กู้</div><div class="font-medium">${l.lenderName}</div></div>
+              <div><div class="text-xs text-gray-500">เงินต้น</div><div class="font-semibold">${Layout.money(l.principalAmount)}</div></div>
+              <div><div class="text-xs text-gray-500">ยอดคงเหลือ</div><div class="font-semibold text-danger">${Layout.money(l.outstandingBalance)}</div></div>
+              <div><div class="text-xs text-gray-500">อัตราดอกเบี้ย</div><div>${l.interestRate}% (${l.interestType === 'Fixed' ? 'คงที่' : 'ลอยตัว'})</div></div>
+              <div><div class="text-xs text-gray-500">วันเริ่ม - ครบกำหนด</div><div>${Layout.date(l.startDate)} - ${Layout.date(l.maturityDate)}</div></div>
+              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(l.status)}</div></div>
+            </div>`;
+
+          // Load schedule
+          await this.loadSchedule(id);
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          if (l.status === 'Active') {
+            footer += ` <button class="btn btn-info" onclick="Page.generateSchedule('${id}')">สร้างตารางผ่อน</button>`;
+            footer += ` <button class="btn btn-primary" onclick="Page.openPayment('${id}')">บันทึกชำระ</button>`;
+          }
+          document.getElementById('detailFooter').innerHTML = footer;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      detailTab(tab, el) {
+        document.getElementById('scheduleTab').classList.toggle('hidden', tab !== 'schedule');
+        document.getElementById('paymentsTab').classList.toggle('hidden', tab !== 'payments');
+        el.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        if (tab === 'payments') this.loadPayments(this.currentLoanId);
+      },
+      async loadSchedule(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getLoanSchedule(id);
+          const items = res.data?.items || res.data || [];
+          document.getElementById('scheduleTab').innerHTML = items.length ?
+            `<table class="table"><thead><tr><th>งวดที่</th><th>วันครบกำหนด</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th class="text-right">รวม</th><th class="text-right">คงเหลือ</th><th>สถานะ</th></tr></thead><tbody>${items.map(s => `<tr>
+              <td>${s.installmentNumber || s.periodNumber}</td>
+              <td>${Layout.date(s.dueDate)}</td>
+              <td class="text-right">${Layout.money(s.principalAmount)}</td>
+              <td class="text-right">${Layout.money(s.interestAmount)}</td>
+              <td class="text-right font-semibold">${Layout.money(s.totalAmount || (s.principalAmount + s.interestAmount))}</td>
+              <td class="text-right">${Layout.money(s.remainingBalance)}</td>
+              <td>${s.isPaid ? '<span class="badge badge-success">ชำระแล้ว</span>' : '<span class="badge badge-warning">รอชำระ</span>'}</td>
+            </tr>`).join('')}</tbody></table>`
+            : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีตารางผ่อนชำระ — กด "สร้างตารางผ่อน" เพื่อสร้าง</div>';
+        } catch (e) { document.getElementById('scheduleTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีตารางผ่อนชำระ</div>'; }
+      },
+      async loadPayments(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getLoanPayments(id);
+          const items = res.data?.items || res.data || [];
+          document.getElementById('paymentsTab').innerHTML = items.length ?
+            `<table class="table"><thead><tr><th>วันที่</th><th class="text-right">จำนวน</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th>หมายเหตุ</th></tr></thead><tbody>${items.map(p => `<tr>
+              <td>${Layout.date(p.paymentDate)}</td>
+              <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
+              <td class="text-right">${Layout.money(p.principalPortion)}</td>
+              <td class="text-right">${Layout.money(p.interestPortion)}</td>
+              <td class="text-gray-500">${p.notes || '-'}</td>
+            </tr>`).join('')}</tbody></table>`
+            : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีประวัติการชำระ</div>';
+        } catch (e) { document.getElementById('paymentsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+      },
+      async generateSchedule(id) {
+        const api = Layout.api(); if (!api) return;
+        try { await api.generateSchedule(id); Layout.toast('สร้างตารางผ่อนสำเร็จ'); this.loadSchedule(id); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openPayment(id) {
+        document.getElementById('payLoanId').value = id;
+        document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('payAmount').value = '';
+        document.getElementById('payPrincipal').value = '';
+        document.getElementById('payInterest').value = '';
+        document.getElementById('payNotes').value = '';
+        Layout.openModal('payModal');
+      },
+      async savePayment() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('payLoanId').value;
+        try {
+          await api.makeLoanPayment(id, {
+            paymentDate: document.getElementById('payDate').value,
+            amount: parseFloat(document.getElementById('payAmount').value),
+            principalPortion: parseFloat(document.getElementById('payPrincipal').value) || null,
+            interestPortion: parseFloat(document.getElementById('payInterest').value) || null,
+            notes: document.getElementById('payNotes').value || null,
+          });
+          Layout.closeModal('payModal'); Layout.toast('บันทึกการชำระสำเร็จ');
+          this.load(); this.loadSummary();
+          if (this.currentLoanId === id) { this.loadSchedule(id); this.loadPayments(id); }
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

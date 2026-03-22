@@ -1,34 +1,46 @@
-using Accounting.Models.Enums;
-
 namespace Accounting.Models.DTOs.Loan;
 
 public record CreateLoanRequest(
-    string LoanNumber, string LoanType, string LenderName,
-    decimal PrincipalAmount, decimal InterestRate, string InterestType,
-    int TermMonths, DateTime StartDate, DateTime MaturityDate,
-    string RepaymentFrequency, Guid? LoanAccountId,
-    Guid? InterestExpenseAccountId, Guid? BankAccountId);
+    string LoanType, string Name, string? Lender,
+    Guid? ContactId, decimal PrincipalAmount,
+    decimal InterestRate, string InterestType,
+    int TermMonths, DateTime DisbursementDate,
+    DateTime FirstPaymentDate, string RepaymentFrequency,
+    Guid? LoanAccountId, Guid? InterestExpenseAccountId,
+    Guid? BankAccountId);
 
 public record UpdateLoanRequest(
-    string? LenderName = null, decimal? InterestRate = null, string? Status = null);
+    string? Name, decimal? InterestRate,
+    string? Status, string? Notes);
 
 public record LoanResponse(
-    Guid Id, string LoanNumber, string LoanType, string LenderName,
-    decimal PrincipalAmount, decimal InterestRate, string InterestType,
-    int TermMonths, DateTime StartDate, DateTime MaturityDate,
-    string RepaymentFrequency, decimal OutstandingBalance,
-    decimal TotalInterestPaid, string Status, DateTime CreatedAt);
+    Guid Id, string LoanNumber, string LoanType, string Name,
+    string? Lender, decimal PrincipalAmount,
+    decimal InterestRate, string InterestType,
+    int TermMonths, DateTime DisbursementDate,
+    DateTime MaturityDate, decimal MonthlyPayment,
+    decimal OutstandingPrincipal, decimal TotalInterestPaid,
+    string Status, DateTime CreatedAt);
 
 public record LoanScheduleResponse(
-    Guid Id, int InstallmentNumber, DateTime DueDate,
-    decimal PrincipalAmount, decimal InterestAmount, decimal TotalAmount,
-    decimal OutstandingBalance, bool IsPaid, DateTime? PaidDate);
+    int InstallmentNumber, DateTime DueDate,
+    decimal PaymentAmount, decimal PrincipalPortion,
+    decimal InterestPortion, decimal RemainingBalance,
+    bool IsPaid, DateTime? PaidDate);
 
-public record CreateLoanPaymentRequest(
-    Guid LoanId, DateTime PaymentDate, decimal PrincipalAmount,
-    decimal InterestAmount, string? Reference);
+public record MakeLoanPaymentRequest(
+    int InstallmentNumber, DateTime PaymentDate,
+    decimal PrincipalPaid, decimal InterestPaid,
+    decimal? LateFee, string PaymentMethod, string? Reference);
 
 public record LoanPaymentResponse(
-    Guid Id, Guid LoanId, int? InstallmentNumber, DateTime PaymentDate,
-    decimal PrincipalAmount, decimal InterestAmount, decimal TotalAmount,
-    string? Reference, DateTime CreatedAt);
+    Guid Id, int InstallmentNumber, DateTime PaymentDate,
+    decimal PrincipalPaid, decimal InterestPaid,
+    decimal TotalPaid, decimal? LateFee, string PaymentMethod);
+
+public record LoanSummaryResponse(
+    int TotalLoans, int ActiveLoans,
+    decimal TotalOutstandingPrincipal,
+    decimal TotalMonthlyPayment,
+    decimal TotalInterestPaidYTD,
+    List<LoanResponse> Loans);

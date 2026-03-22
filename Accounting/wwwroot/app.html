@@ -15,20 +15,42 @@
         <h2 class="page-title">แดชบอร์ด</h2>
         <p class="page-subtitle">ภาพรวมธุรกิจ</p>
       </div>
-      <div class="flex gap-2">
-        <input type="month" id="dashMonth" class="form-input" style="width:180px">
+      <div class="flex gap-2" style="align-items:center">
+        <select id="dashPreset" class="form-input" style="width:140px" onchange="Dashboard.applyPreset()">
+          <option value="thisMonth">เดือนนี้</option>
+          <option value="lastMonth">เดือนก่อน</option>
+          <option value="thisQuarter">ไตรมาสนี้</option>
+          <option value="thisYear">ปีนี้</option>
+          <option value="custom">กำหนดเอง</option>
+        </select>
+        <input type="date" id="dashFrom" class="form-input" style="width:150px;display:none">
+        <input type="date" id="dashTo" class="form-input" style="width:150px;display:none">
         <button class="btn btn-primary" onclick="Dashboard.load()">โหลดข้อมูล</button>
+        <button class="btn btn-ghost" onclick="Dashboard.toggleCustomize()" title="ปรับแต่งวิดเจ็ต">⚙️</button>
+        <button class="btn btn-ghost" onclick="Dashboard.exportPDF()" title="ส่งออก PDF">📄</button>
       </div>
     </div>
 
-    <div class="grid grid-4 gap-4" id="kpiCards" style="margin-bottom:24px">
+    <!-- Widget Customization Panel -->
+    <div id="widgetPanel" class="card" style="margin-bottom:16px;display:none;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h4 style="margin:0">ปรับแต่งวิดเจ็ต</h4>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-secondary" onclick="Dashboard.resetWidgets()">รีเซ็ต</button>
+          <button class="btn btn-sm btn-primary" onclick="Dashboard.saveWidgets()">บันทึก</button>
+        </div>
+      </div>
+      <div id="widgetList" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
+
+    <div class="grid grid-4 gap-4 dash-widget" data-widget="kpiMain" id="kpiCards" style="margin-bottom:24px">
       <div class="kpi-card"><div class="kpi-label">รายได้รวม</div><div class="kpi-value" id="kpiRevenue">-</div></div>
       <div class="kpi-card"><div class="kpi-label">ค่าใช้จ่ายรวม</div><div class="kpi-value" id="kpiExpense">-</div></div>
       <div class="kpi-card"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value" id="kpiNet">-</div></div>
       <div class="kpi-card"><div class="kpi-label">เงินสดคงเหลือ</div><div class="kpi-value" id="kpiCash">-</div></div>
     </div>
 
-    <div class="grid grid-4 gap-4" style="margin-bottom:24px">
+    <div class="grid grid-4 gap-4 dash-widget" data-widget="kpiSecondary" style="margin-bottom:24px">
       <div class="kpi-card"><div class="kpi-label">ลูกหนี้ค้างชำระ</div><div class="kpi-value text-warning" id="kpiAR">-</div></div>
       <div class="kpi-card"><div class="kpi-label">เจ้าหนี้ค้างชำระ</div><div class="kpi-value text-danger" id="kpiAP">-</div></div>
       <div class="kpi-card"><div class="kpi-label">ใบแจ้งหนี้ทั้งหมด</div><div class="kpi-value" id="kpiInvoices">-</div></div>
@@ -36,7 +58,7 @@
     </div>
 
     <!-- Charts Row -->
-    <div class="grid grid-2 gap-4" style="margin-bottom:24px">
+    <div class="grid grid-2 gap-4 dash-widget" data-widget="charts" style="margin-bottom:24px">
       <div class="card">
         <div class="card-header"><h3 class="card-title">แนวโน้มรายได้/ค่าใช้จ่าย</h3></div>
         <div id="revenueTrendChart" style="height:280px;display:flex;align-items:flex-end;gap:4px;padding:20px 0"></div>
@@ -58,7 +80,7 @@
     </div>
 
     <!-- Tables Row -->
-    <div class="grid grid-2 gap-4" style="margin-bottom:24px">
+    <div class="grid grid-2 gap-4 dash-widget" data-widget="topTables" style="margin-bottom:24px">
       <div class="card">
         <div class="card-header"><h3 class="card-title">ลูกค้ารายใหญ่</h3></div>
         <div class="table-container" style="border:none">
@@ -80,7 +102,7 @@
     </div>
 
     <!-- Overdue & Upcoming -->
-    <div class="grid grid-2 gap-4">
+    <div class="grid grid-2 gap-4 dash-widget" data-widget="overdue">
       <div class="card">
         <div class="card-header"><h3 class="card-title">ใบแจ้งหนี้เกินกำหนด</h3></div>
         <div class="table-container" style="border:none">
@@ -102,7 +124,7 @@
     </div>
 
     <!-- Bank Balances -->
-    <div class="card" style="margin-top:24px">
+    <div class="card dash-widget" data-widget="bank" style="margin-top:24px">
       <div class="card-header"><h3 class="card-title">ยอดเงินในบัญชีธนาคาร</h3></div>
       <div class="table-container" style="border:none">
         <table class="table">
@@ -117,19 +139,154 @@
   <script src="/js/layout.js"></script>
   <script>
     const Dashboard = {
+      WIDGETS: {
+        kpiMain: 'KPI หลัก (รายได้/ค่าใช้จ่าย/กำไร/เงินสด)',
+        kpiSecondary: 'KPI รอง (AR/AP/ใบแจ้งหนี้/รออนุมัติ)',
+        charts: 'กราฟแนวโน้มและกระแสเงินสด',
+        topTables: 'ลูกค้า/ค่าใช้จ่ายสูงสุด',
+        overdue: 'เกินกำหนด/ถึงกำหนด',
+        bank: 'ยอดธนาคาร'
+      },
+
+      getWidgetConfig() {
+        try {
+          return JSON.parse(localStorage.getItem('dash_widgets')) || null;
+        } catch { return null; }
+      },
+
+      applyWidgetVisibility() {
+        const cfg = this.getWidgetConfig();
+        document.querySelectorAll('.dash-widget').forEach(el => {
+          const id = el.dataset.widget;
+          if (cfg && cfg.hidden && cfg.hidden.includes(id)) {
+            el.style.display = 'none';
+          } else {
+            el.style.display = '';
+          }
+        });
+        // Reorder
+        if (cfg && cfg.order) {
+          const parent = document.getElementById('pageContent');
+          const widgets = [...parent.querySelectorAll('.dash-widget')];
+          const sorted = cfg.order.map(id => widgets.find(w => w.dataset.widget === id)).filter(Boolean);
+          const remaining = widgets.filter(w => !cfg.order.includes(w.dataset.widget));
+          [...sorted, ...remaining].forEach(w => parent.appendChild(w));
+        }
+      },
+
+      toggleCustomize() {
+        const panel = document.getElementById('widgetPanel');
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        if (panel.style.display === 'block') this.renderWidgetList();
+      },
+
+      renderWidgetList() {
+        const cfg = this.getWidgetConfig() || { hidden: [], order: Object.keys(this.WIDGETS) };
+        const list = document.getElementById('widgetList');
+        const order = cfg.order || Object.keys(this.WIDGETS);
+        list.innerHTML = order.map(id => {
+          const hidden = cfg.hidden?.includes(id);
+          return `<label style="display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;cursor:pointer;background:${hidden ? 'var(--gray-50)' : 'white'}">
+            <input type="checkbox" ${hidden ? '' : 'checked'} data-wid="${id}" onchange="Dashboard.toggleWidget('${id}',this.checked)">
+            <span style="cursor:grab" draggable="true" ondragstart="Dashboard.dragStart(event,'${id}')" ondragover="event.preventDefault()" ondrop="Dashboard.drop(event,'${id}')">${this.WIDGETS[id]}</span>
+          </label>`;
+        }).join('');
+      },
+
+      toggleWidget(id, visible) {
+        const cfg = this.getWidgetConfig() || { hidden: [], order: Object.keys(this.WIDGETS) };
+        cfg.hidden = cfg.hidden || [];
+        if (visible) cfg.hidden = cfg.hidden.filter(h => h !== id);
+        else if (!cfg.hidden.includes(id)) cfg.hidden.push(id);
+        localStorage.setItem('dash_widgets', JSON.stringify(cfg));
+        this.applyWidgetVisibility();
+      },
+
+      dragStart(e, id) { e.dataTransfer.setData('text/plain', id); },
+      drop(e, targetId) {
+        e.preventDefault();
+        const srcId = e.dataTransfer.getData('text/plain');
+        if (srcId === targetId) return;
+        const cfg = this.getWidgetConfig() || { hidden: [], order: Object.keys(this.WIDGETS) };
+        const order = cfg.order || Object.keys(this.WIDGETS);
+        const srcIdx = order.indexOf(srcId);
+        const tgtIdx = order.indexOf(targetId);
+        if (srcIdx < 0 || tgtIdx < 0) return;
+        order.splice(srcIdx, 1);
+        order.splice(tgtIdx, 0, srcId);
+        cfg.order = order;
+        localStorage.setItem('dash_widgets', JSON.stringify(cfg));
+        this.renderWidgetList();
+        this.applyWidgetVisibility();
+      },
+
+      saveWidgets() {
+        this.toggleCustomize();
+        Layout.toast('บันทึกการตั้งค่าวิดเจ็ตเรียบร้อย', 'success');
+      },
+
+      resetWidgets() {
+        localStorage.removeItem('dash_widgets');
+        this.applyWidgetVisibility();
+        this.renderWidgetList();
+        Layout.toast('รีเซ็ตวิดเจ็ตเรียบร้อย', 'success');
+      },
+
+      applyPreset() {
+        const preset = document.getElementById('dashPreset').value;
+        const fromEl = document.getElementById('dashFrom');
+        const toEl = document.getElementById('dashTo');
+        fromEl.style.display = preset === 'custom' ? '' : 'none';
+        toEl.style.display = preset === 'custom' ? '' : 'none';
+        if (preset !== 'custom') this.load();
+      },
+
+      getDateRange() {
+        const preset = document.getElementById('dashPreset').value;
+        const now = new Date();
+        let from, to;
+        switch (preset) {
+          case 'thisMonth':
+            from = new Date(now.getFullYear(), now.getMonth(), 1);
+            to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            break;
+          case 'lastMonth':
+            from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            to = new Date(now.getFullYear(), now.getMonth(), 0);
+            break;
+          case 'thisQuarter': {
+            const qm = Math.floor(now.getMonth() / 3) * 3;
+            from = new Date(now.getFullYear(), qm, 1);
+            to = new Date(now.getFullYear(), qm + 3, 0);
+            break;
+          }
+          case 'thisYear':
+            from = new Date(now.getFullYear(), 0, 1);
+            to = new Date(now.getFullYear(), 11, 31);
+            break;
+          case 'custom':
+            from = document.getElementById('dashFrom').value ? new Date(document.getElementById('dashFrom').value) : new Date(now.getFullYear(), now.getMonth(), 1);
+            to = document.getElementById('dashTo').value ? new Date(document.getElementById('dashTo').value) : now;
+            break;
+        }
+        const fmt = d => d.toISOString().split('T')[0];
+        return { fromDate: fmt(from), toDate: fmt(to) };
+      },
+
+      exportPDF() {
+        window.print();
+      },
+
       async load() {
         if (!Layout.init('dashboard')) return;
         Layout.setTitle('แดชบอร์ด');
         const api = Layout.api();
         if (!api) return;
+        this.applyWidgetVisibility();
 
         try {
-          const month = document.getElementById('dashMonth')?.value;
-          let q = '?trendMonths=6';
-          if (month) {
-            const [y, m] = month.split('-');
-            q += `&fromDate=${y}-${m}-01&toDate=${y}-${m}-28`;
-          }
+          const { fromDate, toDate } = this.getDateRange();
+          let q = `?trendMonths=6&fromDate=${fromDate}&toDate=${toDate}`;
           const res = await api.dashboard(q);
           const d = res.data;
           if (!d) return;

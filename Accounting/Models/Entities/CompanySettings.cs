@@ -45,4 +45,16 @@ public class CompanySettings : TenantEntity
     public bool AutoCloseMonthEnd { get; set; } = false;
     public int MonthEndClosingDay { get; set; } = 15;    // วันสุดท้ายที่บันทึกเดือนก่อนได้
     public bool PreventPostToClosedPeriod { get; set; } = true;
+
+    // e-Tax Invoice Settings (per-company)
+    public bool EtaxEnabled { get; set; } = false;
+    public string? EtaxCertificatePath { get; set; }        // path to .p12/.pfx certificate
+    public string? EtaxCertificatePassword { get; set; }    // encrypted certificate password
+    public string? EtaxRdApiKey { get; set; }               // Revenue Department API Key
+    public string? EtaxRdApiSecret { get; set; }            // Revenue Department API Secret
+    public bool EtaxTestMode { get; set; } = true;          // true = ทดสอบ, false = production
+    public bool EtaxAutoSign { get; set; } = false;         // ลงนามอัตโนมัติเมื่อสร้าง
+    public bool EtaxAutoSubmit { get; set; } = false;       // ส่งสรรพากรอัตโนมัติหลังลงนาม
+    public string? EtaxServiceProvider { get; set; }        // "RD" or third-party provider
+    public string? EtaxXmlOutputPath { get; set; }          // custom XML output path
 }

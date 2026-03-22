@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบเงินเดือน - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <!-- Tabs -->
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('employees')">พนักงาน</button>
+      <button class="tab" onclick="Page.switchTab('runs')">รอบเงินเดือน</button>
+      <button class="tab" onclick="Page.switchTab('leaves')">ลาหยุด</button>
+      <button class="tab" onclick="Page.switchTab('reports')">รายงาน ภงด.1 / ประกันสังคม</button>
+    </div>
+
+    <!-- Employees Tab -->
+    <div id="tab-employees">
+      <div class="page-header">
+        <div><h2 class="page-title">พนักงาน</h2><p class="page-subtitle">จัดการข้อมูลพนักงานทั้งหมด</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateEmployee()">+ เพิ่มพนักงาน</button>
+      </div>
+      <div class="toolbar">
+        <input type="text" class="search-input" placeholder="ค้นหาพนักงาน..." id="empSearch" oninput="Page.loadEmployees()">
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>รหัส</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>แผนก</th><th class="text-right">เงินเดือน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="empBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+      <div id="empPagination"></div>
+    </div>
+
+    <!-- Payroll Runs Tab -->
+    <div id="tab-runs" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">รอบเงินเดือน</h2><p class="page-subtitle">สร้างและจัดการรอบการจ่ายเงินเดือน</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateRun()">+ สร้างรอบเงินเดือน</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>รอบที่</th><th>ชื่อรอบ</th><th>งวด</th><th>วันจ่าย</th><th class="text-right">จำนวนพนักงาน</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="runBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+      <div id="runPagination"></div>
+    </div>
+
+    <!-- Leaves Tab -->
+    <div id="tab-leaves" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">จัดการลาหยุด</h2><p class="page-subtitle">คำขอลาหยุดและการอนุมัติ</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateLeave()">+ สร้างคำขอลา</button>
+      </div>
+      <div class="toolbar">
+        <select class="filter-select" id="leaveYear" onchange="Page.loadLeaves()"></select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>พนักงาน</th><th>ประเภทลา</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th class="text-right">จำนวนวัน</th><th>เหตุผล</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="leaveBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Reports Tab -->
+    <div id="tab-reports" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">รายงานภาษีเงินเดือน</h2><p class="page-subtitle">ภงด.1 และประกันสังคม</p></div>
+      </div>
+      <div class="toolbar">
+        <select class="filter-select" id="reportYear" onchange="Page.loadReports()"></select>
+        <select class="filter-select" id="reportMonth" onchange="Page.loadReports()">
+          <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+          <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+          <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+          <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+        </select>
+        <select class="filter-select" id="reportType" onchange="Page.loadReports()">
+          <option value="pnd1">ภงด.1</option>
+          <option value="sso">ประกันสังคม</option>
+        </select>
+      </div>
+      <div class="card" style="padding:24px" id="reportContent">
+        <p class="text-gray-400 text-center">เลือกเดือนและประเภทรายงานเพื่อดูข้อมูล</p>
+      </div>
+    </div>
+
+    <!-- Employee Modal -->
+    <div class="modal-overlay" id="empModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="empModalTitle">เพิ่มพนักงาน</h3><button class="modal-close" onclick="Layout.closeModal('empModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="empId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="empCode" placeholder="EMP001"></div>
+            <div class="form-group"><label class="form-label">คำนำหน้า</label>
+              <select class="form-select" id="empTitle"><option value="นาย">นาย</option><option value="นาง">นาง</option><option value="นางสาว">นางสาว</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="empFirstName"></div>
+            <div class="form-group"><label class="form-label">นามสกุล *</label><input type="text" class="form-input" id="empLastName"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เลขบัตรประชาชน</label><input type="text" class="form-input" id="empIdCard" maxlength="13"></div>
+            <div class="form-group"><label class="form-label">วันเริ่มงาน *</label><input type="date" class="form-input" id="empStartDate"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ตำแหน่ง</label><input type="text" class="form-input" id="empPosition"></div>
+            <div class="form-group"><label class="form-label">แผนก</label><input type="text" class="form-input" id="empDepartment"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เงินเดือน *</label><input type="number" class="form-input" id="empSalary" step="0.01"></div>
+            <div class="form-group"><label class="form-label">บัญชีธนาคาร</label><input type="text" class="form-input" id="empBankAccount" placeholder="เลขบัญชี"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="empEmail"></div>
+            <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="empPhone"></div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('empModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEmployee()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Payroll Run Modal -->
+    <div class="modal-overlay" id="runModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">สร้างรอบเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('runModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อรอบ *</label><input type="text" class="form-input" id="runName" placeholder="เช่น เงินเดือนเดือน มี.ค. 2569"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เดือน *</label>
+              <select class="form-select" id="runMonth">
+                <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+                <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+                <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+                <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">ปี *</label><input type="number" class="form-input" id="runYear" value="2569"></div>
+          </div>
+          <div class="form-group"><label class="form-label">วันจ่ายเงิน *</label><input type="date" class="form-input" id="runPayDate"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('runModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRun()">สร้างรอบ</button></div>
+      </div>
+    </div>
+
+    <!-- Run Detail Modal -->
+    <div class="modal-overlay" id="runDetailModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="runDetailTitle">รายละเอียดรอบเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('runDetailModal')">&times;</button></div>
+        <div class="modal-body" id="runDetailContent" style="max-height:70vh;overflow-y:auto">
+        </div>
+        <div class="modal-footer" id="runDetailFooter"></div>
+      </div>
+    </div>
+
+    <!-- Leave Modal -->
+    <div class="modal-overlay" id="leaveModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">สร้างคำขอลา</h3><button class="modal-close" onclick="Layout.closeModal('leaveModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="leaveEmpId"></select></div>
+          <div class="form-group"><label class="form-label">ประเภทลา *</label>
+            <select class="form-select" id="leaveType">
+              <option value="Sick">ลาป่วย</option><option value="Annual">ลาพักร้อน</option><option value="Personal">ลากิจ</option><option value="Maternity">ลาคลอด</option><option value="Other">อื่นๆ</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="leaveStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด *</label><input type="date" class="form-input" id="leaveEnd"></div>
+          </div>
+          <div class="form-group"><label class="form-label">เหตุผล</label><textarea class="form-input" id="leaveReason" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('leaveModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveLeave()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Payslip PDF Modal -->
+    <div class="modal-overlay" id="payslipModal">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header"><h3 class="modal-title">สลิปเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('payslipModal')">&times;</button></div>
+        <div class="modal-body" style="padding:0"><iframe id="payslipFrame" style="width:100%;height:70vh;border:none"></iframe></div>
+        <div class="modal-footer"><button class="btn btn-primary" onclick="Page.printPayslip()">พิมพ์</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  currentTab: 'employees',
+  empPage: 1,
+  runPage: 1,
+
+  init() {
+    if (!Layout.init('payroll')) return;
+    Layout.setTitle('ระบบเงินเดือน');
+    const y = new Date().getFullYear();
+    ['leaveYear','reportYear'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      for (let i = y; i >= y-3; i--) sel.innerHTML += `<option value="${i}">${i+543}</option>`;
+    });
+    const m = new Date().getMonth() + 1;
+    const rm = document.getElementById('reportMonth');
+    if (rm) rm.value = m;
+    this.loadEmployees();
+  },
+
+  switchTab(tab) {
+    this.currentTab = tab;
+    document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tabs .tab').forEach(t => { if (t.textContent.includes({employees:'พนักงาน',runs:'รอบเงินเดือน',leaves:'ลาหยุด',reports:'รายงาน'}[tab]?.substring(0,4)||'')) t.classList.add('active'); });
+    ['employees','runs','leaves','reports'].forEach(t => {
+      const el = document.getElementById('tab-'+t);
+      if (el) el.style.display = t === tab ? '' : 'none';
+    });
+    if (tab === 'employees') this.loadEmployees();
+    else if (tab === 'runs') this.loadRuns();
+    else if (tab === 'leaves') this.loadLeaves();
+    else if (tab === 'reports') this.loadReports();
+  },
+
+  // ===== Employees =====
+  async loadEmployees() {
+    const api = Layout.api(); if (!api) return;
+    const search = document.getElementById('empSearch')?.value || '';
+    try {
+      const res = await api.getEmployees(`?page=${this.empPage}&pageSize=20${search ? '&search='+encodeURIComponent(search) : ''}`);
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('empBody');
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีพนักงาน</td></tr>'; return; }
+      tbody.innerHTML = items.map(e => `<tr>
+        <td><span class="font-medium">${e.employeeCode || e.code || '-'}</span></td>
+        <td>${e.firstName || ''} ${e.lastName || ''}</td>
+        <td>${e.position || '-'}</td>
+        <td>${e.department || '-'}</td>
+        <td class="text-right">${Layout.money(e.salary || e.baseSalary)}</td>
+        <td>${Layout.statusBadge(e.status || 'Active')}</td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editEmployee('${e.id}')">แก้ไข</button></td>
+      </tr>`).join('');
+      const totalPages = res.data?.totalPages || 1;
+      document.getElementById('empPagination').innerHTML = Layout.renderPagination(this.empPage, totalPages, 'Page.gotoEmpPage');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  gotoEmpPage(p) { Page.empPage = p; Page.loadEmployees(); },
+
+  openCreateEmployee() {
+    document.getElementById('empModalTitle').textContent = 'เพิ่มพนักงาน';
+    document.getElementById('empId').value = '';
+    ['empCode','empFirstName','empLastName','empIdCard','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('empStartDate').value = Layout.dateInput(new Date());
+    Layout.openModal('empModal');
+  },
+
+  async editEmployee(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getEmployee(id);
+      const e = res.data;
+      document.getElementById('empModalTitle').textContent = 'แก้ไขพนักงาน';
+      document.getElementById('empId').value = e.id;
+      document.getElementById('empCode').value = e.employeeCode || e.code || '';
+      document.getElementById('empFirstName').value = e.firstName || '';
+      document.getElementById('empLastName').value = e.lastName || '';
+      document.getElementById('empIdCard').value = e.idCardNumber || e.nationalId || '';
+      document.getElementById('empStartDate').value = Layout.dateInput(e.startDate || e.hireDate);
+      document.getElementById('empPosition').value = e.position || '';
+      document.getElementById('empDepartment').value = e.department || '';
+      document.getElementById('empSalary').value = e.salary || e.baseSalary || '';
+      document.getElementById('empBankAccount').value = e.bankAccount || '';
+      document.getElementById('empEmail').value = e.email || '';
+      document.getElementById('empPhone').value = e.phone || '';
+      Layout.openModal('empModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async saveEmployee() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('empId').value;
+    const data = {
+      employeeCode: document.getElementById('empCode').value,
+      title: document.getElementById('empTitle').value,
+      firstName: document.getElementById('empFirstName').value,
+      lastName: document.getElementById('empLastName').value,
+      idCardNumber: document.getElementById('empIdCard').value,
+      startDate: document.getElementById('empStartDate').value,
+      position: document.getElementById('empPosition').value,
+      department: document.getElementById('empDepartment').value,
+      salary: parseFloat(document.getElementById('empSalary').value) || 0,
+      bankAccount: document.getElementById('empBankAccount').value,
+      email: document.getElementById('empEmail').value,
+      phone: document.getElementById('empPhone').value,
+    };
+    if (!data.firstName || !data.lastName) { Layout.toast('กรุณากรอกชื่อ-สกุล', 'error'); return; }
+    try {
+      if (id) await api.updateEmployee(id, data);
+      else await api.createEmployee(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มพนักงานสำเร็จ');
+      Layout.closeModal('empModal');
+      this.loadEmployees();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== Payroll Runs =====
+  async loadRuns() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getPayrollRuns(`?page=${this.runPage}&pageSize=20`);
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('runBody');
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรอบเงินเดือน</td></tr>'; return; }
+      tbody.innerHTML = items.map((r, i) => `<tr>
+        <td>${i+1}</td>
+        <td><span class="font-medium">${r.name || r.title || '-'}</span></td>
+        <td>${r.month || '-'}/${r.year || '-'}</td>
+        <td>${Layout.date(r.payDate || r.paymentDate)}</td>
+        <td class="text-right">${r.employeeCount || r.totalEmployees || 0}</td>
+        <td class="text-right">${Layout.money(r.totalNetPay || r.totalAmount)}</td>
+        <td>${Layout.statusBadge(r.status || 'Draft')}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.viewRun('${r.id}')">ดู</button>
+          ${r.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.calculateRun('${r.id}')">คำนวณ</button>` : ''}
+          ${r.status === 'Calculated' ? `<button class="btn btn-sm btn-success" onclick="Page.approveRun('${r.id}')">อนุมัติ</button>` : ''}
+          ${r.status === 'Approved' ? `<button class="btn btn-sm btn-primary" onclick="Page.payRun('${r.id}')">จ่าย</button>` : ''}
+        </td>
+      </tr>`).join('');
+      const totalPages = res.data?.totalPages || 1;
+      document.getElementById('runPagination').innerHTML = Layout.renderPagination(this.runPage, totalPages, 'Page.gotoRunPage');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  gotoRunPage(p) { Page.runPage = p; Page.loadRuns(); },
+
+  openCreateRun() {
+    const now = new Date();
+    document.getElementById('runMonth').value = now.getMonth() + 1;
+    document.getElementById('runYear').value = now.getFullYear() + 543;
+    document.getElementById('runPayDate').value = '';
+    document.getElementById('runName').value = '';
+    Layout.openModal('runModal');
+  },
+
+  async saveRun() {
+    const api = Layout.api(); if (!api) return;
+    const data = {
+      name: document.getElementById('runName').value,
+      month: parseInt(document.getElementById('runMonth').value),
+      year: parseInt(document.getElementById('runYear').value),
+      payDate: document.getElementById('runPayDate').value,
+    };
+    if (!data.name || !data.payDate) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try {
+      await api.createPayrollRun(data);
+      Layout.toast('สร้างรอบเงินเดือนสำเร็จ');
+      Layout.closeModal('runModal');
+      this.loadRuns();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async calculateRun(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.calculatePayroll(id);
+      Layout.toast('คำนวณเงินเดือนสำเร็จ');
+      this.loadRuns();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async approveRun(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.approvePayroll(id);
+      Layout.toast('อนุมัติรอบเงินเดือนสำเร็จ');
+      this.loadRuns();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async payRun(id) {
+    if (!confirm('ยืนยันการจ่ายเงินเดือน?')) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.payPayroll(id);
+      Layout.toast('จ่ายเงินเดือนสำเร็จ');
+      this.loadRuns();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async viewRun(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getPayrollRun(id);
+      const r = res.data;
+      document.getElementById('runDetailTitle').textContent = r.name || 'รายละเอียดรอบเงินเดือน';
+      const details = r.details || r.employees || [];
+      document.getElementById('runDetailContent').innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+          <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">งวด</div><div class="font-medium">${r.month}/${r.year}</div></div>
+          <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">วันจ่าย</div><div class="font-medium">${Layout.date(r.payDate||r.paymentDate)}</div></div>
+          <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
+          <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ยอดจ่ายสุทธิ</div><div class="font-medium text-primary">${Layout.money(r.totalNetPay||r.totalAmount)}</div></div>
+        </div>
+        <table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>สลิป</th></tr></thead>
+        <tbody>${details.length ? details.map(d => `<tr>
+          <td>${d.employeeName || (d.firstName+' '+d.lastName) || '-'}</td>
+          <td class="text-right">${Layout.money(d.baseSalary||d.salary)}</td>
+          <td class="text-right">${Layout.money(d.otherIncome||d.allowances||0)}</td>
+          <td class="text-right">${Layout.money(d.tax||d.incomeTax||0)}</td>
+          <td class="text-right">${Layout.money(d.socialSecurity||d.sso||0)}</td>
+          <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary)}</td>
+          <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${d.employeeId||d.id}')">ดูสลิป</button></td>
+        </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table>`;
+      document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')">ปิด</button>`;
+      Layout.openModal('runDetailModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  showPayslip(runId, empId) {
+    const api = Layout.api(); if (!api) return;
+    const url = api.getPayslip(runId, empId);
+    const token = localStorage.getItem('token');
+    document.getElementById('payslipFrame').src = url + '?token=' + token;
+    Layout.openModal('payslipModal');
+  },
+
+  printPayslip() {
+    document.getElementById('payslipFrame').contentWindow.print();
+  },
+
+  // ===== Leaves =====
+  async loadLeaves() {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('leaveYear')?.value || new Date().getFullYear();
+    try {
+      const res = await api.getLeaves(`?year=${year}`);
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('leaveBody');
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีคำขอลา</td></tr>'; return; }
+      tbody.innerHTML = items.map(l => {
+        const typeMap = {Sick:'ลาป่วย',Annual:'ลาพักร้อน',Personal:'ลากิจ',Maternity:'ลาคลอด',Other:'อื่นๆ'};
+        return `<tr>
+          <td>${l.employeeName || '-'}</td>
+          <td>${typeMap[l.leaveType||l.type] || l.leaveType || l.type || '-'}</td>
+          <td>${Layout.date(l.startDate)}</td>
+          <td>${Layout.date(l.endDate)}</td>
+          <td class="text-right">${l.days || l.totalDays || '-'}</td>
+          <td>${l.reason || '-'}</td>
+          <td>${Layout.statusBadge(l.status || 'Pending')}</td>
+          <td>${l.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.approveLeave('${l.id}')">อนุมัติ</button>` : ''}</td>
+        </tr>`;
+      }).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreateLeave() {
+    this.loadEmployeeSelect();
+    Layout.openModal('leaveModal');
+  },
+
+  async loadEmployeeSelect() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getEmployees('?pageSize=200');
+      const items = res.data?.items || res.data || [];
+      const sel = document.getElementById('leaveEmpId');
+      sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
+    } catch (err) { /* ignore */ }
+  },
+
+  async saveLeave() {
+    const api = Layout.api(); if (!api) return;
+    const data = {
+      employeeId: document.getElementById('leaveEmpId').value,
+      leaveType: document.getElementById('leaveType').value,
+      startDate: document.getElementById('leaveStart').value,
+      endDate: document.getElementById('leaveEnd').value,
+      reason: document.getElementById('leaveReason').value,
+    };
+    if (!data.employeeId || !data.startDate || !data.endDate) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try {
+      await api.createLeave(data);
+      Layout.toast('สร้างคำขอลาสำเร็จ');
+      Layout.closeModal('leaveModal');
+      this.loadLeaves();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async approveLeave(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.approveLeave(id);
+      Layout.toast('อนุมัติลาสำเร็จ');
+      this.loadLeaves();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== Reports =====
+  async loadReports() {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('reportYear')?.value || new Date().getFullYear();
+    const month = document.getElementById('reportMonth')?.value || 1;
+    const type = document.getElementById('reportType')?.value || 'pnd1';
+    const content = document.getElementById('reportContent');
+    try {
+      let res;
+      if (type === 'pnd1') {
+        res = await api.getPnd1(year, month);
+        const d = res.data || {};
+        content.innerHTML = `
+          <h3 style="margin-bottom:16px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.employeeCount || 0}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalIncome)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTax)}</div></div>
+          </div>
+          ${d.employees ? `<table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
+          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.income)}</td><td class="text-right">${Layout.money(e.tax)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+      } else {
+        res = await api.getSso(year, month);
+        const d = res.data || {};
+        content.innerHTML = `
+          <h3 style="margin-bottom:16px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.employeeCount || 0}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.employeeContribution)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.employerContribution)}</div></div>
+          </div>
+          ${d.employees ? `<table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
+          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.wage)}</td><td class="text-right">${Layout.money(e.contribution)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+      }
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

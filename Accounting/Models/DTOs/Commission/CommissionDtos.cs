@@ -30,3 +30,7 @@ public record CommissionCalculationResponse(
     Guid Id, Guid EmployeeId, string EmployeeName, Guid CommissionPlanId,
     string PlanName, int Year, int Month,
     decimal BaseAmount, decimal CommissionAmount, string Status, DateTime CreatedAt);
+
+public record AssignCommissionRequest(Guid? EmployeeId, Guid? UserId, DateTime StartDate, DateTime? EndDate);
+
+public record CommissionCalcResponse(Guid? EmployeeId, string? EmployeeName, int Year, int Month, decimal BasisAmount, decimal CommissionAmount, string Status);

@@ -36,7 +36,9 @@ public class Employee : TenantEntity
     public DateTime? ProbationEndDate { get; set; }
     public bool IsActive { get; set; } = true;
     public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
     public Guid? DimensionId { get; set; }               // Cost Center / Department
+    public AccountingDimension? Dimension { get; set; }
 
     // Compensation
     public decimal BaseSalary { get; set; }
@@ -64,6 +66,7 @@ public class Employee : TenantEntity
 
     // Linked account
     public Guid? SalaryExpenseAccountId { get; set; }
+    public ChartOfAccount? SalaryExpenseAccount { get; set; }
 
     public ICollection<PayrollRun> PayrollRuns { get; set; } = new List<PayrollRun>();
     public ICollection<EmployeeLeave> Leaves { get; set; } = new List<EmployeeLeave>();
@@ -95,6 +98,7 @@ public class PayrollRun : TenantEntity
 
     public int EmployeeCount { get; set; }
     public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
     public string? ApprovedBy { get; set; }
     public DateTime? ApprovedAt { get; set; }
 
@@ -180,5 +184,6 @@ public class PayrollItem : TenantEntity
     public bool IsTaxable { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public Guid? AccountId { get; set; }                 // GL account
+    public ChartOfAccount? Account { get; set; }
     public int SortOrder { get; set; }
 }

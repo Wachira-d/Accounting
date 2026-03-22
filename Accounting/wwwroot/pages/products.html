@@ -78,7 +78,7 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
-      page: 1,
+      page: 1, _cache: {},
       async init() {
         if (!Layout.init('products')) return;
         Layout.setTitle('สินค้า/บริการ');
@@ -96,6 +96,7 @@
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          items.forEach(p => Page._cache[p.id] = p);
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.code}</td>
             <td>${p.name}</td>
@@ -105,7 +106,7 @@
             <td class="text-right">${Layout.money(p.costPrice)}</td>
             <td class="text-right ${(p.currentStock <= p.minimumStock && p.trackStock) ? 'text-danger font-semibold' : ''}">${p.trackStock ? p.currentStock : '-'}</td>
             <td>${p.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick='Page.openEdit(${JSON.stringify(p).replace(/'/g,"&#39;")})'>แก้ไข</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')">แก้ไข</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -126,7 +127,8 @@
         document.getElementById('fCode').disabled = false;
         Layout.openModal('formModal');
       },
-      openEdit(p) {
+      openEdit(id) {
+        const p = this._cache[id]; if (!p) return;
         document.getElementById('formTitle').textContent = 'แก้ไขสินค้า';
         document.getElementById('editId').value = p.id;
         document.getElementById('fCode').value = p.code; document.getElementById('fCode').disabled = true;

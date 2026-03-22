@@ -17,3 +17,7 @@ public record WebhookDeliveryResponse(
     Guid Id, Guid WebhookId, string EventType, string PayloadJson,
     int HttpStatusCode, string? ResponseBody, int AttemptNumber,
     bool IsSuccess, DateTime DeliveredAt);
+
+public record WebhookRegistrationResponse(Guid Id, string Name, string Url, string EventTypes, bool IsActive, int MaxRetries, int FailureCount, DateTime? LastTriggeredAt, DateTime? LastSuccessAt, string? LastError);
+
+public record WebhookEventTypeResponse(string EventType, string Description, string? SamplePayloadJson);

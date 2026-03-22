@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Ai;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -31,14 +32,30 @@ public class AiController : ControllerBase
         return Ok(new ApiResponse<bool>(true, true));
     }
 
+    [HttpPost("categorize/{resultId:guid}/reject")]
+    public async Task<ActionResult<ApiResponse<bool>>> Reject(Guid companyId, Guid resultId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _service.RejectCategorizationAsync(companyId, resultId, userId);
+        return Ok(new ApiResponse<bool>(true, true));
+    }
+
     // Rules
     [HttpPost("rules")]
     public async Task<ActionResult<ApiResponse<AutoCatRuleResponse>>> CreateRule(Guid companyId, [FromBody] CreateAutoCatRuleRequest request)
-        => Ok(new ApiResponse<AutoCatRuleResponse>(true, await _service.CreateRuleAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<AutoCatRuleResponse>(true, await _service.CreateRuleAsync(companyId, request)));
 
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<AutoCatRuleResponse>>>> GetRules(Guid companyId)
         => Ok(new ApiResponse<List<AutoCatRuleResponse>>(true, await _service.GetRulesAsync(companyId)));
+
+    [HttpPut("rules/{ruleId:guid}")]
+    public async Task<ActionResult<ApiResponse<AutoCatRuleResponse>>> UpdateRule(Guid companyId, Guid ruleId, [FromBody] UpdateAutoCatRuleRequest request)
+        => Ok(new ApiResponse<AutoCatRuleResponse>(true, await _service.UpdateRuleAsync(companyId, ruleId, request)));
+
+    [HttpDelete("rules/{ruleId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteRule(Guid companyId, Guid ruleId)
+    { await _service.DeleteRuleAsync(companyId, ruleId); return NoContent(); }
 
     [HttpPost("rules/learn")]
     public async Task<ActionResult<ApiResponse<List<AutoCatRuleResponse>>>> LearnRules(Guid companyId)
@@ -53,14 +70,26 @@ public class AiController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<AnomalyResponse>>>> GetAnomalies(Guid companyId, [FromQuery] string? status)
         => Ok(new ApiResponse<List<AnomalyResponse>>(true, await _service.GetAnomaliesAsync(companyId, status)));
 
+    [HttpPost("anomalies/{anomalyId:guid}/acknowledge")]
+    public async Task<ActionResult<ApiResponse<bool>>> Acknowledge(Guid companyId, Guid anomalyId)
+    { await _service.AcknowledgeAnomalyAsync(companyId, anomalyId); return Ok(new ApiResponse<bool>(true, true)); }
+
     [HttpPost("anomalies/{anomalyId:guid}/resolve")]
     public async Task<ActionResult<ApiResponse<bool>>> Resolve(Guid companyId, Guid anomalyId, [FromQuery] string notes)
     { await _service.ResolveAnomalyAsync(companyId, anomalyId, notes, User.Identity?.Name ?? ""); return Ok(new ApiResponse<bool>(true, true)); }
+
+    [HttpPost("anomalies/{anomalyId:guid}/false-positive")]
+    public async Task<ActionResult<ApiResponse<bool>>> MarkFalsePositive(Guid companyId, Guid anomalyId)
+    { await _service.MarkFalsePositiveAsync(companyId, anomalyId); return Ok(new ApiResponse<bool>(true, true)); }
 
     // Forecasting
     [HttpPost("forecast")]
     public async Task<ActionResult<ApiResponse<CashFlowForecastResponse>>> CreateForecast(Guid companyId, [FromBody] CreateForecastRequest request)
         => Ok(new ApiResponse<CashFlowForecastResponse>(true, await _service.GenerateForecastAsync(companyId, request)));
+
+    [HttpGet("forecast/{forecastId:guid}")]
+    public async Task<ActionResult<ApiResponse<CashFlowForecastResponse>>> GetForecast(Guid companyId, Guid forecastId)
+        => Ok(new ApiResponse<CashFlowForecastResponse>(true, await _service.GetForecastAsync(companyId, forecastId)));
 
     [HttpGet("forecasts")]
     public async Task<ActionResult<ApiResponse<List<CashFlowForecastResponse>>>> GetForecasts(Guid companyId)

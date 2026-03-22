@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Portal;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -12,10 +13,16 @@ namespace Accounting.Services.Implementations;
 public class PortalService : IPortalService
 {
     private readonly AccountingDbContext _db;
+    private readonly IPdfGenerationService? _pdfService;
+    private readonly string _portalSigningKey;
 
-    public PortalService(AccountingDbContext db)
+    public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null)
     {
         _db = db;
+        _pdfService = pdfService;
+        _portalSigningKey = Environment.GetEnvironmentVariable("PORTAL_SIGNING_KEY")
+            ?? configuration["Portal:SigningKey"]
+            ?? throw new InvalidOperationException("Portal signing key is not configured. Set PORTAL_SIGNING_KEY env var or Portal:SigningKey in config.");
     }
 
     // ===== Portal Access Management =====
@@ -222,9 +229,17 @@ public class PortalService : IPortalService
             await _db.SaveChangesAsync();
         }
 
-        // Generate a simple PDF placeholder (in production, use a real PDF library)
-        var content = $"Document: {doc.DocumentNumber}\nDate: {doc.DocumentDate:yyyy-MM-dd}\nTotal: {doc.TotalAmount:N2}";
-        return Encoding.UTF8.GetBytes(content);
+        // Delegate to PdfGenerationService if available
+        if (_pdfService != null)
+        {
+            var pdfResponse = await _pdfService.GenerateDocumentPdfAsync(companyId,
+                new Models.DTOs.DocumentTemplate.GeneratePdfRequest(documentId, null, null, null, null));
+            return pdfResponse.PdfData;
+        }
+
+        // Fallback: generate basic PDF
+        var html = $"<html><body><h2>{doc.DocumentNumber}</h2><p>Date: {doc.DocumentDate:dd/MM/yyyy}</p><p>Total: {doc.TotalAmount:N2}</p></body></html>";
+        return PdfGenerationService.ConvertHtmlToPdf(html, null);
     }
 
     public async Task<PortalStatementResponse> GetMyStatementAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate)
@@ -310,7 +325,7 @@ public class PortalService : IPortalService
         var payloadBytes = Encoding.UTF8.GetBytes(payload.ToString());
 
         // Sign with HMAC-SHA256 using a derived key (in production, use a configured secret)
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes("portal-signing-key-replace-in-production"));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_portalSigningKey));
         var signature = hmac.ComputeHash(payloadBytes);
 
         var tokenBytes = new byte[payloadBytes.Length + 1 + signature.Length];
@@ -344,7 +359,7 @@ public class PortalService : IPortalService
                 throw new InvalidOperationException("Token has expired.");
 
             // Verify signature
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes("portal-signing-key-replace-in-production"));
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_portalSigningKey));
             var expectedSignature = hmac.ComputeHash(payloadBytes);
 
             var actualSignature = new byte[tokenBytes.Length - dotIndex - 1];

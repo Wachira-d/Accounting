@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Compliance;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +16,7 @@ public class ComplianceController : ControllerBase
 
     [HttpPost("filings")]
     public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> Create(Guid companyId, [FromBody] CreateComplianceFilingRequest request)
-        => Ok(new ApiResponse<ComplianceFilingResponse>(true, await _service.CreateFilingAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<ComplianceFilingResponse>(true, await _service.CreateFilingAsync(companyId, request)));
 
     [HttpGet("filings/{filingId:guid}")]
     public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> GetById(Guid companyId, Guid filingId)

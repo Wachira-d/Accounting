@@ -12,15 +12,17 @@ public class AuthService : IAuthService
 {
     private readonly AccountingDbContext _db;
     private readonly IConfiguration _config;
+    private readonly IEmailService _emailService;
 
     // Account lockout settings
     private const int MaxFailedAttempts = 5;
     private const int LockoutMinutes = 15;
 
-    public AuthService(AccountingDbContext db, IConfiguration config)
+    public AuthService(AccountingDbContext db, IConfiguration config, IEmailService emailService)
     {
         _db = db;
         _config = config;
+        _emailService = emailService;
     }
 
     public async Task<LoginResponse> RegisterAsync(RegisterRequest request)
@@ -132,6 +134,40 @@ public class AuthService : IAuthService
         ValidatePassword(request.NewPassword);
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<string> ForgotPasswordAsync(string email)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user == null)
+            return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
+
+        var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray())
+            + Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+        user.PasswordResetToken = token;
+        user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
+        await _db.SaveChangesAsync();
+
+        // Send password reset email
+        await _emailService.SendPasswordResetAsync(user.Email, user.FullName, token);
+
+        return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
+    }
+
+    public async Task ResetPasswordAsync(string token, string newPassword)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u =>
+            u.PasswordResetToken == token && u.PasswordResetTokenExpiry > DateTime.UtcNow)
+            ?? throw new InvalidOperationException("ลิงก์รีเซ็ตรหัสผ่านไม่ถูกต้องหรือหมดอายุ");
+
+        ValidatePassword(newPassword);
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiry = null;
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
         await _db.SaveChangesAsync();
     }
 

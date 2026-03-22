@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.DTOs.Consolidation;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -275,8 +276,8 @@ public class ConsolidationService : IConsolidationService
             // Investment recorded at cost + share of post-acquisition profits
             ConsolidationMethod.Equity => (member.OwnershipPercent / 100m, 0m),
 
-            // Cost Method: investment recorded at cost, only dividend income recognized
-            ConsolidationMethod.Cost => (0m, 0m),
+            // Cost Method: investment at original cost (use ownership% for initial recognition)
+            ConsolidationMethod.Cost => (member.OwnershipPercent / 100m, 0m),
 
             _ => (0m, 0m)
         };
@@ -368,7 +369,7 @@ public class ConsolidationService : IConsolidationService
         if (fromDate.HasValue)
             query = query.Where(l => l.JournalEntry.EntryDate >= fromDate.Value);
 
-        return await query
+        var results = await query
             .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
             .Select(g => new
             {
@@ -377,9 +378,10 @@ public class ConsolidationService : IConsolidationService
                 AccountType = g.Key.AccountType.ToString(),
                 Balance = g.Sum(l => l.DebitAmount - l.CreditAmount)
             })
-            .ToListAsync()
-            .ContinueWith(t => t.Result.Select(b =>
-                (b.AccountCode, b.AccountName, b.AccountType, b.Balance)).ToList());
+            .ToListAsync();
+
+        return results.Select(b =>
+            (b.AccountCode, b.AccountName, b.AccountType, b.Balance)).ToList();
     }
 
     private async Task<List<EliminationEntryResponse>> GenerateEliminationEntries(ConsolidationGroup group, DateTime asOfDate)

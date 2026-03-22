@@ -13,6 +13,15 @@
       <div><h2 class="page-title">โครงการ</h2><p class="page-subtitle">จัดการโครงการและติดตามต้นทุน</p></div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างโครงการ</button>
     </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาโครงการ..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Active">กำลังดำเนินการ</option>
+        <option value="Completed">เสร็จสิ้น</option>
+        <option value="OnHold">ระงับ</option>
+      </select>
+    </div>
     <div class="table-container">
       <table class="table">
         <thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>ลูกค้า</th><th class="text-right">งบประมาณ</th><th class="text-right">ต้นทุนจริง</th><th>ความคืบหน้า</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
@@ -20,10 +29,12 @@
       </table>
     </div>
 
+    <!-- Create/Edit Modal -->
     <div class="modal-overlay" id="formModal">
       <div class="modal">
-        <div class="modal-header"><h3 class="modal-title">สร้างโครงการ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างโครงการ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
+          <input type="hidden" id="fId">
           <div class="form-row">
             <div class="form-group"><label class="form-label">รหัสโครงการ *</label><input type="text" class="form-input" id="fCode"></div>
             <div class="form-group"><label class="form-label">ชื่อโครงการ *</label><input type="text" class="form-input" id="fName"></div>
@@ -44,12 +55,78 @@
         </div>
       </div>
     </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดโครงการ</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="detailInfo" style="margin-bottom:16px"></div>
+          <div class="tabs" style="margin-bottom:0">
+            <div class="tab active" onclick="Page.detailTab('tasks',this)">งาน</div>
+            <div class="tab" onclick="Page.detailTab('costs',this)">ต้นทุน</div>
+            <div class="tab" onclick="Page.detailTab('profit',this)">กำไร</div>
+          </div>
+          <div id="tasksTab" style="max-height:400px;overflow-y:auto"></div>
+          <div id="costsTab" class="hidden" style="max-height:400px;overflow-y:auto"></div>
+          <div id="profitTab" class="hidden"></div>
+        </div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" id="taskModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มงาน</h3><button class="modal-close" onclick="Layout.closeModal('taskModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="taskProjectId">
+          <div class="form-group"><label class="form-label">ชื่องาน *</label><input type="text" class="form-input" id="taskName"></div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="taskDesc"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม</label><input type="date" class="form-input" id="taskStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="taskEnd"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('taskModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveTask()">เพิ่มงาน</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Cost Modal -->
+    <div class="modal-overlay" id="costModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">บันทึกต้นทุน</h3><button class="modal-close" onclick="Layout.closeModal('costModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="costProjectId">
+          <div class="form-group"><label class="form-label">รายละเอียด *</label><input type="text" class="form-input" id="costDesc"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="costAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="costDate"></div>
+          </div>
+          <div class="form-group"><label class="form-label">หมวดหมู่</label>
+            <select class="form-select" id="costCategory">
+              <option value="Labor">ค่าแรง</option><option value="Material">วัสดุ</option>
+              <option value="Equipment">อุปกรณ์</option><option value="Subcontract">ผู้รับเหมาช่วง</option>
+              <option value="Travel">ค่าเดินทาง</option><option value="Other">อื่นๆ</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('costModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveCost()">บันทึก</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
+      currentProjectId: null,
       async init() {
         if (!Layout.init('projects')) return;
         Layout.setTitle('โครงการ');
@@ -57,47 +134,228 @@
       },
       async load() {
         const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = '?page=1&pageSize=30';
+        if (status) q += `&status=${status}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await api.getProjects();
+          const res = await api.getProjects(q);
           const items = res.data?.items || res.data || [];
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีโครงการ</td></tr>'; return; }
-          tbody.innerHTML = items.map(p => `<tr>
+          tbody.innerHTML = items.map(p => {
+            const overBudget = p.actualCost > p.budgetAmount;
+            return `<tr>
             <td class="font-medium">${p.code}</td>
             <td>${p.name}</td>
             <td>${p.contactName || '-'}</td>
             <td class="text-right">${Layout.money(p.budgetAmount)}</td>
-            <td class="text-right">${Layout.money(p.actualCost)}</td>
+            <td class="text-right ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</td>
             <td>
               <div style="display:flex;align-items:center;gap:8px">
                 <div style="flex:1;background:var(--gray-200);border-radius:4px;height:8px;overflow:hidden">
-                  <div style="width:${p.completionPercent||0}%;background:var(--primary);height:100%;border-radius:4px"></div>
+                  <div style="width:${p.completionPercent||0}%;background:${(p.completionPercent||0) >= 100 ? 'var(--success)' : 'var(--primary)'};height:100%;border-radius:4px"></div>
                 </div>
                 <span class="text-xs">${p.completionPercent||0}%</span>
               </div>
             </td>
             <td>${Layout.statusBadge(p.status)}</td>
-            <td><button class="btn btn-sm btn-ghost">ดู</button></td>
-          </tr>`).join('');
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')">ดู</button>
+              ${p.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')">แก้ไข</button>` : ''}
+            </td>
+          </tr>`}).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openCreate() {
+        document.getElementById('formTitle').textContent = 'สร้างโครงการ';
+        document.getElementById('fId').value = '';
+        document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
+        document.getElementById('fName').value = '';
+        document.getElementById('fDesc').value = '';
         document.getElementById('fStart').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fEnd').value = '';
+        document.getElementById('fBudget').value = '';
+        document.getElementById('fContract').value = '';
         Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProject(id);
+          const p = res.data;
+          document.getElementById('formTitle').textContent = 'แก้ไขโครงการ';
+          document.getElementById('fId').value = p.id;
+          document.getElementById('fCode').value = p.code; document.getElementById('fCode').disabled = true;
+          document.getElementById('fName').value = p.name;
+          document.getElementById('fDesc').value = p.description || '';
+          document.getElementById('fStart').value = Layout.dateInput(p.startDate);
+          document.getElementById('fEnd').value = Layout.dateInput(p.endDate);
+          document.getElementById('fBudget').value = p.budgetAmount;
+          document.getElementById('fContract').value = p.contractAmount || '';
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async save() {
         const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const data = {
+          code: document.getElementById('fCode').value,
+          name: document.getElementById('fName').value,
+          description: document.getElementById('fDesc').value || null,
+          startDate: document.getElementById('fStart').value,
+          endDate: document.getElementById('fEnd').value || null,
+          budgetAmount: parseFloat(document.getElementById('fBudget').value),
+          contractAmount: parseFloat(document.getElementById('fContract').value) || null,
+        };
         try {
-          await api.createProject({
-            code: document.getElementById('fCode').value,
-            name: document.getElementById('fName').value,
-            description: document.getElementById('fDesc').value || null,
-            startDate: document.getElementById('fStart').value,
-            endDate: document.getElementById('fEnd').value || null,
-            budgetAmount: parseFloat(document.getElementById('fBudget').value),
-            contractAmount: parseFloat(document.getElementById('fContract').value) || null,
+          if (id) { await api.updateProject(id, data); }
+          else { await api.createProject(data); }
+          Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างโครงการสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async viewDetail(id) {
+        this.currentProjectId = id;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProject(id);
+          const p = res.data;
+          const overBudget = p.actualCost > p.budgetAmount;
+          const profit = (p.contractAmount || 0) - (p.actualCost || 0);
+
+          document.getElementById('detailTitle').textContent = `${p.code} - ${p.name}`;
+          document.getElementById('detailInfo').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+              <div><div class="text-xs text-gray-500">ระยะเวลา</div><div>${Layout.date(p.startDate)} - ${Layout.date(p.endDate)}</div></div>
+              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(p.status)}</div></div>
+              <div><div class="text-xs text-gray-500">ความคืบหน้า</div><div class="font-semibold">${p.completionPercent || 0}%</div></div>
+            </div>
+            <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+              <div class="kpi-card"><div class="kpi-label">งบประมาณ</div><div class="kpi-value">${Layout.money(p.budgetAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">มูลค่าสัญญา</div><div class="kpi-value">${Layout.money(p.contractAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนจริง</div><div class="kpi-value ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">กำไร (ประมาณ)</div><div class="kpi-value ${profit >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(profit)}</div></div>
+            </div>
+            ${p.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500">คำอธิบาย</div><div>${p.description}</div></div>` : ''}`;
+
+          await this.loadTasks(id);
+
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          if (p.status === 'Active') {
+            footer += ` <button class="btn btn-info" onclick="Page.openAddTask('${id}')">+ เพิ่มงาน</button>`;
+            footer += ` <button class="btn btn-primary" onclick="Page.openAddCost('${id}')">+ บันทึกต้นทุน</button>`;
+            footer += ` <button class="btn btn-success" onclick="Page.completeProject('${id}')">เสร็จสิ้นโครงการ</button>`;
+          }
+          document.getElementById('detailFooter').innerHTML = footer;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      detailTab(tab, el) {
+        document.getElementById('tasksTab').classList.toggle('hidden', tab !== 'tasks');
+        document.getElementById('costsTab').classList.toggle('hidden', tab !== 'costs');
+        document.getElementById('profitTab').classList.toggle('hidden', tab !== 'profit');
+        el.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        if (tab === 'costs') this.loadCosts(this.currentProjectId);
+        if (tab === 'profit') this.loadProfit(this.currentProjectId);
+      },
+      async loadTasks(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjectTasks(id);
+          const items = res.data?.items || res.data || [];
+          const statusMap = { Pending:'รอดำเนินการ', InProgress:'กำลังทำ', Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก' };
+          document.getElementById('tasksTab').innerHTML = items.length ?
+            `<table class="table"><thead><tr><th>ชื่องาน</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th>สถานะ</th></tr></thead><tbody>${items.map(t => `<tr>
+              <td class="font-medium">${t.name}</td>
+              <td>${Layout.date(t.startDate)}</td>
+              <td>${Layout.date(t.endDate)}</td>
+              <td>${Layout.statusBadge(t.status)}</td>
+            </tr>`).join('')}</tbody></table>`
+            : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีงาน</div>';
+        } catch (e) { document.getElementById('tasksTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+      },
+      async loadCosts(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjectCosts(id);
+          const items = res.data?.items || res.data || [];
+          const catMap = { Labor:'ค่าแรง', Material:'วัสดุ', Equipment:'อุปกรณ์', Subcontract:'ผู้รับเหมาช่วง', Travel:'ค่าเดินทาง', Other:'อื่นๆ' };
+          document.getElementById('costsTab').innerHTML = items.length ?
+            `<table class="table"><thead><tr><th>วันที่</th><th>รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
+              <td>${Layout.date(c.costDate || c.date)}</td>
+              <td>${c.description}</td>
+              <td><span class="badge badge-info">${catMap[c.category] || c.category}</span></td>
+              <td class="text-right font-semibold">${Layout.money(c.amount)}</td>
+            </tr>`).join('')}</tbody></table>`
+            : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน</div>';
+        } catch (e) { document.getElementById('costsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+      },
+      async loadProfit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjectProfit(id);
+          const d = res.data;
+          document.getElementById('profitTab').innerHTML = `
+            <div class="grid grid-3 gap-4" style="padding:16px 0">
+              <div class="kpi-card"><div class="kpi-label">รายได้รวม</div><div class="kpi-value text-success">${Layout.money(d.totalRevenue || d.contractAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนรวม</div><div class="kpi-value text-danger">${Layout.money(d.totalCost)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value ${(d.profit || d.netProfit) >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(d.profit || d.netProfit)}</div></div>
+            </div>
+            ${d.costBreakdown ? `<h4 style="margin:16px 0 8px">สัดส่วนต้นทุน</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>หมวด</th><th class="text-right">จำนวน</th><th class="text-right">สัดส่วน</th></tr></thead>
+            <tbody>${(d.costBreakdown||[]).map(c => `<tr><td>${c.category}</td><td class="text-right">${Layout.money(c.amount)}</td><td class="text-right">${(c.percentage||0).toFixed(1)}%</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+        } catch (e) { document.getElementById('profitTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+      },
+      openAddTask(id) {
+        document.getElementById('taskProjectId').value = id;
+        document.getElementById('taskName').value = '';
+        document.getElementById('taskDesc').value = '';
+        document.getElementById('taskStart').value = new Date().toISOString().split('T')[0];
+        document.getElementById('taskEnd').value = '';
+        Layout.openModal('taskModal');
+      },
+      async saveTask() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('taskProjectId').value;
+        try {
+          await api.createProjectTask(id, {
+            name: document.getElementById('taskName').value,
+            description: document.getElementById('taskDesc').value || null,
+            startDate: document.getElementById('taskStart').value || null,
+            endDate: document.getElementById('taskEnd').value || null,
           });
-          Layout.closeModal('formModal'); Layout.toast('สร้างโครงการสำเร็จ'); await this.load();
+          Layout.closeModal('taskModal'); Layout.toast('เพิ่มงานสำเร็จ'); this.loadTasks(id);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openAddCost(id) {
+        document.getElementById('costProjectId').value = id;
+        document.getElementById('costDesc').value = '';
+        document.getElementById('costAmount').value = '';
+        document.getElementById('costDate').value = new Date().toISOString().split('T')[0];
+        Layout.openModal('costModal');
+      },
+      async saveCost() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('costProjectId').value;
+        try {
+          await api.addProjectCost(id, {
+            description: document.getElementById('costDesc').value,
+            amount: parseFloat(document.getElementById('costAmount').value),
+            costDate: document.getElementById('costDate').value,
+            category: document.getElementById('costCategory').value,
+          });
+          Layout.closeModal('costModal'); Layout.toast('บันทึกต้นทุนสำเร็จ');
+          this.loadCosts(id); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async completeProject(id) {
+        if (!confirm('ยืนยันเสร็จสิ้นโครงการ?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.completeProject(id);
+          Layout.toast('โครงการเสร็จสิ้น'); Layout.closeModal('detailModal'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

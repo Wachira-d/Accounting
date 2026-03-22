@@ -159,6 +159,7 @@ public class FreelanceTaskComment : BaseEntity
     public User User { get; set; } = null!;
     public string Content { get; set; } = null!;
     public Guid? ParentCommentId { get; set; }
+    public FreelanceTaskComment? ParentComment { get; set; }
 }
 
 /// <summary>
@@ -185,6 +186,7 @@ public class FreelanceActivityLog
     public Guid FreelanceAccessId { get; set; }
     public FreelanceAccess FreelanceAccess { get; set; } = null!;
     public Guid CompanyId { get; set; }
+    public Company Company { get; set; } = null!;
     public Guid UserId { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string Action { get; set; } = null!;

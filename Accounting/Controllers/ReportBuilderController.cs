@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.ReportBuilder;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +16,7 @@ public class ReportBuilderController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<CustomReportResponse>>> Create(Guid companyId, [FromBody] CreateCustomReportRequest request)
-        => Ok(new ApiResponse<CustomReportResponse>(true, await _service.CreateAsync(companyId, request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<CustomReportResponse>(true, await _service.CreateAsync(companyId, request, User.Identity?.Name ?? "")));
 
     [HttpGet("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<CustomReportResponse>>> GetById(Guid companyId, Guid reportId)
@@ -31,7 +32,7 @@ public class ReportBuilderController : ControllerBase
 
     [HttpDelete("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid reportId)
-    { await _service.DeleteAsync(companyId, reportId); return Ok(new ApiResponse<bool>(true, true)); }
+    { await _service.DeleteAsync(companyId, reportId); return NoContent(); }
 
     [HttpPost("{reportId:guid}/duplicate")]
     public async Task<ActionResult<ApiResponse<CustomReportResponse>>> Duplicate(Guid companyId, Guid reportId, [FromQuery] string newName)

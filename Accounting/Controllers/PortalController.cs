@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Portal;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +17,7 @@ public class PortalAdminController : ControllerBase
 
     [HttpPost("access")]
     public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> CreateAccess(Guid companyId, [FromBody] CreatePortalAccessRequest request)
-        => Ok(new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request)));
 
     [HttpGet("access")]
     public async Task<ActionResult<ApiResponse<List<PortalAccessResponse>>>> GetAccesses(Guid companyId)

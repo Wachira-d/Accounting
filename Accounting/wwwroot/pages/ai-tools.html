@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI อัจฉริยะ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('categorize')">จัดหมวดหมู่อัตโนมัติ</button>
+      <button class="tab" onclick="Page.switchTab('anomaly')">ตรวจจับผิดปกติ</button>
+      <button class="tab" onclick="Page.switchTab('ocr')">OCR สแกนเอกสาร</button>
+      <button class="tab" onclick="Page.switchTab('forecast')">พยากรณ์กระแสเงินสด</button>
+    </div>
+
+    <!-- Auto-Categorize -->
+    <div id="tab-categorize">
+      <div class="page-header">
+        <div><h2 class="page-title">AI จัดหมวดหมู่อัตโนมัติ</h2><p class="page-subtitle">ใช้ AI จัดหมวดหมู่รายการบัญชีอัตโนมัติจากรูปแบบที่เรียนรู้</p></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" onclick="Page.learnRules()">เรียนรู้จากประวัติ</button>
+          <button class="btn btn-primary" onclick="Page.batchCategorize()">จัดหมวดหมู่ทั้งหมด</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">กฎการจัดหมวดหมู่</h3>
+          <div id="rulesContent"><p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p></div>
+        </div>
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">จัดหมวดหมู่รายการเดี่ยว</h3>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภท</label>
+              <select class="form-select" id="catEntityType"><option value="Transaction">ธุรกรรม</option><option value="Document">เอกสาร</option><option value="Expense">ค่าใช้จ่าย</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">ID</label><input type="text" class="form-input" id="catEntityId" placeholder="Entity ID"></div>
+          </div>
+          <button class="btn btn-primary" onclick="Page.singleCategorize()">จัดหมวดหมู่</button>
+          <div id="catResult" style="margin-top:16px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Anomaly Detection -->
+    <div id="tab-anomaly" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">ตรวจจับความผิดปกติ</h2><p class="page-subtitle">AI ตรวจจับรายการที่ผิดปกติจากรูปแบบปกติ</p></div>
+        <button class="btn btn-primary" onclick="Page.detectAnomalies()">สแกนหาความผิดปกติ</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ประเภท</th><th>รายการ</th><th>รายละเอียด</th><th>ความรุนแรง</th><th>วันที่</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="anomalyBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กดปุ่มสแกนเพื่อตรวจจับ</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- OCR -->
+    <div id="tab-ocr" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">OCR สแกนเอกสาร</h2><p class="page-subtitle">สแกนใบเสร็จ/ใบกำกับภาษีด้วย AI แล้วสร้างเอกสารอัตโนมัติ</p></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">อัพโหลดเอกสาร</h3>
+          <div class="form-group">
+            <label class="form-label">เลือกรูปภาพหรือ PDF</label>
+            <input type="file" class="form-input" id="ocrFile" accept="image/*,.pdf" style="padding:8px">
+          </div>
+          <button class="btn btn-primary" onclick="Page.uploadAndScan()">สแกนด้วย OCR</button>
+          <div id="ocrUploadResult" style="margin-top:16px"></div>
+        </div>
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">ผลการสแกนล่าสุด</h3>
+          <div id="ocrResults"><p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cash Flow Forecast -->
+    <div id="tab-forecast" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">พยากรณ์กระแสเงินสด</h2><p class="page-subtitle">AI พยากรณ์กระแสเงินสดล่วงหน้าจากข้อมูลในอดีต</p></div>
+        <button class="btn btn-primary" onclick="Page.createForecast()">สร้างการพยากรณ์ใหม่</button>
+      </div>
+      <div id="forecastContent"><p class="text-gray-400 text-center" style="padding:40px">กำลังโหลด...</p></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('ai-tools')) return;
+    Layout.setTitle('AI อัจฉริยะ');
+    this.loadRules();
+  },
+
+  switchTab(tab) {
+    ['categorize','anomaly','ocr','forecast'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['categorize','anomaly','ocr','forecast'][i] === tab));
+    if (tab === 'anomaly') this.loadAnomalies();
+    if (tab === 'ocr') this.loadOcrResults();
+    if (tab === 'forecast') this.loadForecasts();
+  },
+
+  // ===== Categorize =====
+  async loadRules() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getAiRules();
+      const items = res.data?.items || res.data || [];
+      document.getElementById('rulesContent').innerHTML = items.length ? `<div style="max-height:300px;overflow-y:auto">${items.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--gray-100)">
+        <div class="text-sm font-medium">${r.pattern || r.name || '-'}</div>
+        <div class="text-xs text-gray-500">${r.category || r.accountName || '-'} | ความแม่นยำ: ${r.confidence ? Math.round(r.confidence*100)+'%' : '-'}</div>
+      </div>`).join('')}</div>` : '<p class="text-gray-400 text-center">ยังไม่มีกฎ กดปุ่ม "เรียนรู้จากประวัติ" เพื่อสร้างกฎอัตโนมัติ</p>';
+    } catch (err) { document.getElementById('rulesContent').innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+  },
+
+  async learnRules() {
+    const api = Layout.api(); if (!api) return;
+    try { await api.aiLearnRules(); Layout.toast('เรียนรู้กฎสำเร็จ'); this.loadRules(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async batchCategorize() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.aiBatchCategorize({});
+      const d = res.data || {};
+      Layout.toast(`จัดหมวดหมู่สำเร็จ ${d.categorizedCount || d.count || 0} รายการ`);
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async singleCategorize() {
+    const api = Layout.api(); if (!api) return;
+    const entityType = document.getElementById('catEntityType').value;
+    const entityId = document.getElementById('catEntityId').value;
+    if (!entityId) { Layout.toast('กรุณาระบุ Entity ID', 'error'); return; }
+    try {
+      const res = await api.aiCategorize(entityType, entityId);
+      const d = res.data || {};
+      document.getElementById('catResult').innerHTML = `<div class="card" style="padding:16px;background:var(--gray-50)">
+        <div class="text-sm"><strong>หมวดหมู่:</strong> ${d.suggestedCategory || d.category || '-'}</div>
+        <div class="text-sm"><strong>บัญชี:</strong> ${d.suggestedAccount || d.accountName || '-'}</div>
+        <div class="text-sm"><strong>ความมั่นใจ:</strong> ${d.confidence ? Math.round(d.confidence*100)+'%' : '-'}</div>
+        <button class="btn btn-sm btn-success" style="margin-top:8px" onclick="Page.acceptCategory('${d.resultId || d.id}')">ยอมรับ</button>
+      </div>`;
+    } catch (err) { document.getElementById('catResult').innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+  },
+
+  async acceptCategory(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.aiAcceptCategory(id); Layout.toast('ยอมรับสำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== Anomaly =====
+  async loadAnomalies() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getAnomalies();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('anomalyBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบความผิดปกติ</td></tr>'; return; }
+      const sevMap = {High:'<span class="badge badge-danger">สูง</span>',Medium:'<span class="badge badge-warning">ปานกลาง</span>',Low:'<span class="badge badge-info">ต่ำ</span>'};
+      tbody.innerHTML = items.map(a => `<tr>
+        <td>${a.anomalyType || a.type || '-'}</td>
+        <td class="font-medium">${a.entityDescription || a.description || '-'}</td>
+        <td class="text-sm">${a.details || a.reason || '-'}</td>
+        <td>${sevMap[a.severity] || a.severity || '-'}</td>
+        <td>${Layout.date(a.detectedAt || a.createdAt)}</td>
+        <td>${Layout.statusBadge(a.status || 'Open')}</td>
+        <td>${a.status !== 'Resolved' ? `<button class="btn btn-sm btn-success" onclick="Page.resolveAnomaly('${a.id}')">แก้ไขแล้ว</button>` : ''}</td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async detectAnomalies() {
+    const api = Layout.api(); if (!api) return;
+    Layout.toast('กำลังสแกน...', 'info');
+    try { await api.aiDetectAnomalies(); Layout.toast('สแกนสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async resolveAnomaly(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.resolveAnomaly(id, 'แก้ไขแล้ว'); Layout.toast('อัพเดตสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== OCR =====
+  async loadOcrResults() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getOcrResults();
+      const items = res.data?.items || res.data || [];
+      const content = document.getElementById('ocrResults');
+      if (!items.length) { content.innerHTML = '<p class="text-gray-400 text-center">ยังไม่มีผลสแกน</p>'; return; }
+      content.innerHTML = `<div style="max-height:400px;overflow-y:auto">${items.slice(0,10).map(r => `<div style="padding:12px 0;border-bottom:1px solid var(--gray-100)">
+        <div class="text-sm font-medium">${r.fileName || r.documentType || 'เอกสาร'}</div>
+        <div class="text-xs text-gray-500">วันที่: ${Layout.date(r.scannedAt || r.createdAt)} | ${r.status === 'Completed' ? '<span class="text-success">สแกนสำเร็จ</span>' : '<span class="text-warning">กำลังประมวลผล</span>'}</div>
+        ${r.extractedData ? `<div class="text-xs" style="margin-top:4px">ยอด: ${Layout.money(r.extractedData.totalAmount || r.extractedData.amount)} | ผู้ขาย: ${r.extractedData.vendorName || '-'}</div>` : ''}
+        ${r.status === 'Completed' ? `<button class="btn btn-sm btn-primary" style="margin-top:4px" onclick="Page.createDocFromOcr('${r.id}')">สร้างเอกสาร</button>` : ''}
+      </div>`).join('')}</div>`;
+    } catch (err) { document.getElementById('ocrResults').innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+  },
+
+  async uploadAndScan() {
+    const api = Layout.api(); if (!api) return;
+    const fileInput = document.getElementById('ocrFile');
+    if (!fileInput.files.length) { Layout.toast('กรุณาเลือกไฟล์', 'error'); return; }
+    const result = document.getElementById('ocrUploadResult');
+    result.innerHTML = '<div style="text-align:center"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500">กำลังสแกน...</p></div>';
+    try {
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      const uploadRes = await api.uploadAttachment('ocr', 'scan', formData);
+      const fileId = uploadRes.data?.id || uploadRes.data?.fileId;
+      if (fileId) {
+        const scanRes = await api.ocrScan(fileId);
+        const d = scanRes.data || {};
+        result.innerHTML = `<div class="card" style="padding:16px;background:var(--gray-50)">
+          <div class="text-sm font-medium text-success">สแกนสำเร็จ!</div>
+          ${d.extractedData ? `<div class="text-sm" style="margin-top:8px">
+            <div><strong>ประเภท:</strong> ${d.extractedData.documentType || '-'}</div>
+            <div><strong>ผู้ขาย:</strong> ${d.extractedData.vendorName || '-'}</div>
+            <div><strong>ยอด:</strong> ${Layout.money(d.extractedData.totalAmount)}</div>
+            <div><strong>วันที่:</strong> ${d.extractedData.date || '-'}</div>
+          </div>` : ''}
+          <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="Page.createDocFromOcr('${d.id}')">สร้างเอกสาร</button>
+        </div>`;
+        this.loadOcrResults();
+      }
+    } catch (err) { result.innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+  },
+
+  async createDocFromOcr(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.ocrCreateDocument(id); Layout.toast('สร้างเอกสารจาก OCR สำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== Forecast =====
+  async loadForecasts() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getForecasts();
+      const items = res.data?.items || res.data || [];
+      const content = document.getElementById('forecastContent');
+      if (!items.length) { content.innerHTML = '<div class="card" style="padding:40px;text-align:center"><p class="text-gray-400">ยังไม่มีการพยากรณ์ กดปุ่มสร้างการพยากรณ์ใหม่</p></div>'; return; }
+      content.innerHTML = items.map(f => `<div class="card" style="padding:24px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div><h3 class="font-medium">${f.name || 'พยากรณ์กระแสเงินสด'}</h3><span class="text-sm text-gray-500">สร้างเมื่อ: ${Layout.date(f.createdAt)}</span></div>
+          <span class="badge ${f.status === 'Completed' ? 'badge-success' : 'badge-warning'}">${f.status === 'Completed' ? 'เสร็จสิ้น' : 'กำลังประมวลผล'}</span>
+        </div>
+        ${f.periods || f.predictions ? `<table class="table"><thead><tr><th>งวด</th><th class="text-right">รายรับคาดการณ์</th><th class="text-right">รายจ่ายคาดการณ์</th><th class="text-right">เงินสดสุทธิ</th></tr></thead>
+        <tbody>${(f.periods || f.predictions || []).map(p => `<tr>
+          <td>${p.period || p.month || '-'}</td>
+          <td class="text-right text-success">${Layout.money(p.predictedInflow || p.income)}</td>
+          <td class="text-right text-danger">${Layout.money(p.predictedOutflow || p.expense)}</td>
+          <td class="text-right font-medium">${Layout.money((p.predictedInflow||p.income||0)-(p.predictedOutflow||p.expense||0))}</td>
+        </tr>`).join('')}</tbody></table>` : ''}
+      </div>`).join('');
+    } catch (err) { document.getElementById('forecastContent').innerHTML = `<div class="card" style="padding:24px"><p class="text-danger text-center">${err.message}</p></div>`; }
+  },
+
+  async createForecast() {
+    const api = Layout.api(); if (!api) return;
+    Layout.toast('กำลังสร้างการพยากรณ์...', 'info');
+    try { await api.createForecast({ periods: 6, method: 'AI' }); Layout.toast('สร้างการพยากรณ์สำเร็จ'); this.loadForecasts(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

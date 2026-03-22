@@ -24,7 +24,7 @@ public class CompanyController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _companyService.CreateAsync(userId, request);
-        return Ok(new ApiResponse<CompanyResponse>(true, result, "สร้างบริษัทสำเร็จ"));
+        return StatusCode(201, new ApiResponse<CompanyResponse>(true, result, "สร้างบริษัทสำเร็จ"));
     }
 
     [HttpGet]
@@ -56,7 +56,7 @@ public class CompanyController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _companyService.AddUserAsync(companyId, userId, request);
-        return Ok(new ApiResponse<string>(true, null, "เพิ่มผู้ใช้สำเร็จ"));
+        return StatusCode(201, new ApiResponse<string>(true, null, "เพิ่มผู้ใช้สำเร็จ"));
     }
 
     [HttpDelete("{companyId:guid}/users/{targetUserId:guid}")]
@@ -64,6 +64,6 @@ public class CompanyController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _companyService.RemoveUserAsync(companyId, userId, targetUserId);
-        return Ok(new ApiResponse<string>(true, null, "ลบผู้ใช้สำเร็จ"));
+        return NoContent();
     }
 }

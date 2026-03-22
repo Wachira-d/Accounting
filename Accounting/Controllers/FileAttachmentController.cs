@@ -42,7 +42,7 @@ public class FileAttachmentController : ControllerBase
         var result = await _attachmentService.UploadAsync(companyId, entityType, entityId,
             fileName, file.FileName, file.ContentType, file.Length, storagePath, userId);
 
-        return Ok(new ApiResponse<FileAttachmentResponse>(true, result, "อัพโหลดไฟล์สำเร็จ"));
+        return StatusCode(201, new ApiResponse<FileAttachmentResponse>(true, result, "อัพโหลดไฟล์สำเร็จ"));
     }
 
     [HttpGet("{entityType}/{entityId:guid}")]
@@ -57,6 +57,6 @@ public class FileAttachmentController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid attachmentId)
     {
         await _attachmentService.DeleteAsync(companyId, attachmentId);
-        return Ok(new ApiResponse<string>(true, null, "ลบไฟล์แนบสำเร็จ"));
+        return NoContent();
     }
 }

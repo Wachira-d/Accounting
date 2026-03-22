@@ -1,29 +1,44 @@
 namespace Accounting.Models.DTOs.RevenueRecognition;
 
 public record CreateRevenueContractRequest(
-    string ContractNumber, Guid ContactId, DateTime ContractDate,
-    DateTime StartDate, DateTime EndDate, decimal TotalContractValue,
-    string? Description, List<PerformanceObligationRequest> Obligations);
-
-public record PerformanceObligationRequest(
-    string Name, string? Description, decimal StandaloneSellingPrice,
-    string RecognitionMethod, string? MeasureOfProgress);
+    string ContractNumber, string Name, Guid ContactId,
+    DateTime ContractDate, DateTime StartDate, DateTime EndDate,
+    decimal TotalContractValue);
 
 public record UpdateRevenueContractRequest(
-    string? Description = null, string? Status = null, decimal? TotalContractValue = null);
+    string? Name, DateTime? EndDate,
+    decimal? TotalContractValue, string? Status);
 
 public record RevenueContractResponse(
-    Guid Id, string ContractNumber, Guid ContactId, string ContactName,
-    DateTime ContractDate, DateTime StartDate, DateTime EndDate,
-    decimal TotalContractValue, decimal RecognizedRevenue, decimal DeferredRevenue,
-    string Status, List<PerformanceObligationResponse> Obligations, DateTime CreatedAt);
+    Guid Id, string ContractNumber, string Name,
+    string ContactName, DateTime ContractDate,
+    DateTime StartDate, DateTime EndDate,
+    decimal TotalContractValue, string Status,
+    decimal RecognizedRevenue, decimal DeferredRevenue,
+    List<PerformanceObligationResponse> Obligations);
+
+public record CreateObligationRequest(
+    string Name, string Description,
+    decimal StandaloneSellingPrice, string RecognitionMethod,
+    string? MeasureOfProgress);
 
 public record PerformanceObligationResponse(
-    Guid Id, string Name, string? Description, decimal StandaloneSellingPrice,
-    decimal AllocatedTransactionPrice, string RecognitionMethod,
-    string? MeasureOfProgress, decimal CompletionPercent,
-    decimal RecognizedAmount, decimal DeferredAmount, string Status);
+    Guid Id, string Name, string Description,
+    decimal StandaloneSellingPrice, decimal AllocatedPrice,
+    string RecognitionMethod, decimal CompletionPercent,
+    decimal RecognizedRevenue, decimal DeferredRevenue,
+    bool IsSatisfied, DateTime? SatisfiedDate);
 
 public record RevenueScheduleResponse(
-    Guid Id, Guid ObligationId, DateTime PeriodStart, DateTime PeriodEnd,
-    decimal Amount, bool IsRecognized, DateTime? RecognizedDate);
+    Guid Id, Guid ContractId, DateTime ScheduleDate,
+    decimal Amount, bool IsRecognized, Guid? JournalEntryId);
+
+public record DeferredRevenueReportResponse(
+    DateTime AsOfDate, decimal TotalDeferred,
+    decimal TotalRecognized,
+    List<DeferredRevenueByContract> ByContract);
+
+public record DeferredRevenueByContract(
+    Guid ContractId, string ContractName, string ContactName,
+    decimal ContractValue, decimal Recognized,
+    decimal Deferred, DateTime EndDate);

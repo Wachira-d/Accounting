@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระหว่างบริษัท - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('transactions')">รายการระหว่างบริษัท</button>
+      <button class="tab" onclick="Page.switchTab('balances')">ยอดคงค้าง</button>
+    </div>
+
+    <div id="tab-transactions">
+      <div class="page-header">
+        <div><h2 class="page-title">รายการระหว่างบริษัท</h2><p class="page-subtitle">จัดการรายการค้าระหว่างบริษัทในเครือ</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างรายการ</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เลขที่</th><th>บริษัทคู่ค้า</th><th>ประเภท</th><th>วันที่</th><th class="text-right">ยอด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-balances" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">ยอดคงค้างระหว่างบริษัท</h2><p class="page-subtitle">สรุปยอดลูกหนี้/เจ้าหนี้ระหว่างบริษัท</p></div>
+      </div>
+      <div id="balanceContent" class="card" style="padding:24px"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">สร้างรายการระหว่างบริษัท</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">บริษัทคู่ค้า *</label><select class="form-select" id="fPartner"></select></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="fType"><option value="Sale">ขาย</option><option value="Purchase">ซื้อ</option><option value="Transfer">โอน</option><option value="Loan">ให้กู้ยืม</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">สกุลเงิน</label><input type="text" class="form-input" id="fCurrency" value="THB"></div>
+          </div>
+          <div class="form-group"><label class="form-label">รายละเอียด</label><textarea class="form-input" id="fDesc" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.save()">สร้าง</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('intercompany')) return;
+    Layout.setTitle('ระหว่างบริษัท');
+    this.load();
+  },
+
+  switchTab(tab) {
+    ['transactions','balances'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['transactions','balances'][i] === tab));
+    if (tab === 'balances') this.loadBalances();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getIntercompanyTxns();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('tableBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการ</td></tr>'; return; }
+      const typeMap = {Sale:'ขาย',Purchase:'ซื้อ',Transfer:'โอน',Loan:'ให้กู้ยืม'};
+      tbody.innerHTML = items.map(t => `<tr>
+        <td><span class="font-medium">${t.referenceNumber || t.id?.substring(0,8) || '-'}</span></td>
+        <td>${t.partnerCompanyName || '-'}</td>
+        <td>${typeMap[t.transactionType || t.type] || t.transactionType || '-'}</td>
+        <td>${Layout.date(t.transactionDate || t.date)}</td>
+        <td class="text-right">${Layout.money(t.amount)}</td>
+        <td>${Layout.statusBadge(t.status || 'Pending')}</td>
+        <td>
+          ${t.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirm('${t.id}')">ยืนยัน</button>` : ''}
+          ${t.status === 'Pending' ? `<button class="btn btn-sm btn-danger" onclick="Page.void('${t.id}')">ยกเลิก</button>` : ''}
+        </td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openCreate() {
+    try {
+      const res = await API.getCompanies();
+      const companies = res.data?.items || res.data || [];
+      const cid = Layout.getCompanyId();
+      const sel = document.getElementById('fPartner');
+      sel.innerHTML = companies.filter(c => c.id !== cid).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    } catch (err) { /* ignore */ }
+    document.getElementById('fDate').value = Layout.dateInput(new Date());
+    document.getElementById('fAmount').value = '';
+    document.getElementById('fDesc').value = '';
+    Layout.openModal('formModal');
+  },
+
+  async save() {
+    const api = Layout.api(); if (!api) return;
+    const data = { partnerCompanyId: document.getElementById('fPartner').value, transactionType: document.getElementById('fType').value, transactionDate: document.getElementById('fDate').value, amount: parseFloat(document.getElementById('fAmount').value) || 0, currency: document.getElementById('fCurrency').value, description: document.getElementById('fDesc').value };
+    if (!data.partnerCompanyId || !data.amount) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try { await api.createIntercompanyTxn(data); Layout.toast('สร้างรายการสำเร็จ'); Layout.closeModal('formModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async confirm(id) { const api = Layout.api(); if (!api) return; try { await api.confirmIntercompanyTxn(id); Layout.toast('ยืนยันสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); } },
+  async void(id) { if (!confirm('ยกเลิกรายการนี้?')) return; const api = Layout.api(); if (!api) return; try { await api.voidIntercompanyTxn(id); Layout.toast('ยกเลิกสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); } },
+
+  async loadBalances() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getIntercompanyBalances();
+      const items = res.data?.items || res.data || [];
+      const content = document.getElementById('balanceContent');
+      if (!items.length) { content.innerHTML = '<p class="text-gray-400 text-center">ไม่มียอดคงค้าง</p>'; return; }
+      content.innerHTML = `<table class="table"><thead><tr><th>บริษัทคู่ค้า</th><th class="text-right">ลูกหนี้</th><th class="text-right">เจ้าหนี้</th><th class="text-right">ยอดสุทธิ</th></tr></thead>
+      <tbody>${items.map(b => `<tr><td class="font-medium">${b.companyName || '-'}</td><td class="text-right">${Layout.money(b.receivable)}</td><td class="text-right">${Layout.money(b.payable)}</td><td class="text-right ${(b.receivable-b.payable)>=0?'text-success':'text-danger'} font-medium">${Layout.money((b.receivable||0)-(b.payable||0))}</td></tr>`).join('')}</tbody></table>`;
+    } catch (err) { document.getElementById('balanceContent').innerHTML = `<p class="text-danger">${err.message}</p>`; }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

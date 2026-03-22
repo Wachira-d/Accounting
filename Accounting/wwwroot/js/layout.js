@@ -15,7 +15,55 @@ const Layout = {
     this.render();
     this.bindEvents();
     this.loadNotificationCount();
+    this.initServiceWorker();
+    this.initSignalR();
     return true;
+  },
+
+  // PWA Service Worker
+  initServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  },
+
+  // SignalR real-time notifications
+  signalRConnection: null,
+  initSignalR() {
+    if (typeof signalR === 'undefined') {
+      // Dynamically load SignalR client if not already loaded
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js';
+      script.onload = () => this.connectSignalR();
+      document.head.appendChild(script);
+    } else {
+      this.connectSignalR();
+    }
+  },
+
+  connectSignalR() {
+    const token = localStorage.getItem('token');
+    if (!token || typeof signalR === 'undefined') return;
+    try {
+      this.signalRConnection = new signalR.HubConnectionBuilder()
+        .withUrl('/hubs/notifications', { accessTokenFactory: () => token })
+        .withAutomaticReconnect()
+        .build();
+
+      this.signalRConnection.on('ReceiveNotification', (notification) => {
+        this.toast(notification.title || notification.message || 'การแจ้งเตือนใหม่', 'info');
+        this.loadNotificationCount();
+      });
+
+      this.signalRConnection.on('RefreshData', () => {
+        if (typeof Page !== 'undefined' && Page.load) Page.load();
+      });
+
+      this.signalRConnection.start().then(() => {
+        const cid = this.getCompanyId();
+        if (cid) this.signalRConnection.invoke('JoinCompanyGroup', cid).catch(() => {});
+      }).catch(() => {});
+    } catch (e) { /* SignalR optional */ }
   },
 
   navItems: [
@@ -36,17 +84,38 @@ const Layout = {
     { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html' },
     { id: 'expense', label: 'เบิกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html' },
     { id: 'loans', label: 'สินเชื่อ', icon: '💰', href: '/pages/loans.html' },
+    { section: 'เงินเดือน' },
+    { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html' },
     { section: 'ภาษี' },
     { id: 'tax', label: 'รายงานภาษี', icon: '🏛️', href: '/pages/tax.html' },
     { id: 'wht', label: 'หนังสือรับรองหัก ณ ที่จ่าย', icon: '📜', href: '/pages/wht.html' },
+    { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html' },
+    { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html' },
     { section: 'รายงาน' },
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },
     { id: 'aging', label: 'รายงานอายุลูกหนี้', icon: '⏳', href: '/pages/aging.html' },
+    { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html' },
     { section: 'สินทรัพย์' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
     { section: 'โครงการ' },
     { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html' },
+    { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html' },
+    { section: 'องค์กร' },
+    { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬', href: '/pages/dimensions.html' },
+    { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html' },
+    { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html' },
+    { section: 'ขั้นสูง' },
+    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html' },
+    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📊', href: '/pages/revenue-recognition.html' },
+    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
+    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html' },
+    { id: 'freelance', label: 'จัดการ Freelancer', icon: '👤', href: '/pages/freelance.html' },
+    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html' },
+    { section: 'เชื่อมต่อ' },
+    { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html' },
+    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html' },
+    { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html' },
     { section: 'ระบบ' },
     { id: 'approval', label: 'อนุมัติ', icon: '✅', href: '/pages/approval.html' },
     { id: 'subscription', label: 'แพ็กเกจ/สมัครสมาชิก', icon: '💎', href: '/pages/subscription.html' },
@@ -283,8 +352,8 @@ const Layout = {
         } else {
           list.innerHTML = items.map(n => `
             <div style="padding:12px 0;border-bottom:1px solid var(--gray-100);${n.isRead ? '' : 'background:#F5F3FF;margin:0 -24px;padding:12px 24px'}">
-              <div class="text-sm font-medium">${n.title}</div>
-              <div class="text-xs text-gray-500" style="margin-top:2px">${n.message}</div>
+              <div class="text-sm font-medium">${(n.title||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+              <div class="text-xs text-gray-500" style="margin-top:2px">${(n.message||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
               <div class="text-xs text-gray-400" style="margin-top:4px">${new Date(n.createdAt).toLocaleString('th-TH')}</div>
             </div>
           `).join('');
@@ -327,18 +396,24 @@ const Layout = {
 
   // Format helpers
   money(n) {
-    if (n == null) return '0.00';
-    return Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (n == null || n === '') return '0.00';
+    const num = Number(n);
+    if (isNaN(num)) return '0.00';
+    return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
   date(d) {
     if (!d) return '-';
-    return new Date(d).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return '-';
+    return dt.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
   },
 
   dateInput(d) {
     if (!d) return '';
-    return new Date(d).toISOString().split('T')[0];
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return '';
+    return dt.toISOString().split('T')[0];
   },
 
   statusBadge(status) {
@@ -353,6 +428,10 @@ const Layout = {
       'Trial': ['badge-warning', 'ทดลอง'], 'Expired': ['badge-danger', 'หมดอายุ'],
       'Submitted': ['badge-info', 'ส่งแล้ว'], 'Filed': ['badge-success', 'ยื่นแล้ว'],
       'Disposed': ['badge-gray', 'จำหน่าย'], 'FullyDepreciated': ['badge-warning', 'หมดค่าเสื่อม'],
+      'Cancelled': ['badge-danger', 'ยกเลิก'], 'Completed': ['badge-success', 'เสร็จสิ้น'],
+      'InProgress': ['badge-info', 'กำลังดำเนินการ'], 'Running': ['badge-info', 'กำลังประมวลผล'],
+      'Matched': ['badge-success', 'จับคู่แล้ว'], 'Unmatched': ['badge-warning', 'ยังไม่จับคู่'],
+      'Reconciled': ['badge-success', 'กระทบยอดแล้ว'], 'Processing': ['badge-info', 'กำลังประมวลผล'],
     };
     const [cls, label] = map[status] || ['badge-gray', status];
     return `<span class="badge ${cls}">${label}</span>`;
@@ -389,5 +468,58 @@ const Layout = {
       DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล'
     };
     return map[type] || type;
+  },
+
+  // Export table to CSV
+  exportTableCSV(tableEl, filename = 'export.csv') {
+    if (typeof tableEl === 'string') tableEl = document.querySelector(tableEl);
+    if (!tableEl) return;
+    const rows = [...tableEl.querySelectorAll('tr')];
+    const csv = rows.map(row =>
+      [...row.querySelectorAll('th, td')].map(cell => {
+        let text = cell.textContent.trim().replace(/"/g, '""');
+        return `"${text}"`;
+      }).join(',')
+    ).join('\n');
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    this.toast('ส่งออก CSV สำเร็จ', 'success');
+  },
+
+  // Export table to Excel (simple HTML table format)
+  exportTableExcel(tableEl, filename = 'export.xlsx') {
+    if (typeof tableEl === 'string') tableEl = document.querySelector(tableEl);
+    if (!tableEl) return;
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+      <x:Name>Sheet1</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+      </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+      <body><table>${tableEl.innerHTML}</table></body></html>`;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    this.toast('ส่งออก Excel สำเร็จ', 'success');
+  },
+
+  // Print specific element
+  printElement(selector, title = 'AcctPlatform') {
+    const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+    if (!el) return;
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="/css/style.css">
+      <style>body{padding:20px;font-family:'Noto Sans Thai',sans-serif} .no-print{display:none}</style>
+      </head><body>${el.outerHTML}</body></html>`);
+    win.document.close();
+    win.onload = () => { win.print(); win.close(); };
   },
 };

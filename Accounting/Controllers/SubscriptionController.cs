@@ -215,4 +215,26 @@ public class SubscriptionController : ControllerBase
         var result = await _subscriptionService.CheckFeatureAccessAsync(companyId, featureFlag);
         return Ok(new ApiResponse<bool>(true, result));
     }
+
+    // ===== Usage Tracking =====
+
+    /// <summary>
+    /// ตรวจสอบว่ายังใช้งานได้ตาม limit หรือไม่
+    /// </summary>
+    [HttpGet("{companyId:guid}/usage/{limitType}/check")]
+    public async Task<ActionResult<ApiResponse<bool>>> CheckUsageLimit(Guid companyId, string limitType)
+    {
+        var result = await _subscriptionService.CheckUsageLimitAsync(companyId, limitType);
+        return Ok(new ApiResponse<bool>(true, result));
+    }
+
+    /// <summary>
+    /// เพิ่มจำนวนการใช้งาน
+    /// </summary>
+    [HttpPost("{companyId:guid}/usage/{usageType}/increment")]
+    public async Task<ActionResult<ApiResponse<string>>> IncrementUsage(Guid companyId, string usageType)
+    {
+        await _subscriptionService.IncrementUsageAsync(companyId, usageType);
+        return Ok(new ApiResponse<string>(true, null, "บันทึกการใช้งานสำเร็จ"));
+    }
 }

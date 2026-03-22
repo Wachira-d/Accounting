@@ -305,7 +305,16 @@ public record EtaxInvoiceResponse(
     EtaxStatus Status,
     string? SubmissionId,
     DateTime? SubmittedAt,
+    string? AcceptanceNumber,
+    DateTime? AcceptedAt,
     string? ErrorMessage,
+    string? ErrorCode,
+    string? SellerName,
+    string? SellerTaxId,
+    string? BuyerName,
+    string? BuyerTaxId,
+    DateTime? SignedAt,
+    string? CertificateSerialNumber,
     DateTime CreatedAt);
 
 public enum EtaxStatus

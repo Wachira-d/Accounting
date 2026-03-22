@@ -328,6 +328,74 @@ public class FixedAssetService : IFixedAssetService
             d.Amount, d.AccumulatedAmount, d.NetBookValue, d.IsPosted)).ToList();
     }
 
+    public async Task<RevaluationResponse> RevalueAsync(Guid companyId, Guid assetId, RevalueAssetRequest request, string performedBy)
+    {
+        var asset = await _db.FixedAssets
+            .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
+
+        if (asset.Status != AssetStatus.Active)
+            throw new InvalidOperationException("สามารถตีราคาใหม่ได้เฉพาะสินทรัพย์ที่ Active เท่านั้น");
+
+        if (request.NewFairValue <= 0)
+            throw new ArgumentException("มูลค่ายุติธรรมต้องมากกว่า 0");
+
+        var oldNbv = asset.NetBookValue;
+        var surplus = request.NewFairValue - oldNbv;
+
+        // Update asset values
+        asset.NetBookValue = request.NewFairValue;
+        asset.PurchaseCost = asset.PurchaseCost + surplus;
+
+        // Create revaluation journal entry
+        if (asset.AssetAccountId.HasValue && surplus != 0)
+        {
+            var entryNumber = $"REVAL-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
+            var journalEntry = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = request.RevaluationDate,
+                Description = $"ตีราคาสินทรัพย์ใหม่: {asset.Name} ({asset.AssetCode}) - {request.Notes}",
+                Status = JournalEntryStatus.Draft,
+                CreatedBy = performedBy
+            };
+
+            if (surplus > 0)
+            {
+                // Debit: Asset account, Credit: Revaluation surplus (use asset account as proxy)
+                journalEntry.Lines.Add(new JournalEntryLine
+                {
+                    AccountId = asset.AssetAccountId.Value,
+                    DebitAmount = surplus,
+                    CreditAmount = 0,
+                    Description = $"ตีราคาเพิ่ม - {asset.Name}"
+                });
+            }
+            else
+            {
+                // Debit: Revaluation loss, Credit: Asset account
+                journalEntry.Lines.Add(new JournalEntryLine
+                {
+                    AccountId = asset.AssetAccountId.Value,
+                    DebitAmount = 0,
+                    CreditAmount = Math.Abs(surplus),
+                    Description = $"ตีราคาลด - {asset.Name}"
+                });
+            }
+
+            journalEntry.TotalDebit = journalEntry.Lines.Sum(l => l.DebitAmount);
+            journalEntry.TotalCredit = journalEntry.Lines.Sum(l => l.CreditAmount);
+            _db.JournalEntries.Add(journalEntry);
+        }
+
+        await _db.SaveChangesAsync();
+
+        return new RevaluationResponse(
+            asset.Id, asset.AssetCode, asset.Name,
+            oldNbv, request.NewFairValue, surplus, request.RevaluationDate);
+    }
+
     private static FixedAssetResponse MapToResponse(FixedAsset a) =>
         new(a.Id, a.AssetCode, a.Name, a.Description, a.Category,
             a.Location, a.SerialNumber, a.PurchaseDate, a.PurchaseCost,

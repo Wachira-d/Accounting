@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คอมมิชชัน - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('plans')">แผนคอมมิชชัน</button>
+      <button class="tab" onclick="Page.switchTab('calculate')">คำนวณคอมมิชชัน</button>
+    </div>
+
+    <div id="tab-plans">
+      <div class="page-header">
+        <div><h2 class="page-title">แผนคอมมิชชัน</h2><p class="page-subtitle">กำหนดเงื่อนไขการจ่ายคอมมิชชันพนักงานขาย</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreatePlan()">+ สร้างแผน</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ชื่อแผน</th><th>ประเภท</th><th>อัตรา</th><th>พนักงานที่ใช้</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="planBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-calculate" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">คำนวณคอมมิชชัน</h2><p class="page-subtitle">คำนวณและอนุมัติคอมมิชชันรายเดือน</p></div>
+      </div>
+      <div class="toolbar">
+        <select class="filter-select" id="calcYear"></select>
+        <select class="filter-select" id="calcMonth">
+          <option value="1">ม.ค.</option><option value="2">ก.พ.</option><option value="3">มี.ค.</option><option value="4">เม.ย.</option><option value="5">พ.ค.</option><option value="6">มิ.ย.</option>
+          <option value="7">ก.ค.</option><option value="8">ส.ค.</option><option value="9">ก.ย.</option><option value="10">ต.ค.</option><option value="11">พ.ย.</option><option value="12">ธ.ค.</option>
+        </select>
+        <button class="btn btn-primary" onclick="Page.calculate()">คำนวณ</button>
+        <button class="btn btn-success" onclick="Page.approve()">อนุมัติ</button>
+      </div>
+      <div id="calcContent" class="card" style="padding:24px"><p class="text-gray-400 text-center">เลือกเดือนแล้วกดคำนวณ</p></div>
+    </div>
+
+    <div class="modal-overlay" id="planModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title" id="planTitle">สร้างแผนคอมมิชชัน</h3><button class="modal-close" onclick="Layout.closeModal('planModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="planId">
+          <div class="form-group"><label class="form-label">ชื่อแผน *</label><input type="text" class="form-input" id="planName" placeholder="เช่น คอมมิชชันทีมขาย"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="planType"><option value="Percentage">เปอร์เซ็นต์</option><option value="Fixed">จำนวนคงที่</option><option value="Tiered">ตามขั้น (Tier)</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">อัตรา *</label><input type="number" class="form-input" id="planRate" step="0.01" placeholder="เช่น 5 (%)"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ยอดขายขั้นต่ำ</label><input type="number" class="form-input" id="planMinSales" step="0.01"></div>
+            <div class="form-group"><label class="form-label">เพดานคอมมิชชัน</label><input type="number" class="form-input" id="planCap" step="0.01"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-input" id="planDesc" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('planModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.savePlan()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="assignModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">กำหนดแผนให้พนักงาน</h3><button class="modal-close" onclick="Layout.closeModal('assignModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="assignPlanId">
+          <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="assignEmployee"></select></div>
+          <div class="form-group"><label class="form-label">วันที่เริ่ม *</label><input type="date" class="form-input" id="assignStart"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('assignModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.doAssign()">กำหนด</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('commission')) return;
+    Layout.setTitle('คอมมิชชัน');
+    const y = new Date().getFullYear();
+    const sel = document.getElementById('calcYear');
+    for (let i = y; i >= y-2; i--) sel.innerHTML += `<option value="${i}">${i+543}</option>`;
+    document.getElementById('calcMonth').value = new Date().getMonth() + 1;
+    this.loadPlans();
+  },
+
+  switchTab(tab) {
+    ['plans','calculate'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['plans','calculate'][i] === tab));
+  },
+
+  async loadPlans() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getCommissionPlans();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('planBody');
+      const typeMap = {Percentage:'เปอร์เซ็นต์',Fixed:'คงที่',Tiered:'ตามขั้น'};
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีแผนคอมมิชชัน</td></tr>'; return; }
+      tbody.innerHTML = items.map(p => `<tr>
+        <td><span class="font-medium">${p.name || '-'}</span></td>
+        <td>${typeMap[p.type || p.commissionType] || p.type || '-'}</td>
+        <td>${p.rate || p.percentage || '-'}${p.type === 'Percentage' ? '%' : ''}</td>
+        <td>${p.assignedCount || p.employeeCount || 0} คน</td>
+        <td>${Layout.statusBadge(p.isActive !== false ? 'Active' : 'Inactive')}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editPlan('${p.id}')">แก้ไข</button>
+          <button class="btn btn-sm btn-primary" onclick="Page.openAssign('${p.id}')">กำหนด</button>
+        </td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreatePlan() {
+    document.getElementById('planTitle').textContent = 'สร้างแผนคอมมิชชัน';
+    document.getElementById('planId').value = '';
+    ['planName','planRate','planMinSales','planCap','planDesc'].forEach(id => document.getElementById(id).value = '');
+    Layout.openModal('planModal');
+  },
+
+  editPlan(id) { document.getElementById('planTitle').textContent = 'แก้ไขแผน'; document.getElementById('planId').value = id; Layout.openModal('planModal'); },
+
+  async savePlan() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('planId').value;
+    const data = { name: document.getElementById('planName').value, commissionType: document.getElementById('planType').value, rate: parseFloat(document.getElementById('planRate').value) || 0, minimumSales: parseFloat(document.getElementById('planMinSales').value) || null, cap: parseFloat(document.getElementById('planCap').value) || null, description: document.getElementById('planDesc').value };
+    if (!data.name || !data.rate) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try {
+      if (id) await api.updateCommissionPlan(id, data); else await api.createCommissionPlan(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ'); Layout.closeModal('planModal'); this.loadPlans();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openAssign(planId) {
+    document.getElementById('assignPlanId').value = planId;
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getEmployees('?pageSize=200');
+      const items = res.data?.items || res.data || [];
+      document.getElementById('assignEmployee').innerHTML = items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
+    } catch (err) { /* ignore */ }
+    document.getElementById('assignStart').value = Layout.dateInput(new Date());
+    Layout.openModal('assignModal');
+  },
+
+  async doAssign() {
+    const api = Layout.api(); if (!api) return;
+    const planId = document.getElementById('assignPlanId').value;
+    const data = { employeeId: document.getElementById('assignEmployee').value, startDate: document.getElementById('assignStart').value };
+    try { await api.assignCommissionPlan(planId, data); Layout.toast('กำหนดแผนสำเร็จ'); Layout.closeModal('assignModal'); this.loadPlans(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async calculate() {
+    const api = Layout.api(); if (!api) return;
+    const y = document.getElementById('calcYear').value;
+    const m = document.getElementById('calcMonth').value;
+    const content = document.getElementById('calcContent');
+    content.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
+    try {
+      await api.calculateCommissions(y, m);
+      const res = await api.getCommissionCalcs(y, m);
+      const items = res.data?.items || res.data || [];
+      content.innerHTML = items.length ? `<table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ยอดขาย</th><th class="text-right">อัตรา</th><th class="text-right">คอมมิชชัน</th><th>สถานะ</th></tr></thead>
+      <tbody>${items.map(c => `<tr><td class="font-medium">${c.employeeName||'-'}</td><td class="text-right">${Layout.money(c.totalSales||c.salesAmount)}</td><td class="text-right">${c.rate||c.percentage||'-'}%</td><td class="text-right text-primary font-medium">${Layout.money(c.commissionAmount||c.amount)}</td><td>${Layout.statusBadge(c.status||'Pending')}</td></tr>`).join('')}</tbody></table>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูลคอมมิชชัน</p>';
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+  },
+
+  async approve() {
+    const api = Layout.api(); if (!api) return;
+    const y = document.getElementById('calcYear').value;
+    const m = document.getElementById('calcMonth').value;
+    if (!confirm('อนุมัติคอมมิชชันเดือนนี้?')) return;
+    try { await api.approveCommissions(y, m); Layout.toast('อนุมัติสำเร็จ'); this.calculate(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

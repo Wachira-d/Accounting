@@ -423,3 +423,15 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .detail-item { display: flex; flex-direction: column; }
 .detail-label { font-size: 13px; color: var(--gray-500); }
 .detail-value { font-size: 15px; font-weight: 500; }
+
+/* Print styles */
+@media print {
+  .sidebar, .header, .page-header .btn, #widgetPanel, .toast-container { display: none !important; }
+  .main-content { margin-left: 0 !important; padding: 0 !important; }
+  .page-content { padding: 0 !important; }
+  .card { break-inside: avoid; box-shadow: none; border: 1px solid #ddd; }
+  .kpi-card { box-shadow: none; border: 1px solid #ddd; }
+  body { font-size: 12px; }
+  .page-header { margin-bottom: 12px; }
+  .page-title { font-size: 18px; }
+}

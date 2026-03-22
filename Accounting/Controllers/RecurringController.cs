@@ -40,7 +40,7 @@ public class RecurringController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _recurringService.CreateAsync(companyId, request, userId);
-        return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "สร้างรายการที่เกิดซ้ำสำเร็จ"));
+        return StatusCode(201, new ApiResponse<RecurringTransactionResponse>(true, result, "สร้างรายการที่เกิดซ้ำสำเร็จ"));
     }
 
     [HttpPut("{id:guid}")]
@@ -55,7 +55,7 @@ public class RecurringController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid id)
     {
         await _recurringService.DeleteAsync(companyId, id);
-        return Ok(new ApiResponse<string>(true, null, "ลบรายการที่เกิดซ้ำสำเร็จ"));
+        return NoContent();
     }
 
     [HttpPost("{id:guid}/pause")]

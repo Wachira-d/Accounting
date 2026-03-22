@@ -22,7 +22,7 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<ApiResponse<LoginResponse>>> Register([FromBody] RegisterRequest request)
     {
         var result = await _authService.RegisterAsync(request);
-        return Ok(new ApiResponse<LoginResponse>(true, result, "ลงทะเบียนสำเร็จ"));
+        return StatusCode(201, new ApiResponse<LoginResponse>(true, result, "ลงทะเบียนสำเร็จ"));
     }
 
     [HttpPost("login")]
@@ -46,5 +46,19 @@ public class AuthController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _authService.ChangePasswordAsync(userId, request);
         return Ok(new ApiResponse<string>(true, null, "เปลี่ยนรหัสผ่านสำเร็จ"));
+    }
+
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult<ApiResponse<string>>> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    {
+        var message = await _authService.ForgotPasswordAsync(request.Email);
+        return Ok(new ApiResponse<string>(true, null, message));
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<ActionResult<ApiResponse<string>>> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        await _authService.ResetPasswordAsync(request.Token, request.NewPassword);
+        return Ok(new ApiResponse<string>(true, null, "รีเซ็ตรหัสผ่านสำเร็จ"));
     }
 }

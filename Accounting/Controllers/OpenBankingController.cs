@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.OpenBanking;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +16,7 @@ public class OpenBankingController : ControllerBase
 
     [HttpPost("connections")]
     public async Task<ActionResult<ApiResponse<BankConnectionResponse>>> CreateConnection(Guid companyId, [FromBody] CreateBankConnectionRequest request)
-        => Ok(new ApiResponse<BankConnectionResponse>(true, await _service.CreateConnectionAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<BankConnectionResponse>(true, await _service.CreateConnectionAsync(companyId, request)));
 
     [HttpGet("connections")]
     public async Task<ActionResult<ApiResponse<List<BankConnectionResponse>>>> GetConnections(Guid companyId)
@@ -27,7 +28,7 @@ public class OpenBankingController : ControllerBase
 
     [HttpDelete("connections/{connectionId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteConnection(Guid companyId, Guid connectionId)
-    { await _service.DeleteConnectionAsync(companyId, connectionId); return Ok(new ApiResponse<bool>(true, true)); }
+    { await _service.DeleteConnectionAsync(companyId, connectionId); return NoContent(); }
 
     [HttpPost("connections/{connectionId:guid}/sync")]
     public async Task<ActionResult<ApiResponse<BankFeedImportResponse>>> Sync(Guid companyId, Guid connectionId, [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate)

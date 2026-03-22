@@ -26,7 +26,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.InviteFreelanceAsync(companyId, request, userId);
-        return Ok(new ApiResponse<InvitationResponse>(true, result, "ส่งคำเชิญสำเร็จ"));
+        return StatusCode(201, new ApiResponse<InvitationResponse>(true, result, "ส่งคำเชิญสำเร็จ"));
     }
 
     [HttpGet("invitations")]
@@ -40,12 +40,12 @@ public class FreelanceController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> RevokeInvitation(Guid companyId, Guid invitationId)
     {
         await _freelanceService.RevokeInvitationAsync(companyId, invitationId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิกคำเชิญสำเร็จ"));
+        return Ok(new ApiResponse<string>(true, "ยกเลิกคำเชิญสำเร็จ"));
     }
 
     // ===== Accept Invitation (Public - Freelance) =====
 
-    [HttpPost("/api/freelance/accept-invitation")]
+    [HttpPost("~/api/freelance/accept-invitation")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<InvitationResponse>>> AcceptInvitation([FromBody] AcceptInvitationRequest request)
     {
@@ -91,7 +91,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.CreateTaskAsync(companyId, request, userId);
-        return Ok(new ApiResponse<FreelanceTaskResponse>(true, result, "สร้างงานสำเร็จ"));
+        return StatusCode(201, new ApiResponse<FreelanceTaskResponse>(true, result, "สร้างงานสำเร็จ"));
     }
 
     [HttpGet("tasks")]
@@ -142,7 +142,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.AddCommentAsync(taskId, userId, request);
-        return Ok(new ApiResponse<TaskCommentResponse>(true, result));
+        return StatusCode(201, new ApiResponse<TaskCommentResponse>(true, result));
     }
 
     [HttpPost("tasks/{taskId:guid}/time-logs")]
@@ -151,7 +151,7 @@ public class FreelanceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _freelanceService.AddTimeLogAsync(taskId, userId, request);
-        return Ok(new ApiResponse<TimeLogResponse>(true, result));
+        return StatusCode(201, new ApiResponse<TimeLogResponse>(true, result));
     }
 
     // ===== Activity Logs =====
@@ -167,7 +167,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Freelance Dashboard (for Freelancer) =====
 
-    [HttpGet("/api/freelance/dashboard")]
+    [HttpGet("~/api/freelance/dashboard")]
     public async Task<ActionResult<ApiResponse<FreelanceDashboardResponse>>> GetDashboard()
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

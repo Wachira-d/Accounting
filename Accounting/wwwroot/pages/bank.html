@@ -11,35 +11,111 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">บัญชีธนาคาร</h2><p class="page-subtitle">จัดการบัญชีธนาคารและกระทบยอด</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openImport()">นำเข้า Statement</button>
+        <button class="btn btn-secondary" onclick="Page.openConnections()">Open Banking</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setTab('accounts',this)">บัญชีธนาคาร</div>
+      <div class="tab" onclick="Page.setTab('reconcile',this)">กระทบยอด</div>
+      <div class="tab" onclick="Page.setTab('connections',this)">Open Banking</div>
     </div>
 
     <!-- Bank Account Cards -->
-    <div class="grid grid-3 gap-4" id="bankCards" style="margin-bottom:24px">
-      <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
+    <div id="tabAccounts">
+      <div class="grid grid-3 gap-4" id="bankCards" style="margin-bottom:24px">
+        <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
+      </div>
+
+      <!-- Transactions for selected account -->
+      <div class="card" id="transSection" style="display:none">
+        <div class="card-header">
+          <h3 class="card-title" id="transTitle">รายการเคลื่อนไหว</h3>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-secondary" onclick="Page.openAddTrans()">+ เพิ่มรายการ</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่อัตโนมัติ</button>
+          </div>
+        </div>
+        <!-- Search/Filter bar -->
+        <div class="toolbar" style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <input type="text" class="search-input" placeholder="ค้นหาคำอธิบาย..." id="transSearch" oninput="Page.filterTrans()" style="max-width:200px">
+          <select class="filter-select" id="transTypeFilter" onchange="Page.filterTrans()">
+            <option value="">ทุกประเภท</option>
+            <option value="Deposit">ฝาก</option>
+            <option value="Withdrawal">ถอน</option>
+            <option value="Transfer">โอน</option>
+            <option value="Fee">ค่าธรรมเนียม</option>
+            <option value="Interest">ดอกเบี้ย</option>
+          </select>
+          <select class="filter-select" id="transStatusFilter" onchange="Page.filterTrans()">
+            <option value="">ทุกสถานะ</option>
+            <option value="Unmatched">รอจับคู่</option>
+            <option value="Matched">จับคู่แล้ว</option>
+            <option value="Excluded">ไม่รวม</option>
+          </select>
+          <input type="date" class="form-input" id="transFrom" style="width:140px" onchange="Page.loadTransactions()">
+          <span class="text-gray-400">ถึง</span>
+          <input type="date" class="form-input" id="transTo" style="width:140px" onchange="Page.loadTransactions()">
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th>คำอธิบาย</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+            <tbody id="transBody"><tr><td colspan="7" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
+          </table>
+        </div>
+        <div id="transPagination" style="padding:12px 16px"></div>
+      </div>
     </div>
 
-    <!-- Transactions for selected account -->
-    <div class="card" id="transSection" style="display:none">
-      <div class="card-header">
-        <h3 class="card-title" id="transTitle">รายการเคลื่อนไหว</h3>
-        <div class="flex gap-2">
-          <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่อัตโนมัติ</button>
+    <!-- Reconciliation Tab -->
+    <div id="tabReconcile" style="display:none">
+      <div class="grid grid-2 gap-4" style="margin-bottom:16px">
+        <div class="card"><div class="text-gray-500 text-xs">บัญชีที่เลือก</div><div class="text-lg font-bold" id="reconAccountName">ยังไม่ได้เลือก</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">รายการรอจับคู่</div><div class="text-2xl font-bold text-warning" id="reconCount">0</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">รายการที่ยังไม่ได้กระทบยอด</h3>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-primary" onclick="Page.autoMatch()">จับคู่อัตโนมัติ</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.manualReconcile()">จับคู่ที่เลือก</button>
+          </div>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th><input type="checkbox" onchange="Page.toggleAllRecon(this)"></th><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th>คำอธิบาย</th><th>จัดการ</th></tr></thead>
+            <tbody id="reconBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</td></tr></tbody>
+          </table>
         </div>
       </div>
-      <div class="table-container" style="border:none">
-        <table class="table">
-          <thead><tr><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th>คำอธิบาย</th><th>สถานะ</th></tr></thead>
-          <tbody id="transBody"><tr><td colspan="6" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
-        </table>
+    </div>
+
+    <!-- Open Banking Tab -->
+    <div id="tabConnections" style="display:none">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">การเชื่อมต่อ Open Banking</h3>
+          <button class="btn btn-sm btn-primary" onclick="Page.openCreateConnection()">+ เพิ่มการเชื่อมต่อ</button>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>ธนาคาร</th><th>บัญชี</th><th>สถานะ</th><th>ซิงค์ล่าสุด</th><th>จัดการ</th></tr></thead>
+            <tbody id="connBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <!-- Create Bank Account Modal -->
+    <!-- Create/Edit Bank Account Modal -->
     <div class="modal-overlay" id="formModal">
       <div class="modal">
-        <div class="modal-header"><h3 class="modal-title">เพิ่มบัญชีธนาคาร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มบัญชีธนาคาร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
+          <input type="hidden" id="fId">
           <div class="form-group"><label class="form-label">ชื่อบัญชี *</label><input type="text" class="form-input" id="fName"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ธนาคาร *</label>
@@ -72,6 +148,93 @@
         </div>
       </div>
     </div>
+
+    <!-- Add Transaction Modal -->
+    <div class="modal-overlay" id="transModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มรายการเคลื่อนไหว</h3><button class="modal-close" onclick="Layout.closeModal('transModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="tDate"></div>
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="tType"><option value="Deposit">ฝาก</option><option value="Withdrawal">ถอน</option><option value="Transfer">โอน</option><option value="Fee">ค่าธรรมเนียม</option><option value="Interest">ดอกเบี้ย</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="tAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ผู้รับ/ผู้จ่าย</label><input type="text" class="form-input" id="tPayee"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="tDesc"></div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="tRef"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('transModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveTrans()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Statement Modal -->
+    <div class="modal-overlay" id="importModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">นำเข้า Bank Statement</h3><button class="modal-close" onclick="Layout.closeModal('importModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
+            <select class="form-select" id="impAccount"></select>
+          </div>
+          <div class="form-group"><label class="form-label">รูปแบบไฟล์ *</label>
+            <select class="form-select" id="impFormat"><option value="CSV">CSV</option><option value="OFX">OFX</option><option value="QIF">QIF</option><option value="MT940">MT940</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
+            <input type="file" class="form-input" id="impFile" accept=".csv,.ofx,.qif,.mt940,.txt">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Connection Modal -->
+    <div class="modal-overlay" id="connModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มการเชื่อมต่อ Open Banking</h3><button class="modal-close" onclick="Layout.closeModal('connModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อการเชื่อมต่อ *</label><input type="text" class="form-input" id="cName"></div>
+          <div class="form-group"><label class="form-label">ธนาคาร *</label>
+            <select class="form-select" id="cBank">
+              <option value="KBANK">กสิกรไทย</option><option value="BBL">กรุงเทพ</option><option value="SCB">ไทยพาณิชย์</option>
+              <option value="KTB">กรุงไทย</option><option value="BAY">กรุงศรี</option><option value="TTB">ทหารไทยธนชาต</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
+            <select class="form-select" id="cAccount"></select>
+          </div>
+          <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="cApiKey"></div>
+          <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="cApiSecret"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('connModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveConnection()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Reconcile Modal -->
+    <div class="modal-overlay" id="reconcileModal">
+      <div class="modal" style="max-width:400px">
+        <div class="modal-header"><h3 class="modal-title">จับคู่รายการ</h3><button class="modal-close" onclick="Layout.closeModal('reconcileModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="rTransId">
+          <div class="form-group"><label class="form-label">รหัสรายการบัญชี (Journal Entry ID)</label><input type="text" class="form-input" id="rJournalId" placeholder="วางรหัสรายการบัญชีที่ต้องการจับคู่"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reconcileModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doReconcile()">จับคู่</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -79,85 +242,339 @@
   <script>
     const Page = {
       selectedAccount: null,
+      allTransactions: [],
+      transPage: 1,
+      accounts: [],
       async init() {
         if (!Layout.init('bank')) return;
         Layout.setTitle('บัญชีธนาคาร');
         await this.loadAccounts();
       },
+      setTab(tab, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tabAccounts').style.display = tab === 'accounts' ? '' : 'none';
+        document.getElementById('tabReconcile').style.display = tab === 'reconcile' ? '' : 'none';
+        document.getElementById('tabConnections').style.display = tab === 'connections' ? '' : 'none';
+        if (tab === 'reconcile') this.loadUnreconciled();
+        if (tab === 'connections') this.loadConnections();
+      },
+      // === ACCOUNTS ===
       async loadAccounts() {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getBankAccounts();
-          const accounts = res.data?.items || res.data || [];
+          this.accounts = res.data?.items || res.data || [];
           const container = document.getElementById('bankCards');
-          if (!accounts.length) {
+          if (!this.accounts.length) {
             container.innerHTML = '<div class="card text-center" style="padding:40px;grid-column:1/-1"><p class="text-gray-500">ยังไม่มีบัญชีธนาคาร</p><button class="btn btn-primary" style="margin-top:12px" onclick="Page.openCreate()">+ เพิ่มบัญชี</button></div>';
             return;
           }
-          container.innerHTML = accounts.map(a => `
-            <div class="card" style="cursor:pointer;transition:all .2s;${this.selectedAccount?.id === a.id ? 'border-color:var(--primary);box-shadow:var(--shadow-md)' : ''}" onclick="Page.selectAccount('${a.id}','${a.accountName}')">
+          container.innerHTML = this.accounts.map(a => `
+            <div class="card" style="cursor:pointer;transition:all .2s;${this.selectedAccount?.id === a.id ? 'border-color:var(--primary);box-shadow:var(--shadow-md)' : ''}" onclick="Page.selectAccount('${a.id}')">
               <div class="flex items-center justify-between" style="margin-bottom:12px">
                 <div class="font-semibold">${a.accountName}</div>
-                ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}
+                <div class="flex gap-1">
+                  ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}
+                  <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${a.id}')" title="แก้ไข">&#9998;</button>
+                </div>
               </div>
               <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
+              <div class="text-xs text-gray-400">${a.accountType === 'Savings' ? 'ออมทรัพย์' : a.accountType === 'Current' ? 'กระแสรายวัน' : a.accountType === 'Fixed' ? 'ฝากประจำ' : a.accountType || ''} | ${a.branchName || '-'}</div>
               <div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
               <div class="text-xs text-gray-400">${a.currency || 'THB'}</div>
             </div>
           `).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      async selectAccount(id, name) {
-        this.selectedAccount = { id, name };
+      async selectAccount(id) {
+        const acct = this.accounts.find(a => a.id === id);
+        if (!acct) return;
+        this.selectedAccount = acct;
         document.getElementById('transSection').style.display = 'block';
-        document.getElementById('transTitle').textContent = `รายการเคลื่อนไหว - ${name}`;
-        await this.loadAccounts(); // refresh highlight
+        document.getElementById('transTitle').textContent = `รายการเคลื่อนไหว - ${acct.accountName}`;
+        document.getElementById('reconAccountName').textContent = acct.accountName;
+        await this.loadAccounts();
+        this.transPage = 1;
         await this.loadTransactions();
       },
+      // === TRANSACTIONS ===
       async loadTransactions() {
         if (!this.selectedAccount) return;
         const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.getTransactions(this.selectedAccount.id, '?pageSize=50');
+          let q = `?page=${this.transPage}&pageSize=20`;
+          const from = document.getElementById('transFrom').value;
+          const to = document.getElementById('transTo').value;
+          if (from) q += `&fromDate=${from}`;
+          if (to) q += `&toDate=${to}`;
+          const res = await api.getTransactions(this.selectedAccount.id, q);
+          const data = res.data;
+          this.allTransactions = data?.items || data || [];
+          this.renderTransactions();
+          const totalPages = data?.totalPages || 1;
+          document.getElementById('transPagination').innerHTML = Layout.renderPagination(this.transPage, totalPages, 'Page.goTransPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      filterTrans() { this.renderTransactions(); },
+      renderTransactions() {
+        const search = (document.getElementById('transSearch').value || '').toLowerCase();
+        const typeF = document.getElementById('transTypeFilter').value;
+        const statusF = document.getElementById('transStatusFilter').value;
+        let items = this.allTransactions;
+        if (search) items = items.filter(t => (t.description || '').toLowerCase().includes(search) || (t.payee || '').toLowerCase().includes(search));
+        if (typeF) items = items.filter(t => t.transactionType === typeF);
+        if (statusF) items = items.filter(t => (t.reconciliationStatus || 'Unmatched') === statusF);
+        const tbody = document.getElementById('transBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีรายการ</td></tr>'; return; }
+        const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+        const isCredit = t => t === 'Deposit' || t === 'Interest';
+        tbody.innerHTML = items.map(t => `<tr>
+          <td>${Layout.date(t.transactionDate)}</td>
+          <td><span class="badge ${isCredit(t.transactionType) ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
+          <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
+          <td class="text-right">${Layout.money(t.balanceAfter)}</td>
+          <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>${t.reconciliationStatus !== 'Matched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>` : ''}</td>
+        </tr>`).join('');
+      },
+      goTransPage(p) { Page.transPage = p; Page.loadTransactions(); },
+      // === RECONCILIATION ===
+      async loadUnreconciled() {
+        if (!this.selectedAccount) {
+          document.getElementById('reconBody').innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</td></tr>';
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getUnreconciled(this.selectedAccount.id);
           const items = res.data?.items || res.data || [];
-          const tbody = document.getElementById('transBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีรายการ</td></tr>'; return; }
+          document.getElementById('reconCount').textContent = items.length;
+          const tbody = document.getElementById('reconBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรอจับคู่</td></tr>'; return; }
           const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
           tbody.innerHTML = items.map(t => `<tr>
+            <td><input type="checkbox" class="recon-check" value="${t.id}"></td>
             <td>${Layout.date(t.transactionDate)}</td>
             <td><span class="badge ${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
-            <td class="text-right ${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? 'text-success' : 'text-danger'} font-medium">${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? '+' : '-'}${Layout.money(t.amount)}</td>
-            <td class="text-right">${Layout.money(t.balanceAfter)}</td>
+            <td class="text-right font-medium">${Layout.money(t.amount)}</td>
             <td>${t.description || t.payee || '-'}</td>
-            <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button></td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      toggleAllRecon(cb) {
+        document.querySelectorAll('.recon-check').forEach(c => c.checked = cb.checked);
       },
       async autoMatch() {
         if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
         const api = Layout.api(); if (!api) return;
         try {
-          await api.autoMatch(this.selectedAccount.id);
-          Layout.toast('จับคู่อัตโนมัติสำเร็จ');
+          const res = await api.autoMatch(this.selectedAccount.id);
+          const matched = res.data?.length || 0;
+          Layout.toast(`จับคู่อัตโนมัติสำเร็จ ${matched} รายการ`);
           await this.loadTransactions();
+          await this.loadUnreconciled();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openCreate() { Layout.openModal('formModal'); },
-      async save() {
+      openReconcileOne(transId) {
+        document.getElementById('rTransId').value = transId;
+        document.getElementById('rJournalId').value = '';
+        Layout.openModal('reconcileModal');
+      },
+      async doReconcile() {
+        const api = Layout.api(); if (!api) return;
+        const transId = document.getElementById('rTransId').value;
+        const journalId = document.getElementById('rJournalId').value;
+        if (!journalId) { Layout.toast('กรุณาระบุรหัสรายการบัญชี', 'error'); return; }
+        try {
+          await api.reconcile({ bankTransactionId: transId, journalEntryId: journalId });
+          Layout.closeModal('reconcileModal');
+          Layout.toast('จับคู่สำเร็จ');
+          await this.loadTransactions();
+          await this.loadUnreconciled();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async manualReconcile() {
+        const checked = [...document.querySelectorAll('.recon-check:checked')];
+        if (!checked.length) { Layout.toast('เลือกรายการที่ต้องการจับคู่', 'error'); return; }
+        if (checked.length === 1) { this.openReconcileOne(checked[0].value); return; }
+        // For multiple items, use auto-match on the selected account
+        if (!this.selectedAccount) { Layout.toast('กรุณาเลือกบัญชีธนาคาร', 'error'); return; }
         const api = Layout.api(); if (!api) return;
         try {
-          await api.createBankAccount({
-            accountName: document.getElementById('fName').value,
-            bankName: document.getElementById('fBank').value,
-            accountNumber: document.getElementById('fAccNum').value,
-            branchName: document.getElementById('fBranch').value || null,
-            accountType: document.getElementById('fAccType').value,
-            currency: document.getElementById('fCurrency').value || 'THB',
-            openingBalance: parseFloat(document.getElementById('fOpening').value) || 0,
-          });
+          await api.autoMatch(this.selectedAccount.id);
+          Layout.toast('จับคู่อัตโนมัติสำเร็จ');
+          await this.loadUnreconciled();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === CREATE/EDIT ACCOUNT ===
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มบัญชีธนาคาร';
+        document.getElementById('fId').value = '';
+        document.getElementById('fName').value = '';
+        document.getElementById('fBank').value = 'กสิกรไทย';
+        document.getElementById('fAccNum').value = '';
+        document.getElementById('fAccType').value = 'Savings';
+        document.getElementById('fCurrency').value = 'THB';
+        document.getElementById('fBranch').value = '';
+        document.getElementById('fOpening').value = '0';
+        Layout.openModal('formModal');
+      },
+      openEdit(id) {
+        const a = this.accounts.find(x => x.id === id);
+        if (!a) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขบัญชีธนาคาร';
+        document.getElementById('fId').value = a.id;
+        document.getElementById('fName').value = a.accountName;
+        document.getElementById('fBank').value = a.bankName;
+        document.getElementById('fAccNum').value = a.accountNumber;
+        document.getElementById('fAccType').value = a.accountType || 'Savings';
+        document.getElementById('fCurrency').value = a.currency || 'THB';
+        document.getElementById('fBranch').value = a.branchName || '';
+        document.getElementById('fOpening').value = a.openingBalance || 0;
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const data = {
+          accountName: document.getElementById('fName').value,
+          bankName: document.getElementById('fBank').value,
+          accountNumber: document.getElementById('fAccNum').value,
+          branchName: document.getElementById('fBranch').value || null,
+          accountType: document.getElementById('fAccType').value,
+          currency: document.getElementById('fCurrency').value || 'THB',
+          openingBalance: parseFloat(document.getElementById('fOpening').value) || 0,
+        };
+        if (!data.accountName || !data.accountNumber) { Layout.toast('กรุณากรอกข้อมูลที่จำเป็น', 'error'); return; }
+        try {
+          if (id) { await api.updateBankAccount(id, data); }
+          else { await api.createBankAccount(data); }
           Layout.closeModal('formModal');
-          Layout.toast('เพิ่มบัญชีธนาคารสำเร็จ');
+          Layout.toast(id ? 'แก้ไขบัญชีสำเร็จ' : 'เพิ่มบัญชีธนาคารสำเร็จ');
           await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === ADD TRANSACTION ===
+      openAddTrans() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        document.getElementById('tDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('tType').value = 'Deposit';
+        document.getElementById('tAmount').value = '';
+        document.getElementById('tPayee').value = '';
+        document.getElementById('tDesc').value = '';
+        document.getElementById('tRef').value = '';
+        Layout.openModal('transModal');
+      },
+      async saveTrans() {
+        const api = Layout.api(); if (!api) return;
+        const amount = parseFloat(document.getElementById('tAmount').value);
+        if (!amount) { Layout.toast('กรุณาระบุจำนวนเงิน', 'error'); return; }
+        try {
+          await api.createTransaction({
+            bankAccountId: this.selectedAccount.id,
+            transactionDate: document.getElementById('tDate').value,
+            transactionType: document.getElementById('tType').value,
+            amount,
+            payee: document.getElementById('tPayee').value || null,
+            description: document.getElementById('tDesc').value || null,
+            reference: document.getElementById('tRef').value || null,
+          });
+          Layout.closeModal('transModal');
+          Layout.toast('เพิ่มรายการสำเร็จ');
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === IMPORT STATEMENT ===
+      openImport() {
+        const sel = document.getElementById('impAccount');
+        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountName} - ${a.accountNumber}</option>`).join('');
+        Layout.openModal('importModal');
+      },
+      async doImport() {
+        const api = Layout.api(); if (!api) return;
+        const accountId = document.getElementById('impAccount').value;
+        const format = document.getElementById('impFormat').value;
+        const file = document.getElementById('impFile').files[0];
+        if (!accountId || !file) { Layout.toast('กรุณาเลือกบัญชีและไฟล์', 'error'); return; }
+        try {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const base64 = e.target.result.split(',')[1];
+            try {
+              await api.importBankFile(accountId, format, base64);
+              Layout.closeModal('importModal');
+              Layout.toast('นำเข้า Statement สำเร็จ');
+              if (this.selectedAccount?.id === accountId) await this.loadTransactions();
+              await this.loadAccounts();
+            } catch (err) { Layout.toast(err.message, 'error'); }
+          };
+          reader.readAsDataURL(file);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === OPEN BANKING ===
+      openConnections() { this.setTab('connections', document.querySelectorAll('.tab')[2]); },
+      async loadConnections() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getConnections();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('connBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการเชื่อมต่อ</td></tr>'; return; }
+          tbody.innerHTML = items.map(c => `<tr>
+            <td class="font-medium">${c.bankCode || c.bankName || '-'}</td>
+            <td>${c.bankAccountName || '-'}</td>
+            <td>${c.status === 'Active' ? '<span class="badge badge-success">เชื่อมต่อ</span>' : c.status === 'Error' ? '<span class="badge badge-danger">ผิดพลาด</span>' : '<span class="badge badge-gray">' + (c.status || 'ไม่ทราบ') + '</span>'}</td>
+            <td>${c.lastSyncAt ? Layout.date(c.lastSyncAt) : 'ยังไม่เคย'}</td>
+            <td class="flex gap-1">
+              <button class="btn btn-sm btn-primary" onclick="Page.syncConn('${c.id}')">ซิงค์</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteConn('${c.id}')">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreateConnection() {
+        const sel = document.getElementById('cAccount');
+        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountName}</option>`).join('');
+        document.getElementById('cName').value = '';
+        document.getElementById('cApiKey').value = '';
+        document.getElementById('cApiSecret').value = '';
+        Layout.openModal('connModal');
+      },
+      async saveConnection() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createConnection({
+            connectionName: document.getElementById('cName').value,
+            bankCode: document.getElementById('cBank').value,
+            bankAccountId: document.getElementById('cAccount').value,
+            apiKey: document.getElementById('cApiKey').value || null,
+            apiSecret: document.getElementById('cApiSecret').value || null,
+          });
+          Layout.closeModal('connModal');
+          Layout.toast('เพิ่มการเชื่อมต่อสำเร็จ');
+          await this.loadConnections();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async syncConn(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.syncConnection(id);
+          Layout.toast('ซิงค์สำเร็จ');
+          await this.loadConnections();
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteConn(id) {
+        if (!confirm('ต้องการลบการเชื่อมต่อนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteConnection(id);
+          Layout.toast('ลบสำเร็จ');
+          await this.loadConnections();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

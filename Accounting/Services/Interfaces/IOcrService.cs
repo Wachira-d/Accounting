@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Ocr;
 
 namespace Accounting.Services.Interfaces;
 
@@ -10,5 +11,3 @@ public interface IOcrService
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
 }
-
-public record OcrResultResponse(Guid Id, string OriginalFileName, string ScanStatus, string? DocumentType, decimal Confidence, string? ExtractedVendorName, string? ExtractedVendorTaxId, string? ExtractedDocumentNumber, DateTime? ExtractedDate, decimal? ExtractedSubTotal, decimal? ExtractedVatAmount, decimal? ExtractedTotalAmount, Guid? MatchedContactId, Guid? CreatedDocumentId, DateTime? ProcessedAt);

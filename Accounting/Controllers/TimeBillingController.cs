@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.TimeBilling;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +17,7 @@ public class TimeBillingController : ControllerBase
     // Time entries
     [HttpPost("entries")]
     public async Task<ActionResult<ApiResponse<TimeEntryResponse>>> CreateEntry(Guid companyId, [FromBody] CreateTimeEntryRequest request)
-        => Ok(new ApiResponse<TimeEntryResponse>(true, await _service.CreateTimeEntryAsync(companyId, request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<TimeEntryResponse>(true, await _service.CreateTimeEntryAsync(companyId, request, User.Identity?.Name ?? "")));
 
     [HttpGet("entries/{entryId:guid}")]
     public async Task<ActionResult<ApiResponse<TimeEntryResponse>>> GetEntry(Guid companyId, Guid entryId)
@@ -38,14 +39,29 @@ public class TimeBillingController : ControllerBase
     public async Task<ActionResult<ApiResponse<TimeEntryResponse>>> Approve(Guid companyId, Guid entryId)
         => Ok(new ApiResponse<TimeEntryResponse>(true, await _service.ApproveAsync(companyId, entryId, User.Identity?.Name ?? "")));
 
+    [HttpDelete("entries/{entryId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteEntry(Guid companyId, Guid entryId)
+    {
+        await _service.DeleteAsync(companyId, entryId);
+        return NoContent();
+    }
+
     // Billing rates
     [HttpPost("rates")]
     public async Task<ActionResult<ApiResponse<BillingRateResponse>>> CreateRate(Guid companyId, [FromBody] CreateBillingRateRequest request)
-        => Ok(new ApiResponse<BillingRateResponse>(true, await _service.CreateRateAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<BillingRateResponse>(true, await _service.CreateRateAsync(companyId, request)));
 
     [HttpGet("rates")]
     public async Task<ActionResult<ApiResponse<List<BillingRateResponse>>>> GetRates(Guid companyId)
         => Ok(new ApiResponse<List<BillingRateResponse>>(true, await _service.GetRatesAsync(companyId)));
+
+    [HttpPut("rates/{rateId:guid}")]
+    public async Task<ActionResult<ApiResponse<BillingRateResponse>>> UpdateRate(Guid companyId, Guid rateId, [FromBody] UpdateBillingRateRequest request)
+        => Ok(new ApiResponse<BillingRateResponse>(true, await _service.UpdateRateAsync(companyId, rateId, request)));
+
+    [HttpGet("rates/effective")]
+    public async Task<ActionResult<ApiResponse<decimal>>> GetEffectiveRate(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] Guid? contactId, [FromQuery] Guid? projectId)
+        => Ok(new ApiResponse<decimal>(true, await _service.GetEffectiveRateAsync(companyId, employeeId, contactId, projectId)));
 
     // Invoice
     [HttpPost("generate-invoice")]

@@ -1,39 +1,61 @@
-using Accounting.Models.Enums;
-
 namespace Accounting.Models.DTOs.Project;
 
 public record CreateProjectRequest(
-    string Code, string Name, string? Description, Guid? ContactId,
-    DateTime StartDate, DateTime? EndDate, decimal BudgetAmount,
-    decimal? ContractAmount, string? BillingMethod, string? RevenueRecognitionMethod);
+    string Code, string Name, string? NameEn, string? Description,
+    Guid? ContactId, string? ProjectManagerName,
+    DateTime StartDate, DateTime? EndDate,
+    decimal BudgetAmount, decimal ContractAmount,
+    string BillingMethod, string RevenueRecognitionMethod,
+    Guid? DimensionId);
 
 public record UpdateProjectRequest(
-    string? Name = null, string? Description = null, DateTime? EndDate = null,
-    decimal? BudgetAmount = null, string? Status = null);
+    string? Name, string? Description, DateTime? EndDate,
+    decimal? BudgetAmount, decimal? ContractAmount,
+    decimal? CompletionPercent, string? Status);
 
 public record ProjectResponse(
     Guid Id, string Code, string Name, string? Description,
-    Guid? ContactId, string? ContactName,
-    DateTime StartDate, DateTime? EndDate,
-    decimal BudgetAmount, decimal? ContractAmount, decimal ActualCost,
-    decimal CompletionPercent, string Status,
-    string? BillingMethod, string? RevenueRecognitionMethod,
-    List<ProjectTaskResponse> Tasks, DateTime CreatedAt);
+    string? CustomerName, DateTime StartDate, DateTime? EndDate,
+    string Status, decimal BudgetAmount, decimal ContractAmount,
+    decimal ActualCost, decimal ActualRevenue,
+    decimal CompletionPercent, string BillingMethod,
+    DateTime CreatedAt);
 
 public record CreateProjectTaskRequest(
-    string Name, string? Description, DateTime? StartDate, DateTime? DueDate,
-    decimal? BudgetHours, decimal? BudgetAmount, Guid? AssignedToUserId);
+    string Name, string? Description, Guid? ParentTaskId,
+    DateTime? StartDate, DateTime? EndDate,
+    decimal EstimatedHours, decimal EstimatedCost,
+    string? AssignedTo);
+
+public record UpdateProjectTaskRequest(
+    string? Name, decimal? ActualHours, decimal? ActualCost,
+    decimal? CompletionPercent, string? Status);
 
 public record ProjectTaskResponse(
-    Guid Id, string Name, string? Description, DateTime? StartDate, DateTime? DueDate,
-    decimal BudgetHours, decimal ActualHours, decimal BudgetAmount, decimal ActualCost,
-    string Status, Guid? AssignedToUserId, string? AssignedToName);
+    Guid Id, Guid ProjectId, string Name, string? Description,
+    DateTime? StartDate, DateTime? EndDate,
+    decimal EstimatedHours, decimal ActualHours,
+    decimal EstimatedCost, decimal ActualCost,
+    decimal CompletionPercent, string Status, string? AssignedTo);
 
-public record CreateProjectCostRequest(
-    Guid ProjectId, Guid? TaskId, string CostType, string Description,
-    decimal Amount, DateTime EntryDate, Guid? AccountId);
+public record CreateProjectCostEntryRequest(
+    Guid? ProjectTaskId, DateTime EntryDate, string CostType,
+    string Description, decimal Quantity, decimal UnitCost,
+    Guid? EmployeeId, bool IsBillable);
 
-public record ProjectCostResponse(
-    Guid Id, Guid ProjectId, Guid? TaskId, string CostType,
-    string Description, decimal Amount, DateTime EntryDate,
-    Guid? AccountId, string? AccountName, DateTime CreatedAt);
+public record ProjectCostEntryResponse(
+    Guid Id, Guid ProjectId, DateTime EntryDate, string CostType,
+    string Description, decimal Quantity, decimal UnitCost,
+    decimal Amount, bool IsBillable, bool IsBilled);
+
+public record ProjectProfitabilityResponse(
+    Guid ProjectId, string ProjectName, decimal ContractAmount,
+    decimal TotalCost, decimal TotalRevenue, decimal GrossProfit,
+    decimal GrossProfitPercent, decimal BudgetVariance,
+    decimal CompletionPercent,
+    Dictionary<string, decimal> CostBreakdown);
+
+public record ProjectSummaryResponse(
+    Guid Id, string Code, string Name, string Status,
+    decimal BudgetAmount, decimal ActualCost,
+    decimal CompletionPercent, decimal ProfitPercent);

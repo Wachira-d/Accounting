@@ -18,6 +18,7 @@
       <div class="tab" onclick="Page.showReport('balance',this)">งบแสดงฐานะการเงิน</div>
       <div class="tab" onclick="Page.showReport('pnl',this)">งบกำไรขาดทุน</div>
       <div class="tab" onclick="Page.showReport('cashflow',this)">กระแสเงินสด</div>
+      <div class="tab" onclick="Page.showReport('custom',this)">รายงานกำหนดเอง</div>
     </div>
 
     <div class="toolbar">
@@ -33,6 +34,58 @@
     <div class="card" id="reportContent">
       <div class="text-center text-gray-400" style="padding:60px">กดปุ่ม "แสดงรายงาน" เพื่อดูข้อมูล</div>
     </div>
+
+    <!-- Custom Report Builder Section (hidden by default) -->
+    <div id="customReportSection" style="display:none">
+      <div class="flex gap-2" style="margin-bottom:16px">
+        <button class="btn btn-primary" onclick="Page.openCreateReport()">+ สร้างรายงาน</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ชื่อรายงาน</th><th>ประเภท</th><th>Data Source</th><th>หมวด</th><th>จัดการ</th></tr></thead>
+          <tbody id="customReportList"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Create/Edit Custom Report Modal -->
+    <div class="modal-overlay" id="reportModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="reportFormTitle">สร้างรายงานกำหนดเอง</h3><button class="modal-close" onclick="Layout.closeModal('reportModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="rId">
+          <div class="form-group"><label class="form-label">ชื่อรายงาน *</label><input type="text" class="form-input" id="rName" placeholder="เช่น Monthly Revenue by Department"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Data Source *</label><select class="form-select" id="rDataSource" onchange="Page.loadDataSourceColumns()"></select></div>
+            <div class="form-group"><label class="form-label">หมวด</label><input type="text" class="form-input" id="rCategory" placeholder="เช่น Finance"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-input" id="rDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label">คอลัมน์ที่แสดง</label><div id="rColumnsSelect" class="flex gap-2" style="flex-wrap:wrap"></div></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Group By</label><select class="form-select" id="rGroupBy"><option value="">ไม่ group</option></select></div>
+            <div class="form-group"><label class="form-label">Chart Type</label>
+              <select class="form-select" id="rChart"><option value="">ไม่แสดง chart</option><option value="Bar">แท่ง</option><option value="Line">เส้น</option><option value="Pie">วงกลม</option></select>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label"><input type="checkbox" id="rTotals"> แสดงผลรวม</label></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveReport()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report Execution Result Modal -->
+    <div class="modal-overlay" id="resultModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="resultTitle">ผลลัพธ์รายงาน</h3><button class="modal-close" onclick="Layout.closeModal('resultModal')">&times;</button></div>
+        <div class="modal-body" id="resultContent" style="max-height:500px;overflow:auto"></div>
+        <div class="modal-footer" id="resultFooter">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('resultModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -40,6 +93,9 @@
   <script>
     const Page = {
       currentReport: 'trial',
+      dataSources: [],
+      columns: [],
+      selectedColumns: [],
       init() {
         if (!Layout.init('reports')) return;
         Layout.setTitle('รายงานการเงิน');
@@ -53,6 +109,11 @@
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
         this.currentReport = type;
+        const isCustom = type === 'custom';
+        document.getElementById('reportContent').style.display = isCustom ? 'none' : '';
+        document.querySelector('.toolbar').style.display = isCustom ? 'none' : '';
+        document.getElementById('customReportSection').style.display = isCustom ? '' : 'none';
+        if (isCustom) this.loadCustomReports();
       },
       async loadReport() {
         const api = Layout.api(); if (!api) return;
@@ -173,6 +234,135 @@
               </tfoot>
             </table>
           </div>`;
+      }
+      // Custom Report Builder
+      async loadCustomReports() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getCustomReports();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('customReportList');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายงาน กดปุ่ม "+ สร้างรายงาน" เพื่อเริ่มต้น</td></tr>'; return; }
+          tbody.innerHTML = items.map(r => `<tr>
+            <td class="font-medium">${r.name}</td>
+            <td>${r.reportType||'-'}</td>
+            <td>${r.dataSourceType||'-'}</td>
+            <td>${r.category||'-'}</td>
+            <td>
+              <button class="btn btn-sm btn-primary" onclick="Page.executeReport('${r.id}','${r.name}')">ดูผล</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.editReport('${r.id}')">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.duplicateReport('${r.id}')">สำเนา</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteReport('${r.id}')">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openCreateReport() {
+        const api = Layout.api(); if (!api) return;
+        document.getElementById('rId').value = '';
+        document.getElementById('rName').value = '';
+        document.getElementById('rCategory').value = '';
+        document.getElementById('rDesc').value = '';
+        document.getElementById('rChart').value = '';
+        document.getElementById('rTotals').checked = true;
+        document.getElementById('reportFormTitle').textContent = 'สร้างรายงานกำหนดเอง';
+        this.selectedColumns = [];
+        try {
+          const res = await api.getReportDataSources();
+          const sources = res.data?.items || res.data || [];
+          this.dataSources = sources;
+          const sel = document.getElementById('rDataSource');
+          sel.innerHTML = '<option value="">-- เลือก Data Source --</option>' + sources.map(s => `<option value="${s.type||s.name}">${s.displayName||s.name}</option>`).join('');
+          document.getElementById('rColumnsSelect').innerHTML = '<span class="text-gray-400 text-sm">เลือก Data Source ก่อน</span>';
+          document.getElementById('rGroupBy').innerHTML = '<option value="">ไม่ group</option>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        Layout.openModal('reportModal');
+      },
+      async loadDataSourceColumns() {
+        const api = Layout.api(); if (!api) return;
+        const ds = document.getElementById('rDataSource').value;
+        if (!ds) return;
+        try {
+          const res = await api.getReportColumns(ds);
+          this.columns = res.data?.items || res.data || [];
+          document.getElementById('rColumnsSelect').innerHTML = this.columns.map(c => `<label class="text-sm" style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="${c.fieldName||c.name}" onchange="Page.toggleColumn(this)" ${this.selectedColumns.includes(c.fieldName||c.name)?'checked':''}> ${c.displayName||c.name}</label>`).join('');
+          const groupSel = document.getElementById('rGroupBy');
+          groupSel.innerHTML = '<option value="">ไม่ group</option>' + this.columns.map(c => `<option value="${c.fieldName||c.name}">${c.displayName||c.name}</option>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      toggleColumn(checkbox) {
+        const val = checkbox.value;
+        if (checkbox.checked) { if (!this.selectedColumns.includes(val)) this.selectedColumns.push(val); }
+        else { this.selectedColumns = this.selectedColumns.filter(c => c !== val); }
+      },
+      async saveReport() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('rId').value;
+        const data = {
+          name: document.getElementById('rName').value,
+          dataSourceType: document.getElementById('rDataSource').value,
+          category: document.getElementById('rCategory').value || null,
+          description: document.getElementById('rDesc').value || null,
+          columnsJson: JSON.stringify(this.selectedColumns),
+          groupingJson: document.getElementById('rGroupBy').value ? JSON.stringify([document.getElementById('rGroupBy').value]) : null,
+          chartType: document.getElementById('rChart').value || null,
+          showTotals: document.getElementById('rTotals').checked
+        };
+        try {
+          if (id) await api.updateCustomReport(id, data);
+          else await api.createCustomReport(data);
+          Layout.closeModal('reportModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างรายงานสำเร็จ'); this.loadCustomReports();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async editReport(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getCustomReport(id);
+          const r = res.data;
+          document.getElementById('rId').value = r.id;
+          document.getElementById('rName').value = r.name;
+          document.getElementById('rCategory').value = r.category || '';
+          document.getElementById('rDesc').value = r.description || '';
+          document.getElementById('rChart').value = r.chartType || '';
+          document.getElementById('rTotals').checked = r.showTotals !== false;
+          document.getElementById('reportFormTitle').textContent = 'แก้ไขรายงาน';
+          this.selectedColumns = r.columnsJson ? JSON.parse(r.columnsJson) : [];
+          // Load data sources
+          const dsRes = await api.getReportDataSources();
+          const sources = dsRes.data?.items || dsRes.data || [];
+          this.dataSources = sources;
+          const sel = document.getElementById('rDataSource');
+          sel.innerHTML = sources.map(s => `<option value="${s.type||s.name}" ${(s.type||s.name)===r.dataSourceType?'selected':''}>${s.displayName||s.name}</option>`).join('');
+          await this.loadDataSourceColumns();
+          if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch {} }
+          Layout.openModal('reportModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async executeReport(id, name) {
+        const api = Layout.api(); if (!api) return;
+        document.getElementById('resultTitle').textContent = name;
+        document.getElementById('resultContent').innerHTML = '<div style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></div>';
+        Layout.openModal('resultModal');
+        try {
+          const res = await api.executeCustomReport(id, {});
+          const d = res.data;
+          if (!d || (!d.rows?.length && !d.columns?.length)) { document.getElementById('resultContent').innerHTML = '<p class="text-center text-gray-400" style="padding:40px">ไม่มีข้อมูล</p>'; return; }
+          const cols = d.columns || Object.keys(d.rows?.[0] || {});
+          let html = '<div class="table-container"><table class="table"><thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+          (d.rows || []).forEach(row => { html += '<tr>' + cols.map(c => `<td>${row[c] != null ? row[c] : '-'}</td>`).join('') + '</tr>'; });
+          if (d.totals) { html += '<tr style="background:var(--gray-100);font-weight:bold">' + cols.map(c => `<td>${d.totals[c] != null ? d.totals[c] : ''}</td>`).join('') + '</tr>'; }
+          html += '</tbody></table></div>';
+          document.getElementById('resultContent').innerHTML = html;
+        } catch (e) { document.getElementById('resultContent').innerHTML = `<p class="text-center text-danger">${e.message}</p>`; }
+      },
+      async duplicateReport(id) {
+        const api = Layout.api(); if (!api) return;
+        try { await api.duplicateCustomReport(id); Layout.toast('สำเนาสำเร็จ'); this.loadCustomReports(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteReport(id) {
+        if (!confirm('ลบรายงานนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.deleteCustomReport(id); Layout.toast('ลบสำเร็จ'); this.loadCustomReports(); } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };
     Page.init();

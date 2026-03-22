@@ -41,7 +41,10 @@ public record BudgetVsActualResponse(
     Guid BudgetId,
     string BudgetName,
     int FiscalYear,
-    List<BudgetVsActualLine> Lines);
+    List<BudgetVsActualLine> Lines,
+    List<BudgetAlertResponse> Alerts,
+    decimal TotalBudget,
+    decimal TotalActual);
 
 public record BudgetVsActualLine(
     Guid AccountId,
@@ -51,3 +54,13 @@ public record BudgetVsActualLine(
     decimal ActualAmount,
     decimal Variance,
     decimal VariancePercent);
+
+public record BudgetAlertResponse(
+    Guid AccountId,
+    string AccountCode,
+    string AccountName,
+    string AlertLevel,
+    decimal BudgetAmount,
+    decimal ActualAmount,
+    decimal OverBudgetPercent,
+    string Message);

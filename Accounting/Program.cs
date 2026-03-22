@@ -1,5 +1,6 @@
 using System.Text;
 using Accounting.Data;
+using Accounting.Hubs;
 using Accounting.Middleware;
 using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
@@ -7,6 +8,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using FluentValidation;
+using FluentValidation.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +18,11 @@ builder.Services.AddDbContext<AccountingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // ===== Authentication (JWT) =====
+// JWT secret: prefer environment variable, fallback to config
+var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET")
+    ?? builder.Configuration["Jwt:Secret"]
+    ?? throw new InvalidOperationException("JWT secret is not configured. Set JWT_SECRET environment variable or Jwt:Secret in appsettings.");
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -27,8 +35,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!)),
+                Encoding.UTF8.GetBytes(jwtSecret)),
             ClockSkew = TimeSpan.FromMinutes(1)
+        };
+
+        // Support SignalR token via query string
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -103,6 +126,19 @@ builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddHttpClient();
 
+// Email service
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+// SignalR for real-time notifications
+builder.Services.AddSignalR();
+
+// Background job scheduler
+builder.Services.AddHostedService<BackgroundJobService>();
+
+// ===== Validation =====
+builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+builder.Services.AddFluentValidationAutoValidation();
+
 // ===== Controllers =====
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -170,8 +206,8 @@ builder.Services.AddCors(options =>
     {
         var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? new[] { "http://localhost:3000" };
         policy.WithOrigins(origins)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
+            .WithHeaders("Authorization", "Content-Type", "X-Api-Key", "X-Company-Id", "X-Requested-With")
+            .WithMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
             .AllowCredentials();
     });
 });
@@ -214,8 +250,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Accounting Platform API v1"));
 }
 
-// Only redirect to HTTPS if not running on plain HTTP (e.g. IIS port 80)
-if (!app.Environment.IsProduction())
+// Enforce HTTPS in production
+if (app.Environment.IsProduction())
 {
     app.UseHttpsRedirection();
 }
@@ -224,6 +260,15 @@ app.UseCors();
 // Static files (frontend)
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Serve uploaded files (logos, attachments)
+var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "uploads");
+if (!Directory.Exists(uploadsPath)) Directory.CreateDirectory(uploadsPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),
+    RequestPath = "/uploads"
+});
 
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
@@ -243,6 +288,9 @@ app.UseMiddleware<AuditMiddleware>();
 
 app.MapControllers();
 
+// SignalR hubs
+app.MapHub<NotificationHub>("/hubs/notifications");
+
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
@@ -254,10 +302,20 @@ try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-    db.Database.EnsureCreated();
+
+    // Use Migrate() if migrations exist, fallback to EnsureCreated()
+    if (db.Database.GetPendingMigrations().Any())
+    {
+        db.Database.Migrate();
+    }
+    else
+    {
+        db.Database.EnsureCreated();
+    }
+
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
-    await SeedAdminUser.SeedAsync(db);
+    await SeedAdminUser.SeedAsync(db, app.Configuration);
 }
 catch (Exception ex)
 {

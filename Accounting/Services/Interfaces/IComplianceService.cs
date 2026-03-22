@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Compliance;
 
 namespace Accounting.Services.Interfaces;
 
@@ -12,6 +13,3 @@ public interface IComplianceService
     Task<List<ComplianceFilingResponse>> GetPendingFilingsAsync(Guid companyId);
     Task InitializeFilingCalendarAsync(Guid companyId, int year);
 }
-
-public record CreateComplianceFilingRequest(string FilingType, string FormCode, int Year, int? Month, DateTime DueDate, string? Notes);
-public record ComplianceFilingResponse(Guid Id, string FilingType, string FormCode, int Year, int? Month, DateTime DueDate, DateTime? FiledDate, string Status, string? SubmissionReference, string? ConfirmationNumber, decimal? TaxAmount, decimal? PenaltyAmount, string? ValidationErrors, int DaysUntilDue);

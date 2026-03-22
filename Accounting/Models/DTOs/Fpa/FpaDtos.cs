@@ -2,40 +2,62 @@ namespace Accounting.Models.DTOs.Fpa;
 
 public record CreateScenarioRequest(
     string Name, string? Description, string ScenarioType,
-    string BaselineType, Guid? BaselineScenarioId,
-    List<ScenarioAssumptionRequest> Assumptions);
-
-public record ScenarioAssumptionRequest(
-    Guid AccountId, string AdjustmentType, decimal AdjustmentValue,
-    int? Month, string? Notes);
+    int FiscalYear, string BaselineType, Guid? BaselineScenarioId);
 
 public record UpdateScenarioRequest(
-    string? Name = null, string? Description = null, bool? IsActive = null);
+    string? Name, string? Description, string? Status);
 
 public record ScenarioResponse(
     Guid Id, string Name, string? Description, string ScenarioType,
-    string BaselineType, bool IsActive,
-    List<ScenarioAssumptionResponse> Assumptions,
-    List<ScenarioResultResponse>? Results, DateTime CreatedAt);
+    int FiscalYear, string BaselineType, string Status,
+    int AssumptionCount, DateTime CreatedAt);
 
-public record ScenarioAssumptionResponse(
-    Guid Id, Guid AccountId, string AccountCode, string AccountName,
-    string AdjustmentType, decimal AdjustmentValue, int? Month, string? Notes);
+public record CreateAssumptionRequest(
+    string Category, string Description, string AdjustmentType,
+    decimal AdjustmentValue, Guid? AccountId, Guid? DimensionId,
+    int? ApplyToMonth);
 
-public record ScenarioResultResponse(
-    Guid Id, Guid AccountId, string AccountCode, string AccountName,
-    int Month, decimal BaselineAmount, decimal AdjustedAmount,
-    decimal VarianceAmount, decimal VariancePercent);
+public record ScenarioResultsResponse(
+    Guid ScenarioId, string ScenarioName,
+    List<ScenarioMonthResult> MonthlyResults,
+    decimal TotalBaselineRevenue, decimal TotalScenarioRevenue,
+    decimal TotalBaselineExpenses, decimal TotalScenarioExpenses,
+    decimal BaselineNetIncome, decimal ScenarioNetIncome);
 
-public record CreateKpiRequest(
-    string Name, string? Description, string Formula,
-    string Category, string Unit, decimal? TargetValue, string? TargetDirection);
+public record ScenarioMonthResult(
+    int Month, decimal BaselineRevenue, decimal ScenarioRevenue,
+    decimal BaselineExpenses, decimal ScenarioExpenses,
+    decimal BaselineNetIncome, decimal ScenarioNetIncome);
 
-public record KpiResponse(
-    Guid Id, string Name, string? Description, string Formula,
-    string Category, string Unit, decimal? TargetValue,
-    string? TargetDirection, bool IsActive, DateTime CreatedAt);
+public record ScenarioComparisonResponse(
+    List<ScenarioResultsResponse> Scenarios,
+    string ComparisonSummaryJson);
+
+public record CreateFinancialKpiRequest(
+    string Name, string Code, string Category, string Formula,
+    decimal? TargetValue, decimal? WarningThreshold,
+    decimal? CriticalThreshold);
+
+public record FinancialKpiResponse(
+    Guid Id, string Name, string Code, string Category,
+    decimal? TargetValue, decimal? LatestValue,
+    string? LatestStatus, bool IsActive);
 
 public record KpiSnapshotResponse(
-    Guid Id, Guid KpiId, string KpiName, int Year, int Month,
-    decimal Value, decimal? TargetValue, decimal? VariancePercent, DateTime CalculatedAt);
+    int Year, int Month, decimal Value, string? Status);
+
+public record FinancialRatiosResponse(
+    DateTime AsOfDate, decimal CurrentRatio, decimal QuickRatio,
+    decimal DebtToEquity, decimal ReturnOnEquity, decimal ReturnOnAssets,
+    decimal GrossProfitMargin, decimal NetProfitMargin,
+    decimal AssetTurnover, decimal ReceivableTurnover,
+    decimal PayableTurnover, decimal InventoryTurnover,
+    decimal DaysSalesOutstanding, decimal DaysPayableOutstanding,
+    decimal DaysInventoryOutstanding, decimal CashConversionCycle,
+    decimal WorkingCapital, decimal InterestCoverage);
+
+public record BreakEvenResponse(
+    int FiscalYear, decimal TotalFixedCosts,
+    decimal AverageContributionMarginPercent,
+    decimal BreakEvenRevenue, decimal CurrentRevenue,
+    decimal MarginOfSafety, decimal MarginOfSafetyPercent);

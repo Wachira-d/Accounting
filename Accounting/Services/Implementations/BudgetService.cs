@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Budget;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -71,6 +72,31 @@ public class BudgetService : IBudgetService
 
         var budgets = await query.OrderByDescending(b => b.FiscalYear).ToListAsync();
         return budgets.Select(MapToResponse).ToList();
+    }
+
+    public async Task<PagedResponse<BudgetResponse>> GetAllPagedAsync(Guid companyId, int? fiscalYear, PagedRequest request)
+    {
+        var query = _db.Budgets
+            .Include(b => b.Lines).ThenInclude(l => l.Account)
+            .Where(b => b.CompanyId == companyId);
+
+        if (fiscalYear.HasValue)
+            query = query.Where(b => b.FiscalYear == fiscalYear.Value);
+
+        if (!string.IsNullOrEmpty(request.Search))
+            query = query.Where(b => b.Name.Contains(request.Search));
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(b => b.FiscalYear)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .ToListAsync();
+
+        return new PagedResponse<BudgetResponse>(
+            items.Select(MapToResponse).ToList(),
+            total, request.Page, request.PageSize,
+            (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
     public async Task<BudgetResponse> UpdateAsync(Guid companyId, Guid budgetId, UpdateBudgetRequest request)
@@ -160,9 +186,27 @@ public class BudgetService : IBudgetService
         // Calculate summary with variance alerts
         var totalBudget = lines.Sum(l => l.BudgetAmount);
         var totalActual = lines.Sum(l => l.ActualAmount);
-        var overBudgetLines = lines.Where(l => l.ActualAmount > l.BudgetAmount && l.BudgetAmount > 0).ToList();
 
-        return new BudgetVsActualResponse(budget.Id, budget.Name, budget.FiscalYear, lines);
+        var alerts = lines
+            .Where(l => l.ActualAmount > l.BudgetAmount && l.BudgetAmount > 0)
+            .Select(l =>
+            {
+                var overPercent = ((l.ActualAmount - l.BudgetAmount) / l.BudgetAmount) * 100;
+                var level = overPercent switch
+                {
+                    > 50 => "Critical",
+                    > 20 => "Warning",
+                    _ => "Info"
+                };
+                return new BudgetAlertResponse(
+                    l.AccountId, l.AccountCode, l.AccountName,
+                    level, l.BudgetAmount, l.ActualAmount, overPercent,
+                    $"{l.AccountName} เกินงบประมาณ {overPercent:F1}% (งบ {l.BudgetAmount:N2} / จริง {l.ActualAmount:N2})");
+            })
+            .OrderByDescending(a => a.OverBudgetPercent)
+            .ToList();
+
+        return new BudgetVsActualResponse(budget.Id, budget.Name, budget.FiscalYear, lines, alerts, totalBudget, totalActual);
     }
 
     private static BudgetResponse MapToResponse(Budget b) =>

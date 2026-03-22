@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Consolidation;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -16,7 +17,7 @@ public class ConsolidationController : ControllerBase
 
     [HttpPost("groups")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> CreateGroup([FromBody] CreateConsolidationGroupRequest request)
-        => Ok(new ApiResponse<ConsolidationGroupResponse>(true, await _service.CreateGroupAsync(request, User.Identity?.Name ?? "")));
+        => StatusCode(201, new ApiResponse<ConsolidationGroupResponse>(true, await _service.CreateGroupAsync(request, User.Identity?.Name ?? "")));
 
     [HttpGet("groups/{groupId:guid}")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> GetGroup(Guid groupId)
@@ -28,11 +29,14 @@ public class ConsolidationController : ControllerBase
 
     [HttpPost("groups/{groupId:guid}/members")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> AddMember(Guid groupId, [FromBody] AddConsolidationMemberRequest request)
-        => Ok(new ApiResponse<ConsolidationGroupResponse>(true, await _service.AddMemberAsync(groupId, request)));
+        => StatusCode(201, new ApiResponse<ConsolidationGroupResponse>(true, await _service.AddMemberAsync(groupId, request)));
 
     [HttpDelete("groups/{groupId:guid}/members/{memberId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveMember(Guid groupId, Guid memberId)
-    { await _service.RemoveMemberAsync(groupId, memberId); return Ok(new ApiResponse<bool>(true, true)); }
+    {
+        await _service.RemoveMemberAsync(groupId, memberId);
+        return Ok(new ApiResponse<bool>(true, true, "ลบสมาชิกสำเร็จ"));
+    }
 
     [HttpGet("groups/{groupId:guid}/balance-sheet")]
     public async Task<ActionResult<ApiResponse<ConsolidatedReportResponse>>> GetBalanceSheet(Guid groupId, [FromQuery] DateTime asOfDate)

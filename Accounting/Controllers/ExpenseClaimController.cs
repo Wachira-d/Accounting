@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Expense;
 using Accounting.Models.Enums;
@@ -24,9 +24,9 @@ public class ExpenseClaimController : ControllerBase
     public async Task<ActionResult<ApiResponse<ExpenseClaimResponse>>> Create(
         Guid companyId, [FromBody] CreateExpenseClaimRequest request)
     {
-        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _expenseService.CreateAsync(companyId, request, userId);
-        return Ok(new ApiResponse<ExpenseClaimResponse>(true, result, "สร้างใบเบิกค่าใช้จ่ายสำเร็จ"));
+        return StatusCode(201, new ApiResponse<ExpenseClaimResponse>(true, result, "สร้างใบเบิกค่าใช้จ่ายสำเร็จ"));
     }
 
     [HttpGet("{claimId:guid}")]
@@ -63,7 +63,7 @@ public class ExpenseClaimController : ControllerBase
     public async Task<ActionResult<ApiResponse<ExpenseClaimResponse>>> Approve(
         Guid companyId, Guid claimId, [FromBody] ApproveExpenseClaimRequest request)
     {
-        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _expenseService.ApproveAsync(companyId, claimId, userId, request);
         return Ok(new ApiResponse<ExpenseClaimResponse>(true, result, "อนุมัติสำเร็จ"));
     }
@@ -72,7 +72,7 @@ public class ExpenseClaimController : ControllerBase
     public async Task<ActionResult<ApiResponse<ExpenseClaimResponse>>> Reject(
         Guid companyId, Guid claimId, [FromBody] RejectExpenseClaimRequest request)
     {
-        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _expenseService.RejectAsync(companyId, claimId, userId, request);
         return Ok(new ApiResponse<ExpenseClaimResponse>(true, result, "ปฏิเสธสำเร็จ"));
     }
@@ -95,7 +95,7 @@ public class ExpenseClaimController : ControllerBase
     [HttpGet("my-claims")]
     public async Task<ActionResult<ApiResponse<List<ExpenseClaimResponse>>>> GetMyClaims(Guid companyId)
     {
-        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _expenseService.GetMyClaimsAsync(companyId, userId);
         return Ok(new ApiResponse<List<ExpenseClaimResponse>>(true, result));
     }

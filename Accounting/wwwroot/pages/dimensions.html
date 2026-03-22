@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>หลายสาขาและมิติ - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('branches')">สาขา</button>
+      <button class="tab" onclick="Page.switchTab('dimensions')">มิติการวิเคราะห์</button>
+      <button class="tab" onclick="Page.switchTab('analysis')">วิเคราะห์ตามมิติ</button>
+    </div>
+
+    <!-- Branches Tab -->
+    <div id="tab-branches">
+      <div class="page-header">
+        <div><h2 class="page-title">จัดการสาขา</h2><p class="page-subtitle">กำหนดสาขาสำหรับแยกรายงานและติดตามผลประกอบการ</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateBranch()">+ เพิ่มสาขา</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>ที่อยู่</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="branchBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Dimensions Tab -->
+    <div id="tab-dimensions" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">มิติการวิเคราะห์</h2><p class="page-subtitle">สร้างมิติเพิ่มเติมเพื่อวิเคราะห์ข้อมูลทางบัญชี (แผนก, โปรเจค, ภูมิภาค ฯลฯ)</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateDimension()">+ สร้างมิติ</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ชื่อมิติ</th><th>รหัส</th><th>ค่าที่กำหนด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="dimBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Analysis Tab -->
+    <div id="tab-analysis" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">วิเคราะห์ตามมิติ</h2><p class="page-subtitle">ดูงบกำไรขาดทุนแยกตามมิติ</p></div>
+      </div>
+      <div class="toolbar">
+        <select class="filter-select" id="analysisDim" onchange="Page.loadAnalysis()"></select>
+      </div>
+      <div id="analysisContent" class="card" style="padding:24px">
+        <p class="text-gray-400 text-center">เลือกมิติเพื่อดูการวิเคราะห์</p>
+      </div>
+    </div>
+
+    <!-- Branch Modal -->
+    <div class="modal-overlay" id="branchModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title" id="branchModalTitle">เพิ่มสาขา</h3><button class="modal-close" onclick="Layout.closeModal('branchModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="branchId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสสาขา *</label><input type="text" class="form-input" id="branchCode" placeholder="BR001"></div>
+            <div class="form-group"><label class="form-label">ชื่อสาขา *</label><input type="text" class="form-input" id="branchName"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ที่อยู่</label><input type="text" class="form-input" id="branchAddr"></div>
+          <div class="form-group"><label class="form-label"><input type="checkbox" id="branchActive" checked> ใช้งาน</label></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('branchModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveBranch()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Dimension Modal -->
+    <div class="modal-overlay" id="dimModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title" id="dimModalTitle">สร้างมิติ</h3><button class="modal-close" onclick="Layout.closeModal('dimModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="dimId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อมิติ *</label><input type="text" class="form-input" id="dimName" placeholder="เช่น แผนก, ภูมิภาค"></div>
+            <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="dimCode" placeholder="DEPT"></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="dimDesc"></div>
+          <div class="form-group"><label class="form-label">ค่าที่กำหนด (คั่นด้วยเครื่องหมายจุลภาค)</label><input type="text" class="form-input" id="dimValues" placeholder="เช่น ฝ่ายขาย, ฝ่ายผลิต, ฝ่ายบัญชี"></div>
+          <div class="form-group"><label class="form-label"><input type="checkbox" id="dimRequired"> จำเป็นต้องระบุ</label></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('dimModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveDimension()">บันทึก</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('dimensions')) return;
+    Layout.setTitle('หลายสาขาและมิติ');
+    this.loadBranches();
+  },
+
+  switchTab(tab) {
+    ['branches','dimensions','analysis'].forEach(t => {
+      const el = document.getElementById('tab-'+t);
+      if (el) el.style.display = t === tab ? '' : 'none';
+    });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['branches','dimensions','analysis'][i] === tab));
+    if (tab === 'branches') this.loadBranches();
+    else if (tab === 'dimensions') this.loadDimensions();
+    else if (tab === 'analysis') this.initAnalysis();
+  },
+
+  async loadBranches() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getBranches();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('branchBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสาขา</td></tr>'; return; }
+      tbody.innerHTML = items.map(b => `<tr>
+        <td><span class="font-medium">${b.code || '-'}</span></td>
+        <td>${b.name || '-'}</td>
+        <td>${b.address || '-'}</td>
+        <td>${Layout.statusBadge(b.isActive !== false ? 'Active' : 'Inactive')}</td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editBranch('${b.id}')">แก้ไข</button></td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreateBranch() {
+    document.getElementById('branchModalTitle').textContent = 'เพิ่มสาขา';
+    document.getElementById('branchId').value = '';
+    ['branchCode','branchName','branchAddr'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('branchActive').checked = true;
+    Layout.openModal('branchModal');
+  },
+
+  editBranch(id) {
+    // Simplified - just open modal for edit
+    document.getElementById('branchModalTitle').textContent = 'แก้ไขสาขา';
+    document.getElementById('branchId').value = id;
+    Layout.openModal('branchModal');
+  },
+
+  async saveBranch() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('branchId').value;
+    const data = { code: document.getElementById('branchCode').value, name: document.getElementById('branchName').value, address: document.getElementById('branchAddr').value, isActive: document.getElementById('branchActive').checked };
+    if (!data.name) { Layout.toast('กรุณากรอกชื่อสาขา', 'error'); return; }
+    try {
+      if (id) await api.updateBranch(id, data); else await api.createBranch(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มสาขาสำเร็จ');
+      Layout.closeModal('branchModal'); this.loadBranches();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadDimensions() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getDimensions();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('dimBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีมิติ</td></tr>'; return; }
+      tbody.innerHTML = items.map(d => `<tr>
+        <td><span class="font-medium">${d.name || '-'}</span></td>
+        <td>${d.code || '-'}</td>
+        <td>${d.values?.length || d.valueCount || 0} ค่า</td>
+        <td>${Layout.statusBadge(d.isActive !== false ? 'Active' : 'Inactive')}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editDimension('${d.id}')">แก้ไข</button>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteDimension('${d.id}')">ลบ</button>
+        </td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreateDimension() {
+    document.getElementById('dimModalTitle').textContent = 'สร้างมิติ';
+    document.getElementById('dimId').value = '';
+    ['dimName','dimCode','dimDesc','dimValues'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('dimRequired').checked = false;
+    Layout.openModal('dimModal');
+  },
+
+  editDimension(id) {
+    document.getElementById('dimModalTitle').textContent = 'แก้ไขมิติ';
+    document.getElementById('dimId').value = id;
+    Layout.openModal('dimModal');
+  },
+
+  async saveDimension() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('dimId').value;
+    const data = { name: document.getElementById('dimName').value, code: document.getElementById('dimCode').value, description: document.getElementById('dimDesc').value, values: document.getElementById('dimValues').value.split(',').map(v => v.trim()).filter(Boolean), isRequired: document.getElementById('dimRequired').checked };
+    if (!data.name || !data.code) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try {
+      if (id) await api.updateDimension(id, data); else await api.createDimension(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างมิติสำเร็จ');
+      Layout.closeModal('dimModal'); this.loadDimensions();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async deleteDimension(id) {
+    if (!confirm('ลบมิตินี้?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.deleteDimension(id); Layout.toast('ลบสำเร็จ'); this.loadDimensions(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async initAnalysis() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getDimensions();
+      const items = res.data?.items || res.data || [];
+      const sel = document.getElementById('analysisDim');
+      sel.innerHTML = '<option value="">-- เลือกมิติ --</option>' + items.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+    } catch (err) { /* ignore */ }
+  },
+
+  async loadAnalysis() {
+    const api = Layout.api(); if (!api) return;
+    const dimId = document.getElementById('analysisDim').value;
+    const content = document.getElementById('analysisContent');
+    if (!dimId) { content.innerHTML = '<p class="text-gray-400 text-center">เลือกมิติเพื่อดูการวิเคราะห์</p>'; return; }
+    try {
+      const res = await api.getDimensionPnl(dimId);
+      const d = res.data || {};
+      const items = d.items || d.values || [];
+      content.innerHTML = `<table class="table"><thead><tr><th>มิติ</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th><th class="text-right">กำไร/ขาดทุน</th></tr></thead>
+      <tbody>${items.length ? items.map(i => `<tr><td class="font-medium">${i.name||i.value||'-'}</td><td class="text-right">${Layout.money(i.revenue)}</td><td class="text-right">${Layout.money(i.expense)}</td><td class="text-right ${(i.revenue-i.expense)>=0?'text-success':'text-danger'}">${Layout.money((i.revenue||0)-(i.expense||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody></table>`;
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

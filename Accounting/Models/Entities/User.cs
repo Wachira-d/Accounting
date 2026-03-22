@@ -17,6 +17,9 @@ public class User : BaseEntity
     // Security
     public int? FailedLoginAttempts { get; set; }
     public DateTime? LockoutEnd { get; set; }
+    public string? PasswordResetToken { get; set; }
+    public DateTime? PasswordResetTokenExpiry { get; set; }
+    public bool EmailVerified { get; set; } = false;
 
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();

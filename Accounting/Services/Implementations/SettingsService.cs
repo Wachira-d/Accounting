@@ -52,8 +52,63 @@ public class SettingsService : ISettingsService
         if (request.MonthEndClosingDay.HasValue) settings.MonthEndClosingDay = request.MonthEndClosingDay.Value;
         if (request.PreventPostToClosedPeriod.HasValue) settings.PreventPostToClosedPeriod = request.PreventPostToClosedPeriod.Value;
 
+        // e-Tax settings
+        if (request.EtaxEnabled.HasValue) settings.EtaxEnabled = request.EtaxEnabled.Value;
+        if (request.EtaxCertificatePath != null) settings.EtaxCertificatePath = request.EtaxCertificatePath;
+        if (request.EtaxCertificatePassword != null) settings.EtaxCertificatePassword = request.EtaxCertificatePassword;
+        if (request.EtaxRdApiKey != null) settings.EtaxRdApiKey = request.EtaxRdApiKey;
+        if (request.EtaxRdApiSecret != null) settings.EtaxRdApiSecret = request.EtaxRdApiSecret;
+        if (request.EtaxTestMode.HasValue) settings.EtaxTestMode = request.EtaxTestMode.Value;
+        if (request.EtaxAutoSign.HasValue) settings.EtaxAutoSign = request.EtaxAutoSign.Value;
+        if (request.EtaxAutoSubmit.HasValue) settings.EtaxAutoSubmit = request.EtaxAutoSubmit.Value;
+        if (request.EtaxServiceProvider != null) settings.EtaxServiceProvider = request.EtaxServiceProvider;
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
+    }
+
+    // ===== Logo Management =====
+
+    public async Task<CompanySettingsResponse> UploadLogoAsync(Guid companyId, Stream fileStream, string fileName, string contentType)
+    {
+        var settings = await GetOrCreateSettingsAsync(companyId);
+
+        // Validate content type
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
+        if (!allowedTypes.Contains(contentType.ToLower()))
+            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น");
+
+        // Create upload directory
+        var uploadDir = Path.Combine("uploads", "logos", companyId.ToString());
+        Directory.CreateDirectory(uploadDir);
+
+        // Delete old logo if exists
+        if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
+            File.Delete(settings.LogoPath);
+
+        // Save new logo
+        var ext = Path.GetExtension(fileName);
+        var savedFileName = $"logo_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
+        var filePath = Path.Combine(uploadDir, savedFileName);
+
+        using (var fs = new FileStream(filePath, FileMode.Create))
+            await fileStream.CopyToAsync(fs);
+
+        settings.LogoPath = filePath;
+        settings.LogoUrl = $"/uploads/logos/{companyId}/{savedFileName}";
+        await _db.SaveChangesAsync();
+
+        return MapToResponse(companyId, settings);
+    }
+
+    public async Task DeleteLogoAsync(Guid companyId)
+    {
+        var settings = await GetOrCreateSettingsAsync(companyId);
+        if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
+            File.Delete(settings.LogoPath);
+        settings.LogoPath = null;
+        settings.LogoUrl = null;
+        await _db.SaveChangesAsync();
     }
 
     // ===== Number Series =====
@@ -248,11 +303,24 @@ public class SettingsService : ISettingsService
 
     private static CompanySettingsResponse MapToResponse(Guid companyId, CompanySettings s) => new(
         companyId, s.LogoUrl, s.PrimaryColor, s.SecondaryColor,
-        s.DefaultPaymentTerms, s.DefaultPaymentDueDays, s.DefaultVatRate, s.VatRegistered,
+        s.DefaultPaymentTerms, s.DefaultPaymentDueDays,
+        // Document notes/footer
+        s.InvoiceNotes, s.ReceiptNotes, s.QuotationNotes, s.InvoiceFooter, s.ReceiptFooter,
+        // Email
+        s.EmailFromName, s.EmailReplyTo, s.InvoiceEmailSubject, s.InvoiceEmailBody,
+        // Tax
+        s.DefaultVatRate, s.VatRegistered,
+        // Security
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.AllowFreelanceAccess, s.MaxFreelanceUsers,
         s.EnableApiAccess, s.MaxApiKeys,
-        s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod);
+        // Closing
+        s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod,
+        // e-Tax
+        s.EtaxEnabled, s.EtaxTestMode, s.EtaxAutoSign, s.EtaxAutoSubmit,
+        s.EtaxServiceProvider,
+        !string.IsNullOrEmpty(s.EtaxCertificatePath),
+        !string.IsNullOrEmpty(s.EtaxRdApiKey));
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

@@ -35,6 +35,27 @@ public class SettingsController : ControllerBase
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพเดทการตั้งค่าสำเร็จ"));
     }
 
+    // ===== Logo Upload =====
+
+    [HttpPost("logo")]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
+    public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UploadLogo(Guid companyId, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาเลือกไฟล์โลโก้"));
+
+        using var stream = file.OpenReadStream();
+        var result = await _settingsService.UploadLogoAsync(companyId, stream, file.FileName, file.ContentType);
+        return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพโหลดโลโก้สำเร็จ"));
+    }
+
+    [HttpDelete("logo")]
+    public async Task<IActionResult> DeleteLogo(Guid companyId)
+    {
+        await _settingsService.DeleteLogoAsync(companyId);
+        return NoContent();
+    }
+
     // ===== Number Series =====
 
     [HttpGet("number-series")]
@@ -48,7 +69,7 @@ public class SettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<NumberSeriesResponse>>> CreateNumberSeries(Guid companyId, [FromBody] CreateNumberSeriesRequest request)
     {
         var result = await _settingsService.CreateNumberSeriesAsync(companyId, request);
-        return Ok(new ApiResponse<NumberSeriesResponse>(true, result, "สร้าง number series สำเร็จ"));
+        return StatusCode(201, new ApiResponse<NumberSeriesResponse>(true, result, "สร้าง number series สำเร็จ"));
     }
 
     [HttpPut("number-series/{seriesId:guid}")]
@@ -72,13 +93,13 @@ public class SettingsController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _settingsService.CreateApiKeyAsync(companyId, userId, request);
-        return Ok(new ApiResponse<ApiKeyCreatedResponse>(true, result, "สร้าง API key สำเร็จ (เก็บ key นี้ไว้ จะแสดงครั้งเดียว)"));
+        return StatusCode(201, new ApiResponse<ApiKeyCreatedResponse>(true, result, "สร้าง API key สำเร็จ (เก็บ key นี้ไว้ จะแสดงครั้งเดียว)"));
     }
 
     [HttpDelete("api-keys/{apiKeyId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> RevokeApiKey(Guid companyId, Guid apiKeyId)
     {
         await _settingsService.RevokeApiKeyAsync(companyId, apiKeyId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิก API key สำเร็จ"));
+        return NoContent();
     }
 }

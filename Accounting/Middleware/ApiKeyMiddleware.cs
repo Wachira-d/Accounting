@@ -35,7 +35,6 @@ public class ApiKeyMiddleware
         }
 
         var keyPrefix = rawKey[..8];
-        var keyHash = BCrypt.Net.BCrypt.HashPassword(rawKey);
 
         // Find by prefix (efficient lookup)
         var apiKey = await db.Set<Models.Entities.ApiKey>()
@@ -46,6 +45,14 @@ public class ApiKeyMiddleware
         {
             context.Response.StatusCode = 401;
             await context.Response.WriteAsJsonAsync(new { success = false, message = "Invalid or revoked API key" });
+            return;
+        }
+
+        // Verify the full key hash
+        if (!BCrypt.Net.BCrypt.Verify(rawKey, apiKey.KeyHash))
+        {
+            context.Response.StatusCode = 401;
+            await context.Response.WriteAsJsonAsync(new { success = false, message = "Invalid API key" });
             return;
         }
 

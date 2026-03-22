@@ -10,15 +10,64 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">รออนุมัติ</h2><p class="page-subtitle">รายการที่รอการอนุมัติ</p></div>
-    </div>
-    <div class="table-container">
-      <table class="table">
-        <thead><tr><th>ประเภท</th><th>รหัส</th><th>ผู้ขอ</th><th>วันที่ขอ</th><th>ขั้นตอนปัจจุบัน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
-      </table>
+      <div><h2 class="page-title">ระบบอนุมัติ</h2><p class="page-subtitle">จัดการรายการรออนุมัติและกฎการอนุมัติ</p></div>
     </div>
 
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setTab('pending',this)">รออนุมัติ</div>
+      <div class="tab" onclick="Page.setTab('rules',this)">กฎการอนุมัติ</div>
+    </div>
+
+    <!-- Pending Approvals -->
+    <div id="tabPending">
+      <div class="toolbar" style="margin-bottom:16px">
+        <input type="text" class="search-input" placeholder="ค้นหาผู้ขอ, ประเภท..." id="searchInput" oninput="Page.filterPending()">
+        <select class="filter-select" id="typeFilter" onchange="Page.filterPending()">
+          <option value="">ทุกประเภท</option>
+          <option value="Document">เอกสาร</option>
+          <option value="Payment">การชำระเงิน</option>
+          <option value="ExpenseClaim">เบิกค่าใช้จ่าย</option>
+          <option value="Journal">รายการบัญชี</option>
+          <option value="PayrollRun">เงินเดือน</option>
+        </select>
+        <button class="btn btn-sm btn-success" onclick="Page.batchApprove()">อนุมัติที่เลือก</button>
+        <button class="btn btn-sm btn-danger" onclick="Page.batchReject()">ปฏิเสธที่เลือก</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th><input type="checkbox" onchange="Page.toggleAll(this)"></th><th>ประเภท</th><th>รหัส</th><th>ผู้ขอ</th><th>วันที่ขอ</th><th>ขั้นตอน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Approval Rules -->
+    <div id="tabRules" style="display:none">
+      <div style="margin-bottom:16px;text-align:right">
+        <button class="btn btn-primary" onclick="Page.openCreateRule()">+ เพิ่มกฎการอนุมัติ</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ชื่อกฎ</th><th>ประเภท</th><th>เงื่อนไข</th><th>ผู้อนุมัติ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="rulesBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">รายละเอียดรายการ</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer">
+          <div class="form-group" style="flex:1;margin:0"><input type="text" class="form-input" id="detailComments" placeholder="ความคิดเห็น (ไม่บังคับ)"></div>
+          <button class="btn btn-danger" onclick="Page.submitFromDetail('Rejected')">ปฏิเสธ</button>
+          <button class="btn btn-success" onclick="Page.submitFromDetail('Approved')">อนุมัติ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Modal -->
     <div class="modal-overlay" id="actionModal">
       <div class="modal" style="max-width:400px">
         <div class="modal-header"><h3 class="modal-title">ดำเนินการอนุมัติ</h3><button class="modal-close" onclick="Layout.closeModal('actionModal')">&times;</button></div>
@@ -32,33 +81,139 @@
         </div>
       </div>
     </div>
+
+    <!-- Rule Modal -->
+    <div class="modal-overlay" id="ruleModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title" id="ruleTitle">เพิ่มกฎการอนุมัติ</h3><button class="modal-close" onclick="Layout.closeModal('ruleModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="ruleId">
+          <div class="form-group"><label class="form-label">ชื่อกฎ *</label><input type="text" class="form-input" id="ruleName"></div>
+          <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
+            <select class="form-select" id="ruleEntityType">
+              <option value="Document">เอกสาร</option>
+              <option value="Payment">การชำระเงิน</option>
+              <option value="ExpenseClaim">เบิกค่าใช้จ่าย</option>
+              <option value="Journal">รายการบัญชี</option>
+              <option value="PayrollRun">เงินเดือน</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จำนวนขั้นต่ำ (บาท)</label><input type="number" class="form-input" id="ruleMinAmount" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label">จำนวนขั้นสูง (บาท)</label><input type="number" class="form-input" id="ruleMaxAmount" step="0.01"></div>
+          </div>
+          <div class="form-group"><label class="form-label">จำนวนขั้นตอนอนุมัติ</label><input type="number" class="form-input" id="ruleSteps" value="1" min="1" max="5"></div>
+          <div class="form-group"><label class="form-label">อีเมลผู้อนุมัติ (คั่นด้วย ,)</label><input type="text" class="form-input" id="ruleApprovers" placeholder="user1@email.com, user2@email.com"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('ruleModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveRule()">บันทึก</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
+      allPending: [],
+      detailId: null,
       async init() {
         if (!Layout.init('approval')) return;
-        Layout.setTitle('รออนุมัติ');
+        Layout.setTitle('ระบบอนุมัติ');
         await this.load();
       },
+      setTab(tab, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tabPending').style.display = tab === 'pending' ? '' : 'none';
+        document.getElementById('tabRules').style.display = tab === 'rules' ? '' : 'none';
+        if (tab === 'rules') this.loadRules();
+      },
+      // === PENDING ===
       async load() {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getPendingApprovals();
-          const items = res.data?.items || res.data || [];
-          const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรออนุมัติ</td></tr>'; return; }
-          tbody.innerHTML = items.map(a => `<tr>
-            <td>${a.entityType}</td>
-            <td class="text-xs">${a.entityId ? a.entityId.substring(0,8)+'...' : '-'}</td>
-            <td>${a.requestedByName || '-'}</td>
-            <td>${Layout.date(a.requestedAt)}</td>
-            <td>ขั้นตอน ${a.currentStep || '-'}</td>
-            <td>${Layout.statusBadge(a.overallStatus)}</td>
-            <td><button class="btn btn-sm btn-primary" onclick="Page.openAction('${a.id}')">ดำเนินการ</button></td>
-          </tr>`).join('');
+          this.allPending = res.data?.items || res.data || [];
+          this.renderPending();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      filterPending() { this.renderPending(); },
+      renderPending() {
+        const search = (document.getElementById('searchInput').value || '').toLowerCase();
+        const typeF = document.getElementById('typeFilter').value;
+        let items = this.allPending;
+        if (search) items = items.filter(a => (a.requestedByName || '').toLowerCase().includes(search) || (a.entityType || '').toLowerCase().includes(search));
+        if (typeF) items = items.filter(a => a.entityType === typeF);
+        const tbody = document.getElementById('tableBody');
+        const typeMap = { Document: 'เอกสาร', Payment: 'การชำระเงิน', ExpenseClaim: 'เบิกค่าใช้จ่าย', Journal: 'รายการบัญชี', PayrollRun: 'เงินเดือน' };
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรออนุมัติ</td></tr>'; return; }
+        tbody.innerHTML = items.map(a => `<tr>
+          <td><input type="checkbox" class="approval-check" value="${a.id}"></td>
+          <td>${typeMap[a.entityType] || a.entityType}</td>
+          <td class="text-xs">${a.entityId ? a.entityId.substring(0,8)+'...' : '-'}</td>
+          <td>${a.requestedByName || '-'}</td>
+          <td>${Layout.date(a.requestedAt)}</td>
+          <td>ขั้นตอน ${a.currentStep || '-'}</td>
+          <td>${Layout.statusBadge(a.overallStatus)}</td>
+          <td class="flex gap-1">
+            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')">ดู</button>
+            <button class="btn btn-sm btn-success" onclick="Page.quickApprove('${a.id}')">อนุมัติ</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.openAction('${a.id}')">ปฏิเสธ</button>
+          </td>
+        </tr>`).join('');
+      },
+      toggleAll(cb) { document.querySelectorAll('.approval-check').forEach(c => c.checked = cb.checked); },
+      async viewDetail(id) {
+        this.detailId = id;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getApprovalRequest(id);
+          const d = res.data || {};
+          const typeMap = { Document: 'เอกสาร', Payment: 'การชำระเงิน', ExpenseClaim: 'เบิกค่าใช้จ่าย', Journal: 'รายการบัญชี', PayrollRun: 'เงินเดือน' };
+          let html = `
+            <div class="grid grid-2 gap-4" style="margin-bottom:16px">
+              <div><span class="text-gray-500 text-xs">ประเภท</span><div class="font-semibold">${typeMap[d.entityType] || d.entityType}</div></div>
+              <div><span class="text-gray-500 text-xs">สถานะ</span><div>${Layout.statusBadge(d.overallStatus)}</div></div>
+              <div><span class="text-gray-500 text-xs">ผู้ขออนุมัติ</span><div class="font-medium">${d.requestedByName || d.requestedByEmail || '-'}</div></div>
+              <div><span class="text-gray-500 text-xs">วันที่ขอ</span><div>${Layout.date(d.requestedAt)}</div></div>
+              <div><span class="text-gray-500 text-xs">ขั้นตอนปัจจุบัน</span><div>ขั้นตอนที่ ${d.currentStep || 1} / ${d.totalSteps || 1}</div></div>
+              <div><span class="text-gray-500 text-xs">รหัสเอกสาร</span><div class="text-xs">${d.entityId || '-'}</div></div>
+            </div>`;
+          if (d.steps && d.steps.length) {
+            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">ประวัติการอนุมัติ</h4><div class="table-container"><table class="table"><thead><tr><th>ขั้นตอน</th><th>ผู้อนุมัติ</th><th>สถานะ</th><th>ความคิดเห็น</th><th>วันที่</th></tr></thead><tbody>';
+            html += d.steps.map(s => `<tr>
+              <td>${s.stepNumber}</td>
+              <td>${s.approverName || s.approverEmail || '-'}</td>
+              <td>${Layout.statusBadge(s.status)}</td>
+              <td>${s.comments || '-'}</td>
+              <td>${s.actionAt ? Layout.date(s.actionAt) : '-'}</td>
+            </tr>`).join('');
+            html += '</tbody></table></div>';
+          }
+          document.getElementById('detailContent').innerHTML = html;
+          document.getElementById('detailComments').value = '';
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async submitFromDetail(status) {
+        if (!this.detailId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.submitAction(this.detailId, { status, comments: document.getElementById('detailComments').value || null });
+          Layout.closeModal('detailModal');
+          Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async quickApprove(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.submitAction(id, { status: 'Approved', comments: null });
+          Layout.toast('อนุมัติสำเร็จ');
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openAction(id) {
@@ -74,6 +229,96 @@
           Layout.closeModal('actionModal');
           Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
           await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async batchApprove() { await this.batchAction('Approved'); },
+      async batchReject() { await this.batchAction('Rejected'); },
+      async batchAction(status) {
+        const checked = document.querySelectorAll('.approval-check:checked');
+        if (!checked.length) { Layout.toast('เลือกรายการก่อน', 'error'); return; }
+        if (status === 'Rejected' && !confirm(`ปฏิเสธ ${checked.length} รายการ?`)) return;
+        const api = Layout.api(); if (!api) return;
+        let ok = 0;
+        for (const cb of checked) {
+          try { await api.submitAction(cb.value, { status, comments: null }); ok++; } catch (e) {}
+        }
+        Layout.toast(`${status === 'Approved' ? 'อนุมัติ' : 'ปฏิเสธ'}สำเร็จ ${ok} รายการ`);
+        await this.load();
+      },
+      // === RULES ===
+      async loadRules() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getApprovalRules();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('rulesBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีกฎการอนุมัติ</td></tr>'; return; }
+          const typeMap = { Document: 'เอกสาร', Payment: 'การชำระเงิน', ExpenseClaim: 'เบิกค่าใช้จ่าย', Journal: 'รายการบัญชี', PayrollRun: 'เงินเดือน' };
+          tbody.innerHTML = items.map(r => `<tr>
+            <td class="font-medium">${r.ruleName || r.name || '-'}</td>
+            <td>${typeMap[r.entityType] || r.entityType}</td>
+            <td>${r.minAmount != null ? Layout.money(r.minAmount) + ' - ' + Layout.money(r.maxAmount || 999999999) : 'ทั้งหมด'}</td>
+            <td class="text-xs">${(r.approverEmails || r.approvers || []).join(', ') || '-'}</td>
+            <td>${r.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td class="flex gap-1">
+              <button class="btn btn-sm btn-ghost" onclick="Page.editRule('${r.id}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteRule('${r.id}')">ลบ</button>
+            </td>
+          </tr>`).join('');
+          this._rules = items;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreateRule() {
+        document.getElementById('ruleTitle').textContent = 'เพิ่มกฎการอนุมัติ';
+        document.getElementById('ruleId').value = '';
+        document.getElementById('ruleName').value = '';
+        document.getElementById('ruleEntityType').value = 'Document';
+        document.getElementById('ruleMinAmount').value = '0';
+        document.getElementById('ruleMaxAmount').value = '';
+        document.getElementById('ruleSteps').value = '1';
+        document.getElementById('ruleApprovers').value = '';
+        Layout.openModal('ruleModal');
+      },
+      editRule(id) {
+        const r = (this._rules || []).find(x => x.id === id);
+        if (!r) return;
+        document.getElementById('ruleTitle').textContent = 'แก้ไขกฎการอนุมัติ';
+        document.getElementById('ruleId').value = r.id;
+        document.getElementById('ruleName').value = r.ruleName || r.name || '';
+        document.getElementById('ruleEntityType').value = r.entityType || 'Document';
+        document.getElementById('ruleMinAmount').value = r.minAmount || 0;
+        document.getElementById('ruleMaxAmount').value = r.maxAmount || '';
+        document.getElementById('ruleSteps').value = r.steps || r.totalSteps || 1;
+        document.getElementById('ruleApprovers').value = (r.approverEmails || r.approvers || []).join(', ');
+        Layout.openModal('ruleModal');
+      },
+      async saveRule() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('ruleId').value;
+        const data = {
+          ruleName: document.getElementById('ruleName').value,
+          entityType: document.getElementById('ruleEntityType').value,
+          minAmount: parseFloat(document.getElementById('ruleMinAmount').value) || 0,
+          maxAmount: parseFloat(document.getElementById('ruleMaxAmount').value) || null,
+          totalSteps: parseInt(document.getElementById('ruleSteps').value) || 1,
+          approverEmails: document.getElementById('ruleApprovers').value.split(',').map(e => e.trim()).filter(Boolean),
+        };
+        if (!data.ruleName) { Layout.toast('กรุณาระบุชื่อกฎ', 'error'); return; }
+        try {
+          if (id) { await api.updateApprovalRule(id, data); }
+          else { await api.createApprovalRule(data); }
+          Layout.closeModal('ruleModal');
+          Layout.toast('บันทึกกฎสำเร็จ');
+          await this.loadRules();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteRule(id) {
+        if (!confirm('ต้องการลบกฎนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteApprovalRule(id);
+          Layout.toast('ลบกฎสำเร็จ');
+          await this.loadRules();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

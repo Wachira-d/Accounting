@@ -31,3 +31,7 @@ public record StockTransferResponse(
 public record StockTransferLineResponse(
     Guid Id, Guid ProductId, string ProductName, decimal Quantity,
     string? LotNumber, string? SerialNumber);
+
+public record WarehouseStockSummaryResponse(Guid WarehouseId, string WarehouseName, decimal Quantity, decimal AvailableQuantity);
+
+public record TransferReceiveLine(Guid ProductId, decimal ReceivedQuantity);

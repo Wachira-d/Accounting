@@ -39,3 +39,8 @@ public record CurrencyRateResponse(
     decimal MidRate,
     string? Source,
     DateTime CreatedAt);
+
+public record UnrealizedGainLossItem(
+    Guid BankAccountId, string AccountName, string Currency,
+    decimal ForeignBalance, decimal ExchangeRate,
+    decimal BaseAmount, decimal GainLoss);

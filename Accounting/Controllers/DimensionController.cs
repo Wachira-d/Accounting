@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Dimension;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -17,7 +18,7 @@ public class DimensionController : ControllerBase
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<DimensionResponse>>> Create(Guid companyId, [FromBody] CreateDimensionRequest request)
-        => Ok(new ApiResponse<DimensionResponse>(true, await _service.CreateDimensionAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<DimensionResponse>(true, await _service.CreateDimensionAsync(companyId, request)));
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<DimensionResponse>>>> GetAll(Guid companyId, [FromQuery] DimensionType? type)
@@ -33,7 +34,7 @@ public class DimensionController : ControllerBase
 
     [HttpDelete("{dimensionId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid dimensionId)
-    { await _service.DeleteDimensionAsync(companyId, dimensionId); return Ok(new ApiResponse<bool>(true, true)); }
+    { await _service.DeleteDimensionAsync(companyId, dimensionId); return NoContent(); }
 
     [HttpPost("journal-lines/{lineId:guid}/allocations")]
     public async Task<ActionResult<ApiResponse<bool>>> AssignDimensions(Guid companyId, Guid lineId, [FromBody] List<DimensionAllocationRequest> allocations)
@@ -54,7 +55,7 @@ public class DimensionController : ControllerBase
     // Branches
     [HttpPost("branches")]
     public async Task<ActionResult<ApiResponse<BranchResponse>>> CreateBranch(Guid companyId, [FromBody] CreateBranchRequest request)
-        => Ok(new ApiResponse<BranchResponse>(true, await _service.CreateBranchAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<BranchResponse>(true, await _service.CreateBranchAsync(companyId, request)));
 
     [HttpGet("branches")]
     public async Task<ActionResult<ApiResponse<List<BranchResponse>>>> GetBranches(Guid companyId)

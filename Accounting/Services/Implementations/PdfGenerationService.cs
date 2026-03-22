@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
@@ -107,6 +109,8 @@ public class PdfGenerationService : IPdfGenerationService
         var html = BuildPreviewHtml(company, template, request.Language);
         return ConvertHtmlToPdf(html, template);
     }
+
+    public byte[] ConvertHtmlToPdfBytes(string html) => ConvertHtmlToPdf(html, null);
 
     // ===== HTML Builders =====
 
@@ -360,15 +364,529 @@ public class PdfGenerationService : IPdfGenerationService
 
     // ===== Helpers =====
 
-    private static byte[] ConvertHtmlToPdf(string html, DocumentTemplate? template)
+    /// <summary>
+    /// Convert HTML to a valid multi-page PDF 1.4 document.
+    /// Parses HTML structure to render headers, tables, and text blocks with proper formatting.
+    /// Uses PDF Type1 fonts (Helvetica family) for rendering.
+    /// Thai/Unicode text is encoded as UTF-16BE hex strings for proper display.
+    /// Note: For full Thai glyph rendering, a production deployment should use an embedded TrueType font (e.g. THSarabunNew).
+    /// </summary>
+    internal static byte[] ConvertHtmlToPdf(string html, DocumentTemplate? template)
     {
-        // NOTE: In production, integrate with a PDF library such as:
-        // - QuestPDF (recommended for .NET)
-        // - wkhtmltopdf
-        // - Puppeteer Sharp
-        // - iText/iTextSharp
-        // For now, return HTML as bytes (placeholder for PDF renderer integration)
-        return Encoding.UTF8.GetBytes(html);
+        var pageWidth = 595;  // A4 default
+        var pageHeight = template?.PaperSize == "A4" ? 842 : 792;
+        var marginTop = (int)(template?.MarginTop ?? 20) * 3; // mm to points approx
+        var marginBottom = (int)(template?.MarginBottom ?? 20) * 3;
+        var marginLeft = (int)(template?.MarginLeft ?? 15) * 3;
+        var marginRight = (int)(template?.MarginRight ?? 15) * 3;
+        var contentWidth = pageWidth - marginLeft - marginRight;
+
+        // Parse HTML into structured blocks
+        var blocks = ParseHtmlToBlocks(html);
+
+        // Build pages of content streams
+        var pages = new List<byte[]>();
+        var currentPage = new StringBuilder();
+        var y = pageHeight - marginTop;
+        var lineHeight = 14;
+        var headerSize = 16;
+        var bodySize = 10;
+
+        void StartNewPage()
+        {
+            if (currentPage.Length > 0)
+            {
+                currentPage.Append("ET\n");
+                pages.Add(Encoding.UTF8.GetBytes(currentPage.ToString()));
+                currentPage.Clear();
+            }
+            y = pageHeight - marginTop;
+            currentPage.Append("BT\n");
+        }
+
+        void EnsureSpace(int needed)
+        {
+            if (y - needed < marginBottom) StartNewPage();
+        }
+
+        void DrawLine(string text, int fontSize, bool bold, string alignment = "left")
+        {
+            EnsureSpace(fontSize + 4);
+            var fontTag = bold ? "/F2" : "/F1";
+            var xPos = alignment switch
+            {
+                "center" => marginLeft + contentWidth / 2 - (text.Length * fontSize / 4),
+                "right" => pageWidth - marginRight - (text.Length * fontSize / 3),
+                _ => marginLeft
+            };
+            xPos = Math.Max(marginLeft, xPos);
+            var escaped = EscapePdfString(text);
+            var pdfStr = ContainsNonAscii(text) ? $"<{escaped}>" : $"({escaped})";
+            currentPage.Append($"{fontTag} {fontSize} Tf\n{xPos} {y} Td\n{pdfStr} Tj\n0 0 Td\n");
+            y -= fontSize + 4;
+        }
+
+        void DrawTableRow(string[] cells, int[] colWidths, bool isHeader)
+        {
+            var fontSize = isHeader ? 9 : bodySize;
+            var fontTag = isHeader ? "/F2" : "/F1";
+            EnsureSpace(fontSize + 8);
+
+            // Draw row background for headers
+            if (isHeader)
+            {
+                currentPage.Append("ET\n");
+                currentPage.Append($"0.267 0.447 0.769 rg\n"); // #4472C4
+                currentPage.Append($"{marginLeft} {y - 4} {contentWidth} {fontSize + 8} re f\n");
+                currentPage.Append("0 0 0 rg\n");
+                currentPage.Append("BT\n");
+            }
+
+            var xPos = marginLeft + 4;
+            foreach (var (cell, i) in cells.Select((c, i) => (c, i)))
+            {
+                var w = i < colWidths.Length ? colWidths[i] : 80;
+                var cellText = cell.Length > w / 5 ? cell[..Math.Min(cell.Length, w / 5)] : cell;
+                var escaped = EscapePdfString(cellText);
+                var pdfStr = ContainsNonAscii(cellText) ? $"<{escaped}>" : $"({escaped})";
+                if (isHeader)
+                    currentPage.Append($"1 1 1 rg\n{fontTag} {fontSize} Tf\n{xPos} {y} Td\n{pdfStr} Tj\n0 0 Td\n0 0 0 rg\n");
+                else
+                    currentPage.Append($"{fontTag} {fontSize} Tf\n{xPos} {y} Td\n{pdfStr} Tj\n0 0 Td\n");
+                xPos += w;
+            }
+
+            // Draw horizontal line under row
+            currentPage.Append("ET\n");
+            currentPage.Append($"0.8 0.8 0.8 RG\n0.5 w\n{marginLeft} {y - 4} m {marginLeft + contentWidth} {y - 4} l S\n");
+            currentPage.Append("BT\n");
+
+            y -= fontSize + 8;
+        }
+
+        // Start first page
+        currentPage.Append("BT\n");
+
+        foreach (var block in blocks)
+        {
+            switch (block.Type)
+            {
+                case HtmlBlockType.Title:
+                    DrawLine(block.Text, headerSize, true, "center");
+                    y -= 4; // extra spacing after title
+                    break;
+
+                case HtmlBlockType.Header:
+                    y -= 6;
+                    DrawLine(block.Text, 12, true);
+                    break;
+
+                case HtmlBlockType.Text:
+                    var wrappedLines = WrapText(block.Text, contentWidth / 5);
+                    foreach (var line in wrappedLines)
+                        DrawLine(line, bodySize, false);
+                    break;
+
+                case HtmlBlockType.BoldText:
+                    DrawLine(block.Text, bodySize, true);
+                    break;
+
+                case HtmlBlockType.TableHeader:
+                    DrawTableRow(block.Cells!, block.ColWidths!, true);
+                    break;
+
+                case HtmlBlockType.TableRow:
+                    DrawTableRow(block.Cells!, block.ColWidths!, false);
+                    break;
+
+                case HtmlBlockType.Separator:
+                    y -= 4;
+                    currentPage.Append("ET\n");
+                    currentPage.Append($"0.7 0.7 0.7 RG\n1 w\n{marginLeft} {y} m {marginLeft + contentWidth} {y} l S\n");
+                    currentPage.Append("BT\n");
+                    y -= 8;
+                    break;
+
+                case HtmlBlockType.Space:
+                    y -= 10;
+                    break;
+            }
+        }
+
+        // Finalize last page
+        if (currentPage.Length > 0)
+        {
+            currentPage.Append("ET\n");
+            pages.Add(Encoding.UTF8.GetBytes(currentPage.ToString()));
+        }
+
+        if (pages.Count == 0)
+            pages.Add(Encoding.ASCII.GetBytes("BT\n/F1 10 Tf\n50 750 Td\n(Empty document) Tj\nET\n"));
+
+        // Build PDF structure
+        return BuildPdfDocument(pages, pageWidth, pageHeight);
+    }
+
+    private static byte[] BuildPdfDocument(List<byte[]> pageContents, int pageWidth, int pageHeight)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new StreamWriter(ms, Encoding.ASCII, leaveOpen: true);
+
+        var offsets = new List<long>();
+        var objNum = 1;
+
+        // PDF Header
+        writer.Write("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+        writer.Flush();
+
+        // Object 1: Catalog
+        offsets.Add(ms.Position);
+        writer.Write($"{objNum} 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        writer.Flush();
+        objNum++;
+
+        // Object 2: Pages (placeholder - update later)
+        var pagesObjOffset = ms.Position;
+        offsets.Add(pagesObjOffset);
+        var pageObjIds = new List<int>();
+        for (int i = 0; i < pageContents.Count; i++)
+            pageObjIds.Add(objNum + 2 + i * 2); // font objs at 3,4 then page+stream pairs
+
+        // Font objects
+        objNum++;
+
+        // Object 3: Helvetica (regular)
+        offsets.Add(ms.Position);
+        writer.Write($"{objNum} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n");
+        writer.Flush();
+        objNum++;
+
+        // Object 4: Helvetica-Bold
+        offsets.Add(ms.Position);
+        writer.Write($"{objNum} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n");
+        writer.Flush();
+        objNum++;
+
+        // Page + Content Stream pairs
+        var pageObjOffsets = new List<(int pageObj, int streamObj, long pageOffset, long streamOffset)>();
+        foreach (var content in pageContents)
+        {
+            var streamObjNum = objNum;
+            // Content stream first
+            offsets.Add(ms.Position);
+            writer.Write($"{streamObjNum} 0 obj\n<< /Length {content.Length} >>\nstream\n");
+            writer.Flush();
+            ms.Write(content, 0, content.Length);
+            writer.Write("\nendstream\nendobj\n");
+            writer.Flush();
+            objNum++;
+
+            var pageObjNum = objNum;
+            // Page object
+            offsets.Add(ms.Position);
+            writer.Write($"{pageObjNum} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pageWidth} {pageHeight}] /Contents {streamObjNum} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> >>\nendobj\n");
+            writer.Flush();
+            objNum++;
+
+            pageObjOffsets.Add((pageObjNum, streamObjNum, offsets[^1], offsets[^2]));
+        }
+
+        // Now rewrite the Pages object by seeking back
+        var endPos = ms.Position;
+        ms.Position = pagesObjOffset;
+        var kidsStr = string.Join(" ", pageObjOffsets.Select(p => $"{p.pageObj} 0 R"));
+        var pagesContent = $"2 0 obj\n<< /Type /Pages /Kids [{kidsStr}] /Count {pageContents.Count} >>\nendobj\n";
+        var pagesBytes = Encoding.ASCII.GetBytes(pagesContent);
+        // Pad to ensure we don't corrupt subsequent objects
+        var padded = new byte[Math.Max(pagesBytes.Length, 200)];
+        Array.Copy(pagesBytes, padded, pagesBytes.Length);
+        // Fill rest with spaces + newlines
+        for (int i = pagesBytes.Length; i < padded.Length - 1; i++) padded[i] = (byte)' ';
+        padded[^1] = (byte)'\n';
+        ms.Write(padded, 0, padded.Length);
+        ms.Position = endPos;
+
+        // Cross-reference table
+        var xrefOffset = ms.Position;
+        writer.Write("xref\n");
+        writer.Write($"0 {objNum}\n");
+        writer.Write("0000000000 65535 f \n");
+        writer.Flush();
+        foreach (var offset in offsets)
+        {
+            writer.Write($"{offset:D10} 00000 n \n");
+            writer.Flush();
+        }
+
+        // Trailer
+        writer.Write($"trailer\n<< /Size {objNum} /Root 1 0 R >>\n");
+        writer.Write($"startxref\n{xrefOffset}\n%%EOF\n");
+        writer.Flush();
+
+        return ms.ToArray();
+    }
+
+    private enum HtmlBlockType { Title, Header, Text, BoldText, TableHeader, TableRow, Separator, Space }
+
+    private record HtmlBlock(HtmlBlockType Type, string Text, string[]? Cells = null, int[]? ColWidths = null);
+
+    /// <summary>Parses HTML string into structured rendering blocks</summary>
+    private static List<HtmlBlock> ParseHtmlToBlocks(string html)
+    {
+        var blocks = new List<HtmlBlock>();
+
+        // Extract body content
+        var bodyMatch = Regex.Match(html, @"<body[^>]*>(.*?)</body>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        var content = bodyMatch.Success ? bodyMatch.Groups[1].Value : html;
+
+        // Process by tags
+        var pos = 0;
+        while (pos < content.Length)
+        {
+            var tagStart = content.IndexOf('<', pos);
+            if (tagStart < 0)
+            {
+                var remaining = CleanText(content[pos..]);
+                if (!string.IsNullOrWhiteSpace(remaining))
+                    blocks.Add(new HtmlBlock(HtmlBlockType.Text, remaining));
+                break;
+            }
+
+            // Text before tag
+            if (tagStart > pos)
+            {
+                var text = CleanText(content[pos..tagStart]);
+                if (!string.IsNullOrWhiteSpace(text))
+                    blocks.Add(new HtmlBlock(HtmlBlockType.Text, text));
+            }
+
+            var tagEnd = content.IndexOf('>', tagStart);
+            if (tagEnd < 0) break;
+
+            var tag = content[tagStart..(tagEnd + 1)];
+            var tagName = Regex.Match(tag, @"</?(\w+)").Groups[1].Value.ToLower();
+            pos = tagEnd + 1;
+
+            switch (tagName)
+            {
+                case "div" when tag.Contains("doc-title") || tag.Contains("title"):
+                    var titleContent = ExtractInnerContent(content, ref pos, "div");
+                    var titleText = CleanText(titleContent);
+                    if (!string.IsNullOrWhiteSpace(titleText))
+                        blocks.Add(new HtmlBlock(HtmlBlockType.Title, titleText));
+                    break;
+
+                case "div" when tag.Contains("section-title") || tag.Contains("company-name"):
+                    var headerContent = ExtractInnerContent(content, ref pos, "div");
+                    var headerText = CleanText(headerContent);
+                    if (!string.IsNullOrWhiteSpace(headerText))
+                        blocks.Add(new HtmlBlock(HtmlBlockType.Header, headerText));
+                    break;
+
+                case "h1" or "h2" or "h3":
+                    var hContent = ExtractInnerContent(content, ref pos, tagName);
+                    var hText = CleanText(hContent);
+                    if (!string.IsNullOrWhiteSpace(hText))
+                        blocks.Add(new HtmlBlock(HtmlBlockType.Header, hText));
+                    break;
+
+                case "table":
+                    var tableContent = ExtractInnerContent(content, ref pos, "table");
+                    ParseTable(tableContent, blocks);
+                    break;
+
+                case "strong" or "b":
+                    var boldContent = ExtractInnerContent(content, ref pos, tagName);
+                    var boldText = CleanText(boldContent);
+                    if (!string.IsNullOrWhiteSpace(boldText))
+                        blocks.Add(new HtmlBlock(HtmlBlockType.BoldText, boldText));
+                    break;
+
+                case "hr":
+                    blocks.Add(new HtmlBlock(HtmlBlockType.Separator, ""));
+                    break;
+
+                case "br":
+                    blocks.Add(new HtmlBlock(HtmlBlockType.Space, ""));
+                    break;
+
+                case "div":
+                    var divContent = ExtractInnerContent(content, ref pos, "div");
+                    var divText = CleanText(divContent);
+                    if (!string.IsNullOrWhiteSpace(divText))
+                    {
+                        // Check for nested strong/bold
+                        if (divContent.Contains("<strong>") || divContent.Contains("<b>"))
+                            blocks.Add(new HtmlBlock(HtmlBlockType.BoldText, divText));
+                        else
+                            blocks.Add(new HtmlBlock(HtmlBlockType.Text, divText));
+                    }
+                    break;
+
+                default:
+                    if (!tag.StartsWith("</"))
+                    {
+                        var innerContent = ExtractInnerContent(content, ref pos, tagName);
+                        var innerText = CleanText(innerContent);
+                        if (!string.IsNullOrWhiteSpace(innerText))
+                            blocks.Add(new HtmlBlock(HtmlBlockType.Text, innerText));
+                    }
+                    break;
+            }
+        }
+
+        return blocks;
+    }
+
+    private static void ParseTable(string tableHtml, List<HtmlBlock> blocks)
+    {
+        // Extract header rows
+        var theadMatch = Regex.Match(tableHtml, @"<thead[^>]*>(.*?)</thead>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        if (theadMatch.Success)
+        {
+            var headerCells = ExtractCells(theadMatch.Groups[1].Value, "th");
+            if (headerCells.Length == 0) headerCells = ExtractCells(theadMatch.Groups[1].Value, "td");
+            if (headerCells.Length > 0)
+            {
+                var colWidths = CalculateColWidths(headerCells.Length, 495);
+                blocks.Add(new HtmlBlock(HtmlBlockType.TableHeader, "", headerCells, colWidths));
+            }
+        }
+
+        // Extract body rows
+        var tbodyMatch = Regex.Match(tableHtml, @"<tbody[^>]*>(.*?)</tbody>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        var bodyContent = tbodyMatch.Success ? tbodyMatch.Groups[1].Value : tableHtml;
+
+        var rowMatches = Regex.Matches(bodyContent, @"<tr[^>]*>(.*?)</tr>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        foreach (Match row in rowMatches)
+        {
+            if (theadMatch.Success && theadMatch.Value.Contains(row.Value)) continue;
+
+            var cells = ExtractCells(row.Groups[1].Value, "td");
+            if (cells.Length == 0) cells = ExtractCells(row.Groups[1].Value, "th");
+            if (cells.Length > 0)
+            {
+                var colWidths = CalculateColWidths(cells.Length, 495);
+                var isHeaderRow = row.Value.Contains("<th");
+                blocks.Add(new HtmlBlock(isHeaderRow ? HtmlBlockType.TableHeader : HtmlBlockType.TableRow, "", cells, colWidths));
+            }
+        }
+    }
+
+    private static string[] ExtractCells(string rowHtml, string cellTag)
+    {
+        var matches = Regex.Matches(rowHtml, $@"<{cellTag}[^>]*>(.*?)</{cellTag}>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        return matches.Select(m => CleanText(m.Groups[1].Value)).ToArray();
+    }
+
+    private static int[] CalculateColWidths(int colCount, int totalWidth)
+    {
+        var widths = new int[colCount];
+        var baseWidth = totalWidth / colCount;
+        for (int i = 0; i < colCount; i++)
+            widths[i] = baseWidth;
+        return widths;
+    }
+
+    private static string ExtractInnerContent(string html, ref int pos, string tagName)
+    {
+        var depth = 1;
+        var start = pos;
+        var openTag = $"<{tagName}";
+        var closeTag = $"</{tagName}>";
+
+        while (pos < html.Length && depth > 0)
+        {
+            var nextOpen = html.IndexOf(openTag, pos, StringComparison.OrdinalIgnoreCase);
+            var nextClose = html.IndexOf(closeTag, pos, StringComparison.OrdinalIgnoreCase);
+
+            if (nextClose < 0) { pos = html.Length; break; }
+
+            if (nextOpen >= 0 && nextOpen < nextClose)
+            {
+                depth++;
+                pos = nextOpen + openTag.Length;
+            }
+            else
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    var result = html[start..nextClose];
+                    pos = nextClose + closeTag.Length;
+                    return result;
+                }
+                pos = nextClose + closeTag.Length;
+            }
+        }
+
+        return html[start..Math.Min(pos, html.Length)];
+    }
+
+    private static string CleanText(string html)
+    {
+        var result = Regex.Replace(html, "<[^>]+>", " ");
+        result = Regex.Replace(result, @"\s+", " ");
+        return WebUtility.HtmlDecode(result).Trim();
+    }
+
+    /// <summary>
+    /// Check if text contains non-ASCII characters (e.g. Thai, CJK)
+    /// </summary>
+    private static bool ContainsNonAscii(string text) => text.Any(c => c > 127);
+
+    /// <summary>
+    /// Escape PDF string. For ASCII-only text, uses parenthesized literal string.
+    /// For text with non-ASCII (Thai etc), returns UTF-16BE hex string for Unicode support.
+    /// </summary>
+    private static string EscapePdfString(string text)
+    {
+        if (ContainsNonAscii(text))
+        {
+            // Use UTF-16BE hex string for Unicode text (Thai, etc.)
+            var bytes = Encoding.BigEndianUnicode.GetBytes(text);
+            var hex = new StringBuilder(bytes.Length * 2 + 4);
+            hex.Append("FEFF"); // BOM
+            foreach (var b in bytes)
+                hex.Append(b.ToString("X2"));
+            return hex.ToString();
+        }
+
+        // ASCII: escape PDF special chars
+        var sb = new StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            if (c == '\\') sb.Append("\\\\");
+            else if (c == '(') sb.Append("\\(");
+            else if (c == ')') sb.Append("\\)");
+            else sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    private static List<string> WrapText(string text, int maxWidth)
+    {
+        var lines = new List<string>();
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var currentLine = new StringBuilder();
+
+        foreach (var word in words)
+        {
+            if (currentLine.Length + word.Length + 1 > maxWidth)
+            {
+                if (currentLine.Length > 0)
+                {
+                    lines.Add(currentLine.ToString());
+                    currentLine.Clear();
+                }
+            }
+            if (currentLine.Length > 0) currentLine.Append(' ');
+            currentLine.Append(word);
+        }
+        if (currentLine.Length > 0)
+            lines.Add(currentLine.ToString());
+
+        return lines;
     }
 
     private static DocumentTemplate CreateInMemoryDefaultTemplate(DocumentType docType) => new()

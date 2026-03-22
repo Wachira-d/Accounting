@@ -26,3 +26,9 @@ public record MobileQuickAction(string ActionType, string Title, string? EntityT
 
 public record MobileApprovalResponse(
     Guid EntityId, string EntityType, string Action, bool Success, string? Message);
+
+public record SyncQueueItem(string EntityType, Guid EntityId, string OperationType, string PayloadJson);
+public record SyncQueueResponse(string EntityType, Guid EntityId, string OperationType, string PayloadJson, DateTime ChangedAt);
+public record SyncConflict(string EntityType, Guid EntityId, string ServerVersion, string ClientVersion, string Resolution);
+
+public record MobileAlertResponse(string Type, string Title, string Message, string? ActionUrl, DateTime CreatedAt);

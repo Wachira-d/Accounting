@@ -11,13 +11,25 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">คลังสินค้า</h2><p class="page-subtitle">จัดการคลังสินค้าและการโอนย้ายสต็อก</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มคลังสินค้า</button>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openTransfer()">โอนย้ายสต็อก</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มคลังสินค้า</button>
+      </div>
     </div>
+
+    <!-- Warehouse Cards -->
     <div id="warehouseCards" class="grid grid-3 gap-4" style="margin-bottom:24px">
       <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
     </div>
-    <div class="card">
-      <div class="card-header"><h3 class="card-title">สต็อกสินค้า</h3></div>
+
+    <!-- Tabs -->
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" onclick="Page.showTab('stock',this)">สต็อกสินค้า</div>
+      <div class="tab" onclick="Page.showTab('transfers',this)">การโอนย้าย</div>
+    </div>
+
+    <!-- Stock Table -->
+    <div id="tabStock" class="card" style="border-top-left-radius:0">
       <div class="table-container" style="border:none">
         <table class="table">
           <thead><tr><th>คลัง</th><th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">จอง</th><th class="text-right">คงเหลือ</th><th>ตำแหน่ง</th></tr></thead>
@@ -26,20 +38,61 @@
       </div>
     </div>
 
+    <!-- Transfers Table -->
+    <div id="tabTransfers" class="card hidden" style="border-top-left-radius:0">
+      <div class="table-container" style="border:none">
+        <table class="table">
+          <thead><tr><th>เลขที่</th><th>จากคลัง</th><th>ไปคลัง</th><th>วันที่</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="transferBody"><tr><td colspan="6" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Create/Edit Warehouse Modal -->
     <div class="modal-overlay" id="formModal">
       <div class="modal">
-        <div class="modal-header"><h3 class="modal-title">เพิ่มคลังสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มคลังสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
+          <input type="hidden" id="fId">
           <div class="form-row">
             <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="fCode"></div>
             <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
           </div>
           <div class="form-group"><label class="form-label">ที่อยู่</label><input type="text" class="form-input" id="fAddress"></div>
           <div class="form-group"><label class="form-label">ผู้จัดการ</label><input type="text" class="form-input" id="fManager"></div>
+          <div class="form-group form-checkbox"><input type="checkbox" id="fActive" checked><label for="fActive">เปิดใช้งาน</label></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Transfer Modal -->
+    <div class="modal-overlay" id="transferModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">โอนย้ายสต็อก</h3><button class="modal-close" onclick="Layout.closeModal('transferModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จากคลัง *</label><select class="form-select" id="tFrom"></select></div>
+            <div class="form-group"><label class="form-label">ไปคลัง *</label><select class="form-select" id="tTo"></select></div>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="tNotes"></div>
+          <div style="margin-top:12px">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <label class="form-label" style="margin:0">รายการสินค้า</label>
+              <button class="btn btn-sm btn-secondary" onclick="Page.addTransferLine()">+ เพิ่ม</button>
+            </div>
+            <div class="table-container"><table class="table">
+              <thead><tr><th>สินค้า</th><th style="width:120px">จำนวน</th><th style="width:30px"></th></tr></thead>
+              <tbody id="tLines"></tbody>
+            </table></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('transferModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveTransfer()">สร้างใบโอน</button>
         </div>
       </div>
     </div>
@@ -49,38 +102,183 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
+      warehouses: [],
+      products: [],
       async init() {
         if (!Layout.init('warehouse')) return;
         Layout.setTitle('คลังสินค้า');
         await this.load();
       },
+      showTab(tab, el) {
+        document.getElementById('tabStock').classList.toggle('hidden', tab !== 'stock');
+        document.getElementById('tabTransfers').classList.toggle('hidden', tab !== 'transfers');
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        if (tab === 'transfers') this.loadTransfers();
+      },
       async load() {
-        const cid = Layout.getCompanyId(); if (!cid) return;
+        const api = Layout.api(); if (!api) return;
         try {
-          const res = await API.get(`/api/companies/${cid}/warehouse`);
+          const res = await api.getWarehouses();
           const items = res.data?.items || res.data || [];
+          this.warehouses = items;
           const container = document.getElementById('warehouseCards');
-          if (!items.length) { container.innerHTML = '<div class="card text-center" style="padding:40px;grid-column:1/-1"><p class="text-gray-500">ยังไม่มีคลังสินค้า</p></div>'; return; }
+          if (!items.length) {
+            container.innerHTML = '<div class="card text-center" style="padding:40px;grid-column:1/-1"><p class="text-gray-500">ยังไม่มีคลังสินค้า</p></div>';
+            return;
+          }
           container.innerHTML = items.map(w => `
-            <div class="card"><div class="font-semibold">${w.name}</div><div class="text-xs text-gray-500">${w.code}</div>
-            <div class="text-sm" style="margin-top:8px">${w.address || '-'}</div>
-            <div class="text-xs text-gray-400" style="margin-top:4px">ผู้จัดการ: ${w.managerName || '-'}</div>
-            ${w.isActive ? '<span class="badge badge-success" style="margin-top:8px">ใช้งาน</span>' : '<span class="badge badge-gray" style="margin-top:8px">ปิด</span>'}</div>
+            <div class="card" style="cursor:pointer" onclick="Page.openEdit('${w.id}')">
+              <div class="flex items-center justify-between">
+                <div class="font-semibold">${w.name}</div>
+                ${w.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}
+              </div>
+              <div class="text-xs text-gray-500">${w.code}</div>
+              <div class="text-sm" style="margin-top:8px">${w.address || '-'}</div>
+              <div class="text-xs text-gray-400" style="margin-top:4px">ผู้จัดการ: ${w.managerName || '-'}</div>
+              <button class="btn btn-sm btn-ghost" style="margin-top:8px" onclick="event.stopPropagation();Page.viewStock('${w.id}')">ดูสต็อก</button>
+            </div>
           `).join('');
+          // Load stock for first warehouse
+          if (items.length) this.viewStock(items[0].id);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openCreate() { Layout.openModal('formModal'); },
-      async save() {
-        const cid = Layout.getCompanyId(); if (!cid) return;
+      async viewStock(warehouseId) {
+        const api = Layout.api(); if (!api) return;
         try {
-          await API.post(`/api/companies/${cid}/warehouse`, {
-            code: document.getElementById('fCode').value,
-            name: document.getElementById('fName').value,
-            address: document.getElementById('fAddress').value || null,
-            managerName: document.getElementById('fManager').value || null,
-          });
-          Layout.closeModal('formModal'); Layout.toast('เพิ่มคลังสินค้าสำเร็จ'); await this.load();
+          const res = await api.getWarehouseStock(warehouseId);
+          const items = res.data?.items || res.data || [];
+          const w = this.warehouses.find(x => x.id === warehouseId);
+          document.getElementById('stockBody').innerHTML = items.length ? items.map(s => `<tr>
+            <td>${w?.name || '-'}</td>
+            <td class="font-medium">${s.productName || s.sku || '-'}</td>
+            <td class="text-right">${s.quantity}</td>
+            <td class="text-right">${s.reservedQuantity || 0}</td>
+            <td class="text-right font-semibold">${s.availableQuantity ?? (s.quantity - (s.reservedQuantity || 0))}</td>
+            <td class="text-gray-500">${s.location || '-'}</td>
+          </tr>`).join('') : '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีสต็อกในคลังนี้</td></tr>';
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadTransfers() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getTransfers();
+          const items = res.data?.items || res.data || [];
+          const statusMap = { Pending:'รอดำเนินการ', Shipped:'จัดส่งแล้ว', Received:'รับแล้ว', Cancelled:'ยกเลิก' };
+          document.getElementById('transferBody').innerHTML = items.length ? items.map(t => `<tr>
+            <td class="font-medium">${t.transferNumber || t.id?.substring(0,8)}</td>
+            <td>${t.fromWarehouseName || '-'}</td>
+            <td>${t.toWarehouseName || '-'}</td>
+            <td>${Layout.date(t.createdAt || t.transferDate)}</td>
+            <td>${Layout.statusBadge(t.status)}</td>
+            <td>
+              ${t.status === 'Pending' ? `<button class="btn btn-sm btn-primary" onclick="Page.shipTransfer('${t.id}')">จัดส่ง</button>` : ''}
+              ${t.status === 'Shipped' ? `<button class="btn btn-sm btn-success" onclick="Page.receiveTransfer('${t.id}')">รับสินค้า</button>` : ''}
+            </td>
+          </tr>`).join('') : '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีรายการโอนย้าย</td></tr>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มคลังสินค้า';
+        document.getElementById('fId').value = '';
+        document.getElementById('fCode').value = '';
+        document.getElementById('fCode').disabled = false;
+        document.getElementById('fName').value = '';
+        document.getElementById('fAddress').value = '';
+        document.getElementById('fManager').value = '';
+        document.getElementById('fActive').checked = true;
+        Layout.openModal('formModal');
+      },
+      openEdit(id) {
+        const w = this.warehouses.find(x => x.id === id);
+        if (!w) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขคลังสินค้า';
+        document.getElementById('fId').value = w.id;
+        document.getElementById('fCode').value = w.code;
+        document.getElementById('fCode').disabled = true;
+        document.getElementById('fName').value = w.name;
+        document.getElementById('fAddress').value = w.address || '';
+        document.getElementById('fManager').value = w.managerName || '';
+        document.getElementById('fActive').checked = w.isActive !== false;
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const data = {
+          code: document.getElementById('fCode').value,
+          name: document.getElementById('fName').value,
+          address: document.getElementById('fAddress').value || null,
+          managerName: document.getElementById('fManager').value || null,
+          isActive: document.getElementById('fActive').checked,
+        };
+        try {
+          if (id) { await api.updateWarehouse(id, data); }
+          else { await api.createWarehouse(data); }
+          Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มคลังสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openTransfer() {
+        const api = Layout.api(); if (!api) return;
+        // Load warehouses and products
+        const selFrom = document.getElementById('tFrom');
+        const selTo = document.getElementById('tTo');
+        selFrom.innerHTML = this.warehouses.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+        selTo.innerHTML = this.warehouses.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+        if (this.warehouses.length > 1) selTo.value = this.warehouses[1].id;
+        document.getElementById('tNotes').value = '';
+        document.getElementById('tLines').innerHTML = '';
+        // Load products
+        try {
+          const res = await api.getProducts('?page=1&pageSize=200');
+          this.products = res.data?.items || res.data || [];
+        } catch (e) { /* ignore */ }
+        this.addTransferLine();
+        Layout.openModal('transferModal');
+      },
+      addTransferLine() {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><select class="form-select" data-f="product" style="font-size:13px">${this.products.map(p => `<option value="${p.id}">${p.name} (${p.sku || '-'})</option>`).join('')}</select></td>
+          <td><input type="number" class="form-input text-right" data-f="qty" value="1" min="1"></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove()">✕</button></td>`;
+        document.getElementById('tLines').appendChild(row);
+      },
+      async saveTransfer() {
+        const api = Layout.api(); if (!api) return;
+        const lines = [];
+        document.querySelectorAll('#tLines tr').forEach(row => {
+          lines.push({
+            productId: row.querySelector('[data-f="product"]').value,
+            quantity: parseInt(row.querySelector('[data-f="qty"]').value) || 1,
+          });
+        });
+        if (!lines.length) { Layout.toast('กรุณาเพิ่มสินค้าอย่างน้อย 1 รายการ', 'error'); return; }
+        const fromId = document.getElementById('tFrom').value;
+        const toId = document.getElementById('tTo').value;
+        if (fromId === toId) { Layout.toast('คลังต้นทางและปลายทางต้องไม่เป็นคลังเดียวกัน', 'error'); return; }
+        try {
+          await api.createTransfer({
+            fromWarehouseId: fromId,
+            toWarehouseId: toId,
+            notes: document.getElementById('tNotes').value || null,
+            lines
+          });
+          Layout.closeModal('transferModal'); Layout.toast('สร้างใบโอนย้ายสำเร็จ');
+          this.showTab('transfers', document.querySelectorAll('.tab')[1]);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async shipTransfer(id) {
+        if (!confirm('ยืนยันจัดส่งสินค้า?')) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.shipTransfer(id); Layout.toast('จัดส่งสำเร็จ'); this.loadTransfers(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async receiveTransfer(id) {
+        if (!confirm('ยืนยันรับสินค้า?')) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.receiveTransfer(id, {}); Layout.toast('รับสินค้าสำเร็จ'); this.loadTransfers(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
       }
     };
     Page.init();

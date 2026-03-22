@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
@@ -21,6 +22,15 @@ public class AccountingService : IAccountingService
 
     public async Task<AccountResponse> CreateAccountAsync(Guid companyId, CreateAccountRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.AccountCode))
+            throw new InvalidOperationException("รหัสบัญชีห้ามว่าง");
+
+        if (!Regex.IsMatch(request.AccountCode, @"^\d{4,}$"))
+            throw new InvalidOperationException("รหัสบัญชีต้องเป็นตัวเลขอย่างน้อย 4 หลัก");
+
+        if (string.IsNullOrWhiteSpace(request.AccountName))
+            throw new InvalidOperationException("ชื่อบัญชีห้ามว่าง");
+
         if (await _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId && a.AccountCode == request.AccountCode))
             throw new InvalidOperationException($"รหัสบัญชี {request.AccountCode} ซ้ำ");
 
@@ -110,28 +120,61 @@ public class AccountingService : IAccountingService
             ("5900", "ค่าใช้จ่ายอื่น", "Other Expenses", AccountType.Expense),
         };
 
-        foreach (var (code, name, nameEn, type) in defaults)
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            _db.ChartOfAccounts.Add(new ChartOfAccount
+            foreach (var (code, name, nameEn, type) in defaults)
             {
-                CompanyId = companyId,
-                AccountCode = code,
-                AccountName = name,
-                AccountNameEn = nameEn,
-                AccountType = type,
-                Level = code.Length == 4 && code.EndsWith("000") ? 1 : 2,
-                IsSystemAccount = true,
-                IsActive = true
-            });
-        }
+                _db.ChartOfAccounts.Add(new ChartOfAccount
+                {
+                    CompanyId = companyId,
+                    AccountCode = code,
+                    AccountName = name,
+                    AccountNameEn = nameEn,
+                    AccountType = type,
+                    Level = code.Length == 4 && code.EndsWith("000") ? 1 : 2,
+                    IsSystemAccount = true,
+                    IsActive = true
+                });
+            }
 
-        await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     // ==================== Journal Entries ====================
 
     public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy)
     {
+        // Validate at least 2 lines (double-entry)
+        if (request.Lines.Count < 2)
+            throw new InvalidOperationException("ต้องมีรายการอย่างน้อย 2 รายการ (ระบบบัญชีคู่)");
+
+        // Validate EntryDate is not in the future
+        if (request.EntryDate > DateTime.UtcNow.Date.AddDays(1))
+            throw new InvalidOperationException("วันที่ลงบัญชีต้องไม่เป็นวันที่ในอนาคต");
+
+        // Validate each line
+        var companyAccountIds = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId)
+            .Select(a => a.Id)
+            .ToListAsync();
+
+        foreach (var line in request.Lines)
+        {
+            if (!companyAccountIds.Contains(line.AccountId))
+                throw new InvalidOperationException($"ไม่พบบัญชี {line.AccountId} ในผังบัญชีของบริษัท");
+
+            if (line.DebitAmount > 0 && line.CreditAmount > 0)
+                throw new InvalidOperationException("แต่ละรายการต้องมียอดเดบิตหรือเครดิตเพียงด้านเดียว");
+        }
+
         // Validate debit = credit
         var totalDebit = request.Lines.Sum(l => l.DebitAmount);
         var totalCredit = request.Lines.Sum(l => l.CreditAmount);
@@ -141,49 +184,60 @@ public class AccountingService : IAccountingService
         if (totalDebit == 0)
             throw new InvalidOperationException("ต้องมียอดเดบิต/เครดิตอย่างน้อย 1 รายการ");
 
-        // Generate entry number
-        var count = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
-        var entryNumber = $"JV-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
-
-        var entry = new JournalEntry
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            CompanyId = companyId,
-            EntryNumber = entryNumber,
-            EntryDate = request.EntryDate,
-            Description = request.Description,
-            Reference = request.Reference,
-            TotalDebit = totalDebit,
-            TotalCredit = totalCredit,
-            CreatedBy = createdBy
-        };
+            // Generate entry number
+            var count = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+            var entryNumber = $"JV-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
 
-        // Find fiscal period
-        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
-            f.CompanyId == companyId &&
-            f.StartDate <= request.EntryDate &&
-            f.EndDate >= request.EntryDate &&
-            f.Status == FiscalPeriodStatus.Open);
-        if (period != null)
-            entry.FiscalPeriodId = period.Id;
-
-        _db.JournalEntries.Add(entry);
-
-        var order = 1;
-        foreach (var line in request.Lines)
-        {
-            _db.JournalEntryLines.Add(new JournalEntryLine
+            var entry = new JournalEntry
             {
-                JournalEntryId = entry.Id,
-                AccountId = line.AccountId,
-                DebitAmount = line.DebitAmount,
-                CreditAmount = line.CreditAmount,
-                Description = line.Description,
-                LineOrder = order++
-            });
-        }
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = request.EntryDate,
+                Description = request.Description,
+                Reference = request.Reference,
+                TotalDebit = totalDebit,
+                TotalCredit = totalCredit,
+                CreatedBy = createdBy
+            };
 
-        await _db.SaveChangesAsync();
-        return await GetJournalEntryAsync(companyId, entry.Id);
+            // Find fiscal period
+            var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+                f.CompanyId == companyId &&
+                f.StartDate <= request.EntryDate &&
+                f.EndDate >= request.EntryDate &&
+                f.Status == FiscalPeriodStatus.Open);
+            if (period != null)
+                entry.FiscalPeriodId = period.Id;
+
+            _db.JournalEntries.Add(entry);
+
+            var order = 1;
+            foreach (var line in request.Lines)
+            {
+                _db.JournalEntryLines.Add(new JournalEntryLine
+                {
+                    JournalEntryId = entry.Id,
+                    AccountId = line.AccountId,
+                    DebitAmount = line.DebitAmount,
+                    CreditAmount = line.CreditAmount,
+                    Description = line.Description,
+                    LineOrder = order++
+                });
+            }
+
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return await GetJournalEntryAsync(companyId, entry.Id);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId)
@@ -237,6 +291,14 @@ public class AccountingService : IAccountingService
 
         if (entry.Status != JournalEntryStatus.Draft)
             throw new InvalidOperationException("สามารถ post ได้เฉพาะใบสำคัญที่เป็น Draft เท่านั้น");
+
+        // Validate fiscal period is Open
+        if (entry.FiscalPeriodId.HasValue)
+        {
+            var period = await _db.FiscalPeriods.FindAsync(entry.FiscalPeriodId.Value);
+            if (period != null && period.Status == FiscalPeriodStatus.Closed)
+                throw new InvalidOperationException("ไม่สามารถ post ได้เนื่องจากงวดบัญชีปิดแล้ว");
+        }
 
         entry.Status = JournalEntryStatus.Posted;
         await _db.SaveChangesAsync();
@@ -483,6 +545,9 @@ public class AccountingService : IAccountingService
     {
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f => f.Id == periodId && f.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบงวดบัญชี");
+
+        if (period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException("สามารถปิดได้เฉพาะงวดบัญชีที่เปิดอยู่เท่านั้น");
 
         // Check for draft entries
         var hasDrafts = await _db.JournalEntries.AnyAsync(j =>

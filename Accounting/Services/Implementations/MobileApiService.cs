@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Mobile;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;

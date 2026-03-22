@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Mobile;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,7 +19,7 @@ public class MobileController : ControllerBase
     public async Task<ActionResult<ApiResponse<DeviceRegistrationResponse>>> RegisterDevice([FromBody] RegisterDeviceRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        return Ok(new ApiResponse<DeviceRegistrationResponse>(true, await _service.RegisterDeviceAsync(userId, request)));
+        return StatusCode(201, new ApiResponse<DeviceRegistrationResponse>(true, await _service.RegisterDeviceAsync(userId, request)));
     }
 
     [HttpDelete("devices/{deviceToken}")]
@@ -26,7 +27,7 @@ public class MobileController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _service.UnregisterDeviceAsync(userId, deviceToken);
-        return Ok(new ApiResponse<bool>(true, true));
+        return NoContent();
     }
 
     [HttpGet("companies/{companyId:guid}/dashboard")]

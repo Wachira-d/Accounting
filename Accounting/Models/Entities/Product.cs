@@ -28,8 +28,11 @@ public class Product : TenantEntity
 
     // Account mapping
     public Guid? SalesAccountId { get; set; }
+    public ChartOfAccount? SalesAccount { get; set; }
     public Guid? PurchaseAccountId { get; set; }
+    public ChartOfAccount? PurchaseAccount { get; set; }
     public Guid? InventoryAccountId { get; set; }
+    public ChartOfAccount? InventoryAccount { get; set; }
 
     // Stock (สำหรับ ProductType = Product)
     public decimal CurrentStock { get; set; }

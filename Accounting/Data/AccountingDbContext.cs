@@ -1460,13 +1460,27 @@ public class AccountingDbContext : DbContext
     public override int SaveChanges()
     {
         UpdateTimestamps();
-        return base.SaveChanges();
+        var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null);
+        var result = base.SaveChanges();
+        if (auditEntries.Count > 0)
+        {
+            AuditLogs.AddRange(auditEntries);
+            base.SaveChanges();
+        }
+        return result;
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         UpdateTimestamps();
-        return base.SaveChangesAsync(cancellationToken);
+        var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null);
+        var result = await base.SaveChangesAsync(cancellationToken);
+        if (auditEntries.Count > 0)
+        {
+            AuditLogs.AddRange(auditEntries);
+            await base.SaveChangesAsync(cancellationToken);
+        }
+        return result;
     }
 
     private void UpdateTimestamps()

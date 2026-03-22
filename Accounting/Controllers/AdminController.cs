@@ -338,7 +338,7 @@ public class AdminController : ControllerBase
     public async Task<ActionResult<ApiResponse<PlanTemplateResponse>>> CreatePlanTemplate([FromBody] CreatePlanTemplateRequest request)
     {
         var result = await _subscriptionService.CreatePlanTemplateAsync(request);
-        return Ok(new ApiResponse<PlanTemplateResponse>(true, result, "สร้าง plan template สำเร็จ"));
+        return StatusCode(201, new ApiResponse<PlanTemplateResponse>(true, result, "สร้าง plan template สำเร็จ"));
     }
 
     [HttpGet("plans")]

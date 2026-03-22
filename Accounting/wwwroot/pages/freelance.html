@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการ Freelancer - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('freelancers')">Freelancer</button>
+      <button class="tab" onclick="Page.switchTab('tasks')">งาน/Task</button>
+      <button class="tab" onclick="Page.switchTab('invitations')">คำเชิญ</button>
+    </div>
+
+    <div id="tab-freelancers">
+      <div class="page-header">
+        <div><h2 class="page-title">จัดการ Freelancer</h2><p class="page-subtitle">เชิญและจัดการ Freelancer ที่ทำงานให้กิจการ</p></div>
+        <button class="btn btn-primary" onclick="Page.openInvite()">+ เชิญ Freelancer</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>ความเชี่ยวชาญ</th><th>งานที่มอบหมาย</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="flBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-tasks" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">งาน/Task</h2><p class="page-subtitle">มอบหมายและติดตามงาน Freelancer</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateTask()">+ สร้างงาน</button>
+      </div>
+      <div class="toolbar">
+        <select class="filter-select" id="taskStatus" onchange="Page.loadTasks()">
+          <option value="">ทุกสถานะ</option><option value="Open">เปิด</option><option value="InProgress">กำลังทำ</option><option value="Submitted">ส่งแล้ว</option><option value="Approved">อนุมัติ</option><option value="Rejected">ปฏิเสธ</option>
+        </select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>งาน</th><th>Freelancer</th><th>กำหนดส่ง</th><th class="text-right">ค่าตอบแทน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="taskBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-invitations" style="display:none">
+      <div class="page-header"><div><h2 class="page-title">คำเชิญ</h2><p class="page-subtitle">คำเชิญที่ส่งไปยัง Freelancer</p></div></div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>อีเมล</th><th>ชื่อ</th><th>วันที่เชิญ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="invBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Invite Modal -->
+    <div class="modal-overlay" id="inviteModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เชิญ Freelancer</h3><button class="modal-close" onclick="Layout.closeModal('inviteModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">อีเมล *</label><input type="email" class="form-input" id="invEmail"></div>
+          <div class="form-group"><label class="form-label">ชื่อ</label><input type="text" class="form-input" id="invName"></div>
+          <div class="form-group"><label class="form-label">ความเชี่ยวชาญ</label><input type="text" class="form-input" id="invSkills" placeholder="เช่น บัญชี, ออกแบบ, โปรแกรมเมอร์"></div>
+          <div class="form-group"><label class="form-label">สิทธิ์การเข้าถึง</label>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <label><input type="checkbox" id="invPermDocs" checked> ดูเอกสาร</label>
+              <label><input type="checkbox" id="invPermTasks" checked> จัดการงาน</label>
+              <label><input type="checkbox" id="invPermTime" checked> บันทึกเวลา</label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('inviteModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.sendInvite()">ส่งคำเชิญ</button></div>
+      </div>
+    </div>
+
+    <!-- Task Modal -->
+    <div class="modal-overlay" id="taskModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">สร้างงาน</h3><button class="modal-close" onclick="Layout.closeModal('taskModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่องาน *</label><input type="text" class="form-input" id="taskTitle"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">มอบหมายให้ *</label><select class="form-select" id="taskAssignee"></select></div>
+            <div class="form-group"><label class="form-label">กำหนดส่ง *</label><input type="date" class="form-input" id="taskDue"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ค่าตอบแทน</label><input type="number" class="form-input" id="taskBudget" step="0.01"></div>
+          <div class="form-group"><label class="form-label">รายละเอียด</label><textarea class="form-input" id="taskDesc" rows="3"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('taskModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveTask()">สร้าง</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('freelance')) return;
+    Layout.setTitle('จัดการ Freelancer');
+    this.loadFreelancers();
+  },
+
+  switchTab(tab) {
+    ['freelancers','tasks','invitations'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['freelancers','tasks','invitations'][i] === tab));
+    if (tab === 'tasks') this.loadTasks();
+    if (tab === 'invitations') this.loadInvitations();
+  },
+
+  async loadFreelancers() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getFreelancers();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('flBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มี Freelancer</td></tr>'; return; }
+      tbody.innerHTML = items.map(f => `<tr>
+        <td class="font-medium">${f.name || f.fullName || '-'}</td>
+        <td>${f.email || '-'}</td>
+        <td>${f.skills || f.specialization || '-'}</td>
+        <td>${f.taskCount || f.assignedTasks || 0} งาน</td>
+        <td>${Layout.statusBadge(f.isActive !== false ? 'Active' : 'Inactive')}</td>
+        <td>${f.isActive !== false ? `<button class="btn btn-sm btn-danger" onclick="Page.deactivateFL('${f.id}')">ปิดใช้งาน</button>` : ''}</td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async deactivateFL(id) {
+    if (!confirm('ปิดใช้งาน Freelancer นี้?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.deactivateFreelance(id); Layout.toast('ปิดใช้งานสำเร็จ'); this.loadFreelancers(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openInvite() {
+    ['invEmail','invName','invSkills'].forEach(id => document.getElementById(id).value = '');
+    Layout.openModal('inviteModal');
+  },
+
+  async sendInvite() {
+    const api = Layout.api(); if (!api) return;
+    const data = { email: document.getElementById('invEmail').value, name: document.getElementById('invName').value, skills: document.getElementById('invSkills').value, permissions: { viewDocuments: document.getElementById('invPermDocs').checked, manageTasks: document.getElementById('invPermTasks').checked, logTime: document.getElementById('invPermTime').checked } };
+    if (!data.email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
+    try { await api.inviteFreelancer(data); Layout.toast('ส่งคำเชิญสำเร็จ'); Layout.closeModal('inviteModal'); this.loadFreelancers(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadTasks() {
+    const api = Layout.api(); if (!api) return;
+    const status = document.getElementById('taskStatus')?.value || '';
+    try {
+      const res = await api.getFreelanceTasks(status ? `?status=${status}` : '');
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('taskBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีงาน</td></tr>'; return; }
+      tbody.innerHTML = items.map(t => `<tr>
+        <td class="font-medium">${t.title || t.name || '-'}</td>
+        <td>${t.assigneeName || t.freelancerName || '-'}</td>
+        <td>${Layout.date(t.dueDate)}</td>
+        <td class="text-right">${Layout.money(t.budget || t.amount)}</td>
+        <td>${Layout.statusBadge(t.status || 'Open')}</td>
+        <td>
+          ${t.status === 'Submitted' ? `<button class="btn btn-sm btn-success" onclick="Page.reviewTask('${t.id}','Approved')">อนุมัติ</button><button class="btn btn-sm btn-danger" onclick="Page.reviewTask('${t.id}','Rejected')">ปฏิเสธ</button>` : ''}
+        </td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openCreateTask() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getFreelancers();
+      const items = res.data?.items || res.data || [];
+      document.getElementById('taskAssignee').innerHTML = '<option value="">-- เลือก --</option>' + items.map(f => `<option value="${f.id}">${f.name || f.fullName}</option>`).join('');
+    } catch (err) { /* ignore */ }
+    ['taskTitle','taskBudget','taskDesc'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('taskDue').value = '';
+    Layout.openModal('taskModal');
+  },
+
+  async saveTask() {
+    const api = Layout.api(); if (!api) return;
+    const data = { title: document.getElementById('taskTitle').value, assigneeId: document.getElementById('taskAssignee').value, dueDate: document.getElementById('taskDue').value, budget: parseFloat(document.getElementById('taskBudget').value) || null, description: document.getElementById('taskDesc').value };
+    if (!data.title || !data.assigneeId) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try { await api.createFreelanceTask(data); Layout.toast('สร้างงานสำเร็จ'); Layout.closeModal('taskModal'); this.loadTasks(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async reviewTask(id, decision) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.reviewFreelanceTask(id, { decision }); Layout.toast(decision === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธแล้ว'); this.loadTasks(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadInvitations() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getFreelanceInvitations();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('invBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำเชิญ</td></tr>'; return; }
+      tbody.innerHTML = items.map(i => `<tr>
+        <td>${i.email || '-'}</td>
+        <td>${i.name || '-'}</td>
+        <td>${Layout.date(i.createdAt || i.invitedAt)}</td>
+        <td>${Layout.statusBadge(i.status || 'Pending')}</td>
+        <td>${i.status === 'Pending' ? `<button class="btn btn-sm btn-danger" onclick="Page.revokeInvite('${i.id}')">ยกเลิก</button>` : ''}</td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async revokeInvite(id) {
+    if (!confirm('ยกเลิกคำเชิญนี้?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.revokeInvitation(id); Layout.toast('ยกเลิกสำเร็จ'); this.loadInvitations(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

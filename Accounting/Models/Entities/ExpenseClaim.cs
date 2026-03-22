@@ -28,6 +28,7 @@ public class ExpenseClaim : TenantEntity
     public string? PaidReference { get; set; }
 
     public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
 
     public ICollection<ExpenseClaimLine> Lines { get; set; } = new List<ExpenseClaimLine>();
 }

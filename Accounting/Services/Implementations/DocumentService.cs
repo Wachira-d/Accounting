@@ -31,6 +31,34 @@ public class DocumentService : IDocumentService
         if (!await _subscriptionService.CheckFeatureAccessAsync(companyId, FeatureFlags.DocumentEngine))
             throw new InvalidOperationException("ไม่มีสิทธิ์ใช้ระบบเอกสาร");
 
+        // Validate ContactId exists in company contacts
+        var contactExists = await _db.Contacts.AnyAsync(c => c.Id == request.ContactId && c.CompanyId == companyId);
+        if (!contactExists)
+            throw new InvalidOperationException("ไม่พบผู้ติดต่อในบริษัทนี้");
+
+        // Validate at least 1 line item
+        if (request.Lines == null || request.Lines.Count == 0)
+            throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
+
+        // Validate each line
+        foreach (var line in request.Lines)
+        {
+            if (line.Quantity <= 0)
+                throw new InvalidOperationException("จำนวนสินค้าต้องมากกว่า 0");
+
+            if (line.UnitPrice < 0)
+                throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+
+            if (line.DiscountPercent < 0 || line.DiscountPercent > 100)
+                throw new InvalidOperationException("ส่วนลดต้องอยู่ระหว่าง 0-100%");
+
+            if (line.VatRate != 0 && line.VatRate != 7 && line.VatRate != -1)
+                throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
+
+            if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
+                throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
+        }
+
         var prefix = request.DocumentType switch
         {
             DocumentType.Quotation => "QT",
@@ -42,70 +70,81 @@ public class DocumentService : IDocumentService
             _ => "DOC"
         };
 
-        var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == request.DocumentType);
-        var docNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
-
-        var doc = new Document
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            CompanyId = companyId,
-            DocumentNumber = docNumber,
-            DocumentType = request.DocumentType,
-            DocumentDate = request.DocumentDate,
-            DueDate = request.DueDate,
-            ContactId = request.ContactId,
-            Reference = request.Reference,
-            Notes = request.Notes,
-            CreatedBy = createdBy
-        };
+            var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == request.DocumentType);
+            var docNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
 
-        _db.Documents.Add(doc);
-
-        decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
-        var order = 1;
-
-        foreach (var line in request.Lines)
-        {
-            var lineAmount = line.Quantity * line.UnitPrice;
-            var discountAmt = lineAmount * line.DiscountPercent / 100;
-            var afterDiscount = lineAmount - discountAmt;
-            var vatAmt = afterDiscount * line.VatRate / 100;
-            var whtAmt = afterDiscount * line.WithholdingTaxRate / 100;
-
-            subTotal += afterDiscount;
-            totalDiscount += discountAmt;
-            totalVat += vatAmt;
-            totalWht += whtAmt;
-
-            _db.DocumentLines.Add(new DocumentLine
+            var doc = new Document
             {
-                DocumentId = doc.Id,
-                LineOrder = order++,
-                Description = line.Description,
-                Quantity = line.Quantity,
-                Unit = line.Unit ?? "ชิ้น",
-                UnitPrice = line.UnitPrice,
-                DiscountPercent = line.DiscountPercent,
-                DiscountAmount = discountAmt,
-                Amount = afterDiscount,
-                VatRate = line.VatRate,
-                VatAmount = vatAmt,
-                WithholdingTaxRate = line.WithholdingTaxRate,
-                WithholdingTaxAmount = whtAmt,
-                AccountId = line.AccountId
-            });
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = request.DocumentType,
+                DocumentDate = request.DocumentDate,
+                DueDate = request.DueDate,
+                ContactId = request.ContactId,
+                Reference = request.Reference,
+                Notes = request.Notes,
+                CreatedBy = createdBy
+            };
+
+            _db.Documents.Add(doc);
+
+            decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
+            var order = 1;
+
+            foreach (var line in request.Lines)
+            {
+                var lineAmount = line.Quantity * line.UnitPrice;
+                var discountAmt = lineAmount * line.DiscountPercent / 100;
+                var afterDiscount = lineAmount - discountAmt;
+                var vatAmt = afterDiscount * line.VatRate / 100;
+                var whtAmt = afterDiscount * line.WithholdingTaxRate / 100;
+
+                subTotal += afterDiscount;
+                totalDiscount += discountAmt;
+                totalVat += vatAmt;
+                totalWht += whtAmt;
+
+                _db.DocumentLines.Add(new DocumentLine
+                {
+                    DocumentId = doc.Id,
+                    LineOrder = order++,
+                    Description = line.Description,
+                    Quantity = line.Quantity,
+                    Unit = line.Unit ?? "ชิ้น",
+                    UnitPrice = line.UnitPrice,
+                    DiscountPercent = line.DiscountPercent,
+                    DiscountAmount = discountAmt,
+                    Amount = afterDiscount,
+                    VatRate = line.VatRate,
+                    VatAmount = vatAmt,
+                    WithholdingTaxRate = line.WithholdingTaxRate,
+                    WithholdingTaxAmount = whtAmt,
+                    AccountId = line.AccountId
+                });
+            }
+
+            doc.SubTotal = subTotal;
+            doc.DiscountAmount = totalDiscount;
+            doc.VatAmount = totalVat;
+            doc.WithholdingTaxAmount = totalWht;
+            doc.TotalAmount = subTotal + totalVat - totalWht;
+            doc.BalanceDue = doc.TotalAmount;
+
+            await _db.SaveChangesAsync();
+            await _subscriptionService.IncrementUsageAsync(companyId, "document");
+
+            await transaction.CommitAsync();
+
+            return await GetDocumentAsync(companyId, doc.Id);
         }
-
-        doc.SubTotal = subTotal;
-        doc.DiscountAmount = totalDiscount;
-        doc.VatAmount = totalVat;
-        doc.WithholdingTaxAmount = totalWht;
-        doc.TotalAmount = subTotal + totalVat - totalWht;
-        doc.BalanceDue = doc.TotalAmount;
-
-        await _db.SaveChangesAsync();
-        await _subscriptionService.IncrementUsageAsync(companyId, "document");
-
-        return await GetDocumentAsync(companyId, doc.Id);
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId)
@@ -222,18 +261,29 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
 
-        doc.Status = DocumentStatus.Approved;
-        doc.UpdatedBy = approvedBy;
-
-        // Auto-post to journal if Invoice or TaxInvoice with account mappings
-        if ((doc.DocumentType == DocumentType.Invoice || doc.DocumentType == DocumentType.TaxInvoice)
-            && doc.Lines.Any(l => l.AccountId.HasValue))
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            await AutoPostToJournalAsync(companyId, doc, approvedBy);
-        }
+            doc.Status = DocumentStatus.Approved;
+            doc.UpdatedBy = approvedBy;
 
-        await _db.SaveChangesAsync();
-        return await GetDocumentAsync(companyId, documentId);
+            // Auto-post to journal if Invoice or TaxInvoice with account mappings
+            if ((doc.DocumentType == DocumentType.Invoice || doc.DocumentType == DocumentType.TaxInvoice)
+                && doc.Lines.Any(l => l.AccountId.HasValue))
+            {
+                await AutoPostToJournalAsync(companyId, doc, approvedBy);
+            }
+
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return await GetDocumentAsync(companyId, documentId);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task VoidDocumentAsync(Guid companyId, Guid documentId)
@@ -329,39 +379,61 @@ public class DocumentService : IDocumentService
 
     public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
+        // Validate Amount > 0
+        if (request.Amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
+
+        // Validate PaymentDate is not in the future
+        if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
+            throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
+
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // Validate document status allows payment
+        if (doc.Status != DocumentStatus.Approved && doc.Status != DocumentStatus.PartiallyPaid && doc.Status != DocumentStatus.Sent)
+            throw new InvalidOperationException("สามารถชำระเงินได้เฉพาะเอกสารที่อนุมัติแล้ว, ชำระบางส่วน หรือส่งแล้วเท่านั้น");
 
         if (request.Amount > doc.BalanceDue)
             throw new InvalidOperationException($"จำนวนเงินชำระ ({request.Amount:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
 
-        var count = await _db.Payments.CountAsync(p => p.CompanyId == companyId);
-        var payment = new Payment
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            CompanyId = companyId,
-            PaymentNumber = $"PAY-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}",
-            DocumentId = request.DocumentId,
-            PaymentDate = request.PaymentDate,
-            Amount = request.Amount,
-            PaymentMethod = request.PaymentMethod,
-            Reference = request.Reference,
-            BankAccount = request.BankAccount,
-            Notes = request.Notes,
-            CreatedBy = createdBy
-        };
+            var count = await _db.Payments.CountAsync(p => p.CompanyId == companyId);
+            var payment = new Payment
+            {
+                CompanyId = companyId,
+                PaymentNumber = $"PAY-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}",
+                DocumentId = request.DocumentId,
+                PaymentDate = request.PaymentDate,
+                Amount = request.Amount,
+                PaymentMethod = request.PaymentMethod,
+                Reference = request.Reference,
+                BankAccount = request.BankAccount,
+                Notes = request.Notes,
+                CreatedBy = createdBy
+            };
 
-        _db.Payments.Add(payment);
+            _db.Payments.Add(payment);
 
-        doc.PaidAmount += request.Amount;
-        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
-        doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+            doc.PaidAmount += request.Amount;
+            doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+            doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
 
-        await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
 
-        return new PaymentResponse(
-            payment.Id, payment.PaymentNumber, payment.DocumentId,
-            payment.PaymentDate, payment.Amount, payment.PaymentMethod,
-            payment.Reference, payment.BankAccount, payment.CreatedAt);
+            return new PaymentResponse(
+                payment.Id, payment.PaymentNumber, payment.DocumentId,
+                payment.PaymentDate, payment.Amount, payment.PaymentMethod,
+                payment.Reference, payment.BankAccount, payment.CreatedAt);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null)
