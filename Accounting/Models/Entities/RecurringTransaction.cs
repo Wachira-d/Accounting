@@ -25,6 +25,7 @@ public class RecurringTransaction : TenantEntity
     public string TemplateType { get; set; } = null!; // "Document" or "Journal"
     public DocumentType? DocumentType { get; set; }
     public Guid? ContactId { get; set; }
+    public Contact? Contact { get; set; }
 
     // Template data (JSON)
     public string TemplateData { get; set; } = null!; // JSON of CreateDocumentRequest or CreateJournalEntryRequest

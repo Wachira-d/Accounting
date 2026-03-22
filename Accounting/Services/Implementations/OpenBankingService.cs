@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.OpenBanking;
@@ -11,10 +13,14 @@ namespace Accounting.Services.Implementations;
 public class OpenBankingService : IOpenBankingService
 {
     private readonly AccountingDbContext _db;
+    private readonly string _encryptionKey;
 
-    public OpenBankingService(AccountingDbContext db)
+    public OpenBankingService(AccountingDbContext db, IConfiguration configuration)
     {
         _db = db;
+        _encryptionKey = Environment.GetEnvironmentVariable("OPENBANKING_ENCRYPTION_KEY")
+            ?? configuration["OpenBanking:EncryptionKey"]
+            ?? "DefaultKeyForDev-Change-In-Production!";
     }
 
     // ===== Connections =====
@@ -29,7 +35,7 @@ public class OpenBankingService : IOpenBankingService
             ConnectionType = request.ConnectionType,
             ApiEndpoint = request.ApiEndpoint,
             ClientId = request.ClientId,
-            EncryptedCredentials = request.Credentials, // In production, encrypt before storing
+            EncryptedCredentials = EncryptString(request.Credentials),
             AutoSync = request.AutoSync,
             SyncIntervalMinutes = request.SyncIntervalMinutes,
             LinkedBankAccountId = request.LinkedBankAccountId,
@@ -338,4 +344,18 @@ public class OpenBankingService : IOpenBankingService
         i.Id, i.ImportDate, i.PeriodStart, i.PeriodEnd,
         i.TotalTransactions, i.NewTransactions, i.DuplicateSkipped, i.AutoMatched,
         i.Status, i.ErrorMessage);
+
+    private string EncryptString(string plainText)
+    {
+        using var aes = Aes.Create();
+        aes.Key = SHA256.HashData(Encoding.UTF8.GetBytes(_encryptionKey));
+        aes.GenerateIV();
+        using var encryptor = aes.CreateEncryptor();
+        var plainBytes = Encoding.UTF8.GetBytes(plainText);
+        var cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
+        var result = new byte[aes.IV.Length + cipherBytes.Length];
+        Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
+        Buffer.BlockCopy(cipherBytes, 0, result, aes.IV.Length, cipherBytes.Length);
+        return Convert.ToBase64String(result);
+    }
 }

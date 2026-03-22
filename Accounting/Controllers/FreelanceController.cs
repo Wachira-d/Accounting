@@ -40,12 +40,12 @@ public class FreelanceController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> RevokeInvitation(Guid companyId, Guid invitationId)
     {
         await _freelanceService.RevokeInvitationAsync(companyId, invitationId);
-        return NoContent();
+        return Ok(new ApiResponse<string>(true, "ยกเลิกคำเชิญสำเร็จ"));
     }
 
     // ===== Accept Invitation (Public - Freelance) =====
 
-    [HttpPost("/api/freelance/accept-invitation")]
+    [HttpPost("~/api/freelance/accept-invitation")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<InvitationResponse>>> AcceptInvitation([FromBody] AcceptInvitationRequest request)
     {
@@ -167,7 +167,7 @@ public class FreelanceController : ControllerBase
 
     // ===== Freelance Dashboard (for Freelancer) =====
 
-    [HttpGet("/api/freelance/dashboard")]
+    [HttpGet("~/api/freelance/dashboard")]
     public async Task<ActionResult<ApiResponse<FreelanceDashboardResponse>>> GetDashboard()
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

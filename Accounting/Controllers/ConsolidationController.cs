@@ -33,7 +33,10 @@ public class ConsolidationController : ControllerBase
 
     [HttpDelete("groups/{groupId:guid}/members/{memberId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveMember(Guid groupId, Guid memberId)
-    { await _service.RemoveMemberAsync(groupId, memberId); return NoContent(); }
+    {
+        await _service.RemoveMemberAsync(groupId, memberId);
+        return Ok(new ApiResponse<bool>(true, true, "ลบสมาชิกสำเร็จ"));
+    }
 
     [HttpGet("groups/{groupId:guid}/balance-sheet")]
     public async Task<ActionResult<ApiResponse<ConsolidatedReportResponse>>> GetBalanceSheet(Guid groupId, [FromQuery] DateTime asOfDate)

@@ -14,11 +14,15 @@ public class PortalService : IPortalService
 {
     private readonly AccountingDbContext _db;
     private readonly IPdfGenerationService? _pdfService;
+    private readonly string _portalSigningKey;
 
-    public PortalService(AccountingDbContext db, IPdfGenerationService? pdfService = null)
+    public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null)
     {
         _db = db;
         _pdfService = pdfService;
+        _portalSigningKey = Environment.GetEnvironmentVariable("PORTAL_SIGNING_KEY")
+            ?? configuration["Portal:SigningKey"]
+            ?? throw new InvalidOperationException("Portal signing key is not configured. Set PORTAL_SIGNING_KEY env var or Portal:SigningKey in config.");
     }
 
     // ===== Portal Access Management =====
@@ -321,7 +325,7 @@ public class PortalService : IPortalService
         var payloadBytes = Encoding.UTF8.GetBytes(payload.ToString());
 
         // Sign with HMAC-SHA256 using a derived key (in production, use a configured secret)
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes("portal-signing-key-replace-in-production"));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_portalSigningKey));
         var signature = hmac.ComputeHash(payloadBytes);
 
         var tokenBytes = new byte[payloadBytes.Length + 1 + signature.Length];
@@ -355,7 +359,7 @@ public class PortalService : IPortalService
                 throw new InvalidOperationException("Token has expired.");
 
             // Verify signature
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes("portal-signing-key-replace-in-production"));
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_portalSigningKey));
             var expectedSignature = hmac.ComputeHash(payloadBytes);
 
             var actualSignature = new byte[tokenBytes.Length - dotIndex - 1];

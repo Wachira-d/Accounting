@@ -369,7 +369,7 @@ public class ConsolidationService : IConsolidationService
         if (fromDate.HasValue)
             query = query.Where(l => l.JournalEntry.EntryDate >= fromDate.Value);
 
-        return await query
+        var results = await query
             .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
             .Select(g => new
             {
@@ -378,9 +378,10 @@ public class ConsolidationService : IConsolidationService
                 AccountType = g.Key.AccountType.ToString(),
                 Balance = g.Sum(l => l.DebitAmount - l.CreditAmount)
             })
-            .ToListAsync()
-            .ContinueWith(t => t.Result.Select(b =>
-                (b.AccountCode, b.AccountName, b.AccountType, b.Balance)).ToList());
+            .ToListAsync();
+
+        return results.Select(b =>
+            (b.AccountCode, b.AccountName, b.AccountType, b.Balance)).ToList();
     }
 
     private async Task<List<EliminationEntryResponse>> GenerateEliminationEntries(ConsolidationGroup group, DateTime asOfDate)

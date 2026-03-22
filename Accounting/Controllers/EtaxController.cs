@@ -14,10 +14,14 @@ namespace Accounting.Controllers;
 public class EtaxController : ControllerBase
 {
     private readonly IEtaxInvoiceService _etaxService;
+    private readonly IConfiguration _configuration;
+    private readonly Data.AccountingDbContext _db;
 
-    public EtaxController(IEtaxInvoiceService etaxService)
+    public EtaxController(IEtaxInvoiceService etaxService, IConfiguration configuration, Data.AccountingDbContext db)
     {
         _etaxService = etaxService;
+        _configuration = configuration;
+        _db = db;
     }
 
     [HttpPost("generate")]
@@ -110,11 +114,8 @@ public class EtaxController : ControllerBase
     [HttpGet("config-status")]
     public async Task<ActionResult<ApiResponse<object>>> GetConfigStatus(Guid companyId)
     {
-        var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-        var db = HttpContext.RequestServices.GetRequiredService<Data.AccountingDbContext>();
-
         // Check per-company settings first
-        var companySettings = await db.CompanySettings
+        var companySettings = await _db.CompanySettings
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
         var useCompanyConfig = companySettings?.EtaxEnabled == true;
@@ -136,13 +137,13 @@ public class EtaxController : ControllerBase
         }
         else
         {
-            certPath = config["Etax:CertificatePath"];
+            certPath = _configuration["Etax:CertificatePath"];
             hasCert = !string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath);
-            hasApiKey = !string.IsNullOrEmpty(config["Etax:RdApiKey"]);
-            isTestMode = config.GetValue<bool>("Etax:RdTestMode");
-            autoSign = config.GetValue<bool>("Etax:AutoSign");
-            autoSubmit = config.GetValue<bool>("Etax:AutoSubmit");
-            serviceProvider = config["Etax:ServiceProvider"] ?? "RD";
+            hasApiKey = !string.IsNullOrEmpty(_configuration["Etax:RdApiKey"]);
+            isTestMode = _configuration.GetValue<bool>("Etax:RdTestMode");
+            autoSign = _configuration.GetValue<bool>("Etax:AutoSign");
+            autoSubmit = _configuration.GetValue<bool>("Etax:AutoSubmit");
+            serviceProvider = _configuration["Etax:ServiceProvider"] ?? "RD";
         }
 
         return Ok(new ApiResponse<object>(true, new

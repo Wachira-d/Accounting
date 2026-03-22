@@ -20,7 +20,8 @@ builder.Services.AddDbContext<AccountingDbContext>(options =>
 // ===== Authentication (JWT) =====
 // JWT secret: prefer environment variable, fallback to config
 var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET")
-    ?? builder.Configuration["Jwt:Secret"]!;
+    ?? builder.Configuration["Jwt:Secret"]
+    ?? throw new InvalidOperationException("JWT secret is not configured. Set JWT_SECRET environment variable or Jwt:Secret in appsettings.");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -205,8 +206,8 @@ builder.Services.AddCors(options =>
     {
         var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? new[] { "http://localhost:3000" };
         policy.WithOrigins(origins)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
+            .WithHeaders("Authorization", "Content-Type", "X-Api-Key", "X-Company-Id", "X-Requested-With")
+            .WithMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
             .AllowCredentials();
     });
 });
@@ -249,8 +250,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Accounting Platform API v1"));
 }
 
-// Only redirect to HTTPS if not running on plain HTTP (e.g. IIS port 80)
-if (!app.Environment.IsProduction())
+// Enforce HTTPS in production
+if (app.Environment.IsProduction())
 {
     app.UseHttpsRedirection();
 }
@@ -314,7 +315,7 @@ try
 
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
-    await SeedAdminUser.SeedAsync(db);
+    await SeedAdminUser.SeedAsync(db, app.Configuration);
 }
 catch (Exception ex)
 {

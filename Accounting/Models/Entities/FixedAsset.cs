@@ -29,8 +29,11 @@ public class FixedAsset : TenantEntity
 
     // Account mapping
     public Guid? AssetAccountId { get; set; }
+    public ChartOfAccount? AssetAccount { get; set; }
     public Guid? DepreciationExpenseAccountId { get; set; }
+    public ChartOfAccount? DepreciationExpenseAccount { get; set; }
     public Guid? AccumulatedDepreciationAccountId { get; set; }
+    public ChartOfAccount? AccumulatedDepreciationAccount { get; set; }
 
     public ICollection<AssetDepreciation> Depreciations { get; set; } = new List<AssetDepreciation>();
 }
@@ -45,5 +48,6 @@ public class AssetDepreciation : TenantEntity
     public decimal AccumulatedAmount { get; set; }
     public decimal NetBookValue { get; set; }
     public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
     public bool IsPosted { get; set; }
 }

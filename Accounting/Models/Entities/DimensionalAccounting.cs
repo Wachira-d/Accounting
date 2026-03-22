@@ -49,6 +49,7 @@ public class Branch : TenantEntity
     public bool IsActive { get; set; } = true;
     public string? ManagerName { get; set; }
     public Guid? DimensionId { get; set; }         // link to AccountingDimension
+    public AccountingDimension? Dimension { get; set; }
 }
 
 /// <summary>
@@ -72,6 +73,7 @@ public class JournalLineDimension : TenantEntity
 public class IntercompanyTransaction : TenantEntity
 {
     public Guid SourceCompanyId { get; set; }
+    public Company SourceCompany { get; set; } = null!;
     public Guid TargetCompanyId { get; set; }
     public Company TargetCompany { get; set; } = null!;
     public string TransactionNumber { get; set; } = "";
@@ -83,11 +85,14 @@ public class IntercompanyTransaction : TenantEntity
 
     // Journal entries in both companies
     public Guid? SourceJournalEntryId { get; set; }
+    public JournalEntry? SourceJournalEntry { get; set; }
     public Guid? TargetJournalEntryId { get; set; }
+    public JournalEntry? TargetJournalEntry { get; set; }
 
     // Matching for consolidation elimination
     public bool IsEliminated { get; set; } = false;
     public Guid? EliminationEntryId { get; set; }
+    public JournalEntry? EliminationEntry { get; set; }
 
     public ICollection<IntercompanyTransactionLine> Lines { get; set; } = new List<IntercompanyTransactionLine>();
 }
@@ -99,7 +104,9 @@ public class IntercompanyTransactionLine : TenantEntity
     public int LineOrder { get; set; }
     public string Description { get; set; } = "";
     public Guid SourceAccountId { get; set; }
+    public ChartOfAccount SourceAccount { get; set; } = null!;
     public Guid TargetAccountId { get; set; }
+    public ChartOfAccount TargetAccount { get; set; } = null!;
     public decimal Amount { get; set; }
     public decimal VatRate { get; set; }
     public decimal VatAmount { get; set; }

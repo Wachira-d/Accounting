@@ -368,6 +368,8 @@ public class PdfGenerationService : IPdfGenerationService
     /// Convert HTML to a valid multi-page PDF 1.4 document.
     /// Parses HTML structure to render headers, tables, and text blocks with proper formatting.
     /// Uses PDF Type1 fonts (Helvetica family) for rendering.
+    /// Thai/Unicode text is encoded as UTF-16BE hex strings for proper display.
+    /// Note: For full Thai glyph rendering, a production deployment should use an embedded TrueType font (e.g. THSarabunNew).
     /// </summary>
     internal static byte[] ConvertHtmlToPdf(string html, DocumentTemplate? template)
     {
@@ -395,7 +397,7 @@ public class PdfGenerationService : IPdfGenerationService
             if (currentPage.Length > 0)
             {
                 currentPage.Append("ET\n");
-                pages.Add(Encoding.ASCII.GetBytes(currentPage.ToString()));
+                pages.Add(Encoding.UTF8.GetBytes(currentPage.ToString()));
                 currentPage.Clear();
             }
             y = pageHeight - marginTop;
@@ -419,7 +421,8 @@ public class PdfGenerationService : IPdfGenerationService
             };
             xPos = Math.Max(marginLeft, xPos);
             var escaped = EscapePdfString(text);
-            currentPage.Append($"{fontTag} {fontSize} Tf\n{xPos} {y} Td\n({escaped}) Tj\n0 0 Td\n");
+            var pdfStr = ContainsNonAscii(text) ? $"<{escaped}>" : $"({escaped})";
+            currentPage.Append($"{fontTag} {fontSize} Tf\n{xPos} {y} Td\n{pdfStr} Tj\n0 0 Td\n");
             y -= fontSize + 4;
         }
 
@@ -443,11 +446,13 @@ public class PdfGenerationService : IPdfGenerationService
             foreach (var (cell, i) in cells.Select((c, i) => (c, i)))
             {
                 var w = i < colWidths.Length ? colWidths[i] : 80;
-                var escaped = EscapePdfString(cell.Length > w / 5 ? cell[..Math.Min(cell.Length, w / 5)] : cell);
+                var cellText = cell.Length > w / 5 ? cell[..Math.Min(cell.Length, w / 5)] : cell;
+                var escaped = EscapePdfString(cellText);
+                var pdfStr = ContainsNonAscii(cellText) ? $"<{escaped}>" : $"({escaped})";
                 if (isHeader)
-                    currentPage.Append($"1 1 1 rg\n{fontTag} {fontSize} Tf\n{xPos} {y} Td\n({escaped}) Tj\n0 0 Td\n0 0 0 rg\n");
+                    currentPage.Append($"1 1 1 rg\n{fontTag} {fontSize} Tf\n{xPos} {y} Td\n{pdfStr} Tj\n0 0 Td\n0 0 0 rg\n");
                 else
-                    currentPage.Append($"{fontTag} {fontSize} Tf\n{xPos} {y} Td\n({escaped}) Tj\n0 0 Td\n");
+                    currentPage.Append($"{fontTag} {fontSize} Tf\n{xPos} {y} Td\n{pdfStr} Tj\n0 0 Td\n");
                 xPos += w;
             }
 
@@ -512,7 +517,7 @@ public class PdfGenerationService : IPdfGenerationService
         if (currentPage.Length > 0)
         {
             currentPage.Append("ET\n");
-            pages.Add(Encoding.ASCII.GetBytes(currentPage.ToString()));
+            pages.Add(Encoding.UTF8.GetBytes(currentPage.ToString()));
         }
 
         if (pages.Count == 0)
@@ -825,17 +830,36 @@ public class PdfGenerationService : IPdfGenerationService
         return WebUtility.HtmlDecode(result).Trim();
     }
 
+    /// <summary>
+    /// Check if text contains non-ASCII characters (e.g. Thai, CJK)
+    /// </summary>
+    private static bool ContainsNonAscii(string text) => text.Any(c => c > 127);
+
+    /// <summary>
+    /// Escape PDF string. For ASCII-only text, uses parenthesized literal string.
+    /// For text with non-ASCII (Thai etc), returns UTF-16BE hex string for Unicode support.
+    /// </summary>
     private static string EscapePdfString(string text)
     {
-        // Replace non-ASCII with '?' for Type1 font compatibility, escape PDF special chars
+        if (ContainsNonAscii(text))
+        {
+            // Use UTF-16BE hex string for Unicode text (Thai, etc.)
+            var bytes = Encoding.BigEndianUnicode.GetBytes(text);
+            var hex = new StringBuilder(bytes.Length * 2 + 4);
+            hex.Append("FEFF"); // BOM
+            foreach (var b in bytes)
+                hex.Append(b.ToString("X2"));
+            return hex.ToString();
+        }
+
+        // ASCII: escape PDF special chars
         var sb = new StringBuilder(text.Length);
         foreach (var c in text)
         {
             if (c == '\\') sb.Append("\\\\");
             else if (c == '(') sb.Append("\\(");
             else if (c == ')') sb.Append("\\)");
-            else if (c < 128) sb.Append(c);
-            else sb.Append('?'); // Non-ASCII placeholder for Type1 fonts
+            else sb.Append(c);
         }
         return sb.ToString();
     }
