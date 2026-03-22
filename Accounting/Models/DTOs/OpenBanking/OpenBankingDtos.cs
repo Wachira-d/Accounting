@@ -2,21 +2,22 @@ namespace Accounting.Models.DTOs.OpenBanking;
 
 public record CreateBankConnectionRequest(
     string BankCode, string BankName, string ConnectionType,
-    string? ApiEndpoint, Guid BankAccountId, bool AutoSync = false,
+    string? ApiEndpoint, string? ClientId, string? Credentials,
+    Guid? LinkedBankAccountId = null, bool AutoSync = false,
     int SyncIntervalMinutes = 60);
 
 public record UpdateBankConnectionRequest(
-    bool? AutoSync = null, int? SyncIntervalMinutes = null, bool? IsActive = null);
+    bool? AutoSync = null, int? SyncIntervalMinutes = null,
+    string? Credentials = null, bool? IsActive = null);
 
 public record BankConnectionResponse(
     Guid Id, string BankCode, string BankName, string ConnectionType,
-    Guid BankAccountId, string BankAccountName,
-    bool AutoSync, int SyncIntervalMinutes, bool IsActive,
-    string ConnectionStatus, DateTime? LastSyncAt, DateTime CreatedAt);
+    string Status, bool AutoSync, int SyncIntervalMinutes,
+    DateTime? LastSyncAt, string? LastSyncStatus, Guid? LinkedBankAccountId);
 
 public record BankFeedImportResponse(
-    Guid Id, Guid BankConnectionId, DateTime ImportDate,
-    int TotalRecords, int ImportedRecords, int SkippedRecords,
-    int ErrorRecords, string Status, string? ErrorMessage, DateTime CreatedAt);
+    Guid Id, DateTime ImportDate, DateTime? PeriodStart, DateTime? PeriodEnd,
+    int TotalTransactions, int NewTransactions, int DuplicateSkipped, int AutoMatched,
+    string Status, string? ErrorMessage);
 
 public record SyncBankFeedRequest(DateTime? FromDate, DateTime? ToDate);

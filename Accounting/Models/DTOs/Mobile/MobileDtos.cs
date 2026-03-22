@@ -3,29 +3,28 @@ namespace Accounting.Models.DTOs.Mobile;
 public record RegisterDeviceRequest(
     string DeviceToken, string Platform, string? DeviceName, string? AppVersion);
 
-public record DeviceRegistrationResponse(Guid Id, string DeviceToken, string Platform, DateTime RegisteredAt);
+public record DeviceRegistrationResponse(Guid Id, string DeviceToken, string Platform, bool IsActive);
 
-public record SyncRequest(DateTime? LastSyncAt, List<string>? EntityTypes);
+public record SyncRequest(DateTime? LastSyncAt, List<string>? EntityTypes, List<SyncQueueItem>? LocalChanges = null);
 
 public record SyncResponse(
-    DateTime ServerTime, Dictionary<string, int> ChangeCounts,
-    bool HasMore, DateTime? NextSyncFrom);
+    DateTime ServerTime, List<SyncQueueResponse> Changes, List<SyncConflict> Conflicts);
 
 public record MobileDashboardResponse(
-    decimal TotalRevenue, decimal TotalExpense, decimal NetProfit,
-    decimal CashBalance, int PendingApprovals, int OverdueInvoices,
-    List<MobileChartDataPoint> RevenueChart);
+    decimal CashBalance, decimal TotalReceivables, decimal TotalPayables,
+    int PendingApprovals, int OverdueInvoices, decimal TodayRevenue,
+    decimal MonthRevenue, List<MobileAlertResponse> Alerts);
 
 public record MobileChartDataPoint(string Label, decimal Value);
 
 public record MobileQuickActionsResponse(
-    int PendingApprovals, int DraftDocuments, int UnreconciledTransactions,
-    List<MobileQuickAction> Actions);
+    bool CanApproveDocuments, bool CanApproveExpenses, bool CanApprovePayroll,
+    int PendingDocuments, int PendingExpenses, int PendingPayroll);
 
 public record MobileQuickAction(string ActionType, string Title, string? EntityType, Guid? EntityId);
 
 public record MobileApprovalResponse(
-    Guid EntityId, string EntityType, string Action, bool Success, string? Message);
+    bool Success, string? Message, string EntityType, Guid EntityId);
 
 public record SyncQueueItem(string EntityType, Guid EntityId, string OperationType, string PayloadJson);
 public record SyncQueueResponse(string EntityType, Guid EntityId, string OperationType, string PayloadJson, DateTime ChangedAt);

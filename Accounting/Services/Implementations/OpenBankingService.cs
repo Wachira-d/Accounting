@@ -65,7 +65,7 @@ public class OpenBankingService : IOpenBankingService
 
         if (request.AutoSync.HasValue) connection.AutoSync = request.AutoSync.Value;
         if (request.SyncIntervalMinutes.HasValue) connection.SyncIntervalMinutes = request.SyncIntervalMinutes.Value;
-        if (request.Credentials != null) connection.EncryptedCredentials = request.Credentials;
+        if (request.Credentials != null) connection.EncryptedCredentials = EncryptString(request.Credentials);
 
         await _db.SaveChangesAsync();
 

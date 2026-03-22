@@ -5,8 +5,9 @@ public record CreateWebhookRequest(
     int MaxRetries = 3, int TimeoutSeconds = 30, string? HeadersJson = null);
 
 public record UpdateWebhookRequest(
-    string? Name = null, string? Url = null, string? EventTypes = null,
-    int? MaxRetries = null, bool? IsActive = null);
+    string? Name = null, string? Url = null, string? Secret = null,
+    string? EventTypes = null, int? MaxRetries = null,
+    int? TimeoutSeconds = null, bool? IsActive = null);
 
 public record WebhookResponse(
     Guid Id, string Name, string Url, string EventTypes,
@@ -14,9 +15,9 @@ public record WebhookResponse(
     int SuccessCount, int FailureCount, DateTime? LastTriggeredAt, DateTime CreatedAt);
 
 public record WebhookDeliveryResponse(
-    Guid Id, Guid WebhookId, string EventType, string PayloadJson,
-    int HttpStatusCode, string? ResponseBody, int AttemptNumber,
-    bool IsSuccess, DateTime DeliveredAt);
+    Guid Id, string EventType, int HttpStatusCode,
+    bool IsSuccess, int AttemptNumber, int DurationMs,
+    DateTime DeliveredAt, string? ErrorMessage);
 
 public record WebhookRegistrationResponse(Guid Id, string Name, string Url, string EventTypes, bool IsActive, int MaxRetries, int FailureCount, DateTime? LastTriggeredAt, DateTime? LastSuccessAt, string? LastError);
 

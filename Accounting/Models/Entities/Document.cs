@@ -22,6 +22,7 @@ public class Document : TenantEntity
     public Guid? RelatedDocumentId { get; set; }  // e.g. Quotation → Invoice
 
     // Amounts
+    public string Currency { get; set; } = "THB";
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal VatAmount { get; set; }
@@ -48,6 +49,7 @@ public class DocumentLine : BaseEntity
     public Document Document { get; set; } = null!;
 
     public int LineOrder { get; set; }
+    public string? ProductCode { get; set; }
     public string Description { get; set; } = null!;
     public decimal Quantity { get; set; }
     public string Unit { get; set; } = "ชิ้น";

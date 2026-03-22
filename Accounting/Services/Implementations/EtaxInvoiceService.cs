@@ -652,7 +652,7 @@ public class EtaxInvoiceService : IEtaxInvoiceService
                             new XElement(ram + "RateApplicablePercent", vatRate.ToString("F2"))),
                         new XElement(ram + "SpecifiedTradeSettlementHeaderMonetarySummation",
                             new XElement(ram + "LineTotalAmount", doc.SubTotal.ToString("F2")),
-                            new XElement(ram + "AllowanceTotalAmount", (doc.DiscountAmount ?? 0).ToString("F2")),
+                            new XElement(ram + "AllowanceTotalAmount", doc.DiscountAmount.ToString("F2")),
                             new XElement(ram + "TaxBasisTotalAmount", doc.SubTotal.ToString("F2")),
                             new XElement(ram + "TaxTotalAmount",
                                 new XAttribute("currencyID", doc.Currency ?? "THB"),

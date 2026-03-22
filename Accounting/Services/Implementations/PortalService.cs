@@ -336,7 +336,7 @@ public class PortalService : IPortalService
         return Convert.ToBase64String(tokenBytes);
     }
 
-    private static (Guid portalAccessId, Guid contactId, Guid companyId) DecodeJwtToken(string token)
+    private (Guid portalAccessId, Guid contactId, Guid companyId) DecodeJwtToken(string token)
     {
         try
         {
