@@ -323,7 +323,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             {
                 try
                 {
-                    await _accountingService.PostJournalEntryAsync(recurring.CompanyId, result.Id, performedBy);
+                    await _accountingService.PostJournalEntryAsync(recurring.CompanyId, result.Id);
                 }
                 catch (Exception ex)
                 {

@@ -2,21 +2,23 @@ namespace Accounting.Models.DTOs.Commission;
 
 public record CreateCommissionPlanRequest(
     string Name, string? Description, string CalculationBasis,
-    string CalculationMethod, bool IsActive, List<CommissionTierRequest> Tiers);
+    string CalculationMethod, decimal? FlatRate = null,
+    bool IsActive = true, List<CommissionTierRequest>? Tiers = null);
 
 public record CommissionTierRequest(
     decimal FromAmount, decimal? ToAmount, decimal Rate);
 
 public record UpdateCommissionPlanRequest(
-    string? Name = null, string? Description = null, bool? IsActive = null);
+    string? Name = null, string? Description = null,
+    decimal? FlatRate = null, bool? IsActive = null);
 
 public record CommissionPlanResponse(
     Guid Id, string Name, string? Description, string CalculationBasis,
-    string CalculationMethod, bool IsActive,
-    List<CommissionTierResponse> Tiers, DateTime CreatedAt);
+    string CalculationMethod, decimal? FlatRate, bool IsActive,
+    List<CommissionTierResponse> Tiers);
 
 public record CommissionTierResponse(
-    Guid Id, decimal FromAmount, decimal? ToAmount, decimal Rate);
+    decimal FromAmount, decimal? ToAmount, decimal Rate);
 
 public record CreateCommissionAssignmentRequest(
     Guid CommissionPlanId, Guid EmployeeId, DateTime EffectiveFrom, DateTime? EffectiveTo);

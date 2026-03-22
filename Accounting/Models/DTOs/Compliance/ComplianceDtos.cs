@@ -1,10 +1,11 @@
 namespace Accounting.Models.DTOs.Compliance;
 
 public record ComplianceFilingResponse(
-    Guid Id, string FilingType, string FormCode, string? FormName,
-    int Year, int Month, DateTime DueDate,
-    string Status, DateTime? FiledDate, string? ConfirmationNumber,
-    decimal? TaxAmount, decimal? PenaltyAmount, bool IsLate, DateTime CreatedAt);
+    Guid Id, string FilingType, string FormCode, int Year, int? Month,
+    DateTime DueDate, DateTime? FiledDate, string Status,
+    string? SubmissionReference, string? ConfirmationNumber,
+    decimal? TaxAmount, decimal? PenaltyAmount,
+    string? ValidationErrors, int DaysUntilDue);
 
 public record FileComplianceRequest(string? Notes, string? ConfirmationNumber);
 
