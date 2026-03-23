@@ -12,10 +12,12 @@ namespace Accounting.Services.Implementations;
 public class ImportExportService : IImportExportService
 {
     private readonly AccountingDbContext _db;
+    private readonly IErrorLogService _errorLogService;
 
-    public ImportExportService(AccountingDbContext db)
+    public ImportExportService(AccountingDbContext db, IErrorLogService errorLogService)
     {
         _db = db;
+        _errorLogService = errorLogService;
     }
 
     public async Task<ImportResult> ImportAsync(Guid companyId, ImportRequest request, string performedBy)
@@ -55,6 +57,7 @@ public class ImportExportService : IImportExportService
             catch (Exception ex)
             {
                 errors.Add(new ImportError(i + 1, "", "", ex.Message));
+                await _errorLogService.LogErrorAsync(ex, $"ImportExport.ImportRow/{i + 1}");
             }
         }
 
@@ -625,6 +628,7 @@ public class ImportExportService : IImportExportService
             catch (Exception ex)
             {
                 errors.Add(new ImportError(i + 1, "", "", ex.Message));
+                await _errorLogService.LogErrorAsync(ex, $"ImportExport.ImportRow/{i + 1}");
             }
         }
 

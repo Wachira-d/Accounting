@@ -34,6 +34,7 @@ public class BackgroundJobService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in background job cycle");
+                await LogErrorFromScopeAsync(ex, "BackgroundJobService.ExecuteAsync");
             }
 
             // Run every 15 minutes
@@ -66,6 +67,9 @@ public class BackgroundJobService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process recurring transactions");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.RecurringTransactions");
         }
     }
 
@@ -88,6 +92,24 @@ public class BackgroundJobService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to check dunning status");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.DunningLetters");
+        }
+    }
+
+    private async Task LogErrorFromScopeAsync(Exception ex, string source)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, source);
+        }
+        catch
+        {
+            // Prevent error logging from crashing the background service
         }
     }
 
@@ -127,6 +149,9 @@ public class BackgroundJobService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send payment reminders");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.PaymentReminders");
         }
     }
 }

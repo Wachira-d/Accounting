@@ -16,17 +16,20 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly IDocumentService _documentService;
     private readonly IAccountingService _accountingService;
     private readonly ILogger<RecurringTransactionService> _logger;
+    private readonly IErrorLogService _errorLogService;
 
     public RecurringTransactionService(
         AccountingDbContext db,
         IDocumentService documentService,
         IAccountingService accountingService,
-        ILogger<RecurringTransactionService> logger)
+        ILogger<RecurringTransactionService> logger,
+        IErrorLogService errorLogService)
     {
         _db = db;
         _documentService = documentService;
         _accountingService = accountingService;
         _logger = logger;
+        _errorLogService = errorLogService;
     }
 
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
@@ -181,6 +184,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to execute recurring transaction {Id} ({Name})", recurring.Id, recurring.Name);
+                await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.Execute/{recurring.Id}");
             }
         }
 
@@ -276,6 +280,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Auto-approve failed for recurring document {DocId}", result.Id);
+                    await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
                 }
             }
 
@@ -328,6 +333,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Auto-post failed for recurring journal {JournalId}", result.Id);
+                    await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoPost/{result.Id}");
                 }
             }
 

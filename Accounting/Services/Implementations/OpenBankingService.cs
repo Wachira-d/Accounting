@@ -14,13 +14,15 @@ public class OpenBankingService : IOpenBankingService
 {
     private readonly AccountingDbContext _db;
     private readonly string _encryptionKey;
+    private readonly IErrorLogService _errorLogService;
 
-    public OpenBankingService(AccountingDbContext db, IConfiguration configuration)
+    public OpenBankingService(AccountingDbContext db, IConfiguration configuration, IErrorLogService errorLogService)
     {
         _db = db;
         _encryptionKey = Environment.GetEnvironmentVariable("OPENBANKING_ENCRYPTION_KEY")
             ?? configuration["OpenBanking:EncryptionKey"]
             ?? "DefaultKeyForDev-Change-In-Production!";
+        _errorLogService = errorLogService;
     }
 
     // ===== Connections =====
@@ -182,6 +184,7 @@ public class OpenBankingService : IOpenBankingService
                 connection.LastSyncStatus = "Failed";
                 connection.LastError = ex.Message;
                 await _db.SaveChangesAsync();
+                await _errorLogService.LogErrorAsync(ex, $"OpenBanking.SyncTransactions/{connection.Id}");
             }
         }
     }
