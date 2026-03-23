@@ -129,6 +129,9 @@ builder.Services.AddHttpClient();
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();
 
+// Error logging service
+builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
@@ -321,6 +324,16 @@ catch (Exception ex)
 {
     var logger = app.Services.GetRequiredService<ILogger<Program>>();
     logger.LogError(ex, "Failed to initialize database. Check your ConnectionStrings:DefaultConnection in appsettings.Production.json");
+
+    // Try to log startup error to DB if possible
+    try
+    {
+        using var errorScope = app.Services.CreateScope();
+        var errorLogService = errorScope.ServiceProvider.GetService<IErrorLogService>();
+        if (errorLogService != null)
+            await errorLogService.LogErrorAsync(ex, "Program.DatabaseInitialization");
+    }
+    catch { /* DB itself may be unavailable */ }
 }
 
 app.Run();

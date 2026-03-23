@@ -10,6 +10,7 @@ public class FileAttachmentService : IFileAttachmentService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<FileAttachmentService> _logger;
+    private readonly IErrorLogService _errorLogService;
     private readonly string _storagePath;
 
     // Allowed file extensions (whitelist)
@@ -24,10 +25,11 @@ public class FileAttachmentService : IFileAttachmentService
     private const long MaxFileSizeDefault = 25 * 1024 * 1024;  // 25 MB
     private const long MaxFileSizeImage = 10 * 1024 * 1024;    // 10 MB
 
-    public FileAttachmentService(AccountingDbContext db, ILogger<FileAttachmentService> logger, IConfiguration config)
+    public FileAttachmentService(AccountingDbContext db, ILogger<FileAttachmentService> logger, IConfiguration config, IErrorLogService errorLogService)
     {
         _db = db;
         _logger = logger;
+        _errorLogService = errorLogService;
         _storagePath = config["FileStorage:BasePath"] ?? Path.Combine(Directory.GetCurrentDirectory(), "uploads");
     }
 
@@ -117,6 +119,7 @@ public class FileAttachmentService : IFileAttachmentService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to delete physical file: {StoragePath}", attachment.StoragePath);
+                await _errorLogService.LogErrorAsync(ex, $"FileAttachment.DeleteFile/{attachment.StoragePath}");
             }
         }
     }

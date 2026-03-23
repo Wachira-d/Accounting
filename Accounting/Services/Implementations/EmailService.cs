@@ -8,11 +8,13 @@ public class EmailService : IEmailService
 {
     private readonly IConfiguration _config;
     private readonly ILogger<EmailService> _logger;
+    private readonly IErrorLogService _errorLogService;
 
-    public EmailService(IConfiguration config, ILogger<EmailService> logger)
+    public EmailService(IConfiguration config, ILogger<EmailService> logger, IErrorLogService errorLogService)
     {
         _config = config;
         _logger = logger;
+        _errorLogService = errorLogService;
     }
 
     public async Task SendAsync(string to, string subject, string htmlBody)
@@ -53,6 +55,7 @@ public class EmailService : IEmailService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send email to {To}: {Subject}", to, subject);
+            await _errorLogService.LogErrorAsync(ex, $"EmailService.Send/{to}");
         }
     }
 
@@ -147,6 +150,7 @@ public class EmailService : IEmailService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send payslip to {To}", to);
+            await _errorLogService.LogErrorAsync(ex, $"EmailService.SendPayslip/{to}");
         }
     }
 }

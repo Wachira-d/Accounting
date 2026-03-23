@@ -16,11 +16,13 @@ public class WebhookService : IWebhookService
 {
     private readonly AccountingDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IErrorLogService _errorLogService;
 
-    public WebhookService(AccountingDbContext db, IHttpClientFactory httpClientFactory)
+    public WebhookService(AccountingDbContext db, IHttpClientFactory httpClientFactory, IErrorLogService errorLogService)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
+        _errorLogService = errorLogService;
     }
 
     // ==================== Registration ====================
@@ -315,13 +317,14 @@ public class WebhookService : IWebhookService
                 delivery.ErrorMessage = $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
             }
         }
-        catch (TaskCanceledException)
+        catch (TaskCanceledException ex)
         {
             stopwatch.Stop();
             delivery.HttpStatusCode = 0;
             delivery.IsSuccess = false;
             delivery.DurationMs = (decimal)stopwatch.Elapsed.TotalMilliseconds;
             delivery.ErrorMessage = $"Request timed out after {registration.TimeoutSeconds} seconds.";
+            await _errorLogService.LogErrorAsync(ex, $"Webhook.Timeout/{registration.Id}");
         }
         catch (HttpRequestException ex)
         {
@@ -330,6 +333,7 @@ public class WebhookService : IWebhookService
             delivery.IsSuccess = false;
             delivery.DurationMs = (decimal)stopwatch.Elapsed.TotalMilliseconds;
             delivery.ErrorMessage = $"Connection error: {ex.Message}";
+            await _errorLogService.LogErrorAsync(ex, $"Webhook.ConnectionError/{registration.Id}");
         }
         catch (Exception ex)
         {
@@ -338,6 +342,7 @@ public class WebhookService : IWebhookService
             delivery.IsSuccess = false;
             delivery.DurationMs = (decimal)stopwatch.Elapsed.TotalMilliseconds;
             delivery.ErrorMessage = $"Unexpected error: {ex.Message}";
+            await _errorLogService.LogErrorAsync(ex, $"Webhook.UnexpectedError/{registration.Id}");
         }
 
         _db.Set<WebhookDelivery>().Add(delivery);
