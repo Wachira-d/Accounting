@@ -56,6 +56,54 @@ public static class DatabaseMigrationHelper
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Documents') AND name = 'Currency')
                 ALTER TABLE [Documents] ADD [Currency] nvarchar(3) NOT NULL DEFAULT 'THB';
             """,
+
+            // ===== DocumentLines: ProductCode =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('DocumentLines') AND name = 'ProductCode')
+                ALTER TABLE [DocumentLines] ADD [ProductCode] nvarchar(50) NULL;
+            """,
+
+            // ===== CompanySettings: e-Tax fields =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxEnabled')
+                ALTER TABLE [CompanySettings] ADD [EtaxEnabled] bit NOT NULL DEFAULT 0;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxCertificatePath')
+                ALTER TABLE [CompanySettings] ADD [EtaxCertificatePath] nvarchar(500) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxCertificatePassword')
+                ALTER TABLE [CompanySettings] ADD [EtaxCertificatePassword] nvarchar(500) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxRdApiKey')
+                ALTER TABLE [CompanySettings] ADD [EtaxRdApiKey] nvarchar(500) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxRdApiSecret')
+                ALTER TABLE [CompanySettings] ADD [EtaxRdApiSecret] nvarchar(500) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxTestMode')
+                ALTER TABLE [CompanySettings] ADD [EtaxTestMode] bit NOT NULL DEFAULT 0;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxAutoSign')
+                ALTER TABLE [CompanySettings] ADD [EtaxAutoSign] bit NOT NULL DEFAULT 0;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxAutoSubmit')
+                ALTER TABLE [CompanySettings] ADD [EtaxAutoSubmit] bit NOT NULL DEFAULT 0;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxServiceProvider')
+                ALTER TABLE [CompanySettings] ADD [EtaxServiceProvider] nvarchar(100) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxXmlOutputPath')
+                ALTER TABLE [CompanySettings] ADD [EtaxXmlOutputPath] nvarchar(500) NULL;
+            """,
         ];
     }
 }
