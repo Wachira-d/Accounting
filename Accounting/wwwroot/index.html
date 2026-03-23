@@ -184,7 +184,7 @@
 
       <!-- Billing Cycle Toggle -->
       <div style="display:flex;justify-content:center;margin-bottom:32px">
-        <div style="display:inline-flex;background:#fff;border-radius:var(--radius-lg);padding:4px;box-shadow:var(--shadow)">
+        <div style="display:inline-flex;flex-wrap:wrap;justify-content:center;gap:2px;background:#fff;border-radius:var(--radius-lg);padding:4px;box-shadow:var(--shadow)">
           <button class="billing-toggle active" data-cycle="monthly" onclick="Pricing.setCycle('monthly',this)">รายเดือน</button>
           <button class="billing-toggle" data-cycle="quarterly" onclick="Pricing.setCycle('quarterly',this)">ราย 3 เดือน <span style="color:var(--success);font-size:11px">-5%</span></button>
           <button class="billing-toggle" data-cycle="semiannual" onclick="Pricing.setCycle('semiannual',this)">ราย 6 เดือน <span style="color:var(--success);font-size:11px">-10%</span></button>
@@ -227,7 +227,7 @@
       <!-- Feature Comparison Table -->
       <div class="pricing-compare">
         <h3 style="text-align:center;font-size:24px;font-weight:700;margin-bottom:24px">เปรียบเทียบฟีเจอร์ทุกแพ็กเกจ</h3>
-        <div class="table-container" style="max-width:900px;margin:0 auto">
+        <div class="table-container" style="max-width:900px;margin:0 auto;-webkit-overflow-scrolling:touch">
           <table class="table">
             <thead>
               <tr><th>ฟีเจอร์</th><th class="text-center">ทดลองฟรี</th><th class="text-center">Starter</th><th class="text-center" style="background:#EEF2FF">Professional</th><th class="text-center">Enterprise</th></tr>
@@ -347,7 +347,26 @@
 
     // Mobile nav toggle
     function toggleMobileNav() {
-      document.getElementById('navLinks').classList.toggle('show');
+      const navLinks = document.getElementById('navLinks');
+      const navActions = document.querySelector('.nav-actions');
+      navLinks.classList.toggle('show');
+      if (navActions) {
+        navActions.style.display = navLinks.classList.contains('show') ? 'flex' : '';
+        if (navLinks.classList.contains('show')) {
+          navActions.style.flexDirection = 'column';
+          navActions.style.position = 'absolute';
+          navActions.style.top = navLinks.scrollHeight + 72 + 'px';
+          navActions.style.left = '0';
+          navActions.style.right = '0';
+          navActions.style.padding = '0 24px 16px';
+          navActions.style.background = '#fff';
+          navActions.style.zIndex = '99';
+          navActions.style.gap = '8px';
+          navActions.style.boxShadow = 'var(--shadow-lg)';
+        } else {
+          navActions.removeAttribute('style');
+        }
+      }
     }
 
     // Modules grid
