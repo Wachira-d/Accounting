@@ -17,6 +17,7 @@ public class TenantAccessMiddleware
     private static readonly HashSet<string> ExcludedPaths = new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/auth",
+        "/api/admin",
         "/api/subscription/plans",
         "/swagger",
         "/health"
