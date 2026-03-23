@@ -337,6 +337,9 @@ try
         }
     }
 
+    // Add any missing columns to existing tables (no-op if already present)
+    DatabaseMigrationHelper.ApplyMissingColumns(db);
+
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
     await SeedAdminUser.SeedAsync(db, app.Configuration);
