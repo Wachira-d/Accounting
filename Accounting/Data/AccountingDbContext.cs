@@ -355,6 +355,7 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.TotalAmount).HasPrecision(18, 2);
             e.Property(d => d.PaidAmount).HasPrecision(18, 2);
             e.Property(d => d.BalanceDue).HasPrecision(18, 2);
+            e.Property(d => d.Currency).HasMaxLength(3);
             e.HasOne(d => d.Contact).WithMany(c => c.Documents).HasForeignKey(d => d.ContactId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(d => !d.IsDeleted);
         });
