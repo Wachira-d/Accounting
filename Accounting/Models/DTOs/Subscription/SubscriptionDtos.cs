@@ -232,6 +232,57 @@ public record SubscriptionPaymentListResponse(
     int TotalCount,
     int PendingCount);
 
+// ===== Usage Monitor Detail =====
+public record UsageDetailResponse(
+    // Subscription info
+    SubscriptionPlan Plan,
+    SubscriptionStatus Status,
+    DateTime EndDate,
+    // Users
+    int CurrentUsers,
+    int MaxUsers,
+    List<UsageUserInfo> Users,
+    // Storage
+    long StorageUsed,
+    long MaxStorageBytes,
+    List<StorageCategoryInfo> StorageBreakdown,
+    List<StorageFileInfo> LargestFiles,
+    // Monthly usage
+    int DocumentsThisMonth,
+    int MaxDocumentsPerMonth,
+    int JournalEntriesThisMonth,
+    int MaxJournalEntriesPerMonth,
+    DateTime UsageResetDate,
+    // Alerts
+    List<UsageAlert> Alerts);
+
+public record UsageUserInfo(
+    Guid UserId,
+    string FullName,
+    string Email,
+    string Role,
+    DateTime JoinedAt,
+    DateTime? LastLoginAt);
+
+public record StorageCategoryInfo(
+    string Category,
+    string Label,
+    long Bytes,
+    int FileCount);
+
+public record StorageFileInfo(
+    Guid Id,
+    string FileName,
+    string EntityType,
+    long FileSize,
+    DateTime UploadedAt,
+    string UploadedBy);
+
+public record UsageAlert(
+    string Type,     // warning, danger, info
+    string Category, // storage, documents, users, subscription
+    string Message);
+
 // ===== Admin: Update Trial Config Directly =====
 public record UpdateTrialConfigRequest(
     int? TrialDurationDays,

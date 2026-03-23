@@ -42,6 +42,9 @@ public interface ISubscriptionService
     Task<SubscriptionPaymentResponse> ReviewPaymentAsync(Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy);
     Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync(); // Admin: ดูรายการชำระเงินรอตรวจสอบทั้งหมด
 
+    // Usage Monitor
+    Task<UsageDetailResponse> GetUsageDetailAsync(Guid companyId);
+
     // Background: Check expired trials & subscriptions
     Task ProcessExpiredTrialsAsync();
     Task ProcessSubscriptionNotificationsAsync(); // ตรวจสอบและส่งแจ้งเตือน
