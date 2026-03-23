@@ -199,7 +199,7 @@ const Page = {
   empPage: 1,
   runPage: 1,
 
-  async init() {
+  init() {
     if (!Layout.init('payroll')) return;
     Layout.setTitle('ระบบเงินเดือน');
     const y = new Date().getFullYear();
@@ -211,68 +211,7 @@ const Page = {
     const m = new Date().getMonth() + 1;
     const rm = document.getElementById('reportMonth');
     if (rm) rm.value = m;
-    // Check if payroll has been set up (has any employees)
-    const api = Layout.api();
-    if (api) {
-      try {
-        const res = await api.getEmployees('?page=1&pageSize=1');
-        const items = res.data?.items || res.data || [];
-        const total = res.data?.totalCount || res.data?.total || items.length;
-        if (total === 0) { this.showSetupGuide(); return; }
-      } catch (e) { /* proceed normally */ }
-    }
     this.loadEmployees();
-  },
-
-  showSetupGuide() {
-    // Hide normal tabs and content, show setup guide
-    document.querySelector('.tabs').style.display = 'none';
-    ['tab-employees','tab-runs','tab-leaves','tab-reports'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
-    const content = document.getElementById('pageContent');
-    const guide = document.createElement('div');
-    guide.className = 'card';
-    guide.style.cssText = 'text-align:center;padding:60px 40px;max-width:700px;margin:0 auto';
-    guide.innerHTML = `
-      <div style="font-size:64px;margin-bottom:16px">💼</div>
-      <h2 style="margin-bottom:8px;font-size:24px">ยังไม่ได้ตั้งค่าระบบเงินเดือน</h2>
-      <p style="color:var(--gray-500);margin-bottom:32px;font-size:15px;line-height:1.7">
-        เริ่มต้นใช้งานระบบเงินเดือนและ OT โดยเพิ่มข้อมูลพนักงานคนแรก<br>
-        หลังจากเพิ่มพนักงานแล้ว จะสามารถสร้างรอบเงินเดือน คำนวณ OT จัดการลาหยุด<br>
-        และออกรายงาน ภงด.1 / ประกันสังคม ได้ครบทุกฟีเจอร์
-      </p>
-      <div style="display:flex;flex-direction:column;gap:16px;align-items:center;margin-bottom:32px">
-        <div style="display:flex;align-items:center;gap:16px;text-align:left;max-width:400px;width:100%">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">1</div>
-          <div><div style="font-weight:600;font-size:14px">เพิ่มข้อมูลพนักงาน</div><div style="font-size:13px;color:var(--gray-500)">ชื่อ ตำแหน่ง เงินเดือน บัญชีธนาคาร</div></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;text-align:left;max-width:400px;width:100%">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--gray-300);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">2</div>
-          <div><div style="font-weight:600;font-size:14px">สร้างรอบเงินเดือน</div><div style="font-size:13px;color:var(--gray-500)">กำหนดงวดเดือน/ปี และวันจ่าย</div></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;text-align:left;max-width:400px;width:100%">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--gray-300);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">3</div>
-          <div><div style="font-weight:600;font-size:14px">คำนวณและอนุมัติ</div><div style="font-size:13px;color:var(--gray-500)">ระบบคำนวณ OT ภาษี ประกันสังคมอัตโนมัติ</div></div>
-        </div>
-      </div>
-      <button class="btn btn-primary btn-lg" onclick="Page.startSetup()" style="padding:12px 32px;font-size:16px">
-        + เพิ่มพนักงานคนแรก
-      </button>
-    `;
-    content.appendChild(guide);
-  },
-
-  startSetup() {
-    // Remove setup guide and show normal UI
-    const content = document.getElementById('pageContent');
-    const guide = content.querySelector('.card[style*="text-align:center"]');
-    if (guide && guide.textContent.includes('ยังไม่ได้ตั้งค่า')) guide.remove();
-    document.querySelector('.tabs').style.display = '';
-    document.getElementById('tab-employees').style.display = '';
-    this.loadEmployees();
-    this.openCreateEmployee();
   },
 
   switchTab(tab) {
