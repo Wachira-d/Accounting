@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.DTOs.Settings;
 using Accounting.Models.Entities;
@@ -62,6 +63,12 @@ public class SettingsService : ISettingsService
         if (request.EtaxAutoSign.HasValue) settings.EtaxAutoSign = request.EtaxAutoSign.Value;
         if (request.EtaxAutoSubmit.HasValue) settings.EtaxAutoSubmit = request.EtaxAutoSubmit.Value;
         if (request.EtaxServiceProvider != null) settings.EtaxServiceProvider = request.EtaxServiceProvider;
+
+        // Landing Page – Accounting Services
+        if (request.LandingContactPhone != null) settings.LandingContactPhone = request.LandingContactPhone;
+        if (request.LandingContactLine != null) settings.LandingContactLine = request.LandingContactLine;
+        if (request.LandingContactEmail != null) settings.LandingContactEmail = request.LandingContactEmail;
+        if (request.LandingServicesJson != null) settings.LandingServicesJson = request.LandingServicesJson;
 
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
@@ -301,6 +308,35 @@ public class SettingsService : ISettingsService
         return settings;
     }
 
+    public async Task<LandingServicesResponse?> GetLandingServicesAsync()
+    {
+        // Get the first company's settings (for single-tenant landing page)
+        var settings = await _db.Set<CompanySettings>()
+            .Where(s => !s.IsDeleted && s.LandingServicesJson != null)
+            .FirstOrDefaultAsync();
+
+        if (settings == null)
+            return null;
+
+        var services = new List<LandingServiceItem>();
+        if (!string.IsNullOrEmpty(settings.LandingServicesJson))
+        {
+            try
+            {
+                services = JsonSerializer.Deserialize<List<LandingServiceItem>>(
+                    settings.LandingServicesJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+            }
+            catch { /* invalid JSON */ }
+        }
+
+        return new LandingServicesResponse(
+            settings.LandingContactPhone,
+            settings.LandingContactLine,
+            settings.LandingContactEmail,
+            services);
+    }
+
     private static CompanySettingsResponse MapToResponse(Guid companyId, CompanySettings s) => new(
         companyId, s.LogoUrl, s.PrimaryColor, s.SecondaryColor,
         s.DefaultPaymentTerms, s.DefaultPaymentDueDays,
@@ -320,7 +356,10 @@ public class SettingsService : ISettingsService
         s.EtaxEnabled, s.EtaxTestMode, s.EtaxAutoSign, s.EtaxAutoSubmit,
         s.EtaxServiceProvider,
         !string.IsNullOrEmpty(s.EtaxCertificatePath),
-        !string.IsNullOrEmpty(s.EtaxRdApiKey));
+        !string.IsNullOrEmpty(s.EtaxRdApiKey),
+        // Landing Page
+        s.LandingContactPhone, s.LandingContactLine, s.LandingContactEmail,
+        s.LandingServicesJson);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

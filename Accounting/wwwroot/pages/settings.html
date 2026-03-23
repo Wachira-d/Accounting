@@ -21,6 +21,7 @@
       <div class="tab" onclick="Page.showTab('etax',this)">e-Tax</div>
       <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
+      <div class="tab" onclick="Page.showTab('services',this)">บริการบัญชี</div>
     </div>
 
     <!-- ===== Company Info Tab ===== -->
@@ -200,6 +201,24 @@
       <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</div></div>
     </div>
 
+    <!-- ===== Services Tab ===== -->
+    <div id="tabServices" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">บริการทางบัญชี (แสดงหน้าแรก)</h3>
+      <p style="color:#64748b;margin-bottom:20px;font-size:14px">ตั้งค่าข้อมูลบริการและเบอร์ติดต่อที่แสดงใน Landing Page</p>
+
+      <h4 style="font-size:15px;font-weight:600;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #e2e8f0">ข้อมูลติดต่อ</h4>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">เบอร์โทรศัพท์</label><input type="text" class="form-input" id="sLandingPhone" placeholder="02-xxx-xxxx หรือ 08x-xxx-xxxx"></div>
+        <div class="form-group"><label class="form-label">LINE ID</label><input type="text" class="form-input" id="sLandingLine" placeholder="@yourline"></div>
+        <div class="form-group"><label class="form-label">อีเมลติดต่อ</label><input type="email" class="form-input" id="sLandingEmail" placeholder="contact@company.com"></div>
+      </div>
+
+      <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-bottom:8px;border-bottom:1px solid #e2e8f0">แพ็กเกจบริการ</h4>
+      <p style="color:#64748b;margin-bottom:12px;font-size:13px">เพิ่มแพ็กเกจบริการที่จะแสดงในหน้าแรก (สูงสุด 4 แพ็กเกจ)</p>
+      <div id="servicePackages"></div>
+      <button class="btn btn-secondary" style="margin-top:12px" onclick="Page.addServicePackage()">+ เพิ่มแพ็กเกจ</button>
+    </div>
+
     <div style="margin-top:20px;display:flex;justify-content:flex-end">
       <button class="btn btn-primary" onclick="Page.save()">บันทึกการตั้งค่า</button>
     </div>
@@ -219,8 +238,9 @@
           document.getElementById('etaxConfigSection').style.display = this.checked ? 'block' : 'none';
         });
       },
+      servicePackages: [],
       showTab(tab, el) {
-        ['tabCompany','tabGeneral','tabDocument','tabTax','tabEtax','tabApproval','tabNumbering'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        ['tabCompany','tabGeneral','tabDocument','tabTax','tabEtax','tabApproval','tabNumbering','tabServices'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -318,6 +338,14 @@
           document.getElementById('sRequireApproval').checked = s.requireApprovalForDocuments || false;
           document.getElementById('sApprovalThreshold').value = s.approvalThresholdAmount || '';
           document.getElementById('sAllowFreelance').checked = s.allowFreelanceAccess || false;
+          // Landing services
+          document.getElementById('sLandingPhone').value = s.landingContactPhone || '';
+          document.getElementById('sLandingLine').value = s.landingContactLine || '';
+          document.getElementById('sLandingEmail').value = s.landingContactEmail || '';
+          if (s.landingServicesJson) {
+            try { this.servicePackages = JSON.parse(s.landingServicesJson); } catch(e) { this.servicePackages = []; }
+          }
+          this.renderServicePackages();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async uploadLogo() {
@@ -366,6 +394,42 @@
             </table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
         } catch (e) { document.getElementById('numberSeriesContent').innerHTML = '<p class="text-danger text-center">' + e.message + '</p>'; }
       },
+      addServicePackage() {
+        if (this.servicePackages.length >= 4) { Layout.toast('เพิ่มได้สูงสุด 4 แพ็กเกจ', 'error'); return; }
+        this.servicePackages.push({ name: '', description: '', icon: '📋', price: null, priceLabel: '', features: [] });
+        this.renderServicePackages();
+      },
+      removeServicePackage(i) {
+        this.servicePackages.splice(i, 1);
+        this.renderServicePackages();
+      },
+      renderServicePackages() {
+        const el = document.getElementById('servicePackages');
+        if (!this.servicePackages.length) { el.innerHTML = '<p style="color:#94a3b8;font-size:14px">ยังไม่มีแพ็กเกจบริการ กดปุ่มด้านล่างเพื่อเพิ่ม</p>'; return; }
+        el.innerHTML = this.servicePackages.map((pkg, i) => `
+          <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <h4 style="margin:0;font-size:14px;color:#334155">แพ็กเกจ #${i+1}</h4>
+              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeServicePackage(${i})">ลบ</button>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:2"><label class="form-label">ชื่อแพ็กเกจ</label><input type="text" class="form-input sp-name" data-i="${i}" value="${pkg.name||''}" placeholder="เช่น แพ็กเกจพื้นฐาน"></div>
+              <div class="form-group"><label class="form-label">ไอคอน</label><input type="text" class="form-input sp-icon" data-i="${i}" value="${pkg.icon||'📋'}" style="width:60px"></div>
+              <div class="form-group"><label class="form-label">ราคา (บาท/เดือน)</label><input type="number" class="form-input sp-price" data-i="${i}" value="${pkg.price||''}" placeholder="0"></div>
+              <div class="form-group"><label class="form-label">ข้อความราคา</label><input type="text" class="form-input sp-pricelabel" data-i="${i}" value="${pkg.priceLabel||''}" placeholder="เช่น เริ่มต้น 2,500 บาท/เดือน"></div>
+            </div>
+            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input sp-desc" data-i="${i}" value="${pkg.description||''}" placeholder="คำอธิบายสั้นๆ"></div>
+            <div class="form-group"><label class="form-label">ฟีเจอร์ (บรรทัดละ 1 รายการ)</label><textarea class="form-textarea sp-features" data-i="${i}" rows="3" placeholder="จัดทำบัญชีรายเดือน\nยื่นภาษี ภ.พ.30\nปิดงบการเงิน">${(pkg.features||[]).join('\n')}</textarea></div>
+          </div>
+        `).join('');
+        // Bind change events to sync back to servicePackages array
+        el.querySelectorAll('.sp-name').forEach(inp => inp.addEventListener('input', e => { this.servicePackages[e.target.dataset.i].name = e.target.value; }));
+        el.querySelectorAll('.sp-icon').forEach(inp => inp.addEventListener('input', e => { this.servicePackages[e.target.dataset.i].icon = e.target.value; }));
+        el.querySelectorAll('.sp-price').forEach(inp => inp.addEventListener('input', e => { this.servicePackages[e.target.dataset.i].price = parseFloat(e.target.value) || null; }));
+        el.querySelectorAll('.sp-pricelabel').forEach(inp => inp.addEventListener('input', e => { this.servicePackages[e.target.dataset.i].priceLabel = e.target.value; }));
+        el.querySelectorAll('.sp-desc').forEach(inp => inp.addEventListener('input', e => { this.servicePackages[e.target.dataset.i].description = e.target.value; }));
+        el.querySelectorAll('.sp-features').forEach(inp => inp.addEventListener('input', e => { this.servicePackages[e.target.dataset.i].features = e.target.value.split('\n').filter(f => f.trim()); }));
+      },
       async save() {
         const api = Layout.api(); if (!api) return;
         try {
@@ -405,6 +469,11 @@
             requireApprovalForDocuments: document.getElementById('sRequireApproval').checked,
             approvalThresholdAmount: parseFloat(document.getElementById('sApprovalThreshold').value) || null,
             allowFreelanceAccess: document.getElementById('sAllowFreelance').checked,
+            // Landing services
+            landingContactPhone: document.getElementById('sLandingPhone').value || null,
+            landingContactLine: document.getElementById('sLandingLine').value || null,
+            landingContactEmail: document.getElementById('sLandingEmail').value || null,
+            landingServicesJson: JSON.stringify(this.servicePackages),
           });
           Layout.toast('บันทึกการตั้งค่าสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }

@@ -18,7 +18,7 @@
       </a>
       <div class="nav-links" id="navLinks">
         <a href="#features">ฟีเจอร์</a>
-        <a href="#modules">โมดูล</a>
+        <a href="#services">บริการบัญชี</a>
         <a href="#pricing">ราคา</a>
         <a href="#faq">คำถามที่พบบ่อย</a>
       </div>
@@ -153,6 +153,66 @@
             <li>ตรวจจับ Anomaly</li>
             <li>พยากรณ์กระแสเงินสด</li>
             <li>OCR สแกนใบเสร็จ</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Accounting Services -->
+  <section class="section" id="services">
+    <div class="container">
+      <div class="section-header">
+        <div class="badge badge-success">บริการทางบัญชี</div>
+        <h2>บริการจัดทำบัญชีครบวงจร</h2>
+        <p>ทีมนักบัญชีผู้เชี่ยวชาญพร้อมดูแลงานบัญชีและภาษีให้คุณ ด้วยระบบ AcctPlatform</p>
+      </div>
+
+      <!-- Contact Bar -->
+      <div id="serviceContact" style="display:none;text-align:center;margin-bottom:40px">
+        <div style="display:inline-flex;flex-wrap:wrap;gap:24px;align-items:center;background:#fff;padding:16px 32px;border-radius:var(--radius-xl);box-shadow:var(--shadow-md)">
+          <span id="svcPhone" style="display:none"><span style="font-size:20px">📞</span> <a href="#" class="font-semibold text-primary" id="svcPhoneLink"></a></span>
+          <span id="svcLine" style="display:none"><span style="font-size:20px">💬</span> LINE: <strong id="svcLineId"></strong></span>
+          <span id="svcEmail" style="display:none"><span style="font-size:20px">📧</span> <a href="#" class="text-primary" id="svcEmailLink"></a></span>
+        </div>
+      </div>
+
+      <!-- Service Packages -->
+      <div id="serviceGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;max-width:1000px;margin:0 auto">
+        <!-- Default services (replaced by API if configured) -->
+        <div class="feature-card" style="text-align:center;padding:32px">
+          <div style="font-size:36px;margin-bottom:12px">📋</div>
+          <h3 style="margin-bottom:8px">ทำบัญชีรายเดือน</h3>
+          <p style="font-size:14px;color:var(--gray-500);margin-bottom:16px">บันทึกบัญชี ปิดงบรายเดือน จัดทำรายงานภาษี</p>
+          <div style="font-size:28px;font-weight:800;color:var(--primary);margin-bottom:8px">฿3,000<span style="font-size:14px;font-weight:400;color:var(--gray-400)">/เดือน</span></div>
+          <ul style="text-align:left;font-size:13px;color:var(--gray-600);list-style:none;padding:0;margin:0">
+            <li style="padding:4px 0">✓ บันทึกรายรับ-รายจ่าย</li>
+            <li style="padding:4px 0">✓ จัดทำ ภพ.30 / ภงด.3 / ภงด.53</li>
+            <li style="padding:4px 0">✓ ปิดงบทดลองรายเดือน</li>
+          </ul>
+        </div>
+        <div class="feature-card" style="text-align:center;padding:32px;border-color:var(--primary);box-shadow:var(--shadow-lg)">
+          <div style="font-size:36px;margin-bottom:12px">📊</div>
+          <h3 style="margin-bottom:8px">บัญชี + ภาษี + ประกันสังคม</h3>
+          <p style="font-size:14px;color:var(--gray-500);margin-bottom:16px">ครบทุกงานบัญชีรายเดือน พร้อมจัดทำเงินเดือน</p>
+          <div style="font-size:28px;font-weight:800;color:var(--primary);margin-bottom:8px">฿5,500<span style="font-size:14px;font-weight:400;color:var(--gray-400)">/เดือน</span></div>
+          <ul style="text-align:left;font-size:13px;color:var(--gray-600);list-style:none;padding:0;margin:0">
+            <li style="padding:4px 0">✓ ทุกอย่างในแพ็กเกจรายเดือน</li>
+            <li style="padding:4px 0">✓ จัดทำเงินเดือน + สลิป</li>
+            <li style="padding:4px 0">✓ ยื่นประกันสังคม + ภงด.1</li>
+            <li style="padding:4px 0">✓ ปรึกษาภาษีรายเดือน</li>
+          </ul>
+        </div>
+        <div class="feature-card" style="text-align:center;padding:32px">
+          <div style="font-size:36px;margin-bottom:12px">🏢</div>
+          <h3 style="margin-bottom:8px">ปิดงบการเงินประจำปี</h3>
+          <p style="font-size:14px;color:var(--gray-500);margin-bottom:16px">จัดทำงบการเงิน ยื่นภาษีเงินได้ ตรวจสอบบัญชี</p>
+          <div style="font-size:28px;font-weight:800;color:var(--primary);margin-bottom:8px">฿15,000<span style="font-size:14px;font-weight:400;color:var(--gray-400)">/ปี</span></div>
+          <ul style="text-align:left;font-size:13px;color:var(--gray-600);list-style:none;padding:0;margin:0">
+            <li style="padding:4px 0">✓ จัดทำงบการเงินประจำปี</li>
+            <li style="padding:4px 0">✓ ยื่น ภงด.50 / ภงด.51</li>
+            <li style="padding:4px 0">✓ ประสานงานผู้สอบบัญชี</li>
+            <li style="padding:4px 0">✓ ยื่น DBD e-Filing</li>
           </ul>
         </div>
       </div>
@@ -597,6 +657,55 @@
       }
     };
     Pricing.init();
+
+    // ===== Load Accounting Services from API =====
+    (async function() {
+      try {
+        const res = await fetch('/api/landing/services');
+        const json = await res.json();
+        const d = json.data;
+        if (!d) return;
+
+        // Show contact bar if any contact info exists
+        if (d.contactPhone || d.contactLine || d.contactEmail) {
+          document.getElementById('serviceContact').style.display = '';
+          if (d.contactPhone) {
+            document.getElementById('svcPhone').style.display = '';
+            const phoneLink = document.getElementById('svcPhoneLink');
+            phoneLink.href = 'tel:' + d.contactPhone.replace(/[^0-9+]/g, '');
+            phoneLink.textContent = d.contactPhone;
+          }
+          if (d.contactLine) {
+            document.getElementById('svcLine').style.display = '';
+            document.getElementById('svcLineId').textContent = d.contactLine;
+          }
+          if (d.contactEmail) {
+            document.getElementById('svcEmail').style.display = '';
+            const emailLink = document.getElementById('svcEmailLink');
+            emailLink.href = 'mailto:' + d.contactEmail;
+            emailLink.textContent = d.contactEmail;
+          }
+        }
+
+        // Render service packages if configured
+        if (d.services && d.services.length) {
+          const grid = document.getElementById('serviceGrid');
+          const cols = d.services.length <= 2 ? 2 : 3;
+          grid.style.gridTemplateColumns = `repeat(${cols},1fr)`;
+          grid.innerHTML = d.services.map((s, i) => {
+            const isFeatured = d.services.length === 3 ? i === 1 : i === 0;
+            return `<div class="feature-card" style="text-align:center;padding:32px;${isFeatured ? 'border-color:var(--primary);box-shadow:var(--shadow-lg)' : ''}">
+              <div style="font-size:36px;margin-bottom:12px">${s.icon || '📋'}</div>
+              <h3 style="margin-bottom:8px">${s.name}</h3>
+              ${s.description ? `<p style="font-size:14px;color:var(--gray-500);margin-bottom:16px">${s.description}</p>` : ''}
+              ${s.price != null ? `<div style="font-size:28px;font-weight:800;color:var(--primary);margin-bottom:8px">฿${Number(s.price).toLocaleString()}<span style="font-size:14px;font-weight:400;color:var(--gray-400)">${s.priceLabel ? '/' + s.priceLabel : ''}</span></div>` : ''}
+              ${s.priceLabel && s.price == null ? `<div style="font-size:18px;font-weight:700;color:var(--primary);margin-bottom:8px">${s.priceLabel}</div>` : ''}
+              ${s.features && s.features.length ? `<ul style="text-align:left;font-size:13px;color:var(--gray-600);list-style:none;padding:0;margin:0">${s.features.map(f => `<li style="padding:4px 0">✓ ${f}</li>`).join('')}</ul>` : ''}
+            </div>`;
+          }).join('');
+        }
+      } catch (e) { /* Use default static content */ }
+    })();
   </script>
 </body>
 </html>

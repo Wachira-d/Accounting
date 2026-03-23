@@ -104,6 +104,24 @@ public static class DatabaseMigrationHelper
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'EtaxXmlOutputPath')
                 ALTER TABLE [CompanySettings] ADD [EtaxXmlOutputPath] nvarchar(500) NULL;
             """,
+
+            // ===== CompanySettings: Landing page services =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'LandingContactPhone')
+                ALTER TABLE [CompanySettings] ADD [LandingContactPhone] nvarchar(50) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'LandingContactLine')
+                ALTER TABLE [CompanySettings] ADD [LandingContactLine] nvarchar(100) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'LandingContactEmail')
+                ALTER TABLE [CompanySettings] ADD [LandingContactEmail] nvarchar(200) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'LandingServicesJson')
+                ALTER TABLE [CompanySettings] ADD [LandingServicesJson] nvarchar(max) NULL;
+            """,
         ];
     }
 }

@@ -404,6 +404,9 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   /* Modules grid: override inline 4-col */
   #modulesGrid { grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; }
 
+  /* Service grid */
+  #serviceGrid { grid-template-columns: 1fr !important; max-width: 400px !important; margin: 0 auto !important; }
+
   /* Billing toggle: wrap */
   .billing-toggle { padding: 6px 10px; font-size: 12px; }
 

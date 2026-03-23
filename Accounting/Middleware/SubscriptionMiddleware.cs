@@ -14,6 +14,7 @@ public class SubscriptionCheckMiddleware
         "/api/auth",
         "/api/subscription",
         "/api/admin",
+        "/api/landing",
         "/swagger",
         "/health"
     };
