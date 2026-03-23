@@ -374,11 +374,46 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 }
 
 @media (max-width: 768px) {
-  .hero h1 { font-size: 32px; }
-  .hero-stats { flex-direction: column; gap: 16px; }
+  /* Prevent horizontal overflow */
+  html, body { overflow-x: hidden; }
+
+  .hero { padding: 120px 0 60px; }
+  .hero h1 { font-size: 28px; }
+  .hero p { font-size: 15px; }
+  .hero-actions { flex-direction: column; gap: 12px; }
+  .hero-actions .btn { width: 100%; text-align: center; }
+  .hero-stats { flex-direction: row; gap: 16px; justify-content: center; }
+  .hero-stat .num { font-size: 24px; }
+  .hero-stat .label { font-size: 12px; }
   .features-grid { grid-template-columns: 1fr; }
+  .section-header h2 { font-size: 24px; }
+  .section-header p { font-size: 15px; }
+
+  /* Navbar: hide actions, show toggle */
   .nav-links { display: none; }
+  .nav-actions { display: none; }
   .nav-mobile-toggle { display: block; }
+
+  /* Mobile nav dropdown */
+  .nav-links.show {
+    display: flex; flex-direction: column; position: absolute;
+    top: 72px; left: 0; right: 0; background: #fff; padding: 16px 24px;
+    box-shadow: var(--shadow-lg); gap: 12px; z-index: 99;
+  }
+
+  /* Modules grid: override inline 4-col */
+  #modulesGrid { grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; }
+
+  /* Billing toggle: wrap */
+  .billing-toggle { padding: 6px 10px; font-size: 12px; }
+
+  /* Pricing section */
+  .pricing-grid { max-width: 100%; }
+
+  /* Footer */
+  .footer-grid { grid-template-columns: 1fr; gap: 24px; }
+
+  /* App layout */
   .sidebar { transform: translateX(-100%); }
   .sidebar.open { transform: translateX(0); }
   .main-content { margin-left: 0; }
@@ -390,6 +425,24 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
   .toolbar { flex-direction: column; align-items: stretch; }
   .search-input { width: 100%; }
+
+  /* CTA section */
+  .cta-section h2 { font-size: 24px; }
+  .cta-section p { font-size: 15px; }
+
+  /* Detail list */
+  .detail-list { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .container { padding: 0 16px; }
+  .hero h1 { font-size: 24px; }
+  .hero-stats { flex-direction: column; gap: 12px; }
+  #modulesGrid { grid-template-columns: repeat(2, 1fr) !important; }
+  .section { padding: 48px 0; }
+  .section-header { margin-bottom: 32px; }
+  .section-header h2 { font-size: 20px; }
+  .btn-xl { padding: 14px 24px; font-size: 16px; }
 }
 
 /* ===== Animations ===== */
