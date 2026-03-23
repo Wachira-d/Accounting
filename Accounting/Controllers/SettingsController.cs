@@ -19,6 +19,16 @@ public class SettingsController : ControllerBase
         _settingsService = settingsService;
     }
 
+    // ===== Public: Landing Page Services =====
+
+    [HttpGet("/api/landing/services")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<LandingServicesResponse>>> GetLandingServices()
+    {
+        var result = await _settingsService.GetLandingServicesAsync();
+        return Ok(new ApiResponse<LandingServicesResponse>(true, result));
+    }
+
     // ===== Company Settings =====
 
     [HttpGet]

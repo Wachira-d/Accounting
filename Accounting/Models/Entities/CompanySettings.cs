@@ -57,4 +57,10 @@ public class CompanySettings : TenantEntity
     public bool EtaxAutoSubmit { get; set; } = false;       // ส่งสรรพากรอัตโนมัติหลังลงนาม
     public string? EtaxServiceProvider { get; set; }        // "RD" or third-party provider
     public string? EtaxXmlOutputPath { get; set; }          // custom XML output path
+
+    // Landing Page – Accounting Services
+    public string? LandingContactPhone { get; set; }           // เบอร์ติดต่อแสดงหน้าแรก
+    public string? LandingContactLine { get; set; }            // LINE ID
+    public string? LandingContactEmail { get; set; }           // อีเมลติดต่อ
+    public string? LandingServicesJson { get; set; }           // JSON array of accounting service packages
 }

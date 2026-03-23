@@ -49,7 +49,13 @@ public record UpdateCompanySettingsRequest(
     bool? EtaxTestMode,
     bool? EtaxAutoSign,
     bool? EtaxAutoSubmit,
-    string? EtaxServiceProvider);
+    string? EtaxServiceProvider,
+
+    // Landing Page – Accounting Services
+    string? LandingContactPhone,
+    string? LandingContactLine,
+    string? LandingContactEmail,
+    string? LandingServicesJson);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -90,7 +96,27 @@ public record CompanySettingsResponse(
     bool EtaxAutoSubmit,
     string? EtaxServiceProvider,
     bool EtaxCertificateConfigured,
-    bool EtaxApiConfigured);
+    bool EtaxApiConfigured,
+    // Landing Page – Accounting Services
+    string? LandingContactPhone,
+    string? LandingContactLine,
+    string? LandingContactEmail,
+    string? LandingServicesJson);
+
+// ===== Landing Page Services (Public) =====
+public record LandingServicesResponse(
+    string? ContactPhone,
+    string? ContactLine,
+    string? ContactEmail,
+    List<LandingServiceItem> Services);
+
+public record LandingServiceItem(
+    string Name,
+    string? Description,
+    string? Icon,
+    decimal? Price,
+    string? PriceLabel,
+    List<string>? Features);
 
 // ===== Number Series =====
 public record CreateNumberSeriesRequest(
