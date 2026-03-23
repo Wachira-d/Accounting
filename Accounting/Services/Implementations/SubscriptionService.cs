@@ -575,6 +575,106 @@ public class SubscriptionService : ISubscriptionService
         return await GetTrialStatusAsync(companyId);
     }
 
+    // ==================== Usage Monitor ====================
+
+    public async Task<UsageDetailResponse> GetUsageDetailAsync(Guid companyId)
+    {
+        var sub = await _db.Subscriptions
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription สำหรับบริษัทนี้");
+
+        // Get company users
+        var companyUsers = await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == companyId)
+            .Join(_db.Users, cu => cu.UserId, u => u.Id, (cu, u) => new UsageUserInfo(
+                u.Id, u.FullName, u.Email, cu.Role.ToString(), cu.JoinedAt, u.LastLoginAt))
+            .ToListAsync();
+
+        // Get file attachments for storage breakdown
+        var files = await _db.FileAttachments
+            .Where(f => f.CompanyId == companyId)
+            .Select(f => new { f.Id, f.OriginalFileName, f.EntityType, f.FileSize, f.CreatedAt, f.UploadedByUserId })
+            .ToListAsync();
+
+        // Storage breakdown by entity type
+        var breakdown = files
+            .GroupBy(f => f.EntityType ?? "Other")
+            .Select(g => new StorageCategoryInfo(
+                g.Key,
+                GetCategoryLabel(g.Key),
+                g.Sum(f => f.FileSize),
+                g.Count()))
+            .OrderByDescending(c => c.Bytes)
+            .ToList();
+
+        // Top 10 largest files
+        var uploaderIds = files.Select(f => f.UploadedByUserId).Where(id => id != Guid.Empty).Distinct().ToList();
+        var userMap = await _db.Users
+            .Where(u => uploaderIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.FullName);
+
+        var largest = files
+            .OrderByDescending(f => f.FileSize)
+            .Take(10)
+            .Select(f => new StorageFileInfo(
+                f.Id, f.OriginalFileName ?? "unknown", f.EntityType ?? "Other",
+                f.FileSize, f.CreatedAt,
+                f.UploadedByUserId != Guid.Empty && userMap.ContainsKey(f.UploadedByUserId) ? userMap[f.UploadedByUserId] : "-"))
+            .ToList();
+
+        // Build alerts
+        var alerts = new List<UsageAlert>();
+        var storagePct = sub.MaxStorageBytes > 0 ? (double)sub.CurrentStorageUsed / sub.MaxStorageBytes * 100 : 0;
+        var docPct = sub.MaxDocumentsPerMonth > 0 ? (double)sub.CurrentMonthDocuments / sub.MaxDocumentsPerMonth * 100 : 0;
+        var userPct = sub.MaxUsers > 0 ? (double)companyUsers.Count / sub.MaxUsers * 100 : 0;
+
+        if (storagePct >= 90)
+            alerts.Add(new UsageAlert("danger", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storagePct:F0}% แล้ว กรุณาเคลียร์ไฟล์หรืออัปเกรดแพ็กเกจ"));
+        else if (storagePct >= 70)
+            alerts.Add(new UsageAlert("warning", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storagePct:F0}% แล้ว"));
+
+        if (docPct >= 90)
+            alerts.Add(new UsageAlert("danger", "documents", $"เอกสารเดือนนี้ใช้ไป {sub.CurrentMonthDocuments}/{sub.MaxDocumentsPerMonth} รายการ"));
+        else if (docPct >= 70)
+            alerts.Add(new UsageAlert("warning", "documents", $"เอกสารเดือนนี้ใช้ไป {docPct:F0}%"));
+
+        if (userPct >= 100)
+            alerts.Add(new UsageAlert("danger", "users", "จำนวนผู้ใช้เต็มแล้ว อัปเกรดแพ็กเกจเพื่อเพิ่มผู้ใช้"));
+        else if (companyUsers.Count >= sub.MaxUsers - 1 && sub.MaxUsers < 999)
+            alerts.Add(new UsageAlert("warning", "users", $"เหลือโควต้าผู้ใช้อีก {sub.MaxUsers - companyUsers.Count} คน"));
+
+        var daysLeft = (sub.EndDate - DateTime.UtcNow).Days;
+        if (daysLeft <= 0)
+            alerts.Add(new UsageAlert("danger", "subscription", "Subscription หมดอายุแล้ว กรุณาต่ออายุ"));
+        else if (daysLeft <= 7)
+            alerts.Add(new UsageAlert("warning", "subscription", $"Subscription จะหมดอายุใน {daysLeft} วัน"));
+
+        return new UsageDetailResponse(
+            sub.Plan, sub.Status, sub.EndDate,
+            companyUsers.Count, sub.MaxUsers, companyUsers,
+            sub.CurrentStorageUsed, sub.MaxStorageBytes, breakdown, largest,
+            sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth,
+            sub.CurrentMonthJournalEntries, sub.MaxJournalEntriesPerMonth,
+            sub.UsageResetDate,
+            alerts);
+    }
+
+    private static string GetCategoryLabel(string entityType)
+    {
+        return entityType switch
+        {
+            "Document" => "เอกสาร",
+            "JournalEntry" => "รายการบัญชี",
+            "Contact" => "ผู้ติดต่อ",
+            "Product" => "สินค้า",
+            "ExpenseClaim" => "เบิกค่าใช้จ่าย",
+            "FixedAsset" => "สินทรัพย์ถาวร",
+            "PayrollSlip" => "สลิปเงินเดือน",
+            "Logo" => "โลโก้",
+            _ => entityType
+        };
+    }
+
     // ==================== Background: Process Expired Trials ====================
 
     public async Task ProcessExpiredTrialsAsync()

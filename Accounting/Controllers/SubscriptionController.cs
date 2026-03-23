@@ -201,6 +201,18 @@ public class SubscriptionController : ControllerBase
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result));
     }
 
+    // ===== Usage Monitor =====
+
+    /// <summary>
+    /// ดูรายละเอียดการใช้งาน (Usage Monitor)
+    /// </summary>
+    [HttpGet("{companyId:guid}/usage/detail")]
+    public async Task<ActionResult<ApiResponse<UsageDetailResponse>>> GetUsageDetail(Guid companyId)
+    {
+        var result = await _subscriptionService.GetUsageDetailAsync(companyId);
+        return Ok(new ApiResponse<UsageDetailResponse>(true, result));
+    }
+
     // ===== Feature Check =====
 
     /// <summary>

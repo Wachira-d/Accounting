@@ -118,6 +118,7 @@ const Layout = {
     { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html' },
     { section: 'ระบบ' },
     { id: 'approval', label: 'อนุมัติ', icon: '✅', href: '/pages/approval.html' },
+    { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html' },
     { id: 'subscription', label: 'แพ็กเกจ/สมัครสมาชิก', icon: '💎', href: '/pages/subscription.html' },
     { id: 'settings', label: 'ตั้งค่า', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍', href: '/pages/audit.html' },
