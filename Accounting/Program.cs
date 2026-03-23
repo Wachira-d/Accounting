@@ -313,7 +313,28 @@ try
     }
     else
     {
-        db.Database.EnsureCreated();
+        var created = db.Database.EnsureCreated();
+        if (!created)
+        {
+            // Database already exists but may be missing new tables.
+            // EnsureCreated() only creates schema when the DB is brand-new.
+            // Split the full DDL script and execute each statement individually
+            // so missing tables/indexes get created while existing ones are safely skipped.
+            var script = db.Database.GenerateCreateScript();
+            var statements = script.Split(["GO"], StringSplitOptions.RemoveEmptyEntries);
+            foreach (var statement in statements)
+            {
+                if (string.IsNullOrWhiteSpace(statement)) continue;
+                try
+                {
+                    db.Database.ExecuteSqlRaw(statement);
+                }
+                catch
+                {
+                    // Table/index/constraint already exists — safe to ignore
+                }
+            }
+        }
     }
 
     // Seed default plan templates & admin user
