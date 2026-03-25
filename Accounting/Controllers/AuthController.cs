@@ -12,10 +12,12 @@ namespace Accounting.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly IConfiguration _config;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, IConfiguration config)
     {
         _authService = authService;
+        _config = config;
     }
 
     [HttpPost("register")]
@@ -29,6 +31,23 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<ApiResponse<LoginResponse>>> Login([FromBody] LoginRequest request)
     {
         var result = await _authService.LoginAsync(request);
+        return Ok(new ApiResponse<LoginResponse>(true, result, "เข้าสู่ระบบสำเร็จ"));
+    }
+
+    [HttpGet("sso-config")]
+    public ActionResult<ApiResponse<object>> GetSsoConfig()
+    {
+        return Ok(new ApiResponse<object>(true, new
+        {
+            google = _config["OAuth:Google:ClientId"] ?? "",
+            facebook = _config["OAuth:Facebook:AppId"] ?? ""
+        }));
+    }
+
+    [HttpPost("sso")]
+    public async Task<ActionResult<ApiResponse<LoginResponse>>> SsoLogin([FromBody] SsoLoginRequest request)
+    {
+        var result = await _authService.SsoLoginAsync(request);
         return Ok(new ApiResponse<LoginResponse>(true, result, "เข้าสู่ระบบสำเร็จ"));
     }
 

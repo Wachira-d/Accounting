@@ -68,7 +68,18 @@
           </button>
         </form>
 
-        <div class="auth-divider">หรือ</div>
+        <div class="auth-divider">หรือสมัครด้วย</div>
+
+        <div style="display:flex;gap:12px;margin-bottom:24px">
+          <button type="button" onclick="handleGoogleRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+            Google
+          </button>
+          <button type="button" onclick="handleFacebookRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#1877F2" d="M18 9a9 9 0 1 0-10.406 8.89v-6.29H5.309V9h2.285V7.017c0-2.255 1.343-3.501 3.4-3.501.984 0 2.014.176 2.014.176v2.215h-1.135c-1.118 0-1.467.694-1.467 1.406V9h2.496l-.399 2.6h-2.097v6.29A9.002 9.002 0 0 0 18 9z"/></svg>
+            Facebook
+          </button>
+        </div>
 
         <p style="text-align:center;font-size:14px;color:var(--gray-600)">
           มีบัญชีอยู่แล้ว? <a href="/login.html" style="color:var(--primary);font-weight:600">เข้าสู่ระบบ</a>
@@ -77,8 +88,71 @@
     </div>
   </div>
 
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- Facebook SDK -->
+  <script async defer crossorigin="anonymous" src="https://connect.facebook.net/th_TH/sdk.js"></script>
+
   <script src="/js/api.js"></script>
   <script>
+    let ssoConfig = { google: '', facebook: '' };
+    fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
+      ssoConfig = d.data || d;
+      if (ssoConfig.facebook && window.FB) {
+        FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
+      }
+    }).catch(()=>{});
+
+    async function handleSsoResponse(provider, idToken) {
+      const errEl = document.getElementById('errorMsg');
+      errEl.classList.add('hidden');
+      const companyName = document.getElementById('companyName')?.value || '';
+      try {
+        const res = await API.ssoLogin(provider, idToken, companyName || null);
+        if (res.success && res.data) {
+          const token = res.data.accessToken || res.data.token;
+          localStorage.setItem('token', token);
+          localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
+          API.token = token;
+          window.location.href = '/app.html';
+        } else {
+          throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
+        }
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    function handleGoogleRegister() {
+      if (!ssoConfig.google) {
+        document.getElementById('errorMsg').textContent = 'ยังไม่ได้ตั้งค่า Google OAuth';
+        document.getElementById('errorMsg').classList.remove('hidden');
+        return;
+      }
+      google.accounts.id.initialize({
+        client_id: ssoConfig.google,
+        callback: (response) => handleSsoResponse('Google', response.credential)
+      });
+      google.accounts.id.prompt();
+    }
+
+    function handleFacebookRegister() {
+      if (!ssoConfig.facebook) {
+        document.getElementById('errorMsg').textContent = 'ยังไม่ได้ตั้งค่า Facebook OAuth';
+        document.getElementById('errorMsg').classList.remove('hidden');
+        return;
+      }
+      if (!window.FB) {
+        FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
+      }
+      FB.login(function(response) {
+        if (response.authResponse) {
+          handleSsoResponse('Facebook', response.authResponse.accessToken);
+        }
+      }, { scope: 'email,public_profile' });
+    }
+
     async function handleRegister(e) {
       e.preventDefault();
       const btn = document.getElementById('registerBtn');
