@@ -6,23 +6,35 @@ public class Company : BaseEntity
 {
     public string Name { get; set; } = null!;
     public string? NameEn { get; set; }
-    public string TaxId { get; set; } = null!;          // เลขผู้เสียภาษี
-    public string? BranchCode { get; set; } = "00000";  // รหัสสาขา
+    public string TaxId { get; set; } = null!;          // เลขผู้เสียภาษี 13 หลัก
+    public string? BranchCode { get; set; } = "00000";  // รหัสสาขา (00000 = สำนักงานใหญ่)
+    public string? BranchName { get; set; }              // ชื่อสาขา
     public BusinessType BusinessType { get; set; }
     public CompanyStatus Status { get; set; } = CompanyStatus.Active;
 
-    // Address
+    // Thai Business Registration (ข้อมูลตามกฎหมายไทย)
+    public string? JuristicId { get; set; }              // เลขทะเบียนนิติบุคคล (DBD)
+    public bool IsVatRegistered { get; set; }            // จดทะเบียนภาษีมูลค่าเพิ่ม
+    public decimal VatRate { get; set; } = 7m;           // อัตราภาษีมูลค่าเพิ่ม (%)
+    public bool IsWhtRegistered { get; set; } = true;    // หัก ณ ที่จ่าย
+    public bool IsSocialSecurityRegistered { get; set; } // จดทะเบียนประกันสังคม
+    public string? SocialSecurityAccountNo { get; set; } // เลขที่บัญชีประกันสังคม
+
+    // Address (ที่อยู่ตามใบทะเบียน)
     public string? Address { get; set; }
-    public string? SubDistrict { get; set; }
-    public string? District { get; set; }
-    public string? Province { get; set; }
-    public string? PostalCode { get; set; }
+    public string? SubDistrict { get; set; }             // แขวง/ตำบล
+    public string? District { get; set; }                // เขต/อำเภอ
+    public string? Province { get; set; }                // จังหวัด
+    public string? PostalCode { get; set; }              // รหัสไปรษณีย์
     public string? Phone { get; set; }
+    public string? Fax { get; set; }
     public string? Email { get; set; }
+    public string? Website { get; set; }
 
     // Settings
     public int FiscalYearStartMonth { get; set; } = 1;  // เดือนเริ่มต้นปีบัญชี
     public string BaseCurrency { get; set; } = "THB";
+    public bool IsSetupComplete { get; set; }            // ตั้งค่าเสร็จแล้วหรือยัง
 
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();

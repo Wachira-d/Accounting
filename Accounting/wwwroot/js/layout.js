@@ -66,61 +66,73 @@ const Layout = {
     } catch (e) { /* SignalR optional */ }
   },
 
+  // Navigation organized following PEAK Account structure
   navItems: [
     { section: 'หลัก' },
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html' },
+
+    { section: 'รายรับ' },
+    { id: 'documents', label: 'ใบเสนอราคา/แจ้งหนี้', icon: '📄', href: '/pages/documents.html' },
+    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html' },
+    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
+
+    { section: 'รายจ่าย' },
+    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html' },
+    { id: 'payments', label: 'การชำระเงิน', icon: '💳', href: '/pages/payments.html' },
+
+    { section: 'ผู้ติดต่อ' },
+    { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html' },
+    { id: 'freelance', label: 'Freelancer/ผู้รับจ้าง', icon: '👤', href: '/pages/freelance.html' },
+
+    { section: 'สินค้า/บริการ' },
+    { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html' },
+    { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html' },
+
+    { section: 'การเงิน' },
+    { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html' },
+    { id: 'loans', label: 'สินเชื่อ/เงินกู้', icon: '💰', href: '/pages/loans.html' },
+    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html' },
+
     { section: 'บัญชี' },
     { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html' },
     { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html' },
     { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html' },
-    { section: 'เอกสาร' },
-    { id: 'documents', label: 'เอกสารทั้งหมด', icon: '📄', href: '/pages/documents.html' },
-    { id: 'contacts', label: 'ผู้ติดต่อ', icon: '👥', href: '/pages/contacts.html' },
-    { id: 'payments', label: 'การชำระเงิน', icon: '💳', href: '/pages/payments.html' },
-    { section: 'สินค้าและบริการ' },
-    { id: 'products', label: 'สินค้า/บริการ', icon: '📦', href: '/pages/products.html' },
-    { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html' },
-    { section: 'การเงิน' },
-    { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html' },
-    { id: 'expense', label: 'เบิกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html' },
-    { id: 'loans', label: 'สินเชื่อ', icon: '💰', href: '/pages/loans.html' },
-    { section: 'เงินเดือน' },
-    { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html' },
+    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
+
     { section: 'ภาษี' },
-    { id: 'tax', label: 'รายงานภาษี', icon: '🏛️', href: '/pages/tax.html' },
-    { id: 'wht', label: 'หนังสือรับรองหัก ณ ที่จ่าย', icon: '📜', href: '/pages/wht.html' },
+    { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️', href: '/pages/tax.html' },
+    { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜', href: '/pages/wht.html' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html' },
     { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html' },
+
+    { section: 'เงินเดือน' },
+    { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html' },
+    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html' },
+
     { section: 'รายงาน' },
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },
-    { id: 'aging', label: 'รายงานอายุลูกหนี้', icon: '⏳', href: '/pages/aging.html' },
+    { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html' },
     { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html' },
-    { section: 'สินทรัพย์' },
-    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
-    { section: 'โครงการ' },
+
+    { section: 'โครงการ/องค์กร' },
     { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html' },
     { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html' },
-    { section: 'องค์กร' },
     { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬', href: '/pages/dimensions.html' },
     { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html' },
     { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html' },
-    { section: 'ขั้นสูง' },
-    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html' },
-    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📊', href: '/pages/revenue-recognition.html' },
-    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
-    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html' },
-    { id: 'freelance', label: 'จัดการ Freelancer', icon: '👤', href: '/pages/freelance.html' },
-    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html' },
-    { section: 'เชื่อมต่อ' },
+
+    { section: 'คลังเอกสาร' },
     { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html' },
+    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html' },
+
+    { section: 'ตั้งค่า' },
+    { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html' },
+    { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html' },
     { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html' },
-    { section: 'ระบบ' },
-    { id: 'approval', label: 'อนุมัติ', icon: '✅', href: '/pages/approval.html' },
+    { id: 'subscription', label: 'แพ็กเกจ', icon: '💎', href: '/pages/subscription.html' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html' },
-    { id: 'subscription', label: 'แพ็กเกจ/สมัครสมาชิก', icon: '💎', href: '/pages/subscription.html' },
-    { id: 'settings', label: 'ตั้งค่า', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍', href: '/pages/audit.html' },
   ],
 
@@ -233,69 +245,316 @@ const Layout = {
         this.currentCompany = companies[0];
         localStorage.setItem('currentCompany', JSON.stringify(companies[0]));
         select.value = companies[0].id;
-        // Reload page content with selected company
-        if (typeof Dashboard !== 'undefined' && Dashboard.load) Dashboard.load();
-        else if (typeof Page !== 'undefined' && Page.init) Page.init();
       }
+
+      // First-login redirect: if company setup is not complete, go to settings
+      const selected = companies.find(c => c.id === (this.currentCompany?.id || companies[0].id));
+      if (selected && !selected.isSetupComplete && !window.location.pathname.includes('/pages/settings.html')) {
+        window.location.href = '/pages/settings.html?setup=1';
+        return;
+      }
+
+      // Reload page content with selected company
+      if (typeof Dashboard !== 'undefined' && Dashboard.load) Dashboard.load();
+      else if (typeof Page !== 'undefined' && Page.init) Page.init();
     } catch (e) { console.warn('Could not load companies:', e); }
   },
 
+  setupStep: 1,
+
   showCompanySetupPrompt() {
+    this.setupStep = 1;
+    this.renderSetupStep();
+  },
+
+  renderSetupStep() {
     const pageContent = document.getElementById('pageContent');
     if (!pageContent) return;
+
+    const steps = [
+      { num: 1, label: 'ข้อมูลกิจการ' },
+      { num: 2, label: 'ที่อยู่' },
+      { num: 3, label: 'ภาษีและบัญชี' },
+    ];
+
+    const stepBar = `<div style="display:flex;justify-content:center;gap:8px;margin-bottom:32px">
+      ${steps.map(s => `<div style="display:flex;align-items:center;gap:6px">
+        <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;
+          ${this.setupStep >= s.num ? 'background:var(--primary);color:#fff' : 'background:var(--gray-200);color:var(--gray-500)'}">
+          ${this.setupStep > s.num ? '&#10003;' : s.num}</div>
+        <span style="font-size:13px;color:${this.setupStep >= s.num ? 'var(--gray-900)' : 'var(--gray-400)'}">${s.label}</span>
+        ${s.num < 3 ? '<span style="color:var(--gray-300);margin:0 4px">—</span>' : ''}
+      </div>`).join('')}
+    </div>`;
+
+    let formContent = '';
+    if (this.setupStep === 1) {
+      formContent = `
+        <div style="padding:10px 14px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe;margin-bottom:16px;font-size:13px;color:#1e40af">
+          พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD หรือใส่เลขผู้เสียภาษี 13 หลักเพื่อดึงข้อมูลอัตโนมัติ
+        </div>
+        <div class="form-group">
+          <label class="form-label">ชื่อบริษัท / กิจการ <span style="color:red">*</span></label>
+          <input type="text" id="setupCompanyName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา เช่น มังกร" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label">ชื่อบริษัท (EN)</label>
+          <input type="text" id="setupCompanyNameEn" class="form-input" placeholder="Company Name in English">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">ประเภทธุรกิจ <span style="color:red">*</span></label>
+            <select id="setupBizType" class="form-select">
+              <option value="JuristicPerson">บริษัทจำกัด</option>
+              <option value="Partnership">ห้างหุ้นส่วน</option>
+              <option value="Individual">บุคคลธรรมดา</option>
+              <option value="PublicCompany">บริษัทมหาชน</option>
+              <option value="Foundation">มูลนิธิ</option>
+              <option value="Association">สมาคม</option>
+              <option value="Other">อื่นๆ</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label>
+            <input type="text" id="setupJuristicId" class="form-input" placeholder="เลขทะเบียนนิติบุคคล" maxlength="13">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="setupTaxId" class="form-input" placeholder="เลขประจำตัวผู้เสียภาษี" maxlength="13" style="flex:1">
+              <button class="btn btn-secondary" id="setupDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">รหัสสาขา</label>
+            <input type="text" id="setupBranch" class="form-input" placeholder="00000 (สำนักงานใหญ่)" value="00000">
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:16px">
+          <button class="btn btn-primary btn-lg" onclick="Layout.nextSetupStep()">ถัดไป &rarr;</button>
+        </div>`;
+    } else if (this.setupStep === 2) {
+      formContent = `
+        <div class="form-group">
+          <label class="form-label">ที่อยู่ (ตามใบทะเบียน)</label>
+          <textarea class="form-textarea" id="setupAddress" rows="2" placeholder="เลขที่ ซอย ถนน"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">แขวง/ตำบล</label><input type="text" id="setupSubDistrict" class="form-input"></div>
+          <div class="form-group"><label class="form-label">เขต/อำเภอ</label><input type="text" id="setupDistrict" class="form-input"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">จังหวัด</label><input type="text" id="setupProvince" class="form-input"></div>
+          <div class="form-group"><label class="form-label">รหัสไปรษณีย์</label><input type="text" id="setupPostalCode" class="form-input" maxlength="5"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" id="setupPhone" class="form-input" placeholder="02-xxx-xxxx"></div>
+          <div class="form-group"><label class="form-label">อีเมลบริษัท</label><input type="email" id="setupEmail" class="form-input" placeholder="info@company.co.th"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:16px">
+          <button class="btn btn-secondary btn-lg" onclick="Layout.prevSetupStep()">&larr; ย้อนกลับ</button>
+          <button class="btn btn-primary btn-lg" onclick="Layout.nextSetupStep()">ถัดไป &rarr;</button>
+        </div>`;
+    } else if (this.setupStep === 3) {
+      formContent = `
+        <div style="padding:16px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;margin-bottom:20px">
+          <h4 style="margin:0 0 8px;font-size:14px;color:#166534">การตั้งค่าภาษีและบัญชีตามกฎหมายไทย</h4>
+          <p style="margin:0;font-size:13px;color:#15803d">ข้อมูลนี้จำเป็นสำหรับการออกเอกสารภาษีและรายงานที่ถูกต้องตามกฎหมาย</p>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+              <input type="checkbox" id="setupVatRegistered">
+              <span>จดทะเบียนภาษีมูลค่าเพิ่ม (VAT)</span>
+            </label>
+          </div>
+          <div class="form-group" style="flex:1">
+            <label class="form-label">อัตรา VAT (%)</label>
+            <input type="number" id="setupVatRate" class="form-input" value="7" step="0.01">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+              <input type="checkbox" id="setupWhtRegistered" checked>
+              <span>หักภาษี ณ ที่จ่าย (ภ.ง.ด.3/53)</span>
+            </label>
+          </div>
+          <div class="form-group" style="flex:1">
+            <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+              <input type="checkbox" id="setupSocialSecurity">
+              <span>จดทะเบียนประกันสังคม</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">เดือนเริ่มต้นรอบบัญชี (พ.ร.บ.การบัญชี)</label>
+          <select id="setupFiscalMonth" class="form-select">
+            <option value="1">มกราคม (ม.ค. - ธ.ค.)</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+            <option value="4">เมษายน (เม.ย. - มี.ค.)</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+            <option value="7">กรกฎาคม (ก.ค. - มิ.ย.)</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+            <option value="10">ตุลาคม (ต.ค. - ก.ย.)</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+          </select>
+          <p style="font-size:12px;color:var(--gray-500);margin-top:4px">* นิติบุคคลส่วนใหญ่ใช้รอบ ม.ค. - ธ.ค. ตาม พ.ร.บ.การบัญชี พ.ศ. 2543</p>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:20px">
+          <button class="btn btn-secondary btn-lg" onclick="Layout.prevSetupStep()">&larr; ย้อนกลับ</button>
+          <button class="btn btn-primary btn-lg" onclick="Layout.createFirstCompany()" id="setupBtn">สร้างบริษัทและเริ่มต้นใช้งาน</button>
+        </div>`;
+    }
+
     pageContent.innerHTML = `
-      <div style="max-width:500px;margin:80px auto;text-align:center">
-        <div style="font-size:64px;margin-bottom:16px">🏢</div>
-        <h2 style="margin-bottom:8px">ยินดีต้อนรับสู่ AcctPlatform!</h2>
-        <p style="color:var(--gray-500);margin-bottom:32px">เริ่มต้นใช้งานโดยสร้างบริษัทแรกของคุณ</p>
+      <div style="max-width:600px;margin:40px auto;text-align:center">
+        <div style="font-size:48px;margin-bottom:12px">🏢</div>
+        <h2 style="margin-bottom:4px">ยินดีต้อนรับสู่ AcctPlatform!</h2>
+        <p style="color:var(--gray-500);margin-bottom:24px">กรอกข้อมูลกิจการเพื่อเริ่มต้นใช้งานระบบบัญชี</p>
+        ${stepBar}
         <div class="card" style="text-align:left;padding:24px">
-          <div class="form-group">
-            <label class="form-label">ชื่อบริษัท / กิจการ <span style="color:red">*</span></label>
-            <input type="text" id="setupCompanyName" class="form-input" placeholder="เช่น บริษัท ทดสอบ จำกัด">
-          </div>
-          <div class="form-group">
-            <label class="form-label">เลขผู้เสียภาษี</label>
-            <input type="text" id="setupTaxId" class="form-input" placeholder="เลขประจำตัวผู้เสียภาษี 13 หลัก" maxlength="13">
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">ประเภทธุรกิจ</label>
-              <select id="setupBizType" class="form-select">
-                <option value="Company">บริษัทจำกัด</option>
-                <option value="Partnership">ห้างหุ้นส่วน</option>
-                <option value="SoleProprietor">บุคคลธรรมดา</option>
-                <option value="PublicCompany">บริษัทมหาชน</option>
-                <option value="Other">อื่นๆ</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">รหัสสาขา</label>
-              <input type="text" id="setupBranch" class="form-input" placeholder="00000 (สำนักงานใหญ่)" value="00000">
-            </div>
-          </div>
-          <button class="btn btn-primary w-full btn-lg" onclick="Layout.createFirstCompany()" id="setupBtn">
-            สร้างบริษัทและเริ่มต้นใช้งาน
-          </button>
+          ${formContent}
         </div>
       </div>`;
+
+    // Attach DBD lookup after DOM update
+    if (this.setupStep === 1) {
+      setTimeout(() => {
+        if (typeof DbdLookup === 'undefined') return;
+        // Autocomplete on company name
+        DbdLookup.attachNameSearch(document.getElementById('setupCompanyName'), (result) => {
+          this._setupData.name = result.nameTh;
+          this._setupData.nameEn = result.nameEn || '';
+          this._setupData.taxId = result.juristicId || '';
+          this._setupData.juristicId = result.juristicId || '';
+          document.getElementById('setupCompanyName').value = result.nameTh;
+          document.getElementById('setupCompanyNameEn').value = result.nameEn || '';
+          document.getElementById('setupTaxId').value = result.juristicId || '';
+          document.getElementById('setupJuristicId').value = result.juristicId || '';
+          if (result.address) { this._setupData.address = result.address; }
+          this.toast('เลือก ' + result.nameTh + ' แล้ว');
+        });
+        // Tax ID lookup button
+        DbdLookup.attachTaxIdLookup(
+          document.getElementById('setupTaxId'),
+          (result) => {
+            this._setupData.name = result.nameTh;
+            this._setupData.nameEn = result.nameEn || '';
+            this._setupData.juristicId = result.juristicId || '';
+            document.getElementById('setupCompanyName').value = result.nameTh;
+            document.getElementById('setupCompanyNameEn').value = result.nameEn || '';
+            document.getElementById('setupJuristicId').value = result.juristicId || '';
+            if (result.address) { this._setupData.address = result.address; }
+          },
+          document.getElementById('setupDbdBtn')
+        );
+        this.restoreStepData();
+      }, 0);
+    } else {
+      setTimeout(() => this.restoreStepData(), 0);
+    }
+  },
+
+  // Store partial data between steps
+  _setupData: {},
+
+  nextSetupStep() {
+    this.saveCurrentStepData();
+    if (this.setupStep === 1) {
+      if (!this._setupData.name) { this.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
+      if (!this._setupData.taxId) { this.toast('กรุณากรอกเลขผู้เสียภาษี', 'error'); return; }
+    }
+    this.setupStep++;
+    this.renderSetupStep();
+  },
+
+  prevSetupStep() {
+    this.saveCurrentStepData();
+    this.setupStep--;
+    this.renderSetupStep();
+    this.restoreStepData();
+  },
+
+  saveCurrentStepData() {
+    const d = this._setupData;
+    if (this.setupStep === 1) {
+      d.name = document.getElementById('setupCompanyName')?.value?.trim() || '';
+      d.nameEn = document.getElementById('setupCompanyNameEn')?.value?.trim() || '';
+      d.businessType = document.getElementById('setupBizType')?.value || 'JuristicPerson';
+      d.juristicId = document.getElementById('setupJuristicId')?.value?.trim() || '';
+      d.taxId = document.getElementById('setupTaxId')?.value?.trim() || '';
+      d.branchCode = document.getElementById('setupBranch')?.value?.trim() || '00000';
+    } else if (this.setupStep === 2) {
+      d.address = document.getElementById('setupAddress')?.value?.trim() || '';
+      d.subDistrict = document.getElementById('setupSubDistrict')?.value?.trim() || '';
+      d.district = document.getElementById('setupDistrict')?.value?.trim() || '';
+      d.province = document.getElementById('setupProvince')?.value?.trim() || '';
+      d.postalCode = document.getElementById('setupPostalCode')?.value?.trim() || '';
+      d.phone = document.getElementById('setupPhone')?.value?.trim() || '';
+      d.email = document.getElementById('setupEmail')?.value?.trim() || '';
+    } else if (this.setupStep === 3) {
+      d.isVatRegistered = document.getElementById('setupVatRegistered')?.checked || false;
+      d.vatRate = parseFloat(document.getElementById('setupVatRate')?.value) || 7;
+      d.isWhtRegistered = document.getElementById('setupWhtRegistered')?.checked || false;
+      d.isSocialSecurityRegistered = document.getElementById('setupSocialSecurity')?.checked || false;
+      d.fiscalYearStartMonth = parseInt(document.getElementById('setupFiscalMonth')?.value) || 1;
+    }
+  },
+
+  restoreStepData() {
+    const d = this._setupData;
+    setTimeout(() => {
+      if (this.setupStep === 1) {
+        if (d.name) document.getElementById('setupCompanyName').value = d.name;
+        if (d.nameEn) document.getElementById('setupCompanyNameEn').value = d.nameEn;
+        if (d.businessType) document.getElementById('setupBizType').value = d.businessType;
+        if (d.juristicId) document.getElementById('setupJuristicId').value = d.juristicId;
+        if (d.taxId) document.getElementById('setupTaxId').value = d.taxId;
+        if (d.branchCode) document.getElementById('setupBranch').value = d.branchCode;
+      } else if (this.setupStep === 2) {
+        if (d.address) document.getElementById('setupAddress').value = d.address;
+        if (d.subDistrict) document.getElementById('setupSubDistrict').value = d.subDistrict;
+        if (d.district) document.getElementById('setupDistrict').value = d.district;
+        if (d.province) document.getElementById('setupProvince').value = d.province;
+        if (d.postalCode) document.getElementById('setupPostalCode').value = d.postalCode;
+        if (d.phone) document.getElementById('setupPhone').value = d.phone;
+        if (d.email) document.getElementById('setupEmail').value = d.email;
+      }
+    }, 0);
   },
 
   async createFirstCompany() {
-    const name = document.getElementById('setupCompanyName').value.trim();
-    if (!name) { this.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
+    this.saveCurrentStepData();
+    const d = this._setupData;
+    if (!d.name) { this.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
     const btn = document.getElementById('setupBtn');
     btn.disabled = true; btn.textContent = 'กำลังสร้าง...';
     try {
       const res = await API.createCompany({
-        name,
-        taxId: document.getElementById('setupTaxId').value || '-',
-        businessType: document.getElementById('setupBizType').value,
-        branchCode: document.getElementById('setupBranch').value || '00000'
+        name: d.name,
+        nameEn: d.nameEn || null,
+        taxId: d.taxId || '-',
+        branchCode: d.branchCode || '00000',
+        businessType: d.businessType || 'JuristicPerson',
+        juristicId: d.juristicId || null,
+        isVatRegistered: d.isVatRegistered || false,
+        vatRate: d.vatRate || 7,
+        isWhtRegistered: d.isWhtRegistered !== false,
+        isSocialSecurityRegistered: d.isSocialSecurityRegistered || false,
+        address: d.address || null,
+        subDistrict: d.subDistrict || null,
+        district: d.district || null,
+        province: d.province || null,
+        postalCode: d.postalCode || null,
+        phone: d.phone || null,
+        email: d.email || null,
+        fiscalYearStartMonth: d.fiscalYearStartMonth || 1,
       });
       const company = res.data;
       localStorage.setItem('currentCompany', JSON.stringify(company));
+      this._setupData = {};
       this.toast('สร้างบริษัทสำเร็จ!');
-      setTimeout(() => window.location.reload(), 500);
+      // Redirect to settings page for additional setup
+      setTimeout(() => window.location.href = '/pages/settings.html?setup=1', 500);
     } catch (e) {
       this.toast(e.message, 'error');
       btn.disabled = false; btn.textContent = 'สร้างบริษัทและเริ่มต้นใช้งาน';
