@@ -47,6 +47,7 @@ const API = {
   // Auth
   login(email, password) { return this.post('/api/auth/login', { email, password }); },
   register(data) { return this.post('/api/auth/register', data); },
+  ssoLogin(provider, idToken, companyName) { return this.post('/api/auth/sso', { provider, idToken, companyName }); },
   changePassword(data) { return this.post('/api/auth/change-password', data); },
 
   // Company scoped

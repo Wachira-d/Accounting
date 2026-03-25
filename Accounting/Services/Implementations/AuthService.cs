@@ -4,6 +4,8 @@ using Accounting.Models.DTOs.Auth;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Accounting.Services.Implementations;
@@ -169,6 +171,118 @@ public class AuthService : IAuthService
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
         await _db.SaveChangesAsync();
+    }
+
+    public async Task<LoginResponse> SsoLoginAsync(SsoLoginRequest request)
+    {
+        var provider = request.Provider?.Trim();
+        if (provider != "Google" && provider != "Facebook")
+            throw new InvalidOperationException("รองรับเฉพาะ Google และ Facebook เท่านั้น");
+
+        // Validate token with provider and extract user info
+        var (providerUserId, email, fullName) = provider == "Google"
+            ? await ValidateGoogleTokenAsync(request.IdToken)
+            : await ValidateFacebookTokenAsync(request.IdToken);
+
+        if (string.IsNullOrWhiteSpace(email))
+            throw new InvalidOperationException("ไม่สามารถดึงอีเมลจาก " + provider + " ได้ กรุณาอนุญาตการเข้าถึงอีเมล");
+
+        // Find existing user by provider+id or by email
+        var user = await _db.Users.FirstOrDefaultAsync(u =>
+            u.AuthProvider == provider && u.AuthProviderId == providerUserId);
+
+        if (user == null)
+        {
+            // Check if email already exists (local account)
+            user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+
+            if (user != null)
+            {
+                // Link SSO to existing local account
+                user.AuthProvider = provider;
+                user.AuthProviderId = providerUserId;
+                user.EmailVerified = true;
+            }
+            else
+            {
+                // Create new user via SSO (no password needed)
+                user = new User
+                {
+                    Email = email,
+                    PasswordHash = "", // SSO users don't have password
+                    FullName = fullName ?? email.Split('@')[0],
+                    AuthProvider = provider,
+                    AuthProviderId = providerUserId,
+                    EmailVerified = true
+                };
+                _db.Users.Add(user);
+                await _db.SaveChangesAsync();
+
+                // Create company if provided
+                if (!string.IsNullOrWhiteSpace(request.CompanyName))
+                {
+                    var company = new Company { Name = request.CompanyName, TaxId = "-" };
+                    _db.Companies.Add(company);
+                    _db.CompanyUsers.Add(new CompanyUser
+                    {
+                        CompanyId = company.Id,
+                        UserId = user.Id,
+                        Role = Models.Enums.UserRole.Owner
+                    });
+                    await _db.SaveChangesAsync();
+                }
+            }
+        }
+
+        user.LastLoginAt = DateTime.UtcNow;
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
+        await _db.SaveChangesAsync();
+
+        return await GenerateLoginResponse(user);
+    }
+
+    private async Task<(string Id, string Email, string Name)> ValidateGoogleTokenAsync(string idToken)
+    {
+        using var http = new HttpClient();
+        var res = await http.GetAsync($"https://oauth2.googleapis.com/tokeninfo?id_token={Uri.EscapeDataString(idToken)}");
+        if (!res.IsSuccessStatusCode)
+            throw new UnauthorizedAccessException("Google token ไม่ถูกต้องหรือหมดอายุ");
+
+        var json = await res.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        // Verify audience matches our client ID
+        var aud = root.GetProperty("aud").GetString() ?? "";
+        var expectedClientId = _config["OAuth:Google:ClientId"] ?? "";
+        if (!string.IsNullOrEmpty(expectedClientId) && aud != expectedClientId)
+            throw new UnauthorizedAccessException("Google token audience ไม่ตรงกับ client ID");
+
+        var sub = root.GetProperty("sub").GetString() ?? "";
+        var email = root.GetProperty("email").GetString() ?? "";
+        var name = root.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? "" : "";
+
+        return (sub, email, name);
+    }
+
+    private async Task<(string Id, string Email, string Name)> ValidateFacebookTokenAsync(string accessToken)
+    {
+        using var http = new HttpClient();
+        var res = await http.GetAsync(
+            $"https://graph.facebook.com/me?fields=id,name,email&access_token={Uri.EscapeDataString(accessToken)}");
+        if (!res.IsSuccessStatusCode)
+            throw new UnauthorizedAccessException("Facebook token ไม่ถูกต้องหรือหมดอายุ");
+
+        var json = await res.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var id = root.GetProperty("id").GetString() ?? "";
+        var email = root.TryGetProperty("email", out var emailProp) ? emailProp.GetString() ?? "" : "";
+        var name = root.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? "" : "";
+
+        return (id, email, name);
     }
 
     /// <summary>

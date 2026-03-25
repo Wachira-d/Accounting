@@ -14,6 +14,10 @@ public class User : BaseEntity
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiry { get; set; }
 
+    // SSO / External Auth
+    public string? AuthProvider { get; set; }      // "Google", "Facebook", or null for local
+    public string? AuthProviderId { get; set; }     // Provider's unique user ID
+
     // Security
     public int? FailedLoginAttempts { get; set; }
     public DateTime? LockoutEnd { get; set; }

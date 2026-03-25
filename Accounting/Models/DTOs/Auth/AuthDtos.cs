@@ -50,3 +50,12 @@ public record ForgotPasswordRequest(
 public record ResetPasswordRequest(
     [Required] string Token,
     [Required] [MinLength(8)] string NewPassword);
+
+public record SsoLoginRequest(
+    [Required(ErrorMessage = "กรุณาระบุ provider")]
+    string Provider,       // "Google" or "Facebook"
+
+    [Required(ErrorMessage = "กรุณาระบุ token")]
+    string IdToken,        // OAuth ID token from provider
+
+    string? CompanyName);  // Optional: create company on first SSO signup
