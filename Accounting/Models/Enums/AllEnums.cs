@@ -39,6 +39,32 @@ public enum BusinessType
     Other = 99
 }
 
+/// <summary>
+/// ประเภทอุตสาหกรรม/ลักษณะธุรกิจ - กำหนดผังบัญชีเฉพาะทาง
+/// </summary>
+public enum IndustryType
+{
+    General = 0,           // ทั่วไป
+    Trading = 1,           // ซื้อมาขายไป
+    Service = 2,           // ธุรกิจบริการ
+    Manufacturing = 3,     // ผลิต/โรงงาน
+    Restaurant = 4,        // ร้านอาหาร
+    Cafe = 5,              // คาเฟ่/เครื่องดื่ม
+    Retail = 6,            // ค้าปลีก
+    Construction = 7,      // รับเหมาก่อสร้าง
+    RealEstate = 8,        // อสังหาริมทรัพย์
+    Technology = 9,        // เทคโนโลยี/ซอฟต์แวร์
+    Healthcare = 10,       // สุขภาพ/คลินิก
+    Education = 11,        // การศึกษา
+    Beauty = 12,           // ความงาม/สปา/ร้านทำเล็บ
+    Transportation = 13,   // ขนส่ง/โลจิสติกส์
+    Agriculture = 14,      // เกษตร
+    Hotel = 15,            // โรงแรม/ที่พัก
+    Ecommerce = 16,        // อีคอมเมิร์ซ/ออนไลน์
+    Freelance = 17,        // ฟรีแลนซ์
+    Other = 99             // อื่นๆ
+}
+
 // ==================== Subscription & Trial ====================
 public enum SubscriptionPlan
 {

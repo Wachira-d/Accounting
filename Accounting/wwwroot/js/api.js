@@ -60,7 +60,14 @@ const API = {
       getAccounts: () => API.get(`${base}/accounting/accounts`),
       createAccount: (d) => API.post(`${base}/accounting/accounts`, d),
       updateAccount: (id, d) => API.put(`${base}/accounting/accounts/${id}`, d),
-      seedAccounts: (businessType) => API.post(`${base}/accounting/accounts/seed${businessType ? '?businessType=' + businessType : ''}`),
+      seedAccounts: (businessType, industryType) => {
+        const params = [];
+        if (businessType) params.push('businessType=' + businessType);
+        if (industryType) params.push('industryType=' + industryType);
+        return API.post(`${base}/accounting/accounts/seed${params.length ? '?' + params.join('&') : ''}`);
+      },
+      previewAccountTemplate: (businessType, industryType) => API.get(`${base}/accounting/accounts/template-preview?businessType=${businessType || 'JuristicPerson'}&industryType=${industryType || 'General'}`),
+      getBusinessTypes: () => API.get(`${base}/accounting/business-types`),
       getJournals: (q = '') => API.get(`${base}/accounting/journals${q}`),
       getJournal: (id) => API.get(`${base}/accounting/journals/${id}`),
       createJournal: (d) => API.post(`${base}/accounting/journals`, d),

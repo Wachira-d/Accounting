@@ -44,14 +44,32 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("accounts/seed")]
-    public async Task<ActionResult<ApiResponse<string>>> SeedAccounts(Guid companyId, [FromQuery] BusinessType? businessType = null)
+    public async Task<ActionResult<ApiResponse<string>>> SeedAccounts(Guid companyId, [FromQuery] BusinessType? businessType = null, [FromQuery] IndustryType? industryType = null)
     {
         if (businessType.HasValue)
-            await _accountingService.SeedDefaultAccountsAsync(companyId, businessType.Value);
+            await _accountingService.SeedDefaultAccountsAsync(companyId, businessType.Value, industryType ?? IndustryType.General);
         else
             await _accountingService.SeedDefaultAccountsAsync(companyId);
 
         return Ok(new ApiResponse<string>(true, null, "สร้างผังบัญชีเริ่มต้นสำเร็จ"));
+    }
+
+    [HttpGet("accounts/template-preview")]
+    public ActionResult<ApiResponse<object>> PreviewAccountTemplate([FromQuery] BusinessType businessType = BusinessType.JuristicPerson, [FromQuery] IndustryType industryType = IndustryType.General)
+    {
+        var templates = Services.ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
+        var preview = templates.Select(t => new { t.Code, t.NameTh, t.NameEn, AccountType = t.Type.ToString(), t.Level }).ToList();
+        return Ok(new ApiResponse<object>(true, new { totalAccounts = preview.Count, accounts = preview }));
+    }
+
+    [HttpGet("business-types")]
+    public ActionResult<ApiResponse<object>> GetBusinessTypes()
+    {
+        var businessTypes = Services.ChartOfAccountTemplates.GetAllBusinessTypes()
+            .Select(b => new { Type = b.Type.ToString(), b.NameTh, b.NameEn, b.Description, b.Icon, b.EquityLabel });
+        var industryTypes = Services.ChartOfAccountTemplates.GetAllIndustryTypes()
+            .Select(i => new { Type = i.Type.ToString(), i.NameTh, i.NameEn, i.Description, i.Icon });
+        return Ok(new ApiResponse<object>(true, new { businessTypes, industryTypes }));
     }
 
     // ===== Journal Entries =====

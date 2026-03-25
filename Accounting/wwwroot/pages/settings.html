@@ -64,14 +64,41 @@
         <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">ประเภทธุรกิจ</label>
-          <select id="cBizType" class="form-select">
-            <option value="JuristicPerson">บริษัทจำกัด</option><option value="Partnership">ห้างหุ้นส่วน</option>
-            <option value="Individual">บุคคลธรรมดา</option><option value="PublicCompany">บริษัทมหาชน</option>
-            <option value="Foundation">มูลนิธิ</option><option value="Association">สมาคม</option><option value="Other">อื่นๆ</option>
+        <div class="form-group"><label class="form-label">ประเภทนิติบุคคล <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดโครงสร้างส่วนของเจ้าของในผังบัญชี)</span></label>
+          <select id="cBizType" class="form-select" onchange="Page.onBizTypeChange()">
+            <option value="JuristicPerson">🏢 บริษัทจำกัด</option><option value="Partnership">🤝 ห้างหุ้นส่วน</option>
+            <option value="Individual">👤 บุคคลธรรมดา</option><option value="PublicCompany">🏛️ บริษัทมหาชน</option>
+            <option value="Foundation">🏫 มูลนิธิ</option><option value="Association">🏟️ สมาคม</option><option value="Other">📋 อื่นๆ</option>
           </select>
+          <div id="bizTypeDesc" style="margin-top:6px;font-size:12px;color:#64748b;padding:8px 12px;background:#f8fafc;border-radius:6px;display:none"></div>
         </div>
         <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" id="cJuristicId" class="form-input" placeholder="เลขทะเบียนนิติบุคคล" maxlength="13"></div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">ลักษณะธุรกิจ <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดบัญชีรายได้/ค่าใช้จ่ายเฉพาะทาง)</span></label>
+        <div id="industryTypeGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px"></div>
+        <input type="hidden" id="cIndustryType" value="General">
+      </div>
+
+      <!-- Chart of Accounts Preview -->
+      <div id="coaPreviewPanel" style="margin-top:16px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;display:none">
+        <div style="padding:12px 16px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:between">
+          <div style="flex:1">
+            <strong style="font-size:14px">ตัวอย่างผังบัญชีเริ่มต้น</strong>
+            <span id="coaPreviewCount" style="margin-left:8px;font-size:12px;color:#64748b"></span>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="Page.toggleCoaPreview()">ขยาย/ย่อ</button>
+        </div>
+        <div id="coaPreviewBody" style="max-height:300px;overflow-y:auto;display:none"></div>
+      </div>
+
+      <div id="seedCoaSection" style="margin-top:12px;padding:12px 16px;background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;display:none">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:20px">⚠️</span>
+          <div style="flex:1;font-size:13px;color:#92400e">ประเภทธุรกิจหรือลักษณะธุรกิจเปลี่ยน ต้องการรีเซ็ตผังบัญชีตาม template ใหม่หรือไม่?</div>
+          <button class="btn btn-sm btn-primary" onclick="Page.reseedAccounts()">รีเซ็ตผังบัญชี</button>
+        </div>
       </div>
 
       <!-- Thai Tax Registration -->
@@ -331,6 +358,11 @@
           document.getElementById('cBranchCode').value = c.branchCode || '00000';
           document.getElementById('cBranchName').value = c.branchName || '';
           document.getElementById('cBizType').value = c.businessType || 'JuristicPerson';
+          document.getElementById('cIndustryType').value = c.industryType || 'General';
+          this._origBizType = c.businessType || 'JuristicPerson';
+          this._origIndustryType = c.industryType || 'General';
+          this.renderIndustryGrid();
+          this.onBizTypeChange(true);
           document.getElementById('cJuristicId').value = c.juristicId || '';
           document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
           document.getElementById('cVatRate').value = c.vatRate || 7;
@@ -358,12 +390,13 @@
         await this.saveCompany();
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          // Seed chart of accounts based on selected business type
+          // Seed chart of accounts based on selected business/industry type
           const bizType = document.getElementById('cBizType').value;
+          const indType = document.getElementById('cIndustryType').value;
           const api = Layout.api();
           if (api) {
             try {
-              await api.seedAccounts(bizType);
+              await api.seedAccounts(bizType, indType);
             } catch (seedErr) {
               // If accounts already seeded/in use, continue setup
               console.warn('Seed accounts:', seedErr.message);
@@ -375,6 +408,116 @@
           setTimeout(() => window.location.href = '/app.html', 800);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // ===== Business Type & Industry Type UI =====
+      _bizTypeDescMap: {
+        Individual: '👤 เจ้าของคนเดียว ไม่จดทะเบียนนิติบุคคล | ส่วนของเจ้าของ: ทุนเจ้าของกิจการ',
+        JuristicPerson: '🏢 จดทะเบียนบริษัทจำกัด มีผู้ถือหุ้น | ส่วนของเจ้าของ: ทุนเรือนหุ้น (หุ้นสามัญ)',
+        Partnership: '🤝 ห้างหุ้นส่วนสามัญ/จำกัด | ส่วนของเจ้าของ: ทุนหุ้นส่วน',
+        PublicCompany: '🏛️ บริษัทมหาชนจำกัด | ส่วนของเจ้าของ: หุ้นสามัญ+บุริมสิทธิ',
+        Foundation: '🏫 มูลนิธิ ไม่แสวงหากำไร | สินทรัพย์สุทธิ: ทุนสะสม/เงินบริจาค',
+        Association: '🏟️ สมาคม สโมสร | สินทรัพย์สุทธิ: ทุนสะสม/ค่าสมาชิก',
+        Other: '📋 ประเภทอื่น | ส่วนของเจ้าของ: มาตรฐาน'
+      },
+      _industryTypes: [
+        { type: 'General', name: 'ทั่วไป', icon: '🏢', desc: 'ผังบัญชีมาตรฐาน' },
+        { type: 'Trading', name: 'ซื้อมาขายไป', icon: '🛒', desc: 'ค้าส่ง/ค้าปลีก' },
+        { type: 'Service', name: 'บริการ', icon: '🔧', desc: 'ให้บริการทั่วไป' },
+        { type: 'Beauty', name: 'ความงาม/สปา', icon: '💅', desc: 'ร้านทำเล็บ สปา ทำผม' },
+        { type: 'Restaurant', name: 'ร้านอาหาร', icon: '🍜', desc: 'อาหาร/ภัตตาคาร' },
+        { type: 'Cafe', name: 'คาเฟ่', icon: '☕', desc: 'กาแฟ/เครื่องดื่ม' },
+        { type: 'Retail', name: 'ค้าปลีก', icon: '🏪', desc: 'ร้านค้า/มินิมาร์ท' },
+        { type: 'Manufacturing', name: 'ผลิต/โรงงาน', icon: '🏭', desc: 'ผลิตสินค้า' },
+        { type: 'Construction', name: 'ก่อสร้าง', icon: '🏗️', desc: 'รับเหมา/ก่อสร้าง' },
+        { type: 'Technology', name: 'IT/ซอฟต์แวร์', icon: '💻', desc: 'พัฒนาซอฟต์แวร์/SaaS' },
+        { type: 'Hotel', name: 'โรงแรม/ที่พัก', icon: '🏨', desc: 'โรงแรม/รีสอร์ท' },
+        { type: 'Ecommerce', name: 'อีคอมเมิร์ซ', icon: '📱', desc: 'ขายออนไลน์' },
+        { type: 'Healthcare', name: 'สุขภาพ', icon: '🏥', desc: 'คลินิก/ร้านยา' },
+        { type: 'Education', name: 'การศึกษา', icon: '🎓', desc: 'กวดวิชา/คอร์ส' },
+        { type: 'Freelance', name: 'ฟรีแลนซ์', icon: '🎨', desc: 'รับงานอิสระ' },
+        { type: 'Transportation', name: 'ขนส่ง', icon: '🚛', desc: 'โลจิสติกส์' },
+        { type: 'Agriculture', name: 'เกษตร', icon: '🌾', desc: 'เกษตร/ฟาร์ม' },
+        { type: 'Other', name: 'อื่นๆ', icon: '📋', desc: 'ไม่ระบุ' },
+      ],
+      renderIndustryGrid() {
+        const current = document.getElementById('cIndustryType').value || 'General';
+        const grid = document.getElementById('industryTypeGrid');
+        grid.innerHTML = this._industryTypes.map(i => `
+          <div class="industry-card${i.type === current ? ' selected' : ''}" data-type="${i.type}" onclick="Page.selectIndustry('${i.type}')"
+               style="padding:10px 12px;border:2px solid ${i.type === current ? '#4F46E5' : '#e2e8f0'};border-radius:8px;cursor:pointer;text-align:center;transition:all 0.15s;background:${i.type === current ? '#EEF2FF' : '#fff'}"
+               onmouseenter="this.style.borderColor='#818cf8'" onmouseleave="this.style.borderColor='${i.type === current ? '#4F46E5' : '#e2e8f0'}'">
+            <div style="font-size:20px;margin-bottom:4px">${i.icon}</div>
+            <div style="font-size:12px;font-weight:600;color:#1e293b">${i.name}</div>
+            <div style="font-size:10px;color:#64748b;margin-top:2px">${i.desc}</div>
+          </div>
+        `).join('');
+      },
+      selectIndustry(type) {
+        document.getElementById('cIndustryType').value = type;
+        this.renderIndustryGrid();
+        this.onBizTypeChange();
+      },
+      onBizTypeChange(isLoad) {
+        const biz = document.getElementById('cBizType').value;
+        const ind = document.getElementById('cIndustryType').value;
+        // Show description
+        const descEl = document.getElementById('bizTypeDesc');
+        if (this._bizTypeDescMap[biz]) {
+          descEl.textContent = this._bizTypeDescMap[biz];
+          descEl.style.display = 'block';
+        } else { descEl.style.display = 'none'; }
+        // Show preview panel
+        document.getElementById('coaPreviewPanel').style.display = 'block';
+        this.loadCoaPreview();
+        // Show reseed warning if type changed (not on initial load)
+        if (!isLoad && (biz !== this._origBizType || ind !== this._origIndustryType)) {
+          document.getElementById('seedCoaSection').style.display = 'block';
+        } else {
+          document.getElementById('seedCoaSection').style.display = 'none';
+        }
+      },
+      _coaPreviewOpen: false,
+      toggleCoaPreview() {
+        this._coaPreviewOpen = !this._coaPreviewOpen;
+        document.getElementById('coaPreviewBody').style.display = this._coaPreviewOpen ? 'block' : 'none';
+      },
+      async loadCoaPreview() {
+        const api = Layout.api(); if (!api) return;
+        const biz = document.getElementById('cBizType').value;
+        const ind = document.getElementById('cIndustryType').value;
+        try {
+          const res = await api.previewAccountTemplate(biz, ind);
+          const data = res.data;
+          document.getElementById('coaPreviewCount').textContent = `(${data.totalAccounts} บัญชี)`;
+          const typeColors = { Asset: '#3b82f6', Liability: '#f59e0b', Equity: '#8b5cf6', Revenue: '#10b981', Expense: '#ef4444' };
+          const typeLabels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
+          document.getElementById('coaPreviewBody').innerHTML = data.accounts.map(a => {
+            const indent = (a.level - 1) * 20;
+            const isCat = a.level <= 2;
+            const color = typeColors[a.accountType] || '#64748b';
+            return `<div style="padding:4px 16px 4px ${16 + indent}px;font-size:${isCat ? '13px' : '12px'};font-weight:${isCat ? '600' : '400'};color:${isCat ? '#1e293b' : '#475569'};border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:8px">
+              <span style="font-family:monospace;color:#94a3b8;min-width:60px">${a.code}</span>
+              <span style="flex:1">${a.nameTh}</span>
+              ${a.level === 1 ? `<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:${color}15;color:${color};font-weight:600">${typeLabels[a.accountType] || a.accountType}</span>` : ''}
+            </div>`;
+          }).join('');
+        } catch (e) { console.warn('Preview error:', e); }
+      },
+      async reseedAccounts() {
+        if (!confirm('รีเซ็ตผังบัญชีจะลบบัญชีระบบเดิมทั้งหมด (บัญชีที่ถูกใช้งานแล้วจะไม่ถูกลบ) ต้องการดำเนินการ?')) return;
+        const api = Layout.api(); if (!api) return;
+        const biz = document.getElementById('cBizType').value;
+        const ind = document.getElementById('cIndustryType').value;
+        try {
+          await api.seedAccounts(biz, ind);
+          this._origBizType = biz;
+          this._origIndustryType = ind;
+          document.getElementById('seedCoaSection').style.display = 'none';
+          Layout.toast('รีเซ็ตผังบัญชีสำเร็จ! ผังบัญชีใหม่ถูกสร้างตามประเภทธุรกิจที่เลือก');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _origBizType: 'JuristicPerson',
+      _origIndustryType: 'General',
+
       async saveCompany() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         const name = document.getElementById('cName').value.trim();
@@ -387,6 +530,7 @@
             branchCode: document.getElementById('cBranchCode').value || '00000',
             branchName: document.getElementById('cBranchName').value || null,
             businessType: document.getElementById('cBizType').value,
+            industryType: document.getElementById('cIndustryType').value,
             juristicId: document.getElementById('cJuristicId').value || null,
             isVatRegistered: document.getElementById('cVatRegistered').checked,
             vatRate: parseFloat(document.getElementById('cVatRate').value) || 7,

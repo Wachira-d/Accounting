@@ -12,6 +12,7 @@ public interface IAccountingService
     Task<AccountResponse> UpdateAccountAsync(Guid companyId, Guid accountId, UpdateAccountRequest request);
     Task SeedDefaultAccountsAsync(Guid companyId);
     Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType);
+    Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType);
 
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
