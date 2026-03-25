@@ -26,14 +26,23 @@ public class CompanyService : ICompanyService
             NameEn = request.NameEn,
             TaxId = request.TaxId,
             BranchCode = request.BranchCode ?? "00000",
+            BranchName = request.BranchName,
             BusinessType = request.BusinessType,
+            JuristicId = request.JuristicId,
+            IsVatRegistered = request.IsVatRegistered,
+            VatRate = request.VatRate,
+            IsWhtRegistered = request.IsWhtRegistered,
+            IsSocialSecurityRegistered = request.IsSocialSecurityRegistered,
+            SocialSecurityAccountNo = request.SocialSecurityAccountNo,
             Address = request.Address,
             SubDistrict = request.SubDistrict,
             District = request.District,
             Province = request.Province,
             PostalCode = request.PostalCode,
             Phone = request.Phone,
+            Fax = request.Fax,
             Email = request.Email,
+            Website = request.Website,
             FiscalYearStartMonth = request.FiscalYearStartMonth,
             CreatedBy = userId.ToString()
         };
@@ -99,15 +108,25 @@ public class CompanyService : ICompanyService
         if (request.NameEn != null) company.NameEn = request.NameEn;
         if (request.TaxId != null) company.TaxId = request.TaxId;
         if (request.BranchCode != null) company.BranchCode = request.BranchCode;
+        if (request.BranchName != null) company.BranchName = request.BranchName;
         if (request.BusinessType.HasValue) company.BusinessType = request.BusinessType.Value;
+        if (request.JuristicId != null) company.JuristicId = request.JuristicId;
+        if (request.IsVatRegistered.HasValue) company.IsVatRegistered = request.IsVatRegistered.Value;
+        if (request.VatRate.HasValue) company.VatRate = request.VatRate.Value;
+        if (request.IsWhtRegistered.HasValue) company.IsWhtRegistered = request.IsWhtRegistered.Value;
+        if (request.IsSocialSecurityRegistered.HasValue) company.IsSocialSecurityRegistered = request.IsSocialSecurityRegistered.Value;
+        if (request.SocialSecurityAccountNo != null) company.SocialSecurityAccountNo = request.SocialSecurityAccountNo;
         if (request.Address != null) company.Address = request.Address;
         if (request.SubDistrict != null) company.SubDistrict = request.SubDistrict;
         if (request.District != null) company.District = request.District;
         if (request.Province != null) company.Province = request.Province;
         if (request.PostalCode != null) company.PostalCode = request.PostalCode;
         if (request.Phone != null) company.Phone = request.Phone;
+        if (request.Fax != null) company.Fax = request.Fax;
         if (request.Email != null) company.Email = request.Email;
+        if (request.Website != null) company.Website = request.Website;
         if (request.FiscalYearStartMonth.HasValue) company.FiscalYearStartMonth = request.FiscalYearStartMonth.Value;
+        if (request.IsSetupComplete.HasValue) company.IsSetupComplete = request.IsSetupComplete.Value;
 
         company.UpdatedBy = userId.ToString();
         await _db.SaveChangesAsync();
@@ -176,9 +195,12 @@ public class CompanyService : ICompanyService
         }
 
         return new CompanyResponse(
-            c.Id, c.Name, c.NameEn, c.TaxId, c.BranchCode,
-            c.BusinessType, c.Status, c.Address, c.SubDistrict, c.District, c.Province,
-            c.PostalCode, c.Phone, c.Email,
-            c.FiscalYearStartMonth, sub);
+            c.Id, c.Name, c.NameEn, c.TaxId, c.BranchCode, c.BranchName,
+            c.BusinessType, c.Status, c.JuristicId,
+            c.IsVatRegistered, c.VatRate, c.IsWhtRegistered,
+            c.IsSocialSecurityRegistered, c.SocialSecurityAccountNo,
+            c.Address, c.SubDistrict, c.District, c.Province,
+            c.PostalCode, c.Phone, c.Fax, c.Email, c.Website,
+            c.FiscalYearStartMonth, c.IsSetupComplete, sub);
     }
 }

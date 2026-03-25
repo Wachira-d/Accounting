@@ -24,6 +24,16 @@
       <div class="tab" onclick="Page.showTab('services',this)">บริการบัญชี</div>
     </div>
 
+    <!-- Setup Banner (shown on first setup) -->
+    <div id="setupBanner" class="hidden" style="padding:16px 20px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
+      <div style="font-size:32px">🎉</div>
+      <div style="flex:1">
+        <h3 style="margin:0 0 4px;font-size:16px;font-weight:700">ตั้งค่าข้อมูลกิจการให้ครบถ้วน</h3>
+        <p style="margin:0;font-size:13px;opacity:0.9">กรอกข้อมูลบริษัทให้ครบเพื่อออกเอกสารภาษีและรายงานได้ถูกต้องตามกฎหมายไทย เมื่อตั้งค่าเสร็จกด "บันทึกและเริ่มใช้งาน"</p>
+      </div>
+      <button class="btn" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3)" onclick="Page.completeSetup()">บันทึกและเริ่มใช้งาน</button>
+    </div>
+
     <!-- ===== Company Info Tab ===== -->
     <div id="tabCompany" class="card">
       <h3 class="card-title" style="margin-bottom:16px">ข้อมูลบริษัท</h3>
@@ -49,16 +59,52 @@
         <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี <span style="color:red">*</span></label><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13"></div>
+        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13"></div>
         <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
+        <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label class="form-label">ประเภทธุรกิจ</label>
           <select id="cBizType" class="form-select">
-            <option value="Company">บริษัทจำกัด</option><option value="Partnership">ห้างหุ้นส่วน</option>
-            <option value="SoleProprietor">บุคคลธรรมดา</option><option value="PublicCompany">บริษัทมหาชน</option><option value="Other">อื่นๆ</option>
+            <option value="JuristicPerson">บริษัทจำกัด</option><option value="Partnership">ห้างหุ้นส่วน</option>
+            <option value="Individual">บุคคลธรรมดา</option><option value="PublicCompany">บริษัทมหาชน</option>
+            <option value="Foundation">มูลนิธิ</option><option value="Association">สมาคม</option><option value="Other">อื่นๆ</option>
           </select>
         </div>
+        <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" id="cJuristicId" class="form-input" placeholder="เลขทะเบียนนิติบุคคล" maxlength="13"></div>
       </div>
-      <div class="form-group"><label class="form-label">ที่อยู่</label><textarea class="form-textarea" id="cAddress" rows="2" placeholder="ที่อยู่สำหรับออกเอกสาร"></textarea></div>
+
+      <!-- Thai Tax Registration -->
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ทะเบียนภาษีและประกันสังคม</h4>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cVatRegistered">
+            <span>จดทะเบียนภาษีมูลค่าเพิ่ม (VAT)</span>
+          </label>
+        </div>
+        <div class="form-group"><label class="form-label">อัตรา VAT (%)</label><input type="number" id="cVatRate" class="form-input" value="7" step="0.01"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cWhtRegistered" checked>
+            <span>หักภาษี ณ ที่จ่าย (ภ.ง.ด.3/53)</span>
+          </label>
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cSocialSecurity">
+            <span>จดทะเบียนประกันสังคม</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group" id="cSocialSecurityGroup" style="display:none">
+        <label class="form-label">เลขที่บัญชีประกันสังคม</label>
+        <input type="text" id="cSocialSecurityAccountNo" class="form-input" placeholder="เลขที่บัญชีนายจ้าง">
+      </div>
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ที่อยู่ (ตามใบทะเบียน)</h4>
+      <div class="form-group"><label class="form-label">ที่อยู่</label><textarea class="form-textarea" id="cAddress" rows="2" placeholder="เลขที่ ซอย ถนน"></textarea></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">แขวง/ตำบล</label><input type="text" id="cSubDistrict" class="form-input"></div>
         <div class="form-group"><label class="form-label">เขต/อำเภอ</label><input type="text" id="cDistrict" class="form-input"></div>
@@ -67,7 +113,11 @@
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
+        <div class="form-group"><label class="form-label">แฟกซ์</label><input type="text" id="cFax" class="form-input"></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label class="form-label">อีเมลบริษัท</label><input type="email" id="cEmail" class="form-input"></div>
+        <div class="form-group"><label class="form-label">เว็บไซต์</label><input type="text" id="cWebsite" class="form-input" placeholder="https://"></div>
         <div class="form-group"><label class="form-label">เดือนเริ่มต้นปีบัญชี</label>
           <select id="cFiscalMonth" class="form-select">
             <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
@@ -237,6 +287,10 @@
         document.getElementById('sEtaxEnabled').addEventListener('change', function() {
           document.getElementById('etaxConfigSection').style.display = this.checked ? 'block' : 'none';
         });
+        // Toggle social security account number field
+        document.getElementById('cSocialSecurity').addEventListener('change', function() {
+          document.getElementById('cSocialSecurityGroup').style.display = this.checked ? 'block' : 'none';
+        });
       },
       servicePackages: [],
       showTab(tab, el) {
@@ -252,20 +306,45 @@
           const res = await API.getCompany(cid);
           const c = res.data;
           if (!c) return;
+          this._companyData = c;
           document.getElementById('cName').value = c.name || '';
           document.getElementById('cNameEn').value = c.nameEn || '';
           document.getElementById('cTaxId').value = c.taxId || '';
           document.getElementById('cBranchCode').value = c.branchCode || '00000';
-          document.getElementById('cBizType').value = c.businessType || 'Company';
+          document.getElementById('cBranchName').value = c.branchName || '';
+          document.getElementById('cBizType').value = c.businessType || 'JuristicPerson';
+          document.getElementById('cJuristicId').value = c.juristicId || '';
+          document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
+          document.getElementById('cVatRate').value = c.vatRate || 7;
+          document.getElementById('cWhtRegistered').checked = c.isWhtRegistered !== false;
+          document.getElementById('cSocialSecurity').checked = c.isSocialSecurityRegistered || false;
+          document.getElementById('cSocialSecurityAccountNo').value = c.socialSecurityAccountNo || '';
+          if (c.isSocialSecurityRegistered) document.getElementById('cSocialSecurityGroup').style.display = 'block';
           document.getElementById('cAddress').value = c.address || '';
           document.getElementById('cSubDistrict').value = c.subDistrict || '';
           document.getElementById('cDistrict').value = c.district || '';
           document.getElementById('cProvince').value = c.province || '';
           document.getElementById('cPostalCode').value = c.postalCode || '';
           document.getElementById('cPhone').value = c.phone || '';
+          document.getElementById('cFax').value = c.fax || '';
           document.getElementById('cEmail').value = c.email || '';
+          document.getElementById('cWebsite').value = c.website || '';
           document.getElementById('cFiscalMonth').value = c.fiscalYearStartMonth || 1;
+          // Show setup banner if not yet complete
+          if (!c.isSetupComplete || new URLSearchParams(window.location.search).get('setup') === '1') {
+            document.getElementById('setupBanner').classList.remove('hidden');
+          }
         } catch (e) { console.warn('Could not load company profile:', e); }
+      },
+      async completeSetup() {
+        await this.saveCompany();
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          await API.updateCompany(cid, { isSetupComplete: true });
+          document.getElementById('setupBanner').classList.add('hidden');
+          Layout.toast('ตั้งค่าเสร็จสิ้น! พร้อมใช้งานแล้ว');
+          setTimeout(() => window.location.href = '/app.html', 800);
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveCompany() {
         const cid = Layout.getCompanyId(); if (!cid) return;
@@ -277,14 +356,23 @@
             nameEn: document.getElementById('cNameEn').value || null,
             taxId: document.getElementById('cTaxId').value || '-',
             branchCode: document.getElementById('cBranchCode').value || '00000',
+            branchName: document.getElementById('cBranchName').value || null,
             businessType: document.getElementById('cBizType').value,
+            juristicId: document.getElementById('cJuristicId').value || null,
+            isVatRegistered: document.getElementById('cVatRegistered').checked,
+            vatRate: parseFloat(document.getElementById('cVatRate').value) || 7,
+            isWhtRegistered: document.getElementById('cWhtRegistered').checked,
+            isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
+            socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
             address: document.getElementById('cAddress').value || null,
             subDistrict: document.getElementById('cSubDistrict').value || null,
             district: document.getElementById('cDistrict').value || null,
             province: document.getElementById('cProvince').value || null,
             postalCode: document.getElementById('cPostalCode').value || null,
             phone: document.getElementById('cPhone').value || null,
+            fax: document.getElementById('cFax').value || null,
             email: document.getElementById('cEmail').value || null,
+            website: document.getElementById('cWebsite').value || null,
             fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
           });
           const select = document.getElementById('companySelect');
