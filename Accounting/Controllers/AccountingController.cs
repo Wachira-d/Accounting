@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -40,6 +41,17 @@ public class AccountingController : ControllerBase
     {
         var result = await _accountingService.UpdateAccountAsync(companyId, accountId, request);
         return Ok(new ApiResponse<AccountResponse>(true, result));
+    }
+
+    [HttpPost("accounts/seed")]
+    public async Task<ActionResult<ApiResponse<string>>> SeedAccounts(Guid companyId, [FromQuery] BusinessType? businessType = null)
+    {
+        if (businessType.HasValue)
+            await _accountingService.SeedDefaultAccountsAsync(companyId, businessType.Value);
+        else
+            await _accountingService.SeedDefaultAccountsAsync(companyId);
+
+        return Ok(new ApiResponse<string>(true, null, "สร้างผังบัญชีเริ่มต้นสำเร็จ"));
     }
 
     // ===== Journal Entries =====

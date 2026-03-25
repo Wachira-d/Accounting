@@ -1,5 +1,6 @@
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
+using Accounting.Models.Enums;
 
 namespace Accounting.Services.Interfaces;
 
@@ -10,6 +11,7 @@ public interface IAccountingService
     Task<List<AccountResponse>> GetAccountsAsync(Guid companyId);
     Task<AccountResponse> UpdateAccountAsync(Guid companyId, Guid accountId, UpdateAccountRequest request);
     Task SeedDefaultAccountsAsync(Guid companyId);
+    Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType);
 
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);

@@ -60,6 +60,7 @@ const API = {
       getAccounts: () => API.get(`${base}/accounting/accounts`),
       createAccount: (d) => API.post(`${base}/accounting/accounts`, d),
       updateAccount: (id, d) => API.put(`${base}/accounting/accounts/${id}`, d),
+      seedAccounts: (businessType) => API.post(`${base}/accounting/accounts/seed${businessType ? '?businessType=' + businessType : ''}`),
       getJournals: (q = '') => API.get(`${base}/accounting/journals${q}`),
       getJournal: (id) => API.get(`${base}/accounting/journals/${id}`),
       createJournal: (d) => API.post(`${base}/accounting/journals`, d),

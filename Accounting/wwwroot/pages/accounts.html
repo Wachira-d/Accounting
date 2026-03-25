@@ -6,13 +6,50 @@
   <title>ผังบัญชี - AcctPlatform</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .coa-tree { margin: 0; padding: 0; list-style: none; }
+    .coa-row { display: flex; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--gray-100); transition: background 0.15s; cursor: default; }
+    .coa-row:hover { background: var(--gray-50); }
+    .coa-row.level-1 { background: var(--gray-50); font-weight: 700; font-size: 15px; }
+    .coa-row.level-2 { padding-left: 28px; font-weight: 600; font-size: 14px; color: var(--gray-700); }
+    .coa-row.level-3 { padding-left: 48px; font-weight: 500; font-size: 13px; color: var(--gray-600); }
+    .coa-row.level-4 { padding-left: 68px; font-size: 13px; color: var(--gray-700); }
+    .coa-toggle { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; margin-right: 6px; font-size: 11px; color: var(--gray-400); transition: all 0.15s; flex-shrink: 0; }
+    .coa-toggle:hover { background: var(--gray-200); color: var(--gray-600); }
+    .coa-toggle.open { transform: rotate(90deg); }
+    .coa-toggle.empty { visibility: hidden; }
+    .coa-code { width: 90px; font-family: 'Inter', monospace; font-size: 13px; color: var(--gray-500); flex-shrink: 0; }
+    .coa-name { flex: 1; min-width: 0; }
+    .coa-name-en { font-size: 12px; color: var(--gray-400); margin-left: 8px; }
+    .coa-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .coa-children { display: none; }
+    .coa-children.open { display: block; }
+    .coa-category-header { display: flex; align-items: center; padding: 12px 16px; background: linear-gradient(135deg, var(--primary), var(--primary-dark, #1d4ed8)); color: #fff; font-weight: 700; font-size: 15px; border-radius: 8px; margin: 8px 0 4px; cursor: pointer; user-select: none; }
+    .coa-category-header .coa-toggle { color: rgba(255,255,255,0.7); }
+    .coa-category-header .coa-toggle:hover { background: rgba(255,255,255,0.15); color: #fff; }
+    .coa-category-header.asset { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
+    .coa-category-header.liability { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .coa-category-header.equity { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
+    .coa-category-header.revenue { background: linear-gradient(135deg, #10b981, #059669); }
+    .coa-category-header.expense { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .coa-summary { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+    .coa-summary-card { flex: 1; min-width: 140px; background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; padding: 12px 16px; text-align: center; }
+    .coa-summary-card .count { font-size: 24px; font-weight: 700; color: var(--gray-800); }
+    .coa-summary-card .label { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
+    .toolbar-actions { display: flex; gap: 8px; align-items: center; }
+  </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">ผังบัญชี</h2><p class="page-subtitle">จัดการรายการบัญชีทั้งหมด</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+      <div class="toolbar-actions">
+        <button class="btn btn-secondary" onclick="Page.toggleAll()">ขยาย/ย่อทั้งหมด</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+      </div>
     </div>
+
+    <div id="summaryCards" class="coa-summary"></div>
 
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหารหัสหรือชื่อบัญชี..." id="searchInput" oninput="Page.filter()">
@@ -26,15 +63,8 @@
       </select>
     </div>
 
-    <div class="table-container">
-      <table class="table">
-        <thead>
-          <tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th>ชื่ออังกฤษ</th><th>ประเภท</th><th>ระดับ</th><th>สถานะ</th><th>จัดการ</th></tr>
-        </thead>
-        <tbody id="tableBody">
-          <tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr>
-        </tbody>
-      </table>
+    <div id="treeContainer" class="card" style="padding:0;overflow:hidden">
+      <div style="padding:40px;text-align:center;color:var(--gray-400)">กำลังโหลด...</div>
     </div>
 
     <!-- Create/Edit Modal -->
@@ -49,7 +79,7 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">รหัสบัญชี *</label>
-              <input type="text" class="form-input" id="fCode" placeholder="เช่น 1100-01">
+              <input type="text" class="form-input" id="fCode" placeholder="เช่น 111301">
             </div>
             <div class="form-group">
               <label class="form-label">ประเภทบัญชี *</label>
@@ -92,6 +122,7 @@
   <script>
     const Page = {
       accounts: [],
+      allExpanded: false,
       async init() {
         if (!Layout.init('accounts')) return;
         Layout.setTitle('ผังบัญชี');
@@ -102,37 +133,135 @@
         try {
           const res = await api.getAccounts();
           this.accounts = res.data?.items || res.data || [];
-          this.renderTable(this.accounts);
+          this.renderSummary();
+          this.renderTree(this.accounts);
           this.populateParent();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      renderSummary() {
+        const counts = { Asset: 0, Liability: 0, Equity: 0, Revenue: 0, Expense: 0 };
+        this.accounts.forEach(a => { if (a.accountCode.length === 6 && counts[a.accountType] !== undefined) counts[a.accountType]++; });
+        const labels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
+        document.getElementById('summaryCards').innerHTML = Object.entries(counts).map(([k, v]) =>
+          `<div class="coa-summary-card"><div class="count">${v}</div><div class="label">${labels[k]}</div></div>`
+        ).join('') + `<div class="coa-summary-card"><div class="count">${this.accounts.length}</div><div class="label">ทั้งหมด</div></div>`;
       },
       filter() {
         const q = document.getElementById('searchInput').value.toLowerCase();
         const t = document.getElementById('typeFilter').value;
+        if (!q && !t) { this.renderTree(this.accounts); return; }
+        // When filtering, show flat matching results
         const filtered = this.accounts.filter(a =>
-          (!q || a.accountCode.toLowerCase().includes(q) || a.accountName.toLowerCase().includes(q)) &&
+          (!q || a.accountCode.toLowerCase().includes(q) || a.accountName.toLowerCase().includes(q) || (a.accountNameEn || '').toLowerCase().includes(q)) &&
           (!t || a.accountType === t)
         );
-        this.renderTable(filtered);
+        this.renderFlat(filtered);
       },
-      renderTable(items) {
-        const tbody = document.getElementById('tableBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบรายการ</td></tr>'; return; }
-        tbody.innerHTML = items.map(a => `<tr>
-          <td><span class="font-medium">${a.accountCode}</span></td>
-          <td>${'—'.repeat(Math.max(0,(a.level||1)-1))} ${a.accountName}</td>
-          <td class="text-gray-500">${a.accountNameEn || '-'}</td>
-          <td>${Layout.statusBadge(a.accountType === 'Asset' ? '' : '').replace(/<[^>]*>/g,'') || ''}<span class="badge badge-${a.accountType === 'Asset' ? 'info' : a.accountType === 'Revenue' ? 'success' : a.accountType === 'Expense' ? 'danger' : a.accountType === 'Liability' ? 'warning' : 'primary'}">${Layout.accountTypeLabel(a.accountType)}</span></td>
-          <td>${a.level || 1}</td>
-          <td>${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
-          <td>${a.isSystemAccount ? '<span class="text-xs text-gray-400">ระบบ</span>' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')">แก้ไข</button>`}</td>
-        </tr>`).join('');
+      renderFlat(items) {
+        const container = document.getElementById('treeContainer');
+        if (!items.length) { container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">ไม่พบรายการ</div>'; return; }
+        container.innerHTML = items.map(a => `
+          <div class="coa-row level-${Math.min(a.level || 1, 4)}">
+            <span class="coa-toggle empty"></span>
+            <span class="coa-code">${a.accountCode}</span>
+            <span class="coa-name">${a.accountName}${a.accountNameEn ? `<span class="coa-name-en">${a.accountNameEn}</span>` : ''}</span>
+            <span class="coa-meta">
+              <span class="badge badge-${this._typeBadge(a.accountType)}">${Layout.accountTypeLabel(a.accountType)}</span>
+              ${a.isActive ? '' : '<span class="badge badge-gray">ปิด</span>'}
+              ${a.isSystemAccount ? '' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')">แก้ไข</button>`}
+            </span>
+          </div>
+        `).join('');
+      },
+      renderTree(items) {
+        const container = document.getElementById('treeContainer');
+        if (!items.length) { container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">ยังไม่มีผังบัญชี</div>'; return; }
+
+        // Build tree structure: group by account type category (level 1)
+        const tree = this._buildTree(items);
+        const categoryColors = { Asset: 'asset', Liability: 'liability', Equity: 'equity', Revenue: 'revenue', Expense: 'expense' };
+        const categoryLabels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
+
+        let html = '';
+        for (const root of tree) {
+          const colorClass = categoryColors[root.accountType] || 'asset';
+          const hasChildren = root.children && root.children.length > 0;
+          html += `<div class="coa-category-header ${colorClass}" onclick="Page.toggleNode(this)">
+            <span class="coa-toggle${hasChildren ? ' open' : ' empty'}">&#9654;</span>
+            <span class="coa-code" style="color:rgba(255,255,255,0.8)">${root.accountCode}</span>
+            <span class="coa-name">${root.accountName}</span>
+          </div>`;
+          if (hasChildren) {
+            html += `<div class="coa-children open">`;
+            html += this._renderChildren(root.children);
+            html += `</div>`;
+          }
+        }
+        container.innerHTML = html;
+      },
+      _renderChildren(children) {
+        let html = '';
+        for (const node of children) {
+          const hasChildren = node.children && node.children.length > 0;
+          const level = Math.min(node.level || 2, 4);
+          html += `<div class="coa-row level-${level}"${hasChildren ? ' onclick="Page.toggleNode(this)"' : ''} style="${hasChildren ? 'cursor:pointer' : ''}">
+            <span class="coa-toggle${hasChildren ? '' : ' empty'}">&#9654;</span>
+            <span class="coa-code">${node.accountCode}</span>
+            <span class="coa-name">${node.accountName}${node.accountNameEn ? `<span class="coa-name-en">${node.accountNameEn}</span>` : ''}</span>
+            <span class="coa-meta">
+              ${!node.isActive ? '<span class="badge badge-gray">ปิด</span>' : ''}
+              ${!node.isSystemAccount ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${node.id}')">แก้ไข</button>` : ''}
+            </span>
+          </div>`;
+          if (hasChildren) {
+            html += `<div class="coa-children">`;
+            html += this._renderChildren(node.children);
+            html += `</div>`;
+          }
+        }
+        return html;
+      },
+      _buildTree(items) {
+        const map = {};
+        const roots = [];
+        // Sort by code
+        const sorted = [...items].sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+        sorted.forEach(a => { map[a.id] = { ...a, children: [] }; });
+        sorted.forEach(a => {
+          const node = map[a.id];
+          if (a.parentAccountId && map[a.parentAccountId]) {
+            map[a.parentAccountId].children.push(node);
+          } else {
+            roots.push(node);
+          }
+        });
+        return roots;
+      },
+      toggleNode(el) {
+        const childrenDiv = el.nextElementSibling;
+        if (!childrenDiv || !childrenDiv.classList.contains('coa-children')) return;
+        const toggle = el.querySelector('.coa-toggle');
+        childrenDiv.classList.toggle('open');
+        if (toggle) toggle.classList.toggle('open');
+      },
+      toggleAll() {
+        this.allExpanded = !this.allExpanded;
+        document.querySelectorAll('.coa-children').forEach(el => {
+          el.classList.toggle('open', this.allExpanded);
+        });
+        document.querySelectorAll('.coa-toggle:not(.empty)').forEach(el => {
+          el.classList.toggle('open', this.allExpanded);
+        });
+      },
+      _typeBadge(type) {
+        return { Asset: 'info', Liability: 'warning', Equity: 'primary', Revenue: 'success', Expense: 'danger' }[type] || 'gray';
       },
       populateParent() {
         const sel = document.getElementById('fParent');
         sel.innerHTML = '<option value="">-- ไม่มี (บัญชีหลัก) --</option>';
-        this.accounts.forEach(a => {
-          sel.innerHTML += `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`;
+        this.accounts.filter(a => a.accountCode.length <= 3).forEach(a => {
+          const indent = '\u00A0\u00A0'.repeat(Math.max(0, (a.level || 1) - 1));
+          sel.innerHTML += `<option value="${a.id}">${indent}${a.accountCode} - ${a.accountName}</option>`;
         });
       },
       openCreate() {

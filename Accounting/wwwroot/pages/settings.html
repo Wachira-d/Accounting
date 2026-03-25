@@ -358,9 +358,20 @@
         await this.saveCompany();
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
+          // Seed chart of accounts based on selected business type
+          const bizType = document.getElementById('cBizType').value;
+          const api = Layout.api();
+          if (api) {
+            try {
+              await api.seedAccounts(bizType);
+            } catch (seedErr) {
+              // If accounts already seeded/in use, continue setup
+              console.warn('Seed accounts:', seedErr.message);
+            }
+          }
           await API.updateCompany(cid, { isSetupComplete: true });
           document.getElementById('setupBanner').classList.add('hidden');
-          Layout.toast('ตั้งค่าเสร็จสิ้น! พร้อมใช้งานแล้ว');
+          Layout.toast('ตั้งค่าเสร็จสิ้น! ระบบได้สร้างผังบัญชีเริ่มต้นให้แล้ว');
           setTimeout(() => window.location.href = '/app.html', 800);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

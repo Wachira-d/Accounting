@@ -25,8 +25,8 @@ public class AccountingService : IAccountingService
         if (string.IsNullOrWhiteSpace(request.AccountCode))
             throw new InvalidOperationException("รหัสบัญชีห้ามว่าง");
 
-        if (!Regex.IsMatch(request.AccountCode, @"^\d{4,}$"))
-            throw new InvalidOperationException("รหัสบัญชีต้องเป็นตัวเลขอย่างน้อย 4 หลัก");
+        if (!Regex.IsMatch(request.AccountCode, @"^\d{2,}$"))
+            throw new InvalidOperationException("รหัสบัญชีต้องเป็นตัวเลขอย่างน้อย 2 หลัก");
 
         if (string.IsNullOrWhiteSpace(request.AccountName))
             throw new InvalidOperationException("ชื่อบัญชีห้ามว่าง");
@@ -88,54 +88,78 @@ public class AccountingService : IAccountingService
 
     public async Task SeedDefaultAccountsAsync(Guid companyId)
     {
-        var defaults = new List<(string code, string name, string nameEn, AccountType type)>
+        // Get company to determine business type
+        var company = await _db.Companies.FindAsync(companyId)
+            ?? throw new KeyNotFoundException("ไม่พบข้อมูลบริษัท");
+
+        await SeedDefaultAccountsAsync(companyId, company.BusinessType);
+    }
+
+    public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType)
+    {
+        // Remove existing system accounts before re-seeding
+        var existingSystemAccounts = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.IsSystemAccount)
+            .ToListAsync();
+
+        // Check if any system accounts are in use (have journal entry lines)
+        if (existingSystemAccounts.Count > 0)
         {
-            ("1000", "สินทรัพย์", "Assets", AccountType.Asset),
-            ("1100", "เงินสดและเงินฝากธนาคาร", "Cash and Bank", AccountType.Asset),
-            ("1110", "เงินสด", "Cash", AccountType.Asset),
-            ("1120", "เงินฝากธนาคาร", "Bank Deposits", AccountType.Asset),
-            ("1200", "ลูกหนี้การค้า", "Accounts Receivable", AccountType.Asset),
-            ("1300", "สินค้าคงเหลือ", "Inventory", AccountType.Asset),
-            ("1400", "สินทรัพย์หมุนเวียนอื่น", "Other Current Assets", AccountType.Asset),
-            ("1500", "ที่ดิน อาคาร อุปกรณ์", "Property, Plant & Equipment", AccountType.Asset),
-            ("2000", "หนี้สิน", "Liabilities", AccountType.Liability),
-            ("2100", "เจ้าหนี้การค้า", "Accounts Payable", AccountType.Liability),
-            ("2200", "ภาษีมูลค่าเพิ่มค้างจ่าย", "VAT Payable", AccountType.Liability),
-            ("2300", "ภาษีหัก ณ ที่จ่ายค้างจ่าย", "WHT Payable", AccountType.Liability),
-            ("2400", "หนี้สินหมุนเวียนอื่น", "Other Current Liabilities", AccountType.Liability),
-            ("2500", "หนี้สินระยะยาว", "Long-term Liabilities", AccountType.Liability),
-            ("3000", "ส่วนของเจ้าของ", "Equity", AccountType.Equity),
-            ("3100", "ทุนจดทะเบียน", "Registered Capital", AccountType.Equity),
-            ("3200", "กำไรสะสม", "Retained Earnings", AccountType.Equity),
-            ("4000", "รายได้", "Revenue", AccountType.Revenue),
-            ("4100", "รายได้จากการขาย", "Sales Revenue", AccountType.Revenue),
-            ("4200", "รายได้จากการให้บริการ", "Service Revenue", AccountType.Revenue),
-            ("4900", "รายได้อื่น", "Other Revenue", AccountType.Revenue),
-            ("5000", "ค่าใช้จ่าย", "Expenses", AccountType.Expense),
-            ("5100", "ต้นทุนขาย", "Cost of Goods Sold", AccountType.Expense),
-            ("5200", "เงินเดือนและค่าจ้าง", "Salaries and Wages", AccountType.Expense),
-            ("5300", "ค่าเช่า", "Rent Expense", AccountType.Expense),
-            ("5400", "ค่าสาธารณูปโภค", "Utilities Expense", AccountType.Expense),
-            ("5500", "ค่าเสื่อมราคา", "Depreciation Expense", AccountType.Expense),
-            ("5900", "ค่าใช้จ่ายอื่น", "Other Expenses", AccountType.Expense),
-        };
+            var usedAccountIds = await _db.JournalEntryLines
+                .Where(l => existingSystemAccounts.Select(a => a.Id).Contains(l.AccountId))
+                .Select(l => l.AccountId)
+                .Distinct()
+                .ToListAsync();
+
+            if (usedAccountIds.Count > 0)
+                throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
+
+            _db.ChartOfAccounts.RemoveRange(existingSystemAccounts);
+            await _db.SaveChangesAsync();
+        }
+
+        var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType);
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            foreach (var (code, name, nameEn, type) in defaults)
+            // Track created accounts by code for parent lookup
+            var codeToId = new Dictionary<string, Guid>();
+
+            foreach (var tpl in templates)
             {
-                _db.ChartOfAccounts.Add(new ChartOfAccount
+                var account = new ChartOfAccount
                 {
                     CompanyId = companyId,
-                    AccountCode = code,
-                    AccountName = name,
-                    AccountNameEn = nameEn,
-                    AccountType = type,
-                    Level = code.Length == 4 && code.EndsWith("000") ? 1 : 2,
+                    AccountCode = tpl.Code,
+                    AccountName = tpl.NameTh,
+                    AccountNameEn = tpl.NameEn,
+                    AccountType = tpl.Type,
+                    Level = tpl.Level,
                     IsSystemAccount = true,
                     IsActive = true
-                });
+                };
+
+                // Find parent based on code hierarchy
+                // Level 1: 2-digit (e.g., "10") -> no parent
+                // Level 2: 2-digit (e.g., "11") -> parent is the category prefix (e.g., "10")
+                // Level 3: 3-digit (e.g., "111") -> parent is 2-digit (e.g., "11")
+                // Level 4: 6-digit (e.g., "111101") -> parent is 3-digit (e.g., "111")
+                string? parentCode = tpl.Level switch
+                {
+                    2 => tpl.Code.Length >= 2 ? tpl.Code[0] + "0" : null,
+                    3 => tpl.Code.Length >= 2 ? tpl.Code[..2] : null,
+                    4 => tpl.Code.Length >= 3 ? tpl.Code[..3] : null,
+                    _ => null
+                };
+
+                if (parentCode != null && codeToId.TryGetValue(parentCode, out var parentId))
+                {
+                    account.ParentAccountId = parentId;
+                }
+
+                _db.ChartOfAccounts.Add(account);
+                codeToId[tpl.Code] = account.Id;
             }
 
             await _db.SaveChangesAsync();
@@ -424,74 +448,74 @@ public class AccountingService : IAccountingService
         var netIncome = revenue - expenses;
         operatingItems.Add(new CashFlowLineItem("กำไร(ขาดทุน)สุทธิ", null, netIncome));
 
-        // Depreciation add-back (non-cash expense)
+        // Depreciation add-back (non-cash expense) - 533xxx ค่าเสื่อมราคาและค่าตัดจำหน่าย
         var depreciation = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("55"))
+            .Where(l => l.Account.AccountCode.StartsWith("533") || l.Account.AccountCode.StartsWith("55"))
             .Sum(l => l.DebitAmount - l.CreditAmount);
         if (depreciation != 0)
-            operatingItems.Add(new CashFlowLineItem("ค่าเสื่อมราคา (บวกกลับ)", "5500", depreciation));
+            operatingItems.Add(new CashFlowLineItem("ค่าเสื่อมราคา (บวกกลับ)", "533", depreciation));
 
-        // Changes in AR
+        // Changes in AR - 112xxx ลูกหนี้การค้า
         var arChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("12"))
+            .Where(l => l.Account.AccountCode.StartsWith("112") || l.Account.AccountCode.StartsWith("12"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (arChange != 0)
-            operatingItems.Add(new CashFlowLineItem("ลูกหนี้การค้า (เพิ่มขึ้น)/ลดลง", "1200", arChange));
+            operatingItems.Add(new CashFlowLineItem("ลูกหนี้การค้า (เพิ่มขึ้น)/ลดลง", "112", arChange));
 
-        // Changes in Inventory
+        // Changes in Inventory - 113xxx สินค้าคงเหลือ
         var inventoryChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("13"))
+            .Where(l => l.Account.AccountCode.StartsWith("113") || l.Account.AccountCode.StartsWith("13"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (inventoryChange != 0)
-            operatingItems.Add(new CashFlowLineItem("สินค้าคงเหลือ (เพิ่มขึ้น)/ลดลง", "1300", inventoryChange));
+            operatingItems.Add(new CashFlowLineItem("สินค้าคงเหลือ (เพิ่มขึ้น)/ลดลง", "113", inventoryChange));
 
-        // Changes in AP
+        // Changes in AP - 211xxx เจ้าหนี้การค้า
         var apChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("21"))
+            .Where(l => l.Account.AccountCode.StartsWith("211") || l.Account.AccountCode.StartsWith("21"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (apChange != 0)
-            operatingItems.Add(new CashFlowLineItem("เจ้าหนี้การค้า เพิ่มขึ้น/(ลดลง)", "2100", apChange));
+            operatingItems.Add(new CashFlowLineItem("เจ้าหนี้การค้า เพิ่มขึ้น/(ลดลง)", "211", apChange));
 
-        // Tax payable changes
+        // Tax payable changes - 212xxx ภาษีค้างจ่าย
         var taxPayableChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("22") || l.Account.AccountCode.StartsWith("23"))
+            .Where(l => l.Account.AccountCode.StartsWith("212") || l.Account.AccountCode.StartsWith("22") || l.Account.AccountCode.StartsWith("23"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (taxPayableChange != 0)
-            operatingItems.Add(new CashFlowLineItem("ภาษีค้างจ่าย เพิ่มขึ้น/(ลดลง)", "2200", taxPayableChange));
+            operatingItems.Add(new CashFlowLineItem("ภาษีค้างจ่าย เพิ่มขึ้น/(ลดลง)", "212", taxPayableChange));
 
         var operatingTotal = operatingItems.Sum(i => i.Amount);
 
-        // Investing Activities: Fixed asset accounts (15xx)
+        // Investing Activities: Fixed asset accounts - 121xxx ที่ดิน อาคาร อุปกรณ์
         var investingItems = new List<CashFlowLineItem>();
         var fixedAssetChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("15"))
+            .Where(l => l.Account.AccountCode.StartsWith("121") || l.Account.AccountCode.StartsWith("15"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (fixedAssetChange != 0)
-            investingItems.Add(new CashFlowLineItem("ซื้อ/ขาย ที่ดิน อาคาร อุปกรณ์", "1500", fixedAssetChange));
+            investingItems.Add(new CashFlowLineItem("ซื้อ/ขาย ที่ดิน อาคาร อุปกรณ์", "121", fixedAssetChange));
 
         var investingTotal = investingItems.Sum(i => i.Amount);
 
-        // Financing Activities: Long-term liabilities (25xx) + Equity (3xxx)
+        // Financing Activities: Long-term liabilities (221xxx) + Equity (31xxx)
         var financingItems = new List<CashFlowLineItem>();
         var longTermDebtChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("25"))
+            .Where(l => l.Account.AccountCode.StartsWith("221") || l.Account.AccountCode.StartsWith("25"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (longTermDebtChange != 0)
-            financingItems.Add(new CashFlowLineItem("เงินกู้ยืมระยะยาว เพิ่มขึ้น/(ลดลง)", "2500", longTermDebtChange));
+            financingItems.Add(new CashFlowLineItem("เงินกู้ยืมระยะยาว เพิ่มขึ้น/(ลดลง)", "221", longTermDebtChange));
 
         var equityChange = postedLines
             .Where(l => l.Account.AccountCode.StartsWith("31"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (equityChange != 0)
-            financingItems.Add(new CashFlowLineItem("ทุนจดทะเบียน เพิ่มขึ้น/(ลดลง)", "3100", equityChange));
+            financingItems.Add(new CashFlowLineItem("ทุนจดทะเบียน เพิ่มขึ้น/(ลดลง)", "31", equityChange));
 
         var financingTotal = financingItems.Sum(i => i.Amount);
 
         // Cash balances
         var netCashChange = operatingTotal + investingTotal + financingTotal;
 
-        // Opening cash = cash accounts before fromDate
-        var cashAccountCodes = new[] { "111", "112" }; // Cash + Bank deposits
+        // Opening cash = cash accounts before fromDate (111xxx = เงินสดและเงินฝากธนาคาร)
+        var cashAccountCodes = new[] { "111" }; // Cash + Bank deposits (all under 111xxx)
         var openingCash = await _db.JournalEntryLines
             .Include(l => l.Account).Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
