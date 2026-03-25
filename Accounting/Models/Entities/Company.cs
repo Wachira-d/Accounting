@@ -10,6 +10,7 @@ public class Company : BaseEntity
     public string? BranchCode { get; set; } = "00000";  // รหัสสาขา (00000 = สำนักงานใหญ่)
     public string? BranchName { get; set; }              // ชื่อสาขา
     public BusinessType BusinessType { get; set; }
+    public IndustryType IndustryType { get; set; } = IndustryType.General;  // ลักษณะธุรกิจ
     public CompanyStatus Status { get; set; } = CompanyStatus.Active;
 
     // Thai Business Registration (ข้อมูลตามกฎหมายไทย)

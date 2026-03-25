@@ -88,14 +88,19 @@ public class AccountingService : IAccountingService
 
     public async Task SeedDefaultAccountsAsync(Guid companyId)
     {
-        // Get company to determine business type
+        // Get company to determine business type and industry type
         var company = await _db.Companies.FindAsync(companyId)
             ?? throw new KeyNotFoundException("ไม่พบข้อมูลบริษัท");
 
-        await SeedDefaultAccountsAsync(companyId, company.BusinessType);
+        await SeedDefaultAccountsAsync(companyId, company.BusinessType, company.IndustryType);
     }
 
     public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType)
+    {
+        await SeedDefaultAccountsAsync(companyId, businessType, IndustryType.General);
+    }
+
+    public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType)
     {
         // Remove existing system accounts before re-seeding
         var existingSystemAccounts = await _db.ChartOfAccounts
@@ -118,7 +123,7 @@ public class AccountingService : IAccountingService
             await _db.SaveChangesAsync();
         }
 
-        var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType);
+        var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try

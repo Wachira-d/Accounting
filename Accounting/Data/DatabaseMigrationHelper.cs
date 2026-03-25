@@ -105,6 +105,12 @@ public static class DatabaseMigrationHelper
                 ALTER TABLE [CompanySettings] ADD [EtaxXmlOutputPath] nvarchar(500) NULL;
             """,
 
+            // ===== Companies: IndustryType =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'IndustryType')
+                ALTER TABLE [Companies] ADD [IndustryType] int NOT NULL DEFAULT 0;
+            """,
+
             // ===== CompanySettings: Landing page services =====
             """
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'LandingContactPhone')

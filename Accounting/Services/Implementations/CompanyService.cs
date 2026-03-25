@@ -28,6 +28,7 @@ public class CompanyService : ICompanyService
             BranchCode = request.BranchCode ?? "00000",
             BranchName = request.BranchName,
             BusinessType = request.BusinessType,
+            IndustryType = request.IndustryType,
             JuristicId = request.JuristicId,
             IsVatRegistered = request.IsVatRegistered,
             VatRate = request.VatRate,
@@ -110,6 +111,7 @@ public class CompanyService : ICompanyService
         if (request.BranchCode != null) company.BranchCode = request.BranchCode;
         if (request.BranchName != null) company.BranchName = request.BranchName;
         if (request.BusinessType.HasValue) company.BusinessType = request.BusinessType.Value;
+        if (request.IndustryType.HasValue) company.IndustryType = request.IndustryType.Value;
         if (request.JuristicId != null) company.JuristicId = request.JuristicId;
         if (request.IsVatRegistered.HasValue) company.IsVatRegistered = request.IsVatRegistered.Value;
         if (request.VatRate.HasValue) company.VatRate = request.VatRate.Value;
@@ -196,7 +198,7 @@ public class CompanyService : ICompanyService
 
         return new CompanyResponse(
             c.Id, c.Name, c.NameEn, c.TaxId, c.BranchCode, c.BranchName,
-            c.BusinessType, c.Status, c.JuristicId,
+            c.BusinessType, c.IndustryType, c.Status, c.JuristicId,
             c.IsVatRegistered, c.VatRate, c.IsWhtRegistered,
             c.IsSocialSecurityRegistered, c.SocialSecurityAccountNo,
             c.Address, c.SubDistrict, c.District, c.Province,
