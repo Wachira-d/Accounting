@@ -290,9 +290,12 @@ const Layout = {
     let formContent = '';
     if (this.setupStep === 1) {
       formContent = `
+        <div style="padding:10px 14px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe;margin-bottom:16px;font-size:13px;color:#1e40af">
+          พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD หรือใส่เลขผู้เสียภาษี 13 หลักเพื่อดึงข้อมูลอัตโนมัติ
+        </div>
         <div class="form-group">
           <label class="form-label">ชื่อบริษัท / กิจการ <span style="color:red">*</span></label>
-          <input type="text" id="setupCompanyName" class="form-input" placeholder="เช่น บริษัท ทดสอบ จำกัด">
+          <input type="text" id="setupCompanyName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา เช่น มังกร" autocomplete="off">
         </div>
         <div class="form-group">
           <label class="form-label">ชื่อบริษัท (EN)</label>
@@ -317,9 +320,12 @@ const Layout = {
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group">
+          <div class="form-group" style="flex:2">
             <label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label>
-            <input type="text" id="setupTaxId" class="form-input" placeholder="เลขประจำตัวผู้เสียภาษี" maxlength="13">
+            <div style="display:flex;gap:8px">
+              <input type="text" id="setupTaxId" class="form-input" placeholder="เลขประจำตัวผู้เสียภาษี" maxlength="13" style="flex:1">
+              <button class="btn btn-secondary" id="setupDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">รหัสสาขา</label>
@@ -409,6 +415,43 @@ const Layout = {
           ${formContent}
         </div>
       </div>`;
+
+    // Attach DBD lookup after DOM update
+    if (this.setupStep === 1) {
+      setTimeout(() => {
+        if (typeof DbdLookup === 'undefined') return;
+        // Autocomplete on company name
+        DbdLookup.attachNameSearch(document.getElementById('setupCompanyName'), (result) => {
+          this._setupData.name = result.nameTh;
+          this._setupData.nameEn = result.nameEn || '';
+          this._setupData.taxId = result.juristicId || '';
+          this._setupData.juristicId = result.juristicId || '';
+          document.getElementById('setupCompanyName').value = result.nameTh;
+          document.getElementById('setupCompanyNameEn').value = result.nameEn || '';
+          document.getElementById('setupTaxId').value = result.juristicId || '';
+          document.getElementById('setupJuristicId').value = result.juristicId || '';
+          if (result.address) { this._setupData.address = result.address; }
+          this.toast('เลือก ' + result.nameTh + ' แล้ว');
+        });
+        // Tax ID lookup button
+        DbdLookup.attachTaxIdLookup(
+          document.getElementById('setupTaxId'),
+          (result) => {
+            this._setupData.name = result.nameTh;
+            this._setupData.nameEn = result.nameEn || '';
+            this._setupData.juristicId = result.juristicId || '';
+            document.getElementById('setupCompanyName').value = result.nameTh;
+            document.getElementById('setupCompanyNameEn').value = result.nameEn || '';
+            document.getElementById('setupJuristicId').value = result.juristicId || '';
+            if (result.address) { this._setupData.address = result.address; }
+          },
+          document.getElementById('setupDbdBtn')
+        );
+        this.restoreStepData();
+      }, 0);
+    } else {
+      setTimeout(() => this.restoreStepData(), 0);
+    }
   },
 
   // Store partial data between steps

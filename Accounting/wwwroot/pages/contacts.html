@@ -38,9 +38,9 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มผู้ติดต่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="editId">
-          <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">เลขผู้เสียภาษี</label><input type="text" class="form-input" id="fTaxId"></div>
+            <div class="form-group" style="flex:2"><label class="form-label">เลขผู้เสียภาษี</label><div style="display:flex;gap:8px"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
             <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000"></div>
           </div>
           <div class="form-row">
@@ -63,6 +63,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/dbd-lookup.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -105,6 +106,22 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+      _dbdAttached: false,
+      _attachDbd() {
+        if (this._dbdAttached) return;
+        this._dbdAttached = true;
+        const fillFromDbd = (result) => {
+          if (result.nameTh) document.getElementById('fName').value = result.nameTh;
+          if (result.juristicId) document.getElementById('fTaxId').value = result.juristicId;
+          if (result.address) document.getElementById('fAddress').value = result.address;
+        };
+        DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd);
+        DbdLookup.attachTaxIdLookup(
+          document.getElementById('fTaxId'),
+          fillFromDbd,
+          document.getElementById('fDbdBtn')
+        );
+      },
       openCreate() {
         document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
         document.getElementById('editId').value = '';
@@ -112,6 +129,7 @@
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
         Layout.openModal('formModal');
+        setTimeout(() => this._attachDbd(), 100);
       },
       openEdit(id) {
         const c = this._cache[id]; if (!c) return;
@@ -127,6 +145,7 @@
         document.getElementById('fEmail').value = c.email || '';
         document.getElementById('fContactPerson').value = c.contactPerson || '';
         Layout.openModal('formModal');
+        setTimeout(() => this._attachDbd(), 100);
       },
       async save() {
         const api = Layout.api(); if (!api) return;

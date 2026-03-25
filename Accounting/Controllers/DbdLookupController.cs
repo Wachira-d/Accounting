@@ -1,0 +1,46 @@
+using Accounting.Models.DTOs;
+using Accounting.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Accounting.Controllers;
+
+[ApiController]
+[Route("api/dbd")]
+[Authorize]
+public class DbdLookupController : ControllerBase
+{
+    private readonly IDbdLookupService _dbdService;
+
+    public DbdLookupController(IDbdLookupService dbdService)
+    {
+        _dbdService = dbdService;
+    }
+
+    /// <summary>ค้นหานิติบุคคลจากชื่อ (autocomplete)</summary>
+    [HttpGet("search")]
+    public async Task<ActionResult<ApiResponse<List<DbdCompanyResult>>>> Search(
+        [FromQuery] string q, [FromQuery] int limit = 10)
+    {
+        var results = await _dbdService.SearchByNameAsync(q, limit);
+        return Ok(new ApiResponse<List<DbdCompanyResult>>(true, results));
+    }
+
+    /// <summary>ดึงข้อมูลนิติบุคคลจากเลขทะเบียน 13 หลัก</summary>
+    [HttpGet("juristic/{juristicId}")]
+    public async Task<ActionResult<ApiResponse<DbdCompanyResult>>> GetByJuristicId(string juristicId)
+    {
+        var result = await _dbdService.GetByJuristicIdAsync(juristicId);
+        if (result == null)
+            return NotFound(new ApiResponse<DbdCompanyResult>(false, null, "ไม่พบข้อมูลนิติบุคคล"));
+        return Ok(new ApiResponse<DbdCompanyResult>(true, result));
+    }
+
+    /// <summary>ตรวจสอบเลขผู้เสียภาษี</summary>
+    [HttpGet("verify-tin/{tin}")]
+    public async Task<ActionResult<ApiResponse<TinCheckResult>>> VerifyTin(string tin)
+    {
+        var result = await _dbdService.VerifyTinAsync(tin);
+        return Ok(new ApiResponse<TinCheckResult>(true, result));
+    }
+}

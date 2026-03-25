@@ -124,6 +124,7 @@ builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ITimeBillingService, TimeBillingService>();
 builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IMobileApiService, MobileApiService>();
+builder.Services.AddScoped<IDbdLookupService, DbdLookupService>();
 builder.Services.AddHttpClient();
 
 // Email service

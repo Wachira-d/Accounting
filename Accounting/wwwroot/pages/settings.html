@@ -55,11 +55,11 @@
       </div>
 
       <div class="form-row">
-        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span style="color:red">*</span></label><input type="text" id="cName" class="form-input" placeholder="ชื่อบริษัท"></div>
+        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span style="color:red">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
         <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13"></div>
+        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
         <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
         <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
       </div>
@@ -275,6 +275,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/dbd-lookup.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -291,6 +292,23 @@
         document.getElementById('cSocialSecurity').addEventListener('change', function() {
           document.getElementById('cSocialSecurityGroup').style.display = this.checked ? 'block' : 'none';
         });
+        // DBD Lookup: autocomplete on company name
+        DbdLookup.attachNameSearch(document.getElementById('cName'), (result) => {
+          DbdLookup.fillCompanyForm(result, {
+            nameTh: 'cName', nameEn: 'cNameEn', taxId: 'cTaxId', juristicId: 'cJuristicId',
+            address: 'cAddress',
+            addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
+          });
+          Layout.toast('ดึงข้อมูล ' + result.nameTh + ' จาก DBD สำเร็จ');
+        });
+        // DBD Lookup: tax ID lookup button
+        DbdLookup.attachTaxIdLookup(document.getElementById('cTaxId'), (result) => {
+          DbdLookup.fillCompanyForm(result, {
+            nameTh: 'cName', nameEn: 'cNameEn', juristicId: 'cJuristicId',
+            address: 'cAddress',
+            addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
+          });
+        }, document.getElementById('cDbdBtn'));
       },
       servicePackages: [],
       showTab(tab, el) {
