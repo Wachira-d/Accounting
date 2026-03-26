@@ -92,6 +92,7 @@ const Layout = {
     { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html' },
     { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html' },
     { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html' },
+    { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html' },
 
     { section: 'การเงิน' },
     { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html' },
