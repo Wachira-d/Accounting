@@ -35,6 +35,11 @@ const API = {
       if (res.status === 403) {
         throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
       }
+      if (res.status === 429) {
+        // Rate limited - silently skip, don't show error to user
+        console.warn('Rate limited:', url);
+        return { success: false, data: null, message: 'กรุณารอสักครู่' };
+      }
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || json.title || `Error ${res.status}`);
       return json;

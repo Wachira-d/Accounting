@@ -18,15 +18,32 @@ public class RateLimitMiddleware
         _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "120");
     }
 
+    private static readonly HashSet<string> ExcludedPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/auth",
+        "/api/contact",
+        "/health",
+        "/hubs"
+    };
+
     public async Task InvokeAsync(HttpContext context)
     {
+        var path = context.Request.Path.Value ?? "";
+
+        // Skip rate limiting for auth, contact, health, and SignalR paths
+        if (ExcludedPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            await _next(context);
+            return;
+        }
+
         var clientKey = GetClientKey(context);
         var window = Windows.GetOrAdd(clientKey, _ => new SlidingWindow());
 
         if (!window.TryAdd(_maxRequestsPerMinute))
         {
             context.Response.StatusCode = 429;
-            context.Response.Headers.Append("Retry-After", "60");
+            context.Response.Headers.Append("Retry-After", "10");
             await context.Response.WriteAsJsonAsync(new
             {
                 success = false,
