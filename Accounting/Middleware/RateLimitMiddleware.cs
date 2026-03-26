@@ -4,7 +4,8 @@ namespace Accounting.Middleware;
 
 /// <summary>
 /// Rate Limiting Middleware (ป้องกัน abuse)
-/// Sliding window per IP + per User
+/// Sliding window per IP — only applies to unauthenticated requests
+/// Authenticated users (with valid JWT) are not rate limited for normal usage
 /// </summary>
 public class RateLimitMiddleware
 {
@@ -15,13 +16,15 @@ public class RateLimitMiddleware
     public RateLimitMiddleware(RequestDelegate next, IConfiguration config)
     {
         _next = next;
-        _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "120");
+        _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "600");
     }
 
-    private static readonly HashSet<string> ExcludedPaths = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> ExcludedPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/auth",
         "/api/contact",
+        "/api/company",
+        "/api/notification",
         "/health",
         "/hubs"
     };
@@ -30,14 +33,23 @@ public class RateLimitMiddleware
     {
         var path = context.Request.Path.Value ?? "";
 
-        // Skip rate limiting for auth, contact, health, and SignalR paths
-        if (ExcludedPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        // Skip rate limiting for critical paths (auth, company, notifications, etc.)
+        if (ExcludedPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
             await _next(context);
             return;
         }
 
-        var clientKey = GetClientKey(context);
+        // Skip rate limiting for authenticated users (normal usage)
+        // Rate limit only applies to unauthenticated/anonymous requests to prevent abuse
+        var hasToken = context.Request.Headers.ContainsKey("Authorization");
+        if (hasToken)
+        {
+            await _next(context);
+            return;
+        }
+
+        var clientKey = $"ip:{context.Connection.RemoteIpAddress}";
         var window = Windows.GetOrAdd(clientKey, _ => new SlidingWindow());
 
         if (!window.TryAdd(_maxRequestsPerMinute))
@@ -53,17 +65,6 @@ public class RateLimitMiddleware
         }
 
         await _next(context);
-    }
-
-    private static string GetClientKey(HttpContext context)
-    {
-        var userId = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (userId != null) return $"user:{userId}";
-
-        var apiKeyId = context.Items.ContainsKey("ApiKeyId") ? context.Items["ApiKeyId"]?.ToString() : null;
-        if (apiKeyId != null) return $"apikey:{apiKeyId}";
-
-        return $"ip:{context.Connection.RemoteIpAddress}";
     }
 
     private class SlidingWindow

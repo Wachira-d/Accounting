@@ -551,11 +551,8 @@
             email: document.getElementById('cEmail').value || null,
             website: document.getElementById('cWebsite').value || null,
             fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
+            isSetupComplete: true,
           });
-          // Also mark setup as complete when saving company info (prevents redirect loop)
-          if (!Layout.currentCompany?.isSetupComplete) {
-            await API.updateCompany(cid, { isSetupComplete: true });
-          }
           // Update localStorage so navigation doesn't redirect back
           const updatedCompany = { ...Layout.currentCompany, name, isSetupComplete: true };
           Layout.currentCompany = updatedCompany;
