@@ -245,10 +245,13 @@
       allTransactions: [],
       transPage: 1,
       accounts: [],
+      async load() {
+        await this.loadAccounts();
+      },
       async init() {
         if (!Layout.init('bank')) return;
         Layout.setTitle('บัญชีธนาคาร');
-        await this.loadAccounts();
+        await this.load();
       },
       setTab(tab, el) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));

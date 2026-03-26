@@ -147,10 +147,13 @@
     const Page = {
       data: null,
 
+      async load() {
+        await this.loadUsage();
+      },
       async init() {
         if (!Layout.init('usage')) return;
         Layout.setTitle('สถานะการใช้งาน');
-        await this.loadUsage();
+        await this.load();
       },
 
       async loadUsage() {

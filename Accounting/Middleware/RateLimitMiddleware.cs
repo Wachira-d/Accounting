@@ -4,7 +4,8 @@ namespace Accounting.Middleware;
 
 /// <summary>
 /// Rate Limiting Middleware (ป้องกัน abuse)
-/// Sliding window per IP + per User
+/// Only applies to /api/ requests WITHOUT Authorization header
+/// Static files, pages, authenticated API calls are NOT rate limited
 /// </summary>
 public class RateLimitMiddleware
 {
@@ -15,29 +16,29 @@ public class RateLimitMiddleware
     public RateLimitMiddleware(RequestDelegate next, IConfiguration config)
     {
         _next = next;
-        _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "120");
+        _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "600");
     }
-
-    private static readonly HashSet<string> ExcludedPaths = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "/api/auth",
-        "/api/contact",
-        "/health",
-        "/hubs"
-    };
 
     public async Task InvokeAsync(HttpContext context)
     {
         var path = context.Request.Path.Value ?? "";
 
-        // Skip rate limiting for auth, contact, health, and SignalR paths
-        if (ExcludedPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        // Only rate limit API endpoints — skip static files, pages, SignalR, health
+        if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
         }
 
-        var clientKey = GetClientKey(context);
+        // Skip rate limiting for authenticated requests (have JWT token)
+        if (context.Request.Headers.ContainsKey("Authorization"))
+        {
+            await _next(context);
+            return;
+        }
+
+        // Only rate limit anonymous API calls (login, register, contact, public endpoints)
+        var clientKey = $"ip:{context.Connection.RemoteIpAddress}";
         var window = Windows.GetOrAdd(clientKey, _ => new SlidingWindow());
 
         if (!window.TryAdd(_maxRequestsPerMinute))
@@ -53,17 +54,6 @@ public class RateLimitMiddleware
         }
 
         await _next(context);
-    }
-
-    private static string GetClientKey(HttpContext context)
-    {
-        var userId = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (userId != null) return $"user:{userId}";
-
-        var apiKeyId = context.Items.ContainsKey("ApiKeyId") ? context.Items["ApiKeyId"]?.ToString() : null;
-        if (apiKeyId != null) return $"apikey:{apiKeyId}";
-
-        return $"ip:{context.Connection.RemoteIpAddress}";
     }
 
     private class SlidingWindow
