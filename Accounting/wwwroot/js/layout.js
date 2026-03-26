@@ -77,13 +77,15 @@ const Layout = {
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html' },
 
     { section: 'รายรับ' },
-    { id: 'documents', label: 'ใบเสนอราคา/แจ้งหนี้', icon: '📄', href: '/pages/documents.html' },
+    { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue' },
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html' },
     { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
 
     { section: 'รายจ่าย' },
+    { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html' },
     { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html' },
-    { id: 'payments', label: 'การชำระเงิน', icon: '💳', href: '/pages/payments.html' },
+    { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense' },
+    { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳', href: '/pages/payments.html' },
 
     { section: 'ผู้ติดต่อ' },
     { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html' },
