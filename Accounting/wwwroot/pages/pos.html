@@ -205,10 +205,13 @@
       cart: [], currentOrderId: null, currentOrder: null,
       paidTotal: 0,
 
+      async load() {
+        await this.loadTerminals();
+      },
       async init() {
         if (!Layout.init('pos')) return;
         Layout.setTitle('POS หน้าขาย');
-        await this.loadTerminals();
+        await this.load();
       },
 
       async loadTerminals() {

@@ -306,11 +306,14 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
+      async load() {
+        await this.loadCompanyProfile();
+        await this.loadSettings();
+      },
       async init() {
         if (!Layout.init('settings')) return;
         Layout.setTitle('ตั้งค่า');
-        await this.loadCompanyProfile();
-        await this.loadSettings();
+        await this.load();
         // Toggle e-Tax section visibility
         document.getElementById('sEtaxEnabled').addEventListener('change', function() {
           document.getElementById('etaxConfigSection').style.display = this.checked ? 'block' : 'none';
@@ -387,7 +390,7 @@
         } catch (e) { console.warn('Could not load company profile:', e); }
       },
       async completeSetup() {
-        await this.saveCompany();
+        await this.saveCompany(); // saveCompany already sets isSetupComplete: true
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
           // Seed chart of accounts based on selected business/industry type
@@ -402,11 +405,6 @@
               console.warn('Seed accounts:', seedErr.message);
             }
           }
-          await API.updateCompany(cid, { isSetupComplete: true });
-          // Update localStorage to prevent redirect loop on next navigation
-          const updatedCompany = { ...Layout.currentCompany, isSetupComplete: true };
-          Layout.currentCompany = updatedCompany;
-          localStorage.setItem('currentCompany', JSON.stringify(updatedCompany));
           document.getElementById('setupBanner').classList.add('hidden');
           Layout.toast('ตั้งค่าเสร็จสิ้น! ระบบได้สร้างผังบัญชีเริ่มต้นให้แล้ว');
           setTimeout(() => window.location.href = '/app.html', 800);

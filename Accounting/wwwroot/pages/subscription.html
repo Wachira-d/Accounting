@@ -109,14 +109,16 @@
     const Sub = {
       subscription: null, trial: null, plans: [], cycle: 'monthly', selectedPlan: null,
 
-      async init() {
-        if (!Layout.init('settings')) return;
-        Layout.setTitle('แพ็กเกจและการสมัครสมาชิก');
+      async load() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
-
         await Promise.all([this.loadSubscription(cid), this.loadPlans(), this.loadPayments(cid)]);
         await this.loadTrialStatus(cid);
+      },
+      async init() {
+        if (!Layout.init('subscription')) return;
+        Layout.setTitle('แพ็กเกจและการสมัครสมาชิก');
+        await this.load();
       },
 
       async loadSubscription(cid) {
