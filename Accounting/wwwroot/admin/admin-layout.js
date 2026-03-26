@@ -37,7 +37,7 @@ const AdminLayout = {
     sidebar.className = 'admin-sidebar';
     sidebar.innerHTML = `
       <div class="admin-sidebar-header">
-        <span class="admin-logo">AcctPlatform</span>
+        <span class="admin-logo">Nexaacc</span>
         <span class="admin-badge">ADMIN</span>
       </div>
       <nav class="admin-nav">

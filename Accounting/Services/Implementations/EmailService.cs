@@ -37,8 +37,8 @@ public class EmailService : IEmailService
                 EnableSsl = bool.Parse(_config["Email:UseSsl"] ?? "true")
             };
 
-            var fromEmail = _config["Email:FromAddress"] ?? "noreply@acctplatform.com";
-            var fromName = _config["Email:FromName"] ?? "AcctPlatform";
+            var fromEmail = _config["Email:FromAddress"] ?? "noreply@nexaacc.com";
+            var fromName = _config["Email:FromName"] ?? "Nexaacc";
 
             var msg = new MailMessage
             {
@@ -61,11 +61,11 @@ public class EmailService : IEmailService
 
     public async Task SendPasswordResetAsync(string to, string fullName, string resetToken)
     {
-        var baseUrl = _config["App:BaseUrl"] ?? "https://app.acctplatform.com";
+        var baseUrl = _config["App:BaseUrl"] ?? "https://app.nexaacc.com";
         var resetLink = $"{baseUrl}/reset-password.html?token={Uri.EscapeDataString(resetToken)}";
         var html = $@"
             <div style='font-family:sans-serif;max-width:600px;margin:0 auto'>
-                <h2 style='color:#4F46E5'>AcctPlatform - รีเซ็ตรหัสผ่าน</h2>
+                <h2 style='color:#4F46E5'>Nexaacc - รีเซ็ตรหัสผ่าน</h2>
                 <p>สวัสดี {fullName},</p>
                 <p>เราได้รับคำขอรีเซ็ตรหัสผ่านของคุณ กรุณาคลิกปุ่มด้านล่างเพื่อตั้งรหัสผ่านใหม่:</p>
                 <p style='text-align:center;margin:32px 0'>
@@ -73,14 +73,14 @@ public class EmailService : IEmailService
                 </p>
                 <p style='color:#666;font-size:14px'>ลิงก์นี้จะหมดอายุภายใน 1 ชั่วโมง หากคุณไม่ได้ขอรีเซ็ตรหัสผ่าน กรุณาเพิกเฉยอีเมลนี้</p>
             </div>";
-        await SendAsync(to, "รีเซ็ตรหัสผ่าน - AcctPlatform", html);
+        await SendAsync(to, "รีเซ็ตรหัสผ่าน - Nexaacc", html);
     }
 
     public async Task SendDunningLetterAsync(string to, string contactName, string letterContent)
     {
         var html = $@"
             <div style='font-family:sans-serif;max-width:600px;margin:0 auto'>
-                <h2 style='color:#4F46E5'>AcctPlatform - แจ้งเตือนยอดค้างชำระ</h2>
+                <h2 style='color:#4F46E5'>Nexaacc - แจ้งเตือนยอดค้างชำระ</h2>
                 <p>เรียน {contactName},</p>
                 <div style='background:#f9fafb;padding:16px;border-radius:8px;margin:16px 0'>{letterContent}</div>
                 <p style='color:#666;font-size:14px'>กรุณาดำเนินการชำระเงินโดยเร็ว หากชำระแล้วกรุณาเพิกเฉยอีเมลนี้</p>
@@ -92,7 +92,7 @@ public class EmailService : IEmailService
     {
         var html = $@"
             <div style='font-family:sans-serif;max-width:600px;margin:0 auto'>
-                <h2 style='color:#4F46E5'>AcctPlatform - เตือนกำหนดชำระ</h2>
+                <h2 style='color:#4F46E5'>Nexaacc - เตือนกำหนดชำระ</h2>
                 <p>เรียน {contactName},</p>
                 <p>ใบแจ้งหนี้เลขที่ <strong>{documentNumber}</strong> จำนวน <strong>{amount:N2} บาท</strong> จะครบกำหนดชำระในวันที่ <strong>{dueDate:dd/MM/yyyy}</strong></p>
                 <p>กรุณาดำเนินการชำระเงินตามกำหนด ขอบคุณครับ/ค่ะ</p>
@@ -133,11 +133,11 @@ public class EmailService : IEmailService
                 EnableSsl = bool.Parse(_config["Email:UseSsl"] ?? "true")
             };
 
-            var fromEmail = _config["Email:FromAddress"] ?? "noreply@acctplatform.com";
+            var fromEmail = _config["Email:FromAddress"] ?? "noreply@nexaacc.com";
             var msg = new MailMessage
             {
-                From = new MailAddress(fromEmail, _config["Email:FromName"] ?? "AcctPlatform"),
-                Subject = $"สลิปเงินเดือน {payrollPeriod} - AcctPlatform",
+                From = new MailAddress(fromEmail, _config["Email:FromName"] ?? "Nexaacc"),
+                Subject = $"สลิปเงินเดือน {payrollPeriod} - Nexaacc",
                 Body = $"<p>สวัสดี {employeeName},</p><p>แนบสลิปเงินเดือนสำหรับงวด {payrollPeriod}</p>",
                 IsBodyHtml = true
             };
