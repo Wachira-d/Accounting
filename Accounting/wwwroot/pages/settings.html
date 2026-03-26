@@ -525,7 +525,7 @@
         const name = document.getElementById('cName').value.trim();
         if (!name) { Layout.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
         try {
-          await API.updateCompany(cid, {
+          const res = await API.updateCompany(cid, {
             name,
             nameEn: document.getElementById('cNameEn').value || null,
             taxId: document.getElementById('cTaxId').value || '-',
@@ -551,10 +551,16 @@
             fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
             isSetupComplete: true,
           });
-          // Update localStorage so navigation doesn't redirect back
-          const updatedCompany = { ...Layout.currentCompany, name, isSetupComplete: true };
-          Layout.currentCompany = updatedCompany;
-          localStorage.setItem('currentCompany', JSON.stringify(updatedCompany));
+          if (!res || !res.success) throw new Error(res?.message || 'บันทึกไม่สำเร็จ');
+          // Update localStorage and Layout with the server response (authoritative)
+          const serverCompany = res.data || { ...Layout.currentCompany, name, isSetupComplete: true };
+          Layout.currentCompany = serverCompany;
+          localStorage.setItem('currentCompany', JSON.stringify(serverCompany));
+          // Also update companies array in Layout so dashboard banner check uses fresh data
+          if (Layout.companies) {
+            const idx = Layout.companies.findIndex(c => c.id === cid);
+            if (idx >= 0) Layout.companies[idx] = serverCompany;
+          }
           const select = document.getElementById('companySelect');
           if (select) { const opt = select.querySelector(`option[value="${cid}"]`); if (opt) opt.textContent = name; }
           Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');

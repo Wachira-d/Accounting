@@ -273,17 +273,20 @@ const Layout = {
         localStorage.setItem('currentCompany', JSON.stringify(companies[0]));
         select.value = companies[0].id;
       } else {
-        // Always refresh localStorage with full company data from API (includes isSetupComplete etc.)
+        // Refresh localStorage with full company data from API
         const fresh = companies.find(c => c.id === this.currentCompany.id);
         if (fresh) {
+          // isSetupComplete is sticky: once true locally, keep true even if API returns false
+          if (this.currentCompany.isSetupComplete && !fresh.isSetupComplete) {
+            fresh.isSetupComplete = true;
+          }
           this.currentCompany = fresh;
           localStorage.setItem('currentCompany', JSON.stringify(fresh));
         }
       }
 
       // Show setup reminder on dashboard if setup not complete (no forced redirect)
-      const selected = companies.find(c => c.id === (this.currentCompany?.id || companies[0].id));
-      if (selected && !selected.isSetupComplete) {
+      if (this.currentCompany && !this.currentCompany.isSetupComplete) {
         const path = window.location.pathname;
         if (path === '/app.html' || path === '/') {
           this.showSetupReminder();
