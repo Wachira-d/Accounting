@@ -68,9 +68,40 @@ public class ExceptionMiddleware
         }
         catch (Exception logEx)
         {
-            // ถ้าบันทึก error log ไม่ได้ ก็ log ลง console ไว้ ไม่ให้กระทบ response
+            // EF-based logging failed (possibly model building issue) — try raw ADO.NET
             var logger = context.RequestServices.GetService<ILogger<ExceptionMiddleware>>();
-            logger?.LogWarning(logEx, "Failed to save error log to database");
+            logger?.LogWarning(logEx, "EF error log failed, trying raw ADO.NET");
+
+            try
+            {
+                var config = context.RequestServices.GetService<IConfiguration>();
+                var connStr = config?.GetConnectionString("DefaultConnection");
+                if (!string.IsNullOrEmpty(connStr))
+                {
+                    using var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
+                    await conn.OpenAsync();
+                    var sql = @"IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ErrorLogs')
+                        INSERT INTO [ErrorLogs] ([Id],[RequestPath],[HttpMethod],[QueryString],[StatusCode],[ExceptionType],[Message],[StackTrace],[InnerException],[UserId],[IpAddress],[UserAgent],[Timestamp],[CreatedAt],[IsDeleted])
+                        VALUES (NEWID(),@p,@m,@q,@s,@et,@msg,@st,@ie,@u,@ip,@ua,GETUTCDATE(),GETUTCDATE(),0)";
+                    using var cmd = new Microsoft.Data.SqlClient.SqlCommand(sql, conn);
+                    cmd.Parameters.AddWithValue("@p", context.Request.Path.ToString() ?? "");
+                    cmd.Parameters.AddWithValue("@m", context.Request.Method ?? "");
+                    cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString() ?? "");
+                    cmd.Parameters.AddWithValue("@s", 500);
+                    cmd.Parameters.AddWithValue("@et", exception.GetType().FullName ?? "Unknown");
+                    cmd.Parameters.AddWithValue("@msg", exception.Message ?? "");
+                    cmd.Parameters.AddWithValue("@st", (object?)exception.StackTrace ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@ie", (object?)exception.InnerException?.Message ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@u", (object?)context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@ip", (object?)context.Connection.RemoteIpAddress?.ToString() ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@ua", context.Request.Headers.UserAgent.ToString() ?? "");
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
+            catch (Exception rawEx)
+            {
+                logger?.LogError(rawEx, "Raw ADO.NET error logging also failed");
+            }
         }
     }
 
