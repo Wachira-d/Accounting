@@ -251,6 +251,13 @@ const Layout = {
         this.currentCompany = companies[0];
         localStorage.setItem('currentCompany', JSON.stringify(companies[0]));
         select.value = companies[0].id;
+      } else {
+        // Always refresh localStorage with full company data from API (includes isSetupComplete etc.)
+        const fresh = companies.find(c => c.id === this.currentCompany.id);
+        if (fresh) {
+          this.currentCompany = fresh;
+          localStorage.setItem('currentCompany', JSON.stringify(fresh));
+        }
       }
 
       // First-login redirect: if company setup is not complete, go to settings
@@ -646,14 +653,34 @@ const Layout = {
     document.title = title + ' - AcctPlatform';
   },
 
-  // Toast notifications
+  // Toast notifications (with deduplication - max 3 visible, no duplicate messages)
+  _activeToasts: new Map(),
   toast(msg, type = 'success') {
     const container = document.getElementById('toastContainer');
+    if (!container) return;
+
+    // Deduplicate: skip if same message is already showing
+    const key = `${type}:${msg}`;
+    if (this._activeToasts.has(key)) return;
+
+    // Limit max visible toasts to 3
+    const existing = container.querySelectorAll('.toast');
+    if (existing.length >= 3) {
+      existing[0].remove();
+      for (const [k, el] of this._activeToasts) {
+        if (!document.contains(el)) this._activeToasts.delete(k);
+      }
+    }
+
     const t = document.createElement('div');
     t.className = `toast toast-${type}`;
     t.innerHTML = `${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${msg}`;
     container.appendChild(t);
-    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3500);
+    this._activeToasts.set(key, t);
+    setTimeout(() => {
+      t.style.opacity = '0';
+      setTimeout(() => { t.remove(); this._activeToasts.delete(key); }, 300);
+    }, 3500);
   },
 
   // Modal helpers

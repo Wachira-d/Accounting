@@ -403,6 +403,10 @@
             }
           }
           await API.updateCompany(cid, { isSetupComplete: true });
+          // Update localStorage to prevent redirect loop on next navigation
+          const updatedCompany = { ...Layout.currentCompany, isSetupComplete: true };
+          Layout.currentCompany = updatedCompany;
+          localStorage.setItem('currentCompany', JSON.stringify(updatedCompany));
           document.getElementById('setupBanner').classList.add('hidden');
           Layout.toast('ตั้งค่าเสร็จสิ้น! ระบบได้สร้างผังบัญชีเริ่มต้นให้แล้ว');
           setTimeout(() => window.location.href = '/app.html', 800);
@@ -548,6 +552,14 @@
             website: document.getElementById('cWebsite').value || null,
             fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
           });
+          // Also mark setup as complete when saving company info (prevents redirect loop)
+          if (!Layout.currentCompany?.isSetupComplete) {
+            await API.updateCompany(cid, { isSetupComplete: true });
+          }
+          // Update localStorage so navigation doesn't redirect back
+          const updatedCompany = { ...Layout.currentCompany, name, isSetupComplete: true };
+          Layout.currentCompany = updatedCompany;
+          localStorage.setItem('currentCompany', JSON.stringify(updatedCompany));
           const select = document.getElementById('companySelect');
           if (select) { const opt = select.querySelector(`option[value="${cid}"]`); if (opt) opt.textContent = name; }
           Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
