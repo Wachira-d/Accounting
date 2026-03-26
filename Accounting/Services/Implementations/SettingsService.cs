@@ -185,8 +185,16 @@ public class SettingsService : ISettingsService
                 DocumentType.Invoice => "INV",
                 DocumentType.Receipt => "REC",
                 DocumentType.TaxInvoice => "TIV",
+                DocumentType.DebitNote => "DN",
+                DocumentType.CreditNote => "CN",
+                DocumentType.DeliveryNote => "DLV",
+                DocumentType.BillingNote => "BN",
+                DocumentType.ReceiptVoucher => "RV",
+                DocumentType.PurchaseRequisition => "PR",
                 DocumentType.PurchaseOrder => "PO",
                 DocumentType.PurchaseInvoice => "PI",
+                DocumentType.Expense => "EXP",
+                DocumentType.PaymentVoucher => "PV",
                 _ => "DOC"
             };
             var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == documentType);

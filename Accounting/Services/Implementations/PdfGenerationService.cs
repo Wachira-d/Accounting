@@ -904,11 +904,14 @@ public class PdfGenerationService : IPdfGenerationService
         DocumentType.TaxInvoice => "Tax Invoice",
         DocumentType.DebitNote => "Debit Note",
         DocumentType.CreditNote => "Credit Note",
+        DocumentType.DeliveryNote => "Delivery Note",
+        DocumentType.BillingNote => "Billing Note",
+        DocumentType.ReceiptVoucher => "Receipt Voucher",
+        DocumentType.PurchaseRequisition => "Purchase Requisition",
         DocumentType.PurchaseOrder => "Purchase Order",
         DocumentType.PurchaseInvoice => "Purchase Invoice",
         DocumentType.Expense => "Expense",
-        DocumentType.DeliveryNote => "Delivery Note",
-        DocumentType.BillingNote => "Billing Note",
+        DocumentType.PaymentVoucher => "Payment Voucher",
         _ => "Document"
     } : type switch
     {
@@ -918,11 +921,14 @@ public class PdfGenerationService : IPdfGenerationService
         DocumentType.TaxInvoice => "ใบกำกับภาษี",
         DocumentType.DebitNote => "ใบเพิ่มหนี้",
         DocumentType.CreditNote => "ใบลดหนี้",
+        DocumentType.DeliveryNote => "ใบส่งของ",
+        DocumentType.BillingNote => "ใบวางบิล",
+        DocumentType.ReceiptVoucher => "ใบสำคัญรับ",
+        DocumentType.PurchaseRequisition => "ใบขอซื้อ",
         DocumentType.PurchaseOrder => "ใบสั่งซื้อ",
         DocumentType.PurchaseInvoice => "ใบแจ้งหนี้ซื้อ",
         DocumentType.Expense => "ใบบันทึกค่าใช้จ่าย",
-        DocumentType.DeliveryNote => "ใบส่งของ",
-        DocumentType.BillingNote => "ใบวางบิล",
+        DocumentType.PaymentVoucher => "ใบสำคัญจ่าย",
         _ => "เอกสาร"
     };
 

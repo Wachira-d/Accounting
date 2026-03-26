@@ -10,20 +10,37 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">เอกสารทั้งหมด</h2><p class="page-subtitle">ใบแจ้งหนี้ ใบเสร็จ ใบกำกับภาษี ใบเสนอราคา</p></div>
+      <div><h2 class="page-title">เอกสารทั้งหมด</h2><p class="page-subtitle">จัดการเอกสารฝั่งรายรับและรายจ่าย</p></div>
       <div class="flex gap-2">
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างเอกสาร</button>
+        <button class="btn btn-primary" onclick="Page.openCreate('revenue')">+ เอกสารรายรับ</button>
+        <button class="btn btn-secondary" onclick="Page.openCreate('expense')">+ เอกสารรายจ่าย</button>
       </div>
+    </div>
+
+    <!-- Side selector -->
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn btn-sm" id="sideAll" onclick="Page.setSide('')" style="font-weight:600;background:var(--primary);color:#fff">ทั้งหมด</button>
+      <button class="btn btn-sm btn-ghost" id="sideRevenue" onclick="Page.setSide('revenue')">📥 ฝั่งรายรับ</button>
+      <button class="btn btn-sm btn-ghost" id="sideExpense" onclick="Page.setSide('expense')">📤 ฝั่งรายจ่าย</button>
     </div>
 
     <div class="tabs" id="docTabs">
       <div class="tab active" data-type="" onclick="Page.setType(this)">ทั้งหมด</div>
-      <div class="tab" data-type="Invoice" onclick="Page.setType(this)">ใบแจ้งหนี้</div>
-      <div class="tab" data-type="TaxInvoice" onclick="Page.setType(this)">ใบกำกับภาษี</div>
-      <div class="tab" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จ</div>
-      <div class="tab" data-type="Quotation" onclick="Page.setType(this)">ใบเสนอราคา</div>
-      <div class="tab" data-type="PurchaseOrder" onclick="Page.setType(this)">ใบสั่งซื้อ</div>
-      <div class="tab" data-type="CreditNote" onclick="Page.setType(this)">ใบลดหนี้</div>
+      <!-- Revenue tabs -->
+      <div class="tab tab-revenue" data-type="Invoice" onclick="Page.setType(this)">ใบแจ้งหนี้</div>
+      <div class="tab tab-revenue" data-type="TaxInvoice" onclick="Page.setType(this)">ใบกำกับภาษี</div>
+      <div class="tab tab-revenue" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จ</div>
+      <div class="tab tab-revenue" data-type="Quotation" onclick="Page.setType(this)">ใบเสนอราคา</div>
+      <div class="tab tab-revenue" data-type="DeliveryNote" onclick="Page.setType(this)">ใบส่งของ</div>
+      <div class="tab tab-revenue" data-type="BillingNote" onclick="Page.setType(this)">ใบวางบิล</div>
+      <div class="tab tab-revenue" data-type="CreditNote" onclick="Page.setType(this)">ใบลดหนี้</div>
+      <div class="tab tab-revenue" data-type="ReceiptVoucher" onclick="Page.setType(this)">ใบสำคัญรับ</div>
+      <!-- Expense tabs -->
+      <div class="tab tab-expense" data-type="PurchaseRequisition" onclick="Page.setType(this)">ใบขอซื้อ</div>
+      <div class="tab tab-expense" data-type="PurchaseOrder" onclick="Page.setType(this)">ใบสั่งซื้อ</div>
+      <div class="tab tab-expense" data-type="PurchaseInvoice" onclick="Page.setType(this)">ใบแจ้งหนี้ซื้อ</div>
+      <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ค่าใช้จ่าย</div>
+      <div class="tab tab-expense" data-type="PaymentVoucher" onclick="Page.setType(this)">ใบสำคัญจ่าย</div>
     </div>
 
     <div class="toolbar">
@@ -59,16 +76,24 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
               <select class="form-select" id="fDocType">
-                <option value="Invoice">ใบแจ้งหนี้</option>
-                <option value="TaxInvoice">ใบกำกับภาษี</option>
-                <option value="Receipt">ใบเสร็จรับเงิน</option>
-                <option value="Quotation">ใบเสนอราคา</option>
-                <option value="PurchaseOrder">ใบสั่งซื้อ</option>
-                <option value="PurchaseInvoice">ใบรับสินค้า</option>
-                <option value="CreditNote">ใบลดหนี้</option>
-                <option value="DebitNote">ใบเพิ่มหนี้</option>
-                <option value="DeliveryNote">ใบส่งของ</option>
-                <option value="BillingNote">ใบวางบิล</option>
+                <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
+                  <option value="Quotation">ใบเสนอราคา</option>
+                  <option value="Invoice">ใบแจ้งหนี้</option>
+                  <option value="TaxInvoice">ใบกำกับภาษี</option>
+                  <option value="Receipt">ใบเสร็จรับเงิน</option>
+                  <option value="DeliveryNote">ใบส่งของ</option>
+                  <option value="BillingNote">ใบวางบิล</option>
+                  <option value="DebitNote">ใบเพิ่มหนี้</option>
+                  <option value="CreditNote">ใบลดหนี้</option>
+                  <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+                </optgroup>
+                <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
+                  <option value="PurchaseRequisition">ใบขอซื้อ</option>
+                  <option value="PurchaseOrder">ใบสั่งซื้อ</option>
+                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+                  <option value="Expense">ค่าใช้จ่าย</option>
+                  <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                </optgroup>
               </select>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
@@ -143,10 +168,18 @@
           <div class="form-group">
             <label class="form-label">แปลงเป็นเอกสารประเภท</label>
             <select class="form-select" id="convertTarget">
-              <option value="Invoice">ใบแจ้งหนี้</option>
-              <option value="TaxInvoice">ใบกำกับภาษี</option>
-              <option value="Receipt">ใบเสร็จรับเงิน</option>
-              <option value="DeliveryNote">ใบส่งของ</option>
+              <optgroup label="📥 ฝั่งรายรับ">
+                <option value="Invoice">ใบแจ้งหนี้</option>
+                <option value="TaxInvoice">ใบกำกับภาษี</option>
+                <option value="Receipt">ใบเสร็จรับเงิน</option>
+                <option value="DeliveryNote">ใบส่งของ</option>
+                <option value="BillingNote">ใบวางบิล</option>
+                <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+              </optgroup>
+              <optgroup label="📤 ฝั่งรายจ่าย">
+                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+                <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+              </optgroup>
             </select>
           </div>
         </div>
@@ -162,7 +195,7 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
-      page: 1, docType: '', contacts: [],
+      page: 1, docType: '', side: '', contacts: [],
       async init() {
         if (!Layout.init('documents')) return;
         Layout.setTitle('เอกสาร');
@@ -174,6 +207,34 @@
         const sel = document.getElementById('fContact');
         sel.innerHTML = '<option value="">เลือกผู้ติดต่อ</option>' +
           this.contacts.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ` (${c.taxId})` : ''}</option>`).join('');
+      },
+      setSide(side) {
+        this.side = side;
+        this.docType = '';
+        this.page = 1;
+        // Update side buttons
+        ['sideAll','sideRevenue','sideExpense'].forEach(id => {
+          const btn = document.getElementById(id);
+          btn.className = 'btn btn-sm ' + (
+            (id === 'sideAll' && !side) || (id === 'sideRevenue' && side === 'revenue') || (id === 'sideExpense' && side === 'expense')
+            ? '' : 'btn-ghost');
+          if ((id === 'sideAll' && !side) || (id === 'sideRevenue' && side === 'revenue') || (id === 'sideExpense' && side === 'expense')) {
+            btn.style.cssText = 'font-weight:600;background:var(--primary);color:#fff';
+          } else {
+            btn.style.cssText = '';
+          }
+        });
+        // Show/hide tabs based on side
+        document.querySelectorAll('#docTabs .tab').forEach(t => {
+          if (!t.dataset.type) { t.style.display = ''; t.classList.add('active'); return; } // "ทั้งหมด" always visible
+          t.classList.remove('active');
+          const isRevenue = t.classList.contains('tab-revenue');
+          const isExpense = t.classList.contains('tab-expense');
+          if (!side) t.style.display = '';
+          else if (side === 'revenue') t.style.display = isRevenue ? '' : 'none';
+          else if (side === 'expense') t.style.display = isExpense ? '' : 'none';
+        });
+        this.load();
       },
       setType(el) {
         document.querySelectorAll('#docTabs .tab').forEach(t => t.classList.remove('active'));
@@ -188,14 +249,25 @@
         const search = document.getElementById('searchInput').value;
         let q = `?page=${this.page}&pageSize=20`;
         if (this.docType) q += `&type=${this.docType}`;
+        // Filter by side (revenue/expense) if no specific type selected
+        if (!this.docType && this.side) {
+          const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
+          types.forEach(t => q += `&types=${t}`);
+        }
         if (status) q += `&status=${status}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
           const res = await api.getDocuments(q);
           const data = res.data;
-          const items = data?.items || data || [];
+          let items = data?.items || data || [];
+          // Client-side filter by side as fallback (if API doesn't support multi-type filter)
+          if (!this.docType && this.side) {
+            const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
+            items = items.filter(d => types.includes(d.documentType));
+          }
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีเอกสาร</td></tr>'; return; }
+          const sideLabel = this.side === 'revenue' ? 'รายรับ' : this.side === 'expense' ? 'รายจ่าย' : '';
+          if (!items.length) { tbody.innerHTML = `<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีเอกสาร${sideLabel ? 'ฝั่ง' + sideLabel : ''}</td></tr>`; return; }
           tbody.innerHTML = items.map(d => `<tr>
             <td class="font-medium">${d.documentNumber}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
@@ -246,10 +318,19 @@
         document.getElementById('sumTotal').textContent = Layout.money(sub + vat - wht);
       },
       editingId: null,
-      openCreate() {
+      openCreate(side) {
         this.editingId = null;
-        document.querySelector('#formModal .modal-title').textContent = 'สร้างเอกสาร';
-        document.getElementById('fDocType').disabled = false;
+        const isExpense = side === 'expense';
+        document.querySelector('#formModal .modal-title').textContent = isExpense ? 'สร้างเอกสารรายจ่าย' : 'สร้างเอกสารรายรับ';
+        const sel = document.getElementById('fDocType');
+        sel.disabled = false;
+        // Show only relevant optgroup
+        const revGroup = document.getElementById('fDocTypeRevenue');
+        const expGroup = document.getElementById('fDocTypeExpense');
+        if (revGroup) revGroup.style.display = isExpense ? 'none' : '';
+        if (expGroup) expGroup.style.display = isExpense ? '' : 'none';
+        // Pre-select first option of the correct side
+        sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
         document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
@@ -421,12 +502,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       generatePdfHtml(d, company) {
-        const docTypeNames = {
-          Invoice:'ใบแจ้งหนี้', TaxInvoice:'ใบกำกับภาษี', Receipt:'ใบเสร็จรับเงิน',
-          Quotation:'ใบเสนอราคา', PurchaseOrder:'ใบสั่งซื้อ', CreditNote:'ใบลดหนี้',
-          DebitNote:'ใบเพิ่มหนี้', PurchaseInvoice:'ใบรับสินค้า', DeliveryNote:'ใบส่งของ', BillingNote:'ใบวางบิล'
-        };
-        const docTitle = docTypeNames[d.documentType] || d.documentType;
+        const docTitle = Layout.docTypeLabel(d.documentType);
         const isTaxInvoice = d.documentType === 'TaxInvoice' || d.documentType === 'Invoice';
         return `<div id="pdfPrintArea" style="padding:40px;font-family:'Noto Sans Thai',sans-serif;font-size:14px;color:#111;background:#fff;max-width:780px;margin:0 auto">
           <!-- Header -->

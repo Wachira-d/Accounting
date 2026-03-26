@@ -154,17 +154,23 @@ public enum TaxReportStatus
 // ==================== Document ====================
 public enum DocumentType
 {
-    Quotation = 1,        // ใบเสนอราคา
-    Invoice = 2,          // ใบแจ้งหนี้
-    Receipt = 3,          // ใบเสร็จรับเงิน
-    TaxInvoice = 4,       // ใบกำกับภาษี
-    DebitNote = 5,        // ใบเพิ่มหนี้
-    CreditNote = 6,       // ใบลดหนี้
-    PurchaseOrder = 7,    // ใบสั่งซื้อ
-    PurchaseInvoice = 8,  // ใบแจ้งหนี้ซื้อ
-    Expense = 9,          // ใบบันทึกค่าใช้จ่าย
-    DeliveryNote = 10,    // ใบส่งของ
-    BillingNote = 11      // ใบวางบิล
+    // ===== ฝั่งรายรับ (Revenue/Sales) =====
+    Quotation = 1,           // ใบเสนอราคา
+    Invoice = 2,             // ใบแจ้งหนี้
+    Receipt = 3,             // ใบเสร็จรับเงิน
+    TaxInvoice = 4,          // ใบกำกับภาษี
+    DebitNote = 5,            // ใบเพิ่มหนี้
+    CreditNote = 6,           // ใบลดหนี้
+    DeliveryNote = 10,        // ใบส่งของ
+    BillingNote = 11,         // ใบวางบิล
+    ReceiptVoucher = 14,      // ใบสำคัญรับ
+
+    // ===== ฝั่งรายจ่าย (Expense/Purchase) =====
+    PurchaseRequisition = 12, // ใบขอซื้อ
+    PurchaseOrder = 7,        // ใบสั่งซื้อ
+    PurchaseInvoice = 8,      // ใบแจ้งหนี้ซื้อ
+    Expense = 9,              // ใบบันทึกค่าใช้จ่าย
+    PaymentVoucher = 13,      // ใบสำคัญจ่าย
 }
 
 public enum DocumentStatus

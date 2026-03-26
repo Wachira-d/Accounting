@@ -237,11 +237,14 @@ public class DocumentTemplateService : IDocumentTemplateService
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
             DocumentType.DebitNote => "ใบเพิ่มหนี้",
             DocumentType.CreditNote => "ใบลดหนี้",
+            DocumentType.DeliveryNote => "ใบส่งของ",
+            DocumentType.BillingNote => "ใบวางบิล",
+            DocumentType.ReceiptVoucher => "ใบสำคัญรับ",
+            DocumentType.PurchaseRequisition => "ใบขอซื้อ",
             DocumentType.PurchaseOrder => "ใบสั่งซื้อ",
             DocumentType.PurchaseInvoice => "ใบแจ้งหนี้ซื้อ",
             DocumentType.Expense => "ใบบันทึกค่าใช้จ่าย",
-            DocumentType.DeliveryNote => "ใบส่งของ",
-            DocumentType.BillingNote => "ใบวางบิล",
+            DocumentType.PaymentVoucher => "ใบสำคัญจ่าย",
             _ => "เอกสาร"
         };
 

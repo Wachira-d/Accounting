@@ -799,12 +799,17 @@ const Layout = {
     return map[type] || type;
   },
 
+  // Document type labels & categorization
+  _revenueDocTypes: ['Quotation','Invoice','TaxInvoice','Receipt','DeliveryNote','BillingNote','DebitNote','CreditNote','ReceiptVoucher'],
+  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher'],
+
   docTypeLabel(type) {
     const map = {
       Quotation: 'ใบเสนอราคา', Invoice: 'ใบแจ้งหนี้', Receipt: 'ใบเสร็จรับเงิน',
       TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
-      PurchaseOrder: 'ใบสั่งซื้อ', PurchaseInvoice: 'ใบรับสินค้า', Expense: 'ค่าใช้จ่าย',
-      DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล'
+      DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
+      PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
+      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย'
     };
     return map[type] || type;
   },
