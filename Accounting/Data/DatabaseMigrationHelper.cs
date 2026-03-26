@@ -111,7 +111,7 @@ public static class DatabaseMigrationHelper
                 ALTER TABLE [Companies] ADD [IndustryType] int NOT NULL DEFAULT 0;
             """,
 
-            // ===== Users: SSO & Security columns =====
+            // ===== Users: SSO columns =====
             """
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'AuthProvider')
                 ALTER TABLE [Users] ADD [AuthProvider] nvarchar(max) NULL;
@@ -124,25 +124,87 @@ public static class DatabaseMigrationHelper
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'IsSystemAdmin')
                 ALTER TABLE [Users] ADD [IsSystemAdmin] bit NOT NULL DEFAULT 0;
             """,
+
+            // ===== Companies: Business Registration & Setup =====
             """
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'FailedLoginAttempts')
-                ALTER TABLE [Users] ADD [FailedLoginAttempts] int NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'BranchName')
+                ALTER TABLE [Companies] ADD [BranchName] nvarchar(max) NULL;
             """,
             """
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'LockoutEnd')
-                ALTER TABLE [Users] ADD [LockoutEnd] datetime2 NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'JuristicId')
+                ALTER TABLE [Companies] ADD [JuristicId] nvarchar(max) NULL;
             """,
             """
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'PasswordResetToken')
-                ALTER TABLE [Users] ADD [PasswordResetToken] nvarchar(max) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'IsVatRegistered')
+                ALTER TABLE [Companies] ADD [IsVatRegistered] bit NOT NULL DEFAULT 0;
             """,
             """
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'PasswordResetTokenExpiry')
-                ALTER TABLE [Users] ADD [PasswordResetTokenExpiry] datetime2 NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'VatRate')
+                ALTER TABLE [Companies] ADD [VatRate] decimal(18,2) NOT NULL DEFAULT 7;
             """,
             """
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'EmailVerified')
-                ALTER TABLE [Users] ADD [EmailVerified] bit NOT NULL DEFAULT 0;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'IsWhtRegistered')
+                ALTER TABLE [Companies] ADD [IsWhtRegistered] bit NOT NULL DEFAULT 1;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'IsSocialSecurityRegistered')
+                ALTER TABLE [Companies] ADD [IsSocialSecurityRegistered] bit NOT NULL DEFAULT 0;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'SocialSecurityAccountNo')
+                ALTER TABLE [Companies] ADD [SocialSecurityAccountNo] nvarchar(max) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'Fax')
+                ALTER TABLE [Companies] ADD [Fax] nvarchar(max) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'Website')
+                ALTER TABLE [Companies] ADD [Website] nvarchar(max) NULL;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'IsSetupComplete')
+                ALTER TABLE [Companies] ADD [IsSetupComplete] bit NOT NULL DEFAULT 0;
+            """,
+
+            // ===== DocumentLines: WHT income type =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('DocumentLines') AND name = 'IncomeTypeCode')
+                ALTER TABLE [DocumentLines] ADD [IncomeTypeCode] nvarchar(max) NULL;
+            """,
+
+            // ===== Subscriptions: Notification settings =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyBeforeExpiry')
+                ALTER TABLE [Subscriptions] ADD [NotifyBeforeExpiry] bit NOT NULL DEFAULT 1;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyDaysBeforeExpiry')
+                ALTER TABLE [Subscriptions] ADD [NotifyDaysBeforeExpiry] nvarchar(max) NOT NULL DEFAULT '30,15,7,3,1';
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyOnExpiry')
+                ALTER TABLE [Subscriptions] ADD [NotifyOnExpiry] bit NOT NULL DEFAULT 1;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyAfterExpiry')
+                ALTER TABLE [Subscriptions] ADD [NotifyAfterExpiry] bit NOT NULL DEFAULT 1;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyDaysAfterExpiry')
+                ALTER TABLE [Subscriptions] ADD [NotifyDaysAfterExpiry] nvarchar(max) NOT NULL DEFAULT '1,3,7';
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'DeactivationDaysAfterExpiry')
+                ALTER TABLE [Subscriptions] ADD [DeactivationDaysAfterExpiry] int NOT NULL DEFAULT 14;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyBeforeDeactivation')
+                ALTER TABLE [Subscriptions] ADD [NotifyBeforeDeactivation] bit NOT NULL DEFAULT 1;
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Subscriptions') AND name = 'NotifyDaysBeforeDeactivation')
+                ALTER TABLE [Subscriptions] ADD [NotifyDaysBeforeDeactivation] nvarchar(max) NOT NULL DEFAULT '7,3,1';
             """,
 
             // ===== CompanySettings: Landing page services =====
