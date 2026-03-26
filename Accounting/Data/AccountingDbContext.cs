@@ -210,6 +210,21 @@ public class AccountingDbContext : DbContext
     public DbSet<SmartImportSession> SmartImportSessions => Set<SmartImportSession>();
     public DbSet<SmartImportColumnMapping> SmartImportColumnMappings => Set<SmartImportColumnMapping>();
 
+    // POS
+    public DbSet<PosTerminal> PosTerminals => Set<PosTerminal>();
+    public DbSet<PosSession> PosSessions => Set<PosSession>();
+    public DbSet<PosOrder> PosOrders => Set<PosOrder>();
+    public DbSet<PosOrderItem> PosOrderItems => Set<PosOrderItem>();
+    public DbSet<PosOrderItemModifier> PosOrderItemModifiers => Set<PosOrderItemModifier>();
+    public DbSet<PosPayment> PosPayments => Set<PosPayment>();
+    public DbSet<ServicePackage> ServicePackages => Set<ServicePackage>();
+    public DbSet<ServiceComponent> ServiceComponents => Set<ServiceComponent>();
+    public DbSet<PosServiceActivity> PosServiceActivities => Set<PosServiceActivity>();
+    public DbSet<ProductModifierGroup> ProductModifierGroups => Set<ProductModifierGroup>();
+    public DbSet<ProductModifierGroupLink> ProductModifierGroupLinks => Set<ProductModifierGroupLink>();
+    public DbSet<ProductModifierOption> ProductModifierOptions => Set<ProductModifierOption>();
+    public DbSet<StaffCommissionSummary> StaffCommissionSummaries => Set<StaffCommissionSummary>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1466,6 +1481,143 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<WebhookDelivery>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<UserDevice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<SyncQueue>().HasQueryFilter(e => !e.IsDeleted);
+
+        // ===== POS Terminal =====
+        modelBuilder.Entity<PosTerminal>(e =>
+        {
+            e.Property(t => t.Name).HasMaxLength(200);
+            e.Property(t => t.Location).HasMaxLength(500);
+            e.HasQueryFilter(t => !t.IsDeleted);
+        });
+
+        // ===== POS Session =====
+        modelBuilder.Entity<PosSession>(e =>
+        {
+            e.HasOne(s => s.Terminal).WithMany(t => t.Sessions).HasForeignKey(s => s.TerminalId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(s => s.OpeningBalance).HasPrecision(18, 2);
+            e.Property(s => s.ClosingBalance).HasPrecision(18, 2);
+            e.Property(s => s.ExpectedBalance).HasPrecision(18, 2);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        // ===== POS Order =====
+        modelBuilder.Entity<PosOrder>(e =>
+        {
+            e.HasIndex(o => new { o.CompanyId, o.OrderNumber }).IsUnique();
+            e.Property(o => o.OrderNumber).HasMaxLength(50);
+            e.Property(o => o.SubTotal).HasPrecision(18, 2);
+            e.Property(o => o.DiscountAmount).HasPrecision(18, 2);
+            e.Property(o => o.DiscountPercent).HasPrecision(5, 2);
+            e.Property(o => o.ServiceChargePercent).HasPrecision(5, 2);
+            e.Property(o => o.ServiceChargeAmount).HasPrecision(18, 2);
+            e.Property(o => o.VatAmount).HasPrecision(18, 2);
+            e.Property(o => o.TotalAmount).HasPrecision(18, 2);
+            e.Property(o => o.RoundingAmount).HasPrecision(18, 2);
+            e.Property(o => o.NetAmount).HasPrecision(18, 2);
+            e.HasOne(o => o.Session).WithMany(s => s.Orders).HasForeignKey(o => o.SessionId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(o => o.Customer).WithMany().HasForeignKey(o => o.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(o => o.JournalEntry).WithMany().HasForeignKey(o => o.JournalEntryId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(o => !o.IsDeleted);
+        });
+
+        // ===== POS Order Item =====
+        modelBuilder.Entity<PosOrderItem>(e =>
+        {
+            e.HasOne(i => i.Order).WithMany(o => o.Items).HasForeignKey(i => i.OrderId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(i => i.Product).WithMany().HasForeignKey(i => i.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(i => i.ServicePackage).WithMany().HasForeignKey(i => i.ServicePackageId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(i => i.Quantity).HasPrecision(18, 4);
+            e.Property(i => i.UnitPrice).HasPrecision(18, 2);
+            e.Property(i => i.DiscountAmount).HasPrecision(18, 2);
+            e.Property(i => i.DiscountPercent).HasPrecision(5, 2);
+            e.Property(i => i.SubTotal).HasPrecision(18, 2);
+            e.Property(i => i.VatAmount).HasPrecision(18, 2);
+            e.Property(i => i.TotalAmount).HasPrecision(18, 2);
+        });
+
+        // ===== POS Order Item Modifier =====
+        modelBuilder.Entity<PosOrderItemModifier>(e =>
+        {
+            e.HasOne(m => m.OrderItem).WithMany(i => i.Modifiers).HasForeignKey(m => m.OrderItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(m => m.ModifierOption).WithMany().HasForeignKey(m => m.ModifierOptionId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(m => m.PriceAdjustment).HasPrecision(18, 2);
+            e.Property(m => m.ModifierGroupName).HasMaxLength(200);
+            e.Property(m => m.ModifierName).HasMaxLength(200);
+        });
+
+        // ===== POS Payment =====
+        modelBuilder.Entity<PosPayment>(e =>
+        {
+            e.HasOne(p => p.Order).WithMany(o => o.Payments).HasForeignKey(p => p.OrderId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(p => p.Amount).HasPrecision(18, 2);
+            e.Property(p => p.ReceivedAmount).HasPrecision(18, 2);
+            e.Property(p => p.ChangeAmount).HasPrecision(18, 2);
+            e.Property(p => p.ReferenceNo).HasMaxLength(200);
+            e.Property(p => p.CardLastFour).HasMaxLength(4);
+        });
+
+        // ===== Service Package =====
+        modelBuilder.Entity<ServicePackage>(e =>
+        {
+            e.Property(p => p.Name).HasMaxLength(500);
+            e.Property(p => p.Sku).HasMaxLength(50);
+            e.Property(p => p.Category).HasMaxLength(200);
+            e.Property(p => p.Price).HasPrecision(18, 2);
+            e.Property(p => p.CostPrice).HasPrecision(18, 2);
+            e.HasOne(p => p.RevenueAccount).WithMany().HasForeignKey(p => p.RevenueAccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        // ===== Service Component =====
+        modelBuilder.Entity<ServiceComponent>(e =>
+        {
+            e.HasOne(c => c.Package).WithMany(p => p.Components).HasForeignKey(c => c.PackageId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(c => c.Name).HasMaxLength(500);
+            e.Property(c => c.CommissionValue).HasPrecision(18, 2);
+        });
+
+        // ===== POS Service Activity =====
+        modelBuilder.Entity<PosServiceActivity>(e =>
+        {
+            e.HasOne(a => a.OrderItem).WithMany(i => i.ServiceActivities).HasForeignKey(a => a.OrderItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(a => a.Component).WithMany().HasForeignKey(a => a.ComponentId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(a => a.StaffName).HasMaxLength(200);
+            e.Property(a => a.CommissionAmount).HasPrecision(18, 2);
+        });
+
+        // ===== Product Modifier Group =====
+        modelBuilder.Entity<ProductModifierGroup>(e =>
+        {
+            e.Property(g => g.Name).HasMaxLength(200);
+            e.HasQueryFilter(g => !g.IsDeleted);
+        });
+
+        // ===== Product Modifier Group Link =====
+        modelBuilder.Entity<ProductModifierGroupLink>(e =>
+        {
+            e.HasIndex(l => new { l.ProductId, l.ModifierGroupId }).IsUnique();
+            e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.ModifierGroup).WithMany(g => g.ProductLinks).HasForeignKey(l => l.ModifierGroupId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== Product Modifier Option =====
+        modelBuilder.Entity<ProductModifierOption>(e =>
+        {
+            e.HasOne(o => o.Group).WithMany(g => g.Options).HasForeignKey(o => o.GroupId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(o => o.Name).HasMaxLength(200);
+            e.Property(o => o.PriceAdjustment).HasPrecision(18, 2);
+        });
+
+        // ===== Staff Commission Summary =====
+        modelBuilder.Entity<StaffCommissionSummary>(e =>
+        {
+            e.HasIndex(s => new { s.CompanyId, s.StaffId, s.PeriodStart }).IsUnique();
+            e.Property(s => s.StaffName).HasMaxLength(200);
+            e.Property(s => s.TotalCommission).HasPrecision(18, 2);
+            e.Property(s => s.PaidAmount).HasPrecision(18, 2);
+            e.Property(s => s.RemainingAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
     }
 
     public override int SaveChanges()

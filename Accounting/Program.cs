@@ -132,6 +132,7 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 
 // Error logging service
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
+builder.Services.AddScoped<IPosService, PosService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
@@ -308,37 +309,46 @@ try
     var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
 
     // Use Migrate() if migrations exist, fallback to EnsureCreated()
-    if (db.Database.GetPendingMigrations().Any())
+    try
     {
-        db.Database.Migrate();
-    }
-    else
-    {
-        var created = db.Database.EnsureCreated();
-        if (!created)
+        if (db.Database.GetPendingMigrations().Any())
         {
-            // Database already exists but may be missing new tables.
-            // EnsureCreated() only creates schema when the DB is brand-new.
-            // Split the full DDL script and execute each statement individually
-            // so missing tables/indexes get created while existing ones are safely skipped.
-            var script = db.Database.GenerateCreateScript();
-            var statements = script.Split(["GO"], StringSplitOptions.RemoveEmptyEntries);
-            foreach (var statement in statements)
+            db.Database.Migrate();
+        }
+        else
+        {
+            var created = db.Database.EnsureCreated();
+            if (!created)
             {
-                if (string.IsNullOrWhiteSpace(statement)) continue;
-                try
+                // Database already exists but may be missing new tables.
+                // EnsureCreated() only creates schema when the DB is brand-new.
+                // Split the full DDL script and execute each statement individually
+                // so missing tables/indexes get created while existing ones are safely skipped.
+                var script = db.Database.GenerateCreateScript();
+                var statements = script.Split(["GO"], StringSplitOptions.RemoveEmptyEntries);
+                foreach (var statement in statements)
                 {
-                    db.Database.ExecuteSqlRaw(statement);
-                }
-                catch
-                {
-                    // Table/index/constraint already exists — safe to ignore
+                    if (string.IsNullOrWhiteSpace(statement)) continue;
+                    try
+                    {
+                        db.Database.ExecuteSqlRaw(statement);
+                    }
+                    catch
+                    {
+                        // Table/index/constraint already exists — safe to ignore
+                    }
                 }
             }
         }
     }
+    catch (Exception migrateEx)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning(migrateEx, "Schema migration/creation had issues, continuing with ApplyMissingColumns");
+    }
 
-    // Add any missing columns to existing tables (no-op if already present)
+    // CRITICAL: Always run ApplyMissingColumns even if the above migration fails.
+    // This ensures new columns (like IndustryType) are added to existing tables.
     DatabaseMigrationHelper.ApplyMissingColumns(db);
 
     // Seed default plan templates & admin user
@@ -349,6 +359,15 @@ catch (Exception ex)
 {
     var logger = app.Services.GetRequiredService<ILogger<Program>>();
     logger.LogError(ex, "Failed to initialize database. Check your ConnectionStrings:DefaultConnection in appsettings.Production.json");
+
+    // Last resort: try ApplyMissingColumns in a separate scope
+    try
+    {
+        using var retryScope = app.Services.CreateScope();
+        var retryDb = retryScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+        DatabaseMigrationHelper.ApplyMissingColumns(retryDb);
+    }
+    catch { /* DB itself may be unavailable */ }
 
     // Try to log startup error to DB if possible
     try

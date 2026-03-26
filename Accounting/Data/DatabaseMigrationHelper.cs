@@ -128,6 +128,313 @@ public static class DatabaseMigrationHelper
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('CompanySettings') AND name = 'LandingServicesJson')
                 ALTER TABLE [CompanySettings] ADD [LandingServicesJson] nvarchar(max) NULL;
             """,
+
+            // ===== POS Tables =====
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosTerminals')
+            CREATE TABLE [PosTerminals] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [Name] nvarchar(200) NOT NULL,
+                [BusinessMode] int NOT NULL,
+                [IsActive] bit NOT NULL DEFAULT 1,
+                [Location] nvarchar(500) NULL,
+                [SettingsJson] nvarchar(max) NULL,
+                [CompanyId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosTerminals] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosTerminals_Companies] FOREIGN KEY ([CompanyId]) REFERENCES [Companies]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosSessions')
+            CREATE TABLE [PosSessions] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [TerminalId] uniqueidentifier NOT NULL,
+                [OpenedByUserId] uniqueidentifier NOT NULL,
+                [ClosedByUserId] uniqueidentifier NULL,
+                [OpenedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [ClosedAt] datetime2 NULL,
+                [OpeningBalance] decimal(18,2) NOT NULL,
+                [ClosingBalance] decimal(18,2) NOT NULL DEFAULT 0,
+                [ExpectedBalance] decimal(18,2) NOT NULL DEFAULT 0,
+                [Status] int NOT NULL DEFAULT 1,
+                [Notes] nvarchar(max) NULL,
+                [CompanyId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosSessions] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosSessions_PosTerminals] FOREIGN KEY ([TerminalId]) REFERENCES [PosTerminals]([Id]),
+                CONSTRAINT [FK_PosSessions_Companies] FOREIGN KEY ([CompanyId]) REFERENCES [Companies]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosOrders')
+            CREATE TABLE [PosOrders] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [SessionId] uniqueidentifier NOT NULL,
+                [OrderNumber] nvarchar(50) NOT NULL,
+                [OrderType] int NOT NULL,
+                [Status] int NOT NULL DEFAULT 0,
+                [CustomerId] uniqueidentifier NULL,
+                [CustomerName] nvarchar(500) NULL,
+                [TableNumber] nvarchar(50) NULL,
+                [GuestCount] int NULL,
+                [QueueNumber] nvarchar(50) NULL,
+                [AppointmentTime] datetime2 NULL,
+                [PrimaryStaffId] uniqueidentifier NULL,
+                [SubTotal] decimal(18,2) NOT NULL DEFAULT 0,
+                [DiscountAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [DiscountPercent] decimal(5,2) NOT NULL DEFAULT 0,
+                [ServiceChargePercent] decimal(5,2) NOT NULL DEFAULT 0,
+                [ServiceChargeAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [VatAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [TotalAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [RoundingAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [NetAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [Notes] nvarchar(max) NULL,
+                [Reference] nvarchar(200) NULL,
+                [JournalEntryId] uniqueidentifier NULL,
+                [DocumentId] uniqueidentifier NULL,
+                [CompletedAt] datetime2 NULL,
+                [CompanyId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosOrders] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosOrders_PosSessions] FOREIGN KEY ([SessionId]) REFERENCES [PosSessions]([Id]),
+                CONSTRAINT [FK_PosOrders_Companies] FOREIGN KEY ([CompanyId]) REFERENCES [Companies]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ServicePackages')
+            CREATE TABLE [ServicePackages] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [Name] nvarchar(500) NOT NULL,
+                [NameEn] nvarchar(500) NULL,
+                [Description] nvarchar(max) NULL,
+                [Sku] nvarchar(50) NULL,
+                [Category] nvarchar(200) NULL,
+                [Price] decimal(18,2) NOT NULL,
+                [CostPrice] decimal(18,2) NULL,
+                [DurationMinutes] int NOT NULL,
+                [IsActive] bit NOT NULL DEFAULT 1,
+                [IsVatIncluded] bit NOT NULL DEFAULT 1,
+                [RevenueAccountId] uniqueidentifier NULL,
+                [ImageUrl] nvarchar(max) NULL,
+                [SortOrder] int NOT NULL DEFAULT 0,
+                [CompanyId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_ServicePackages] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_ServicePackages_Companies] FOREIGN KEY ([CompanyId]) REFERENCES [Companies]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ServiceComponents')
+            CREATE TABLE [ServiceComponents] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [PackageId] uniqueidentifier NOT NULL,
+                [StepOrder] int NOT NULL,
+                [Name] nvarchar(500) NOT NULL,
+                [NameEn] nvarchar(500) NULL,
+                [Description] nvarchar(max) NULL,
+                [DurationMinutes] int NOT NULL,
+                [CommissionType] int NOT NULL DEFAULT 1,
+                [CommissionValue] decimal(18,2) NOT NULL DEFAULT 0,
+                [RequiresStaff] bit NOT NULL DEFAULT 1,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_ServiceComponents] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_ServiceComponents_ServicePackages] FOREIGN KEY ([PackageId]) REFERENCES [ServicePackages]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosOrderItems')
+            CREATE TABLE [PosOrderItems] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [OrderId] uniqueidentifier NOT NULL,
+                [ProductId] uniqueidentifier NULL,
+                [ServicePackageId] uniqueidentifier NULL,
+                [ItemName] nvarchar(500) NOT NULL,
+                [ItemCode] nvarchar(50) NULL,
+                [Quantity] decimal(18,4) NOT NULL DEFAULT 1,
+                [Unit] nvarchar(50) NULL,
+                [UnitPrice] decimal(18,2) NOT NULL,
+                [DiscountAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [DiscountPercent] decimal(5,2) NOT NULL DEFAULT 0,
+                [SubTotal] decimal(18,2) NOT NULL DEFAULT 0,
+                [VatAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [TotalAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [LineOrder] int NOT NULL DEFAULT 0,
+                [Status] int NOT NULL DEFAULT 0,
+                [Notes] nvarchar(max) NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosOrderItems] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosOrderItems_PosOrders] FOREIGN KEY ([OrderId]) REFERENCES [PosOrders]([Id]),
+                CONSTRAINT [FK_PosOrderItems_Products] FOREIGN KEY ([ProductId]) REFERENCES [Products]([Id]),
+                CONSTRAINT [FK_PosOrderItems_ServicePackages] FOREIGN KEY ([ServicePackageId]) REFERENCES [ServicePackages]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosOrderItemModifiers')
+            CREATE TABLE [PosOrderItemModifiers] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [OrderItemId] uniqueidentifier NOT NULL,
+                [ModifierOptionId] uniqueidentifier NULL,
+                [ModifierGroupName] nvarchar(200) NOT NULL,
+                [ModifierName] nvarchar(200) NOT NULL,
+                [PriceAdjustment] decimal(18,2) NOT NULL DEFAULT 0,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosOrderItemModifiers] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosOrderItemModifiers_PosOrderItems] FOREIGN KEY ([OrderItemId]) REFERENCES [PosOrderItems]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosPayments')
+            CREATE TABLE [PosPayments] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [OrderId] uniqueidentifier NOT NULL,
+                [PaymentMethod] int NOT NULL,
+                [Amount] decimal(18,2) NOT NULL,
+                [ReceivedAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [ChangeAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [ReferenceNo] nvarchar(200) NULL,
+                [CardLastFour] nvarchar(4) NULL,
+                [PaidAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosPayments] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosPayments_PosOrders] FOREIGN KEY ([OrderId]) REFERENCES [PosOrders]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosServiceActivities')
+            CREATE TABLE [PosServiceActivities] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [OrderItemId] uniqueidentifier NOT NULL,
+                [ComponentId] uniqueidentifier NOT NULL,
+                [StaffId] uniqueidentifier NULL,
+                [StaffName] nvarchar(200) NULL,
+                [Status] int NOT NULL DEFAULT 0,
+                [StartedAt] datetime2 NULL,
+                [CompletedAt] datetime2 NULL,
+                [CommissionAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [Notes] nvarchar(max) NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_PosServiceActivities] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_PosServiceActivities_PosOrderItems] FOREIGN KEY ([OrderItemId]) REFERENCES [PosOrderItems]([Id]),
+                CONSTRAINT [FK_PosServiceActivities_ServiceComponents] FOREIGN KEY ([ComponentId]) REFERENCES [ServiceComponents]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ProductModifierGroups')
+            CREATE TABLE [ProductModifierGroups] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [Name] nvarchar(200) NOT NULL,
+                [NameEn] nvarchar(200) NULL,
+                [IsRequired] bit NOT NULL DEFAULT 0,
+                [AllowMultiple] bit NOT NULL DEFAULT 0,
+                [SortOrder] int NOT NULL DEFAULT 0,
+                [CompanyId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_ProductModifierGroups] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_ProductModifierGroups_Companies] FOREIGN KEY ([CompanyId]) REFERENCES [Companies]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ProductModifierGroupLinks')
+            CREATE TABLE [ProductModifierGroupLinks] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [ProductId] uniqueidentifier NOT NULL,
+                [ModifierGroupId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_ProductModifierGroupLinks] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_ProductModifierGroupLinks_Products] FOREIGN KEY ([ProductId]) REFERENCES [Products]([Id]),
+                CONSTRAINT [FK_ProductModifierGroupLinks_Groups] FOREIGN KEY ([ModifierGroupId]) REFERENCES [ProductModifierGroups]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ProductModifierOptions')
+            CREATE TABLE [ProductModifierOptions] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [GroupId] uniqueidentifier NOT NULL,
+                [Name] nvarchar(200) NOT NULL,
+                [NameEn] nvarchar(200) NULL,
+                [PriceAdjustment] decimal(18,2) NOT NULL DEFAULT 0,
+                [IsDefault] bit NOT NULL DEFAULT 0,
+                [SortOrder] int NOT NULL DEFAULT 0,
+                [IsActive] bit NOT NULL DEFAULT 1,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_ProductModifierOptions] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_ProductModifierOptions_Groups] FOREIGN KEY ([GroupId]) REFERENCES [ProductModifierGroups]([Id])
+            );
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StaffCommissionSummaries')
+            CREATE TABLE [StaffCommissionSummaries] (
+                [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+                [StaffId] uniqueidentifier NOT NULL,
+                [StaffName] nvarchar(200) NOT NULL,
+                [PeriodStart] datetime2 NOT NULL,
+                [PeriodEnd] datetime2 NOT NULL,
+                [TotalActivities] int NOT NULL DEFAULT 0,
+                [TotalCommission] decimal(18,2) NOT NULL DEFAULT 0,
+                [PaidAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [RemainingAmount] decimal(18,2) NOT NULL DEFAULT 0,
+                [IsPaid] bit NOT NULL DEFAULT 0,
+                [JournalEntryId] uniqueidentifier NULL,
+                [CompanyId] uniqueidentifier NOT NULL,
+                [CreatedAt] datetime2 NOT NULL DEFAULT GETUTCDATE(),
+                [UpdatedAt] datetime2 NULL,
+                [CreatedBy] nvarchar(max) NULL,
+                [UpdatedBy] nvarchar(max) NULL,
+                [IsDeleted] bit NOT NULL DEFAULT 0,
+                CONSTRAINT [PK_StaffCommissionSummaries] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_StaffCommissionSummaries_Companies] FOREIGN KEY ([CompanyId]) REFERENCES [Companies]([Id])
+            );
+            """,
         ];
     }
 }
