@@ -281,15 +281,12 @@ const Layout = {
         }
       }
 
-      // First-login redirect: only if setup is not complete AND user is on dashboard (first page after login)
-      // Don't forcefully redirect from other pages — let users explore freely
+      // Show setup reminder on dashboard if setup not complete (no forced redirect)
       const selected = companies.find(c => c.id === (this.currentCompany?.id || companies[0].id));
       if (selected && !selected.isSetupComplete) {
         const path = window.location.pathname;
-        // Only redirect from dashboard (app.html) — not from other pages the user navigated to
         if (path === '/app.html' || path === '/') {
-          window.location.href = '/pages/settings.html?setup=1';
-          return;
+          this.showSetupReminder();
         }
       }
 
@@ -298,6 +295,23 @@ const Layout = {
       else if (typeof Page !== 'undefined' && Page.load) Page.load();
       else if (typeof Page !== 'undefined' && Page.init) Page.init();
     } catch (e) { console.warn('Could not load companies:', e); }
+  },
+
+  showSetupReminder() {
+    const pageContent = document.getElementById('pageContent');
+    if (!pageContent) return;
+    // Don't add duplicate
+    if (document.getElementById('setupReminder')) return;
+    const banner = document.createElement('div');
+    banner.id = 'setupReminder';
+    banner.style.cssText = 'background:linear-gradient(135deg,#4F46E5,#4338ca);color:#fff;padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px';
+    banner.innerHTML = `
+      <div>
+        <strong style="font-size:1rem">⚙️ ตั้งค่าบริษัทให้เสร็จสมบูรณ์</strong>
+        <p style="margin:4px 0 0;font-size:0.875rem;opacity:0.9">กรอกข้อมูลบริษัทเพื่อออกเอกสารภาษีและรายงานได้ถูกต้อง</p>
+      </div>
+      <a href="/pages/settings.html?setup=1" class="btn" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3);white-space:nowrap">ตั้งค่าเลย</a>`;
+    pageContent.insertBefore(banner, pageContent.firstChild);
   },
 
   setupStep: 1,
