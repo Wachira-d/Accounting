@@ -21,9 +21,9 @@ const API = {
     try {
       const res = await fetch(`${this.baseUrl}${url}`, options);
       if (res.status === 401) {
-        // On login/register pages, don't redirect — let the page handle the error
-        const isAuthPage = ['/login.html', '/register.html', '/admin/login.html'].some(p => window.location.pathname.endsWith(p));
-        if (!isAuthPage) {
+        // Auth API calls (login/register/sso) should throw error, not redirect
+        const isAuthCall = url.startsWith('/api/auth/');
+        if (!isAuthCall) {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           window.location.href = '/login.html';
