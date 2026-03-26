@@ -67,6 +67,14 @@ public class DocumentService : IDocumentService
             DocumentType.TaxInvoice => "TIV",
             DocumentType.DebitNote => "DN",
             DocumentType.CreditNote => "CN",
+            DocumentType.DeliveryNote => "DLV",
+            DocumentType.BillingNote => "BN",
+            DocumentType.ReceiptVoucher => "RV",
+            DocumentType.PurchaseRequisition => "PR",
+            DocumentType.PurchaseOrder => "PO",
+            DocumentType.PurchaseInvoice => "PI",
+            DocumentType.Expense => "EXP",
+            DocumentType.PaymentVoucher => "PV",
             _ => "DOC"
         };
 

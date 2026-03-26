@@ -273,17 +273,20 @@ const Layout = {
         localStorage.setItem('currentCompany', JSON.stringify(companies[0]));
         select.value = companies[0].id;
       } else {
-        // Always refresh localStorage with full company data from API (includes isSetupComplete etc.)
+        // Refresh localStorage with full company data from API
         const fresh = companies.find(c => c.id === this.currentCompany.id);
         if (fresh) {
+          // isSetupComplete is sticky: once true locally, keep true even if API returns false
+          if (this.currentCompany.isSetupComplete && !fresh.isSetupComplete) {
+            fresh.isSetupComplete = true;
+          }
           this.currentCompany = fresh;
           localStorage.setItem('currentCompany', JSON.stringify(fresh));
         }
       }
 
       // Show setup reminder on dashboard if setup not complete (no forced redirect)
-      const selected = companies.find(c => c.id === (this.currentCompany?.id || companies[0].id));
-      if (selected && !selected.isSetupComplete) {
+      if (this.currentCompany && !this.currentCompany.isSetupComplete) {
         const path = window.location.pathname;
         if (path === '/app.html' || path === '/') {
           this.showSetupReminder();
@@ -796,12 +799,17 @@ const Layout = {
     return map[type] || type;
   },
 
+  // Document type labels & categorization
+  _revenueDocTypes: ['Quotation','Invoice','TaxInvoice','Receipt','DeliveryNote','BillingNote','DebitNote','CreditNote','ReceiptVoucher'],
+  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher'],
+
   docTypeLabel(type) {
     const map = {
       Quotation: 'ใบเสนอราคา', Invoice: 'ใบแจ้งหนี้', Receipt: 'ใบเสร็จรับเงิน',
       TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
-      PurchaseOrder: 'ใบสั่งซื้อ', PurchaseInvoice: 'ใบรับสินค้า', Expense: 'ค่าใช้จ่าย',
-      DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล'
+      DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
+      PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
+      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย'
     };
     return map[type] || type;
   },
