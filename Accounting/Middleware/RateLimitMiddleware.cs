@@ -4,8 +4,8 @@ namespace Accounting.Middleware;
 
 /// <summary>
 /// Rate Limiting Middleware (ป้องกัน abuse)
-/// Sliding window per IP — only applies to unauthenticated requests
-/// Authenticated users (with valid JWT) are not rate limited for normal usage
+/// Only applies to /api/ requests WITHOUT Authorization header
+/// Static files, pages, authenticated API calls are NOT rate limited
 /// </summary>
 public class RateLimitMiddleware
 {
@@ -19,36 +19,25 @@ public class RateLimitMiddleware
         _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "600");
     }
 
-    private static readonly HashSet<string> ExcludedPrefixes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "/api/auth",
-        "/api/contact",
-        "/api/company",
-        "/api/notification",
-        "/health",
-        "/hubs"
-    };
-
     public async Task InvokeAsync(HttpContext context)
     {
         var path = context.Request.Path.Value ?? "";
 
-        // Skip rate limiting for critical paths (auth, company, notifications, etc.)
-        if (ExcludedPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        // Only rate limit API endpoints — skip static files, pages, SignalR, health
+        if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
         }
 
-        // Skip rate limiting for authenticated users (normal usage)
-        // Rate limit only applies to unauthenticated/anonymous requests to prevent abuse
-        var hasToken = context.Request.Headers.ContainsKey("Authorization");
-        if (hasToken)
+        // Skip rate limiting for authenticated requests (have JWT token)
+        if (context.Request.Headers.ContainsKey("Authorization"))
         {
             await _next(context);
             return;
         }
 
+        // Only rate limit anonymous API calls (login, register, contact, public endpoints)
         var clientKey = $"ip:{context.Connection.RemoteIpAddress}";
         var window = Windows.GetOrAdd(clientKey, _ => new SlidingWindow());
 
