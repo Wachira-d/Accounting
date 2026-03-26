@@ -34,7 +34,8 @@ public record CreateJournalEntryRequest(
     DateTime EntryDate,
     string? Description,
     string? Reference,
-    List<JournalLineRequest> Lines);
+    List<JournalLineRequest> Lines,
+    JournalType JournalType = JournalType.General);
 
 public record JournalLineRequest(
     Guid AccountId,
@@ -52,6 +53,7 @@ public record JournalEntryResponse(
     Guid Id,
     string EntryNumber,
     DateTime EntryDate,
+    JournalType JournalType,
     string? Description,
     string? Reference,
     JournalEntryStatus Status,
@@ -116,6 +118,33 @@ public record PnlSection(
     string AccountCode,
     string AccountName,
     decimal Amount);
+
+// ===== General Ledger =====
+public record GeneralLedgerResponse(
+    List<GeneralLedgerAccount> Accounts,
+    DateTime FromDate,
+    DateTime ToDate);
+
+public record GeneralLedgerAccount(
+    Guid AccountId,
+    string AccountCode,
+    string AccountName,
+    AccountType AccountType,
+    decimal OpeningBalance,
+    decimal TotalDebit,
+    decimal TotalCredit,
+    decimal ClosingBalance,
+    List<GeneralLedgerTransaction> Transactions);
+
+public record GeneralLedgerTransaction(
+    Guid JournalEntryId,
+    string EntryNumber,
+    DateTime EntryDate,
+    JournalType JournalType,
+    string? Description,
+    decimal DebitAmount,
+    decimal CreditAmount,
+    decimal RunningBalance);
 
 // ===== Fiscal Period =====
 public record CreateFiscalPeriodRequest(

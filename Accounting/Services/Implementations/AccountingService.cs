@@ -216,15 +216,24 @@ public class AccountingService : IAccountingService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            // Generate entry number
-            var count = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
-            var entryNumber = $"JV-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+            // Generate entry number with journal type prefix
+            var prefix = request.JournalType switch
+            {
+                JournalType.Sales => "SV",
+                JournalType.Purchase => "UV",
+                JournalType.CashReceipts => "RV",
+                JournalType.CashPayments => "PV",
+                _ => "JV"
+            };
+            var count = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId && j.JournalType == request.JournalType);
+            var entryNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
 
             var entry = new JournalEntry
             {
                 CompanyId = companyId,
                 EntryNumber = entryNumber,
                 EntryDate = request.EntryDate,
+                JournalType = request.JournalType,
                 Description = request.Description,
                 Reference = request.Reference,
                 TotalDebit = totalDebit,
@@ -279,11 +288,14 @@ public class AccountingService : IAccountingService
         return MapJournalEntryToResponse(entry);
     }
 
-    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null)
+    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null)
     {
         var query = _db.JournalEntries
             .Include(j => j.Lines).ThenInclude(l => l.Account)
             .Where(j => j.CompanyId == companyId);
+
+        if (!string.IsNullOrEmpty(journalType) && Enum.TryParse<Models.Enums.JournalType>(journalType, true, out var parsedType))
+            query = query.Where(j => j.JournalType == parsedType);
 
         if (!string.IsNullOrEmpty(request.Search))
             query = query.Where(j => j.EntryNumber.Contains(request.Search) || (j.Description != null && j.Description.Contains(request.Search)));
@@ -342,6 +354,81 @@ public class AccountingService : IAccountingService
 
         entry.Status = JournalEntryStatus.Voided;
         await _db.SaveChangesAsync();
+    }
+
+    // ==================== General Ledger ====================
+
+    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null)
+    {
+        // Get all posted journal lines in date range
+        var query = _db.JournalEntryLines
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate >= fromDate
+                && l.JournalEntry.EntryDate <= toDate);
+
+        if (accountId.HasValue)
+            query = query.Where(l => l.AccountId == accountId.Value);
+
+        var lines = await query.OrderBy(l => l.Account.AccountCode)
+            .ThenBy(l => l.JournalEntry.EntryDate)
+            .ThenBy(l => l.JournalEntry.EntryNumber)
+            .ToListAsync();
+
+        // Get opening balances (all posted entries before fromDate)
+        var openingQuery = _db.JournalEntryLines
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate < fromDate);
+
+        if (accountId.HasValue)
+            openingQuery = openingQuery.Where(l => l.AccountId == accountId.Value);
+
+        var openingLines = await openingQuery.ToListAsync();
+
+        var openingBalances = openingLines
+            .GroupBy(l => l.AccountId)
+            .ToDictionary(g => g.Key, g =>
+            {
+                var acctType = g.First().Account.AccountType;
+                var debit = g.Sum(l => l.DebitAmount);
+                var credit = g.Sum(l => l.CreditAmount);
+                // Debit-normal: Asset, Expense; Credit-normal: Liability, Equity, Revenue
+                return (acctType == AccountType.Asset || acctType == AccountType.Expense)
+                    ? debit - credit : credit - debit;
+            });
+
+        // Group by account
+        var grouped = lines.GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType });
+
+        var accounts = new List<GeneralLedgerAccount>();
+        foreach (var g in grouped.OrderBy(g => g.Key.AccountCode))
+        {
+            var opening = openingBalances.GetValueOrDefault(g.Key.AccountId, 0);
+            var isDebitNormal = g.Key.AccountType == AccountType.Asset || g.Key.AccountType == AccountType.Expense;
+            var runningBalance = opening;
+
+            var transactions = new List<GeneralLedgerTransaction>();
+            foreach (var l in g.OrderBy(l => l.JournalEntry.EntryDate).ThenBy(l => l.JournalEntry.EntryNumber))
+            {
+                runningBalance += isDebitNormal ? (l.DebitAmount - l.CreditAmount) : (l.CreditAmount - l.DebitAmount);
+                transactions.Add(new GeneralLedgerTransaction(
+                    l.JournalEntryId, l.JournalEntry.EntryNumber, l.JournalEntry.EntryDate,
+                    l.JournalEntry.JournalType, l.Description ?? l.JournalEntry.Description,
+                    l.DebitAmount, l.CreditAmount, runningBalance));
+            }
+
+            accounts.Add(new GeneralLedgerAccount(
+                g.Key.AccountId, g.Key.AccountCode, g.Key.AccountName, g.Key.AccountType,
+                opening, g.Sum(l => l.DebitAmount), g.Sum(l => l.CreditAmount),
+                runningBalance, transactions));
+        }
+
+        return new GeneralLedgerResponse(accounts, fromDate, toDate);
     }
 
     // ==================== Reports ====================
@@ -595,7 +682,7 @@ public class AccountingService : IAccountingService
         a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description);
 
     private static JournalEntryResponse MapJournalEntryToResponse(JournalEntry j) => new(
-        j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
+        j.Id, j.EntryNumber, j.EntryDate, j.JournalType, j.Description, j.Reference,
         j.Status, j.IsAutoGenerated, j.TotalDebit, j.TotalCredit,
         j.Lines.OrderBy(l => l.LineOrder).Select(l => new JournalLineResponse(
             l.Id, l.AccountId, l.Account.AccountCode, l.Account.AccountName,

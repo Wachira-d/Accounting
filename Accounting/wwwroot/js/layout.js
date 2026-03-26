@@ -109,6 +109,7 @@ const Layout = {
     { section: 'บัญชี' },
     { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html' },
     { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html' },
+    { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html' },
     { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
 

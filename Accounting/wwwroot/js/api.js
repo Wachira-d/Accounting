@@ -84,6 +84,7 @@ const API = {
       createJournal: (d) => API.post(`${base}/accounting/journals`, d),
       postJournal: (id) => API.post(`${base}/accounting/journals/${id}/post`),
       voidJournal: (id) => API.post(`${base}/accounting/journals/${id}/void`),
+      generalLedger: (q = '') => API.get(`${base}/accounting/reports/general-ledger${q}`),
       trialBalance: (q = '') => API.get(`${base}/accounting/reports/trial-balance${q}`),
       balanceSheet: (q = '') => API.get(`${base}/accounting/reports/balance-sheet${q}`),
       profitLoss: (q = '') => API.get(`${base}/accounting/reports/profit-loss${q}`),

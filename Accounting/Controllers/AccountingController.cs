@@ -77,9 +77,10 @@ public class AccountingController : ControllerBase
     [HttpGet("journals")]
     public async Task<ActionResult<ApiResponse<PagedResponse<JournalEntryResponse>>>> GetJournalEntries(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
-        [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+        [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
+        [FromQuery] string? journalType = null)
     {
-        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate);
+        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }
 
@@ -110,6 +111,16 @@ public class AccountingController : ControllerBase
     {
         await _accountingService.VoidJournalEntryAsync(companyId, entryId);
         return Ok(new ApiResponse<string>(true, null, "Void ใบสำคัญสำเร็จ"));
+    }
+
+    // ===== General Ledger =====
+
+    [HttpGet("reports/general-ledger")]
+    public async Task<ActionResult<ApiResponse<GeneralLedgerResponse>>> GetGeneralLedger(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, [FromQuery] Guid? accountId = null)
+    {
+        var result = await _accountingService.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId);
+        return Ok(new ApiResponse<GeneralLedgerResponse>(true, result));
     }
 
     // ===== Reports =====

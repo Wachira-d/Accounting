@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บัญชีแยกประเภท - Nexaacc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .gl-account { margin-bottom:24px; border:1px solid var(--gray-200); border-radius:10px; overflow:hidden; }
+    .gl-account-header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:var(--gray-50); cursor:pointer; }
+    .gl-account-header:hover { background:var(--gray-100); }
+    .gl-account-title { font-weight:600; font-size:14px; }
+    .gl-account-code { color:var(--gray-500); font-size:13px; margin-right:8px; }
+    .gl-account-balance { text-align:right; }
+    .gl-account-balance .label { font-size:11px; color:var(--gray-500); }
+    .gl-account-balance .amount { font-weight:600; font-size:14px; }
+    .gl-account-body { display:none; }
+    .gl-account.open .gl-account-body { display:block; }
+    .gl-account .table { margin:0; border-radius:0; }
+    .gl-account .table thead th { background:white; font-size:12px; }
+    .gl-summary-row { background:var(--gray-50); font-weight:600; }
+    .jtype-badge { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600; }
+    .filter-bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+    .filter-bar label { font-size:13px; font-weight:500; color:var(--gray-600); }
+    .account-type-filters { display:flex; gap:4px; background:var(--gray-100); padding:3px; border-radius:8px; }
+    .account-type-btn { padding:6px 12px; border:none; background:transparent; border-radius:6px; font-size:12px; cursor:pointer; color:var(--gray-600); }
+    .account-type-btn:hover { background:var(--gray-200); }
+    .account-type-btn.active { background:white; color:var(--primary); font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สมุดบัญชีแยกประเภท</h2><p class="page-subtitle">General Ledger - แสดงรายการเคลื่อนไหวแยกตามบัญชี</p></div>
+    </div>
+
+    <div class="filter-bar">
+      <label>ช่วงวันที่:</label>
+      <input type="date" class="form-input" id="fromDate" style="width:160px">
+      <span class="text-gray-400">ถึง</span>
+      <input type="date" class="form-input" id="toDate" style="width:160px">
+      <select class="form-select" id="accountFilter" style="width:250px">
+        <option value="">ทุกบัญชี</option>
+      </select>
+      <button class="btn btn-primary" onclick="Page.load()">แสดงข้อมูล</button>
+    </div>
+
+    <div class="account-type-filters" id="typeFilters">
+      <button class="account-type-btn active" data-type="" onclick="Page.filterType('')">ทั้งหมด</button>
+      <button class="account-type-btn" data-type="Asset" onclick="Page.filterType('Asset')">สินทรัพย์</button>
+      <button class="account-type-btn" data-type="Liability" onclick="Page.filterType('Liability')">หนี้สิน</button>
+      <button class="account-type-btn" data-type="Equity" onclick="Page.filterType('Equity')">ส่วนของเจ้าของ</button>
+      <button class="account-type-btn" data-type="Revenue" onclick="Page.filterType('Revenue')">รายได้</button>
+      <button class="account-type-btn" data-type="Expense" onclick="Page.filterType('Expense')">ค่าใช้จ่าย</button>
+    </div>
+
+    <div id="ledgerContent">
+      <div class="text-center text-gray-400" style="padding:60px">เลือกช่วงวันที่แล้วกด "แสดงข้อมูล"</div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      data: null, currentTypeFilter: '',
+      journalTypeLabels: { 'General':'JV', 'Sales':'SV', 'Purchase':'UV', 'CashReceipts':'RV', 'CashPayments':'PV' },
+      journalTypeColors: { 'General':'#6b7280', 'Sales':'#2563eb', 'Purchase':'#d97706', 'CashReceipts':'#059669', 'CashPayments':'#dc2626' },
+      async init() {
+        if (!Layout.init('general-ledger')) return;
+        Layout.setTitle('บัญชีแยกประเภท');
+        // Default date range: current month
+        const now = new Date();
+        const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+        document.getElementById('fromDate').value = `${y}-${m}-01`;
+        document.getElementById('toDate').value = now.toISOString().split('T')[0];
+        // Load accounts for filter
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts();
+          const accounts = res.data?.items || res.data || [];
+          const sel = document.getElementById('accountFilter');
+          accounts.sort((a,b) => a.accountCode.localeCompare(b.accountCode));
+          accounts.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a.id;
+            opt.textContent = `${a.accountCode} - ${a.accountName}`;
+            sel.appendChild(opt);
+          });
+        } catch(e) {}
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        const accountId = document.getElementById('accountFilter').value;
+        if (!from || !to) { Layout.toast('กรุณาเลือกช่วงวันที่', 'error'); return; }
+        let q = `?fromDate=${from}&toDate=${to}`;
+        if (accountId) q += `&accountId=${accountId}`;
+        const content = document.getElementById('ledgerContent');
+        content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">กำลังโหลด...</div>';
+        try {
+          const res = await api.generalLedger(q);
+          this.data = res.data;
+          this.render();
+        } catch(e) { content.innerHTML = `<div class="text-center text-danger" style="padding:60px">${e.message}</div>`; }
+      },
+      filterType(type) {
+        this.currentTypeFilter = type;
+        document.querySelectorAll('.account-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+        this.render();
+      },
+      render() {
+        const content = document.getElementById('ledgerContent');
+        if (!this.data || !this.data.accounts || !this.data.accounts.length) {
+          content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">ไม่พบรายการในช่วงวันที่ที่เลือก</div>';
+          return;
+        }
+        let accounts = this.data.accounts;
+        if (this.currentTypeFilter) {
+          accounts = accounts.filter(a => a.accountType === this.currentTypeFilter);
+        }
+        if (!accounts.length) {
+          content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">ไม่พบบัญชีประเภทนี้</div>';
+          return;
+        }
+        content.innerHTML = accounts.map((a, idx) => `
+          <div class="gl-account${idx === 0 ? ' open' : ''}" id="acct_${idx}">
+            <div class="gl-account-header" onclick="Page.toggle(${idx})">
+              <div>
+                <span class="gl-account-code">${a.accountCode}</span>
+                <span class="gl-account-title">${a.accountName}</span>
+                <span style="font-size:11px;color:var(--gray-400);margin-left:8px">(${a.transactions.length} รายการ)</span>
+              </div>
+              <div class="gl-account-balance">
+                <div class="label">ยอมคงเหลือ</div>
+                <div class="amount">${Layout.money(Math.abs(a.closingBalance))} ${a.closingBalance < 0 ? 'Cr' : 'Dr'}</div>
+              </div>
+            </div>
+            <div class="gl-account-body">
+              <table class="table">
+                <thead><tr>
+                  <th style="width:100px">วันที่</th>
+                  <th style="width:100px">เลขที่</th>
+                  <th style="width:50px">ประเภท</th>
+                  <th>คำอธิบาย</th>
+                  <th class="text-right" style="width:120px">เดบิต</th>
+                  <th class="text-right" style="width:120px">เครดิต</th>
+                  <th class="text-right" style="width:120px">ยอมคงเหลือ</th>
+                </tr></thead>
+                <tbody>
+                  <tr style="background:#f0fdf4">
+                    <td colspan="4" class="font-semibold" style="font-size:13px">ยอดยกมา</td>
+                    <td class="text-right"></td>
+                    <td class="text-right"></td>
+                    <td class="text-right font-semibold">${Layout.money(a.openingBalance)}</td>
+                  </tr>
+                  ${a.transactions.map(t => `<tr>
+                    <td style="font-size:13px">${Layout.date(t.entryDate)}</td>
+                    <td style="font-size:13px">${t.entryNumber}</td>
+                    <td>${this.jtBadge(t.journalType)}</td>
+                    <td style="font-size:13px">${t.description || '-'}</td>
+                    <td class="text-right" style="font-size:13px">${t.debitAmount > 0 ? Layout.money(t.debitAmount) : ''}</td>
+                    <td class="text-right" style="font-size:13px">${t.creditAmount > 0 ? Layout.money(t.creditAmount) : ''}</td>
+                    <td class="text-right font-medium" style="font-size:13px">${Layout.money(t.runningBalance)}</td>
+                  </tr>`).join('')}
+                  <tr class="gl-summary-row">
+                    <td colspan="4">รวมเคลื่อนไหว</td>
+                    <td class="text-right">${Layout.money(a.totalDebit)}</td>
+                    <td class="text-right">${Layout.money(a.totalCredit)}</td>
+                    <td class="text-right">${Layout.money(a.closingBalance)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `).join('');
+      },
+      toggle(idx) {
+        document.getElementById(`acct_${idx}`).classList.toggle('open');
+      },
+      jtBadge(type) {
+        const label = this.journalTypeLabels[type] || 'JV';
+        const color = this.journalTypeColors[type] || '#6b7280';
+        return `<span class="jtype-badge" style="background:${color}15;color:${color}">${label}</span>`;
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>
