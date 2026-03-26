@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตัวเลือกเพิ่มเติม - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .modifier-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; margin-top: 16px; }
+    .modifier-card { background: var(--bg-card, #fff); border: 1px solid var(--border-color, #e5e7eb); border-radius: 12px; padding: 20px; transition: box-shadow .2s; }
+    .modifier-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+    .modifier-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .modifier-card-title { font-size: 1.1rem; font-weight: 600; margin: 0; }
+    .modifier-card-badges { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .modifier-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .modifier-options-list { list-style: none; padding: 0; margin: 0; }
+    .modifier-options-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border-color, #f0f0f0); font-size: .9rem; }
+    .modifier-options-list li:last-child { border-bottom: none; }
+    .option-name { display: flex; align-items: center; gap: 6px; }
+    .option-price { font-weight: 500; white-space: nowrap; }
+    .option-row { display: grid; grid-template-columns: 1fr 1fr 120px 60px 60px 36px; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .option-row-header { font-size: .8rem; font-weight: 600; color: var(--text-muted, #6b7280); }
+    .option-row .form-input { padding: 6px 8px; font-size: .85rem; }
+    .btn-remove-option { background: none; border: none; color: var(--text-danger, #ef4444); cursor: pointer; font-size: 1.1rem; padding: 2px 6px; border-radius: 4px; }
+    .btn-remove-option:hover { background: rgba(239,68,68,.1); }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted, #9ca3af); }
+    .empty-state p { margin: 8px 0 0; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ตัวเลือกเพิ่มเติม</h2><p class="page-subtitle">จัดการกลุ่มตัวเลือกเพิ่มเติมสำหรับสินค้า (Modifier Groups)</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มกลุ่มตัวเลือก</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหากลุ่มตัวเลือก..." id="searchInput" oninput="Page.load()">
+    </div>
+    <div id="cardContainer" class="modifier-cards">
+      <div class="empty-state" style="grid-column:1/-1"><p>กำลังโหลด...</p></div>
+    </div>
+
+    <!-- Create/Edit Group Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:750px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มกลุ่มตัวเลือก</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อกลุ่ม (ไทย) *</label><input type="text" class="form-input" id="fName"></div>
+            <div class="form-group"><label class="form-label">ชื่อกลุ่ม (อังกฤษ)</label><input type="text" class="form-input" id="fNameEn"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group form-checkbox" style="margin-top:8px"><input type="checkbox" id="fIsRequired"><label for="fIsRequired">จำเป็นต้องเลือก (Required)</label></div>
+            <div class="form-group form-checkbox" style="margin-top:8px"><input type="checkbox" id="fAllowMultiple"><label for="fAllowMultiple">เลือกได้หลายรายการ (Allow Multiple)</label></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ลำดับการแสดง</label><input type="number" class="form-input" id="fSortOrder" value="0"></div>
+            <div class="form-group"></div>
+          </div>
+          <hr style="margin:16px 0;border:none;border-top:1px solid var(--border-color,#e5e7eb)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <label class="form-label" style="margin:0;font-weight:600">ตัวเลือก (Options)</label>
+            <button class="btn btn-sm btn-secondary" onclick="Page.addOptionRow()">+ เพิ่มตัวเลือก</button>
+          </div>
+          <div class="option-row option-row-header">
+            <span>ชื่อ (ไทย) *</span><span>ชื่อ (อังกฤษ)</span><span>ราคา +/-</span><span>ค่าเริ่มต้น</span><span>ลำดับ</span><span></span>
+          </div>
+          <div id="optionRows"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="deleteModal">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header"><h3 class="modal-title">ยืนยันการลบ</h3><button class="modal-close" onclick="Layout.closeModal('deleteModal')">&times;</button></div>
+        <div class="modal-body"><p>คุณต้องการลบกลุ่มตัวเลือก <strong id="deleteName"></strong> หรือไม่?</p><p style="color:var(--text-danger,#ef4444);font-size:.9rem">การลบจะไม่สามารถกู้คืนได้</p></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('deleteModal')">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.confirmDelete()">ลบ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _cache: {},
+      _deleteId: null,
+      _optionCounter: 0,
+
+      async init() {
+        if (!Layout.init('pos-modifiers')) return;
+        Layout.setTitle('ตัวเลือกเพิ่มเติม');
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value;
+        let q = '';
+        if (search) q = `?search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.getPosModifierGroups(q);
+          const data = res.data;
+          const items = data?.items || data || [];
+          const container = document.getElementById('cardContainer');
+          if (!items.length) {
+            container.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>ไม่มีกลุ่มตัวเลือก</p></div>';
+            return;
+          }
+          this._cache = {};
+          items.forEach(g => this._cache[g.id] = g);
+          container.innerHTML = items.map(g => {
+            const options = g.options || [];
+            return `<div class="modifier-card">
+              <div class="modifier-card-header">
+                <div>
+                  <h4 class="modifier-card-title">${this._esc(g.name)}</h4>
+                  ${g.nameEn ? `<div style="font-size:.85rem;color:var(--text-muted,#6b7280)">${this._esc(g.nameEn)}</div>` : ''}
+                  <div class="modifier-card-badges">
+                    ${g.isRequired ? '<span class="badge badge-warning">จำเป็น</span>' : '<span class="badge badge-gray">ไม่จำเป็น</span>'}
+                    ${g.allowMultiple ? '<span class="badge badge-info">เลือกได้หลายรายการ</span>' : '<span class="badge badge-gray">เลือกได้รายการเดียว</span>'}
+                  </div>
+                </div>
+                <div class="modifier-card-actions">
+                  <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${g.id}')">แก้ไข</button>
+                  <button class="btn btn-sm btn-ghost" style="color:var(--text-danger,#ef4444)" onclick="Page.openDelete('${g.id}')">ลบ</button>
+                </div>
+              </div>
+              ${options.length ? `<ul class="modifier-options-list">${options.map(o => `<li>
+                <span class="option-name">
+                  ${o.isDefault ? '<span class="badge badge-success" style="font-size:.7rem;padding:1px 5px">ค่าเริ่มต้น</span>' : ''}
+                  ${this._esc(o.name)}${o.nameEn ? ` <span style="color:var(--text-muted,#9ca3af);font-size:.8rem">(${this._esc(o.nameEn)})</span>` : ''}
+                </span>
+                <span class="option-price">${o.priceAdjustment > 0 ? '+' : ''}${o.priceAdjustment !== 0 ? Layout.money(o.priceAdjustment) : '-'}</span>
+              </li>`).join('')}</ul>` : '<p style="font-size:.85rem;color:var(--text-muted,#9ca3af);margin:0">ยังไม่มีตัวเลือก</p>'}
+              ${g.sortOrder ? `<div style="font-size:.8rem;color:var(--text-muted,#9ca3af);margin-top:8px">ลำดับ: ${g.sortOrder}</div>` : ''}
+            </div>`;
+          }).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      _esc(s) {
+        if (!s) return '';
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+      },
+
+      addOptionRow(opt) {
+        const idx = this._optionCounter++;
+        const container = document.getElementById('optionRows');
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.id = `optRow_${idx}`;
+        row.dataset.optionId = opt?.id || '';
+        row.innerHTML = `
+          <input type="text" class="form-input" placeholder="ชื่อ" value="${this._esc(opt?.name || '')}" data-field="name">
+          <input type="text" class="form-input" placeholder="Name" value="${this._esc(opt?.nameEn || '')}" data-field="nameEn">
+          <input type="number" class="form-input" step="0.01" value="${opt?.priceAdjustment ?? 0}" data-field="priceAdjustment">
+          <div style="text-align:center"><input type="checkbox" ${opt?.isDefault ? 'checked' : ''} data-field="isDefault"></div>
+          <input type="number" class="form-input" value="${opt?.sortOrder ?? 0}" data-field="sortOrder">
+          <button class="btn-remove-option" onclick="Page.removeOptionRow('optRow_${idx}')" title="ลบ">&times;</button>
+        `;
+        container.appendChild(row);
+      },
+
+      removeOptionRow(rowId) {
+        const row = document.getElementById(rowId);
+        if (row) row.remove();
+      },
+
+      _getOptionRowsData() {
+        const rows = document.querySelectorAll('#optionRows .option-row');
+        const options = [];
+        rows.forEach(row => {
+          const name = row.querySelector('[data-field="name"]').value.trim();
+          if (!name) return;
+          options.push({
+            _optionId: row.dataset.optionId || null,
+            name,
+            nameEn: row.querySelector('[data-field="nameEn"]').value.trim() || null,
+            priceAdjustment: parseFloat(row.querySelector('[data-field="priceAdjustment"]').value) || 0,
+            isDefault: row.querySelector('[data-field="isDefault"]').checked,
+            sortOrder: parseInt(row.querySelector('[data-field="sortOrder"]').value) || 0,
+          });
+        });
+        return options;
+      },
+
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มกลุ่มตัวเลือก';
+        document.getElementById('editId').value = '';
+        document.getElementById('fName').value = '';
+        document.getElementById('fNameEn').value = '';
+        document.getElementById('fIsRequired').checked = false;
+        document.getElementById('fAllowMultiple').checked = false;
+        document.getElementById('fSortOrder').value = '0';
+        document.getElementById('optionRows').innerHTML = '';
+        this._optionCounter = 0;
+        this.addOptionRow();
+        Layout.openModal('formModal');
+      },
+
+      openEdit(id) {
+        const g = this._cache[id]; if (!g) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขกลุ่มตัวเลือก';
+        document.getElementById('editId').value = g.id;
+        document.getElementById('fName').value = g.name;
+        document.getElementById('fNameEn').value = g.nameEn || '';
+        document.getElementById('fIsRequired').checked = !!g.isRequired;
+        document.getElementById('fAllowMultiple').checked = !!g.allowMultiple;
+        document.getElementById('fSortOrder').value = g.sortOrder || 0;
+        document.getElementById('optionRows').innerHTML = '';
+        this._optionCounter = 0;
+        (g.options || []).forEach(o => this.addOptionRow(o));
+        Layout.openModal('formModal');
+      },
+
+      openDelete(id) {
+        const g = this._cache[id]; if (!g) return;
+        this._deleteId = id;
+        document.getElementById('deleteName').textContent = g.name;
+        Layout.openModal('deleteModal');
+      },
+
+      async confirmDelete() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deletePosModifierGroup(this._deleteId);
+          Layout.closeModal('deleteModal');
+          Layout.toast('ลบกลุ่มตัวเลือกสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('editId').value;
+        const name = document.getElementById('fName').value.trim();
+        if (!name) { Layout.toast('กรุณากรอกชื่อกลุ่ม', 'error'); return; }
+
+        const groupData = {
+          name,
+          nameEn: document.getElementById('fNameEn').value.trim() || null,
+          isRequired: document.getElementById('fIsRequired').checked,
+          allowMultiple: document.getElementById('fAllowMultiple').checked,
+          sortOrder: parseInt(document.getElementById('fSortOrder').value) || 0,
+        };
+
+        const options = this._getOptionRowsData();
+
+        try {
+          if (id) {
+            // Update group
+            await api.updatePosModifierGroup(id, groupData);
+
+            // Sync options
+            const existing = (this._cache[id]?.options || []);
+            const existingIds = existing.map(o => o.id);
+            const currentIds = options.filter(o => o._optionId).map(o => o._optionId);
+
+            // Remove deleted options
+            for (const eid of existingIds) {
+              if (!currentIds.includes(eid)) {
+                await api.removePosModifierOption(id, eid);
+              }
+            }
+
+            // Update or add options
+            for (const opt of options) {
+              const payload = { name: opt.name, nameEn: opt.nameEn, priceAdjustment: opt.priceAdjustment, isDefault: opt.isDefault, sortOrder: opt.sortOrder };
+              if (opt._optionId) {
+                await api.updatePosModifierOption(id, opt._optionId, payload);
+              } else {
+                await api.addPosModifierOption(id, payload);
+              }
+            }
+
+            Layout.closeModal('formModal');
+            Layout.toast('แก้ไขกลุ่มตัวเลือกสำเร็จ');
+          } else {
+            // Create group with options
+            groupData.productIds = [];
+            groupData.options = options.map(o => ({
+              name: o.name,
+              nameEn: o.nameEn,
+              priceAdjustment: o.priceAdjustment,
+              isDefault: o.isDefault,
+              sortOrder: o.sortOrder,
+            }));
+            await api.createPosModifierGroup(groupData);
+            Layout.closeModal('formModal');
+            Layout.toast('เพิ่มกลุ่มตัวเลือกสำเร็จ');
+          }
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

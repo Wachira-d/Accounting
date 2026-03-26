@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POS หน้าขาย - AcctPlatform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .pos-layout { display:flex; height:calc(100vh - var(--header-height)); overflow:hidden; }
+    .pos-left { flex:1; display:flex; flex-direction:column; border-right:1px solid var(--gray-200); overflow:hidden; }
+    .pos-right { width:420px; display:flex; flex-direction:column; background:var(--gray-50); }
+    .pos-topbar { display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:#fff; border-bottom:1px solid var(--gray-200); gap:8px; flex-shrink:0; }
+    .pos-topbar .session-info { font-size:13px; color:var(--gray-600); display:flex; align-items:center; gap:12px; }
+    .pos-topbar .session-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+    .pos-topbar .session-dot.open { background:var(--success); }
+    .pos-topbar .session-dot.closed { background:var(--gray-400); }
+    .pos-search { padding:10px 16px; border-bottom:1px solid var(--gray-200); flex-shrink:0; }
+    .pos-search input { width:100%; padding:10px 14px; border:1px solid var(--gray-300); border-radius:var(--radius); font-size:14px; }
+    .pos-categories { display:flex; gap:6px; padding:10px 16px; border-bottom:1px solid var(--gray-200); overflow-x:auto; flex-shrink:0; }
+    .pos-categories .cat-btn { padding:6px 14px; border-radius:20px; font-size:13px; font-weight:500; background:var(--gray-100); color:var(--gray-700); cursor:pointer; white-space:nowrap; border:none; transition:all .15s; }
+    .pos-categories .cat-btn.active { background:var(--primary); color:#fff; }
+    .pos-grid { flex:1; overflow-y:auto; padding:12px; display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; align-content:start; }
+    .pos-item { background:#fff; border:1px solid var(--gray-200); border-radius:var(--radius); padding:14px 10px; text-align:center; cursor:pointer; transition:all .15s; display:flex; flex-direction:column; justify-content:center; min-height:90px; }
+    .pos-item:hover { border-color:var(--primary); box-shadow:var(--shadow); }
+    .pos-item .item-name { font-size:13px; font-weight:600; color:var(--gray-800); margin-bottom:4px; line-height:1.3; }
+    .pos-item .item-price { font-size:14px; font-weight:700; color:var(--primary); }
+    .pos-item .item-code { font-size:11px; color:var(--gray-400); }
+    /* Right panel */
+    .order-header { padding:12px 16px; background:#fff; border-bottom:1px solid var(--gray-200); flex-shrink:0; }
+    .order-header select, .order-header input { font-size:13px; padding:6px 10px; border:1px solid var(--gray-300); border-radius:6px; }
+    .order-fields { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+    .order-fields input, .order-fields select { flex:1; min-width:80px; }
+    .order-items { flex:1; overflow-y:auto; padding:8px 12px; }
+    .order-item-row { display:flex; align-items:center; gap:6px; padding:8px; background:#fff; border-radius:6px; margin-bottom:6px; font-size:13px; border:1px solid var(--gray-200); }
+    .order-item-row .oi-name { flex:1; font-weight:500; }
+    .order-item-row .oi-qty { width:36px; text-align:center; font-weight:600; }
+    .order-item-row .oi-price { font-weight:600; color:var(--gray-700); min-width:70px; text-align:right; }
+    .order-item-row .oi-remove { background:none; color:var(--danger); font-size:16px; padding:2px 6px; border-radius:4px; }
+    .order-item-row .oi-remove:hover { background:var(--danger); color:#fff; }
+    .order-summary { padding:12px 16px; background:#fff; border-top:1px solid var(--gray-200); font-size:13px; flex-shrink:0; }
+    .order-summary .sum-row { display:flex; justify-content:space-between; padding:3px 0; }
+    .order-summary .sum-total { font-size:18px; font-weight:700; color:var(--primary); border-top:2px solid var(--gray-300); padding-top:8px; margin-top:4px; }
+    .order-actions { padding:10px 16px; background:#fff; border-top:1px solid var(--gray-200); display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
+    .order-actions .pay-row { display:flex; gap:6px; }
+    .order-actions .pay-row select, .order-actions .pay-row input { flex:1; padding:8px 10px; border:1px solid var(--gray-300); border-radius:6px; font-size:13px; }
+    .order-actions .btn-row { display:flex; gap:6px; }
+    .order-actions .btn-row .btn { flex:1; padding:12px; font-size:14px; font-weight:700; }
+    .btn-pay { background:var(--success); color:#fff; border-radius:var(--radius); }
+    .btn-pay:hover { background:#059669; }
+    .btn-complete { background:var(--primary); color:#fff; border-radius:var(--radius); }
+    .btn-complete:hover { background:var(--primary-dark); }
+    .btn-void { background:var(--danger); color:#fff; border-radius:var(--radius); }
+    .btn-void:hover { background:#dc2626; }
+    .empty-order { text-align:center; color:var(--gray-400); padding:40px 20px; font-size:14px; }
+    .change-display { background:var(--gray-100); border-radius:6px; padding:8px 12px; margin-top:4px; text-align:center; font-size:13px; }
+    .change-display .change-amount { font-size:20px; font-weight:700; color:var(--success); }
+    /* Session setup overlay */
+    .session-setup { position:absolute; inset:0; background:rgba(255,255,255,.95); display:flex; align-items:center; justify-content:center; z-index:10; }
+    .session-card { background:#fff; border-radius:var(--radius-lg); box-shadow:var(--shadow-xl); padding:32px; width:400px; max-width:90vw; }
+    .session-card h3 { margin-bottom:16px; }
+    .session-card .form-group { margin-bottom:12px; }
+    .tab-row { display:flex; gap:4px; margin-bottom:8px; }
+    .tab-btn { padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; background:var(--gray-100); color:var(--gray-600); cursor:pointer; border:none; }
+    .tab-btn.active { background:var(--primary); color:#fff; }
+    @media(max-width:900px){
+      .pos-right { width:340px; }
+      .pos-grid { grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); }
+    }
+    @media(max-width:700px){
+      .pos-layout { flex-direction:column; }
+      .pos-right { width:100%; height:50vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in" style="padding:0;max-width:100%;">
+    <div class="pos-layout" id="posLayout">
+      <!-- LEFT: Product Grid -->
+      <div class="pos-left">
+        <div class="pos-topbar">
+          <div class="session-info" id="sessionInfo">
+            <span class="session-dot closed" id="sessionDot"></span>
+            <span id="sessionText">ยังไม่เปิดกะ</span>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <select id="terminalSelect" class="form-select" style="font-size:13px;padding:6px 10px;" onchange="Page.onTerminalChange()"></select>
+            <button class="btn btn-sm btn-primary" id="btnSession" onclick="Page.toggleSession()">เปิดกะ</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.showDailySummary()">สรุปยอด</button>
+          </div>
+        </div>
+        <div class="pos-search">
+          <input type="text" placeholder="ค้นหาสินค้า/บริการ..." id="searchInput" oninput="Page.filterItems()">
+        </div>
+        <div class="pos-categories" id="categories"></div>
+        <div class="pos-grid" id="productGrid">
+          <div class="empty-order">กรุณาเปิดกะก่อนเริ่มขาย</div>
+        </div>
+      </div>
+      <!-- RIGHT: Order Panel -->
+      <div class="pos-right">
+        <div class="order-header">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <strong style="font-size:14px;" id="orderTitle">ออเดอร์ใหม่</strong>
+            <select id="orderType" style="font-size:12px;padding:4px 8px;border:1px solid var(--gray-300);border-radius:6px;" onchange="Page.onOrderTypeChange()">
+              <option value="0">ทานที่ร้าน</option>
+              <option value="1">สั่งกลับบ้าน</option>
+              <option value="2">เดลิเวอรี่</option>
+              <option value="3">คิว</option>
+              <option value="4">นัดหมาย</option>
+            </select>
+          </div>
+          <div class="order-fields">
+            <input type="text" id="fCustomerName" placeholder="ชื่อลูกค้า (ไม่บังคับ)">
+            <input type="text" id="fTableNo" placeholder="โต๊ะ">
+            <input type="text" id="fQueueNo" placeholder="คิว" style="display:none;">
+          </div>
+        </div>
+        <div class="order-items" id="orderItems">
+          <div class="empty-order">เลือกสินค้าจากด้านซ้าย</div>
+        </div>
+        <div class="order-summary" id="orderSummary" style="display:none;">
+          <div class="sum-row"><span>รวม</span><span id="sumSubtotal">0.00</span></div>
+          <div class="sum-row"><span>ส่วนลด</span><span id="sumDiscount">0.00</span></div>
+          <div class="sum-row"><span>Service Charge</span><span id="sumSc">0.00</span></div>
+          <div class="sum-row"><span>VAT 7%</span><span id="sumVat">0.00</span></div>
+          <div class="sum-row sum-total"><span>ยอดสุทธิ</span><span id="sumNet">0.00</span></div>
+        </div>
+        <div class="order-actions">
+          <div class="pay-row">
+            <select id="payMethod">
+              <option value="Cash">เงินสด</option>
+              <option value="PromptPay">พร้อมเพย์</option>
+              <option value="BankTransfer">โอน</option>
+              <option value="CreditCard">บัตร</option>
+            </select>
+            <input type="number" id="payAmount" placeholder="จำนวนเงิน" step="0.01">
+            <input type="text" id="payRef" placeholder="อ้างอิง" style="max-width:100px;">
+          </div>
+          <div id="changeDisplay" class="change-display" style="display:none;">
+            เงินทอน: <span class="change-amount" id="changeAmount">0.00</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-pay" onclick="Page.addPayment()">ชำระเงิน</button>
+            <button class="btn btn-complete" onclick="Page.completeOrder()">ปิดบิล</button>
+            <button class="btn btn-void" onclick="Page.voidOrder()">ยกเลิก</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open Session Modal -->
+    <div class="modal-overlay" id="sessionModal">
+      <div class="modal" style="max-width:400px;">
+        <div class="modal-header"><h3 class="modal-title">เปิดกะขาย</h3><button class="modal-close" onclick="Layout.closeModal('sessionModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">เงินเปิดกะ</label><input type="number" class="form-input" id="fOpenBal" value="1000" step="0.01"></div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fOpenNote"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('sessionModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.openSession()">เปิดกะ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Close Session Modal -->
+    <div class="modal-overlay" id="closeSessionModal">
+      <div class="modal" style="max-width:400px;">
+        <div class="modal-header"><h3 class="modal-title">ปิดกะขาย</h3><button class="modal-close" onclick="Layout.closeModal('closeSessionModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">เงินปิดกะ (นับจริง)</label><input type="number" class="form-input" id="fCloseBal" step="0.01"></div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fCloseNote"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('closeSessionModal')">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.closeSession()">ปิดกะ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily Summary Modal -->
+    <div class="modal-overlay" id="summaryModal">
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header"><h3 class="modal-title">สรุปยอดขายวันนี้</h3><button class="modal-close" onclick="Layout.closeModal('summaryModal')">&times;</button></div>
+        <div class="modal-body" id="summaryContent"><p class="text-center text-gray-400">กำลังโหลด...</p></div>
+      </div>
+    </div>
+
+    <!-- Order History Modal -->
+    <div class="modal-overlay" id="historyModal">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header"><h3 class="modal-title">รายการออเดอร์</h3><button class="modal-close" onclick="Layout.closeModal('historyModal')">&times;</button></div>
+        <div class="modal-body" id="historyContent"><p class="text-center text-gray-400">กำลังโหลด...</p></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      terminals: [], session: null, products: [], packages: [],
+      allItems: [], filteredItems: [], currentCategory: '',
+      cart: [], currentOrderId: null, currentOrder: null,
+      paidTotal: 0,
+
+      async init() {
+        if (!Layout.init('pos')) return;
+        Layout.setTitle('POS หน้าขาย');
+        await this.loadTerminals();
+      },
+
+      async loadTerminals() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPosTerminals();
+          this.terminals = res.data || [];
+          const sel = document.getElementById('terminalSelect');
+          sel.innerHTML = this.terminals.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+          if (this.terminals.length) await this.checkSession();
+        } catch (e) { Layout.toast('โหลด Terminal ล้มเหลว: ' + e.message, 'error'); }
+      },
+
+      async checkSession() {
+        const api = Layout.api(); if (!api) return;
+        const termId = document.getElementById('terminalSelect').value;
+        if (!termId) return;
+        try {
+          const res = await api.getPosSessions(`?terminalId=${termId}&isOpen=true`);
+          const sessions = res.data || [];
+          if (sessions.length > 0) {
+            this.session = sessions[0];
+            this.updateSessionUI(true);
+            await this.loadCatalog();
+          } else {
+            this.session = null;
+            this.updateSessionUI(false);
+          }
+        } catch (e) { console.error(e); }
+      },
+
+      updateSessionUI(isOpen) {
+        const dot = document.getElementById('sessionDot');
+        const text = document.getElementById('sessionText');
+        const btn = document.getElementById('btnSession');
+        if (isOpen && this.session) {
+          dot.className = 'session-dot open';
+          text.textContent = `กะเปิด: ${new Date(this.session.openedAt).toLocaleTimeString('th-TH')}`;
+          btn.textContent = 'ปิดกะ';
+          btn.className = 'btn btn-sm btn-danger';
+        } else {
+          dot.className = 'session-dot closed';
+          text.textContent = 'ยังไม่เปิดกะ';
+          btn.textContent = 'เปิดกะ';
+          btn.className = 'btn btn-sm btn-primary';
+          document.getElementById('productGrid').innerHTML = '<div class="empty-order">กรุณาเปิดกะก่อนเริ่มขาย</div>';
+        }
+      },
+
+      onTerminalChange() { this.checkSession(); },
+
+      toggleSession() {
+        if (this.session) {
+          Layout.openModal('closeSessionModal');
+        } else {
+          Layout.openModal('sessionModal');
+        }
+      },
+
+      async openSession() {
+        const api = Layout.api(); if (!api) return;
+        const termId = document.getElementById('terminalSelect').value;
+        try {
+          const res = await api.openPosSession({
+            terminalId: termId,
+            openingBalance: parseFloat(document.getElementById('fOpenBal').value) || 0,
+            notes: document.getElementById('fOpenNote').value || null
+          });
+          this.session = res.data;
+          Layout.closeModal('sessionModal');
+          Layout.toast('เปิดกะสำเร็จ');
+          this.updateSessionUI(true);
+          await this.loadCatalog();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async closeSession() {
+        const api = Layout.api(); if (!api) return;
+        if (!this.session) return;
+        try {
+          await api.closePosSession(this.session.id, {
+            closingBalance: parseFloat(document.getElementById('fCloseBal').value) || 0,
+            notes: document.getElementById('fCloseNote').value || null
+          });
+          Layout.closeModal('closeSessionModal');
+          Layout.toast('ปิดกะสำเร็จ');
+          this.session = null;
+          this.updateSessionUI(false);
+          this.resetOrder();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadCatalog() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [prodRes, pkgRes] = await Promise.all([
+            api.getProducts('?pageSize=500'),
+            api.getPosPackages()
+          ]);
+          this.products = (prodRes.data?.items || prodRes.data || []).filter(p => p.isActive);
+          this.packages = (pkgRes.data || []).filter(p => p.isActive);
+          this.allItems = [
+            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, price:p.sellingPrice, category:p.category||'สินค้า' })),
+            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, price:p.price, category:p.category||'บริการ' }))
+          ];
+          this.buildCategories();
+          this.filterItems();
+        } catch (e) { Layout.toast('โหลดรายการล้มเหลว: ' + e.message, 'error'); }
+      },
+
+      buildCategories() {
+        const cats = [...new Set(this.allItems.map(i => i.category))].sort();
+        const el = document.getElementById('categories');
+        el.innerHTML = `<button class="cat-btn active" onclick="Page.selectCategory('')">ทั้งหมด</button>` +
+          cats.map(c => `<button class="cat-btn" onclick="Page.selectCategory('${c}')">${c}</button>`).join('');
+      },
+
+      selectCategory(cat) {
+        this.currentCategory = cat;
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+        event.target.classList.add('active');
+        this.filterItems();
+      },
+
+      filterItems() {
+        const search = (document.getElementById('searchInput').value || '').toLowerCase();
+        this.filteredItems = this.allItems.filter(i => {
+          if (this.currentCategory && i.category !== this.currentCategory) return false;
+          if (search && !i.name.toLowerCase().includes(search) && !(i.code||'').toLowerCase().includes(search)) return false;
+          return true;
+        });
+        this.renderGrid();
+      },
+
+      renderGrid() {
+        const grid = document.getElementById('productGrid');
+        if (!this.filteredItems.length) {
+          grid.innerHTML = '<div class="empty-order">ไม่พบรายการ</div>';
+          return;
+        }
+        grid.innerHTML = this.filteredItems.map(i => `
+          <div class="pos-item" onclick="Page.addToCart('${i.type}','${i.id}')">
+            <div class="item-name">${i.name}</div>
+            <div class="item-price">${Layout.money(i.price)}</div>
+            ${i.code ? `<div class="item-code">${i.code}</div>` : ''}
+          </div>
+        `).join('');
+      },
+
+      addToCart(type, id) {
+        if (!this.session) { Layout.toast('กรุณาเปิดกะก่อน', 'warning'); return; }
+        const item = this.allItems.find(i => i.type === type && i.id === id);
+        if (!item) return;
+        const existing = this.cart.find(c => c.type === type && c.itemId === id);
+        if (existing) {
+          existing.quantity++;
+        } else {
+          this.cart.push({
+            type: type,
+            itemId: id,
+            name: item.name,
+            unitPrice: item.price,
+            quantity: 1
+          });
+        }
+        this.renderCart();
+      },
+
+      removeFromCart(idx) {
+        this.cart.splice(idx, 1);
+        this.renderCart();
+      },
+
+      updateQty(idx, delta) {
+        this.cart[idx].quantity += delta;
+        if (this.cart[idx].quantity <= 0) this.cart.splice(idx, 1);
+        this.renderCart();
+      },
+
+      renderCart() {
+        const el = document.getElementById('orderItems');
+        const sumEl = document.getElementById('orderSummary');
+        if (!this.cart.length && !this.currentOrderId) {
+          el.innerHTML = '<div class="empty-order">เลือกสินค้าจากด้านซ้าย</div>';
+          sumEl.style.display = 'none';
+          return;
+        }
+        sumEl.style.display = 'block';
+        el.innerHTML = this.cart.map((c, i) => `
+          <div class="order-item-row">
+            <div class="oi-name">${c.name}</div>
+            <button class="oi-remove" onclick="Page.updateQty(${i},-1)">-</button>
+            <span class="oi-qty">${c.quantity}</span>
+            <button class="oi-remove" style="color:var(--success)" onclick="Page.updateQty(${i},1)">+</button>
+            <div class="oi-price">${Layout.money(c.unitPrice * c.quantity)}</div>
+            <button class="oi-remove" onclick="Page.removeFromCart(${i})">x</button>
+          </div>
+        `).join('');
+        this.calcTotals();
+      },
+
+      calcTotals() {
+        const subtotal = this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
+        const vat = Math.round(subtotal * 7 / 107 * 100) / 100;
+        const net = subtotal;
+        document.getElementById('sumSubtotal').textContent = Layout.money(subtotal);
+        document.getElementById('sumDiscount').textContent = '0.00';
+        document.getElementById('sumSc').textContent = '0.00';
+        document.getElementById('sumVat').textContent = Layout.money(vat);
+        document.getElementById('sumNet').textContent = Layout.money(net);
+      },
+
+      getNetTotal() {
+        return this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
+      },
+
+      onOrderTypeChange() {
+        const v = document.getElementById('orderType').value;
+        document.getElementById('fTableNo').style.display = (v === '0') ? '' : 'none';
+        document.getElementById('fQueueNo').style.display = (v === '3') ? '' : 'none';
+      },
+
+      async createOrderIfNeeded() {
+        if (this.currentOrderId) return this.currentOrderId;
+        if (!this.cart.length) { Layout.toast('กรุณาเลือกสินค้า', 'warning'); return null; }
+        const api = Layout.api(); if (!api) return null;
+        const ot = parseInt(document.getElementById('orderType').value);
+        const items = this.cart.map(c => ({
+          productId: c.type === 'product' ? c.itemId : null,
+          servicePackageId: c.type === 'package' ? c.itemId : null,
+          itemName: c.name,
+          quantity: c.quantity,
+          unitPrice: c.unitPrice,
+          modifiers: []
+        }));
+        try {
+          const res = await api.createPosOrder({
+            sessionId: this.session.id,
+            orderType: ot,
+            customerName: document.getElementById('fCustomerName').value || null,
+            tableNumber: document.getElementById('fTableNo').value || null,
+            queueNumber: document.getElementById('fQueueNo').value || null,
+            items: items
+          });
+          this.currentOrder = res.data;
+          this.currentOrderId = res.data.id;
+          document.getElementById('orderTitle').textContent = `#${res.data.orderNumber}`;
+          // Sync cart with server response
+          this.paidTotal = 0;
+          this.updateSummaryFromOrder(res.data);
+          return this.currentOrderId;
+        } catch (e) { Layout.toast(e.message, 'error'); return null; }
+      },
+
+      updateSummaryFromOrder(order) {
+        document.getElementById('sumSubtotal').textContent = Layout.money(order.subTotal);
+        document.getElementById('sumDiscount').textContent = Layout.money(order.discountAmount);
+        document.getElementById('sumSc').textContent = Layout.money(order.serviceChargeAmount);
+        document.getElementById('sumVat').textContent = Layout.money(order.vatAmount);
+        document.getElementById('sumNet').textContent = Layout.money(order.netAmount);
+        this.paidTotal = (order.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
+      },
+
+      async addPayment() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        const api = Layout.api(); if (!api) return;
+        const method = document.getElementById('payMethod').value;
+        const amount = parseFloat(document.getElementById('payAmount').value);
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงิน', 'warning'); return; }
+        try {
+          const res = await api.addPosPayment({
+            orderId: orderId,
+            paymentMethod: method,
+            amount: amount,
+            receivedAmount: method === 'Cash' ? amount : amount,
+            referenceNo: document.getElementById('payRef').value || null
+          });
+          this.currentOrder = res.data;
+          this.updateSummaryFromOrder(res.data);
+          Layout.toast('บันทึกการชำระเงินสำเร็จ');
+          document.getElementById('payAmount').value = '';
+          document.getElementById('payRef').value = '';
+          // Show change for cash
+          if (method === 'Cash') {
+            const net = res.data.netAmount;
+            const totalPaid = (res.data.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
+            if (totalPaid >= net) {
+              const lastPay = res.data.payments[res.data.payments.length - 1];
+              document.getElementById('changeDisplay').style.display = 'block';
+              document.getElementById('changeAmount').textContent = Layout.money(lastPay.changeAmount);
+            }
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async completeOrder() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.completePosOrder(orderId);
+          Layout.toast('ปิดบิลสำเร็จ!');
+          this.resetOrder();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async voidOrder() {
+        if (!this.currentOrderId) {
+          this.resetOrder();
+          return;
+        }
+        if (!confirm('ยืนยันยกเลิกออเดอร์?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.voidPosOrder(this.currentOrderId);
+          Layout.toast('ยกเลิกออเดอร์สำเร็จ');
+          this.resetOrder();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      resetOrder() {
+        this.cart = [];
+        this.currentOrderId = null;
+        this.currentOrder = null;
+        this.paidTotal = 0;
+        document.getElementById('orderTitle').textContent = 'ออเดอร์ใหม่';
+        document.getElementById('fCustomerName').value = '';
+        document.getElementById('fTableNo').value = '';
+        document.getElementById('fQueueNo').value = '';
+        document.getElementById('payAmount').value = '';
+        document.getElementById('payRef').value = '';
+        document.getElementById('changeDisplay').style.display = 'none';
+        this.renderCart();
+      },
+
+      async showDailySummary() {
+        Layout.openModal('summaryModal');
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPosDailySummary();
+          const d = res.data;
+          document.getElementById('summaryContent').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div style="background:var(--gray-50);padding:16px;border-radius:8px;text-align:center;">
+                <div style="font-size:12px;color:var(--gray-500);">จำนวนออเดอร์</div>
+                <div style="font-size:24px;font-weight:700;">${d.totalOrders}</div>
+              </div>
+              <div style="background:var(--gray-50);padding:16px;border-radius:8px;text-align:center;">
+                <div style="font-size:12px;color:var(--gray-500);">ยอดขายรวม</div>
+                <div style="font-size:24px;font-weight:700;color:var(--primary);">${Layout.money(d.totalSales)}</div>
+              </div>
+              <div style="background:var(--gray-50);padding:16px;border-radius:8px;text-align:center;">
+                <div style="font-size:12px;color:var(--gray-500);">ส่วนลดรวม</div>
+                <div style="font-size:24px;font-weight:700;color:var(--danger);">${Layout.money(d.totalDiscount)}</div>
+              </div>
+              <div style="background:var(--gray-50);padding:16px;border-radius:8px;text-align:center;">
+                <div style="font-size:12px;color:var(--gray-500);">VAT รวม</div>
+                <div style="font-size:24px;font-weight:700;">${Layout.money(d.totalVat)}</div>
+              </div>
+            </div>
+            ${d.paymentBreakdown && d.paymentBreakdown.length ? `
+              <h4 style="margin:16px 0 8px;">แยกตามช่องทางชำระ</h4>
+              <table class="table" style="font-size:13px;">
+                <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th></tr></thead>
+                <tbody>${d.paymentBreakdown.map(p => `<tr><td>${Page.payMethodLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.total)}</td></tr>`).join('')}</tbody>
+              </table>
+            ` : ''}
+          `;
+        } catch (e) {
+          document.getElementById('summaryContent').innerHTML = `<p class="text-danger">${e.message}</p>`;
+        }
+      },
+
+      payMethodLabel(m) {
+        const map = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', PromptPay:'พร้อมเพย์', Cheque:'เช็ค' };
+        return map[m] || m;
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>
