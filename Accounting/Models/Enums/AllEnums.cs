@@ -504,3 +504,63 @@ public enum ColumnMatchConfidence
     Low = 3,               // < 60% มั่นใจต่ำ - ควร Manual
     None = 4               // จับคู่ไม่ได้
 }
+
+// ==================== POS (Point of Sale) ====================
+public enum PosBusinessMode
+{
+    Trading = 1,           // ซื้อมาขายไป
+    Restaurant = 2,        // ร้านอาหาร
+    Cafe = 3,              // คาเฟ่/เครื่องดื่ม
+    Service = 4,           // ธุรกิจบริการ (ร้านทำเล็บ, สปา, ฯลฯ)
+    Mixed = 5              // ผสม (สินค้า+บริการ)
+}
+
+public enum PosOrderType
+{
+    WalkIn = 1,            // ลูกค้า walk-in
+    DineIn = 2,            // นั่งทานในร้าน
+    TakeAway = 3,          // ซื้อกลับ
+    Delivery = 4,          // เดลิเวอรี่
+    Appointment = 5,       // นัดหมาย (สำหรับบริการ)
+    Online = 6             // สั่งออนไลน์
+}
+
+public enum PosOrderStatus
+{
+    Open = 0,              // เปิดบิล
+    InProgress = 1,        // กำลังดำเนินการ
+    ReadyToServe = 2,      // พร้อมเสิร์ฟ/ส่งมอบ
+    Completed = 3,         // จ่ายเงินแล้ว/เสร็จสิ้น
+    Voided = 4,            // ยกเลิก
+    Refunded = 5,          // คืนเงิน
+    OnHold = 6             // พักบิล
+}
+
+public enum PosItemStatus
+{
+    Pending = 0,           // รอดำเนินการ
+    Preparing = 1,         // กำลังเตรียม (ครัว/บาร์)
+    Ready = 2,             // พร้อมเสิร์ฟ
+    Served = 3,            // เสิร์ฟแล้ว
+    Cancelled = 4          // ยกเลิก
+}
+
+public enum PosSessionStatus
+{
+    Open = 1,              // เปิดกะ
+    Closed = 2             // ปิดกะ
+}
+
+public enum ServiceActivityStatus
+{
+    Pending = 0,           // รอดำเนินการ
+    InProgress = 1,        // กำลังทำ
+    Completed = 2,         // เสร็จแล้ว
+    Skipped = 3            // ข้าม
+}
+
+public enum CommissionType
+{
+    Fixed = 1,             // จำนวนเงินคงที่
+    Percentage = 2         // เปอร์เซ็นต์จากราคาบริการ
+}

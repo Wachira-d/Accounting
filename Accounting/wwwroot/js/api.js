@@ -418,6 +418,53 @@ const API = {
       // e-Tax extended
       etaxSignAndSubmit: (id) => API.post(`${base}/etax/${id}/sign-and-submit`),
       etaxQuickSubmit: (d) => API.post(`${base}/etax/quick-submit`, d),
+      // POS - Terminal
+      getPosTerminals: () => API.get(`${base}/pos/terminals`),
+      createPosTerminal: (d) => API.post(`${base}/pos/terminals`, d),
+      updatePosTerminal: (id, d) => API.put(`${base}/pos/terminals/${id}`, d),
+      // POS - Session
+      getPosSessions: (q = '') => API.get(`${base}/pos/sessions${q}`),
+      getPosSession: (id) => API.get(`${base}/pos/sessions/${id}`),
+      openPosSession: (d) => API.post(`${base}/pos/sessions/open`, d),
+      closePosSession: (id, d) => API.post(`${base}/pos/sessions/${id}/close`, d),
+      // POS - Order
+      getPosOrders: (q = '') => API.get(`${base}/pos/orders${q}`),
+      getPosOrder: (id) => API.get(`${base}/pos/orders/${id}`),
+      createPosOrder: (d) => API.post(`${base}/pos/orders`, d),
+      updatePosOrder: (id, d) => API.put(`${base}/pos/orders/${id}`, d),
+      updatePosOrderStatus: (id, d) => API.post(`${base}/pos/orders/${id}/status`, d),
+      voidPosOrder: (id) => API.post(`${base}/pos/orders/${id}/void`),
+      completePosOrder: (id) => API.post(`${base}/pos/orders/${id}/complete`),
+      // POS - Order Items
+      addPosOrderItem: (orderId, d) => API.post(`${base}/pos/orders/${orderId}/items`, d),
+      removePosOrderItem: (orderId, itemId) => API.del(`${base}/pos/orders/${orderId}/items/${itemId}`),
+      updatePosItemStatus: (orderId, itemId, d) => API.post(`${base}/pos/orders/${orderId}/items/${itemId}/status`, d),
+      // POS - Payment
+      addPosPayment: (d) => API.post(`${base}/pos/payments`, d),
+      // POS - Service Package
+      getPosPackages: (q = '') => API.get(`${base}/pos/packages${q}`),
+      getPosPackage: (id) => API.get(`${base}/pos/packages/${id}`),
+      createPosPackage: (d) => API.post(`${base}/pos/packages`, d),
+      updatePosPackage: (id, d) => API.put(`${base}/pos/packages/${id}`, d),
+      deletePosPackage: (id) => API.del(`${base}/pos/packages/${id}`),
+      // POS - Service Component
+      addPosComponent: (pkgId, d) => API.post(`${base}/pos/packages/${pkgId}/components`, d),
+      updatePosComponent: (pkgId, compId, d) => API.put(`${base}/pos/packages/${pkgId}/components/${compId}`, d),
+      removePosComponent: (pkgId, compId) => API.del(`${base}/pos/packages/${pkgId}/components/${compId}`),
+      // POS - Service Activity
+      updatePosActivity: (actId, d) => API.put(`${base}/pos/activities/${actId}`, d),
+      // POS - Modifier Group
+      getPosModifierGroups: (q = '') => API.get(`${base}/pos/modifier-groups${q}`),
+      createPosModifierGroup: (d) => API.post(`${base}/pos/modifier-groups`, d),
+      updatePosModifierGroup: (id, d) => API.put(`${base}/pos/modifier-groups/${id}`, d),
+      deletePosModifierGroup: (id) => API.del(`${base}/pos/modifier-groups/${id}`),
+      // POS - Modifier Option
+      addPosModifierOption: (groupId, d) => API.post(`${base}/pos/modifier-groups/${groupId}/options`, d),
+      updatePosModifierOption: (groupId, optId, d) => API.put(`${base}/pos/modifier-groups/${groupId}/options/${optId}`, d),
+      removePosModifierOption: (groupId, optId) => API.del(`${base}/pos/modifier-groups/${groupId}/options/${optId}`),
+      // POS - Reports
+      getPosDailySummary: (q = '') => API.get(`${base}/pos/daily-summary${q}`),
+      getPosCommissionSummary: (q) => API.get(`${base}/pos/commission-summary${q}`),
     };
   },
 
