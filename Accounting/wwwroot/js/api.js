@@ -21,10 +21,16 @@ const API = {
     try {
       const res = await fetch(`${this.baseUrl}${url}`, options);
       if (res.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        window.location.href = '/login.html';
-        return;
+        // On login/register pages, don't redirect — let the page handle the error
+        const isAuthPage = ['/login.html', '/register.html', '/admin/login.html'].some(p => window.location.pathname.endsWith(p));
+        if (!isAuthPage) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          window.location.href = '/login.html';
+          return;
+        }
+        const json = await res.json();
+        throw new Error(json.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
       }
       if (res.status === 403) {
         throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
