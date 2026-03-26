@@ -154,7 +154,7 @@ const Layout = {
     sidebar.id = 'sidebar';
     sidebar.innerHTML = `
       <div class="sidebar-header">
-        <div class="sidebar-logo"><span>AcctPlatform</span></div>
+        <div class="sidebar-logo"><span>Nexaacc</span></div>
       </div>
       <div style="padding:12px 16px;border-bottom:1px solid var(--gray-800)">
         <select id="companySelect" class="form-select" style="background:var(--gray-800);color:#fff;border-color:var(--gray-700);font-size:13px;padding:8px 10px">
@@ -281,15 +281,12 @@ const Layout = {
         }
       }
 
-      // First-login redirect: only if setup is not complete AND user is on dashboard (first page after login)
-      // Don't forcefully redirect from other pages — let users explore freely
+      // Show setup reminder on dashboard if setup not complete (no forced redirect)
       const selected = companies.find(c => c.id === (this.currentCompany?.id || companies[0].id));
       if (selected && !selected.isSetupComplete) {
         const path = window.location.pathname;
-        // Only redirect from dashboard (app.html) — not from other pages the user navigated to
         if (path === '/app.html' || path === '/') {
-          window.location.href = '/pages/settings.html?setup=1';
-          return;
+          this.showSetupReminder();
         }
       }
 
@@ -298,6 +295,23 @@ const Layout = {
       else if (typeof Page !== 'undefined' && Page.load) Page.load();
       else if (typeof Page !== 'undefined' && Page.init) Page.init();
     } catch (e) { console.warn('Could not load companies:', e); }
+  },
+
+  showSetupReminder() {
+    const pageContent = document.getElementById('pageContent');
+    if (!pageContent) return;
+    // Don't add duplicate
+    if (document.getElementById('setupReminder')) return;
+    const banner = document.createElement('div');
+    banner.id = 'setupReminder';
+    banner.style.cssText = 'background:linear-gradient(135deg,#4F46E5,#4338ca);color:#fff;padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px';
+    banner.innerHTML = `
+      <div>
+        <strong style="font-size:1rem">⚙️ ตั้งค่าบริษัทให้เสร็จสมบูรณ์</strong>
+        <p style="margin:4px 0 0;font-size:0.875rem;opacity:0.9">กรอกข้อมูลบริษัทเพื่อออกเอกสารภาษีและรายงานได้ถูกต้อง</p>
+      </div>
+      <a href="/pages/settings.html?setup=1" class="btn" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3);white-space:nowrap">ตั้งค่าเลย</a>`;
+    pageContent.insertBefore(banner, pageContent.firstChild);
   },
 
   setupStep: 1,
@@ -448,7 +462,7 @@ const Layout = {
     pageContent.innerHTML = `
       <div style="max-width:600px;margin:40px auto;text-align:center">
         <div style="font-size:48px;margin-bottom:12px">🏢</div>
-        <h2 style="margin-bottom:4px">ยินดีต้อนรับสู่ AcctPlatform!</h2>
+        <h2 style="margin-bottom:4px">ยินดีต้อนรับสู่ Nexaacc!</h2>
         <p style="color:var(--gray-500);margin-bottom:24px">กรอกข้อมูลกิจการเพื่อเริ่มต้นใช้งานระบบบัญชี</p>
         ${stepBar}
         <div class="card" style="text-align:left;padding:24px">
@@ -679,7 +693,7 @@ const Layout = {
 
   setTitle(title) {
     document.getElementById('headerTitle').textContent = title;
-    document.title = title + ' - AcctPlatform';
+    document.title = title + ' - Nexaacc';
   },
 
   // Toast notifications (with deduplication - max 3 visible, no duplicate messages)
@@ -832,7 +846,7 @@ const Layout = {
   },
 
   // Print specific element
-  printElement(selector, title = 'AcctPlatform') {
+  printElement(selector, title = 'Nexaacc') {
     const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
     if (!el) return;
     const win = window.open('', '_blank');

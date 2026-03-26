@@ -1,6 +1,6 @@
 {
-  "name": "AcctPlatform - ระบบบัญชีออนไลน์",
-  "short_name": "AcctPlatform",
+  "name": "Nexaacc - ระบบบัญชีออนไลน์",
+  "short_name": "Nexaacc",
   "description": "ระบบบัญชี SaaS ที่ดีที่สุดสำหรับธุรกิจไทย",
   "start_url": "/app.html",
   "display": "standalone",

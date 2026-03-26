@@ -1,4 +1,4 @@
-const CACHE_NAME = 'acctplatform-v1';
+const CACHE_NAME = 'nexaacc-v1';
 const STATIC_ASSETS = [
   '/app.html',
   '/login.html',
@@ -72,7 +72,7 @@ self.addEventListener('fetch', event => {
 
 // Push notifications
 self.addEventListener('push', event => {
-  const data = event.data?.json() || { title: 'AcctPlatform', body: 'คุณมีการแจ้งเตือนใหม่' };
+  const data = event.data?.json() || { title: 'Nexaacc', body: 'คุณมีการแจ้งเตือนใหม่' };
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
