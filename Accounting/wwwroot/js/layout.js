@@ -6,9 +6,14 @@ const Layout = {
   user: null,
   companies: [],
   currentCompany: null,
+  _initialized: false,
 
   init(pageName) {
+    // Prevent double-initialization (loadCompanies calls Page.init which calls Layout.init again)
+    if (this._initialized && this.currentPage === pageName) return true;
+
     this.currentPage = pageName;
+    this._initialized = true;
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
     if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return false; }
@@ -228,6 +233,17 @@ const Layout = {
   async loadCompanies() {
     try {
       const res = await API.get('/api/company');
+
+      // Guard: if API failed (e.g. network error), don't disrupt current state
+      if (!res || !res.success) {
+        // Still try to load page data with cached company
+        if (this.currentCompany?.id) {
+          if (typeof Dashboard !== 'undefined' && Dashboard.load) Dashboard.load();
+          else if (typeof Page !== 'undefined' && Page.load) Page.load();
+        }
+        return;
+      }
+
       const companies = res.data?.items || res.data || [];
       const select = document.getElementById('companySelect');
 
@@ -238,6 +254,11 @@ const Layout = {
         return;
       }
 
+      // Store companies list for later use (e.g. company select change handler)
+      this.companies = companies;
+
+      // Clear default "-- เลือกบริษัท --" and populate with actual companies
+      select.innerHTML = '';
       companies.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.id;
@@ -260,15 +281,21 @@ const Layout = {
         }
       }
 
-      // First-login redirect: if company setup is not complete, go to settings
+      // First-login redirect: only if setup is not complete AND user is on dashboard (first page after login)
+      // Don't forcefully redirect from other pages — let users explore freely
       const selected = companies.find(c => c.id === (this.currentCompany?.id || companies[0].id));
-      if (selected && !selected.isSetupComplete && !window.location.pathname.includes('/pages/settings.html')) {
-        window.location.href = '/pages/settings.html?setup=1';
-        return;
+      if (selected && !selected.isSetupComplete) {
+        const path = window.location.pathname;
+        // Only redirect from dashboard (app.html) — not from other pages the user navigated to
+        if (path === '/app.html' || path === '/') {
+          window.location.href = '/pages/settings.html?setup=1';
+          return;
+        }
       }
 
-      // Reload page content with selected company
+      // Load page data with selected company (use load() not init() to avoid re-init loop)
       if (typeof Dashboard !== 'undefined' && Dashboard.load) Dashboard.load();
+      else if (typeof Page !== 'undefined' && Page.load) Page.load();
       else if (typeof Page !== 'undefined' && Page.init) Page.init();
     } catch (e) { console.warn('Could not load companies:', e); }
   },
@@ -579,8 +606,10 @@ const Layout = {
       if (e.target.id === 'companySelect') {
         const id = e.target.value;
         if (id) {
-          this.currentCompany = { id };
-          localStorage.setItem('currentCompany', JSON.stringify({ id }));
+          // Keep full company object if available, fallback to { id }
+          const full = this.companies?.find(c => c.id === id) || { id };
+          this.currentCompany = full;
+          localStorage.setItem('currentCompany', JSON.stringify(full));
           window.location.reload();
         }
       }
