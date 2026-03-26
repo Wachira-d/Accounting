@@ -251,6 +251,13 @@ const Layout = {
         this.currentCompany = companies[0];
         localStorage.setItem('currentCompany', JSON.stringify(companies[0]));
         select.value = companies[0].id;
+      } else {
+        // Always refresh localStorage with full company data from API (includes isSetupComplete etc.)
+        const fresh = companies.find(c => c.id === this.currentCompany.id);
+        if (fresh) {
+          this.currentCompany = fresh;
+          localStorage.setItem('currentCompany', JSON.stringify(fresh));
+        }
       }
 
       // First-login redirect: if company setup is not complete, go to settings
