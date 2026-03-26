@@ -356,6 +356,23 @@ app.MapFallbackToFile("index.html");
                 // IndustryType column on Companies
                 @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Companies') AND name = 'IndustryType')
                   ALTER TABLE [Companies] ADD [IndustryType] int NOT NULL DEFAULT 0;",
+                // Users: SSO & Security columns
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'AuthProvider')
+                  ALTER TABLE [Users] ADD [AuthProvider] nvarchar(max) NULL;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'AuthProviderId')
+                  ALTER TABLE [Users] ADD [AuthProviderId] nvarchar(max) NULL;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'IsSystemAdmin')
+                  ALTER TABLE [Users] ADD [IsSystemAdmin] bit NOT NULL DEFAULT 0;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'FailedLoginAttempts')
+                  ALTER TABLE [Users] ADD [FailedLoginAttempts] int NULL;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'LockoutEnd')
+                  ALTER TABLE [Users] ADD [LockoutEnd] datetime2 NULL;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'PasswordResetToken')
+                  ALTER TABLE [Users] ADD [PasswordResetToken] nvarchar(max) NULL;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'PasswordResetTokenExpiry')
+                  ALTER TABLE [Users] ADD [PasswordResetTokenExpiry] datetime2 NULL;",
+                @"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'EmailVerified')
+                  ALTER TABLE [Users] ADD [EmailVerified] bit NOT NULL DEFAULT 0;",
                 // POS tables (create if missing - ordered by FK dependency)
                 @"IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PosTerminals')
                   CREATE TABLE [PosTerminals] (
