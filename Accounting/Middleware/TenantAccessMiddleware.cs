@@ -20,6 +20,7 @@ public class TenantAccessMiddleware
         "/api/admin",
         "/api/subscription/plans",
         "/api/landing",
+        "/api/contact",
         "/swagger",
         "/health"
     };

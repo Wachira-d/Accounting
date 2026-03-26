@@ -225,6 +225,9 @@ public class AccountingDbContext : DbContext
     public DbSet<ProductModifierOption> ProductModifierOptions => Set<ProductModifierOption>();
     public DbSet<StaffCommissionSummary> StaffCommissionSummaries => Set<StaffCommissionSummary>();
 
+    // Contact Inquiries (public contact form)
+    public DbSet<ContactInquiry> ContactInquiries => Set<ContactInquiry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
