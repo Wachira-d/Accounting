@@ -47,7 +47,8 @@ public record UpdateJournalEntryRequest(
     DateTime? EntryDate,
     string? Description,
     string? Reference,
-    List<JournalLineRequest>? Lines);
+    List<JournalLineRequest>? Lines,
+    JournalType? JournalType = null);
 
 public record JournalEntryResponse(
     Guid Id,

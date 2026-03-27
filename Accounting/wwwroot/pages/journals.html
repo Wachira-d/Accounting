@@ -33,7 +33,7 @@
     </div>
 
     <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput" oninput="Page.debounceSearch()">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -185,12 +185,19 @@
           }
         } catch(e) {}
       },
+      _searchTimer: null,
+      debounceSearch() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
+      },
       async load() {
         const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value.trim();
         const status = document.getElementById('statusFilter').value;
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
         let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
         if (this.currentType) q += `&journalType=${this.currentType}`;
         if (status) q += `&status=${status}`;
         if (from) q += `&fromDate=${from}`;
