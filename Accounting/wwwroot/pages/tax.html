@@ -138,7 +138,7 @@
       updateStats() {
         const items = this.allReports;
         document.getElementById('statTotal').textContent = items.length;
-        document.getElementById('statDraft').textContent = items.filter(i => i.status === 'Draft' || i.status === 'Generated').length;
+        document.getElementById('statDraft').textContent = items.filter(i => i.status === 'Draft').length;
         document.getElementById('statFiled').textContent = items.filter(i => i.status === 'Filed').length;
         const latest = items.find(i => i.taxType === 'VAT');
         document.getElementById('statNetTax').textContent = latest ? Layout.money(latest.netVat) : '-';

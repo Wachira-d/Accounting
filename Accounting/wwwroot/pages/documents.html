@@ -480,6 +480,19 @@
       },
       openConvert(id) {
         document.getElementById('convertDocId').value = id;
+        // Filter conversion options based on source document type
+        const doc = this._currentDoc;
+        const select = document.getElementById('convertTarget');
+        if (doc && select) {
+          const revenueTypes = ['Quotation','Invoice','TaxInvoice','Receipt','DebitNote','CreditNote','BillingNote','ReceiptVoucher'];
+          const expenseTypes = ['PurchaseOrder','PurchaseInvoice','PaymentVoucher','ExpenseNote'];
+          const isRevenue = revenueTypes.includes(doc.documentType);
+          Array.from(select.options).forEach(opt => {
+            const isRevenueTarget = revenueTypes.includes(opt.value);
+            const isExpenseTarget = expenseTypes.includes(opt.value);
+            opt.hidden = (isRevenue && isExpenseTarget) || (!isRevenue && isRevenueTarget);
+          });
+        }
         Layout.openModal('convertModal');
       },
       async doConvert() {

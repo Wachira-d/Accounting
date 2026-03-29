@@ -142,9 +142,19 @@
             api.getBankAccounts()
           ]);
           const docs = docsRes.data?.items || docsRes.data || [];
+          this._docsMap = {};
+          docs.forEach(d => this._docsMap[d.id] = d);
           const docSelect = document.getElementById('fDocId');
           docSelect.innerHTML = '<option value="">-- เลือกเอกสาร --</option>' +
             docs.map(d => `<option value="${d.id}">${d.documentNumber} - ${d.contactName || ''} (${Layout.money(d.balanceDue || d.totalAmount)})</option>`).join('');
+          docSelect.onchange = () => {
+            const doc = this._docsMap[docSelect.value];
+            if (doc) {
+              const bal = doc.balanceDue || doc.totalAmount;
+              document.getElementById('fAmount').value = bal;
+              document.getElementById('fAmount').max = bal;
+            }
+          };
           const banks = bankRes.data?.items || bankRes.data || [];
           const bankSelect = document.getElementById('fBankAcc');
           bankSelect.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
@@ -156,11 +166,18 @@
         const api = Layout.api(); if (!api) return;
         const docId = document.getElementById('fDocId').value;
         if (!docId) { Layout.toast('กรุณาเลือกเอกสารอ้างอิง', 'error'); return; }
+        const amount = parseFloat(document.getElementById('fAmount').value);
+        if (!amount || amount <= 0) { Layout.toast('กรุณากรอกจำนวนเงินที่ถูกต้อง', 'error'); return; }
+        const doc = this._docsMap?.[docId];
+        if (doc) {
+          const maxAmount = doc.balanceDue || doc.totalAmount;
+          if (amount > maxAmount) { Layout.toast(`จำนวนเงินเกินยอดคงค้าง (${Layout.money(maxAmount)})`, 'error'); return; }
+        }
         try {
           await api.createPayment({
             documentId: docId,
             paymentDate: document.getElementById('fDate').value,
-            amount: parseFloat(document.getElementById('fAmount').value),
+            amount,
             paymentMethod: document.getElementById('fMethod').value,
             reference: document.getElementById('fRef').value || null,
             bankAccountId: document.getElementById('fBankAcc').value || null,

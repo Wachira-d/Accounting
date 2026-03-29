@@ -230,7 +230,8 @@
           ]);
           const a = assetRes.data;
           const deps = depRes.data?.items || depRes.data || [];
-          const usedPct = a.purchaseCost > 0 ? ((a.accumulatedDepreciation / (a.purchaseCost - (a.salvageValue||0))) * 100).toFixed(0) : 0;
+          const depBase = a.purchaseCost - (a.salvageValue||0);
+          const usedPct = depBase > 0 ? ((a.accumulatedDepreciation / depBase) * 100).toFixed(0) : 0;
 
           document.getElementById('detailTitle').textContent = `${a.assetCode} - ${a.name}`;
           document.getElementById('detailInfo').innerHTML = `

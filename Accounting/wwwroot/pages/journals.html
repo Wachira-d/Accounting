@@ -267,14 +267,18 @@
         const api = Layout.api(); if (!api) return;
         const rows = document.querySelectorAll('#linesBody tr');
         const lines = [];
+        let skippedLines = 0;
         rows.forEach((row, i) => {
           const acc = row.querySelector('select')?.value;
           const debit = parseFloat(row.querySelector('.line-debit')?.value) || 0;
           const credit = parseFloat(row.querySelector('.line-credit')?.value) || 0;
           if (acc && (debit > 0 || credit > 0)) {
             lines.push({ accountId: acc, debitAmount: debit, creditAmount: credit, description: row.querySelector('input[type="text"]')?.value || null });
+          } else if (!acc && (debit > 0 || credit > 0)) {
+            skippedLines++;
           }
         });
+        if (skippedLines > 0) { Layout.toast(`มี ${skippedLines} รายการที่ไม่ได้เลือกบัญชี กรุณาเลือกบัญชีให้ครบ`, 'error'); return; }
         if (lines.length < 2) { Layout.toast('ต้องมีอย่างน้อย 2 รายการ', 'error'); return; }
         const totalD = lines.reduce((s, l) => s + l.debitAmount, 0);
         const totalC = lines.reduce((s, l) => s + l.creditAmount, 0);
