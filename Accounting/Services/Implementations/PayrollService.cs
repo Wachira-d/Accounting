@@ -553,6 +553,33 @@ public class PayrollService : IPayrollService
                             ssoPayableAccount.Id, 0, totalSso, "ประกันสังคมค้างจ่าย"));
                 }
 
+                // Cr: กองทุนสำรองเลี้ยงชีพค้างจ่าย (213) — ส่วนลูกจ้าง+นายจ้าง
+                var totalPvd = run.TotalProvidentFundEmployee + run.TotalProvidentFundEmployer;
+                if (totalPvd > 0)
+                {
+                    var pvdPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode.StartsWith("2132") && a.Level >= 4)
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode.StartsWith("213") && a.Level >= 4
+                            && a.AccountCode != (ssoPayableAccount?.AccountCode ?? ""));
+                    if (pvdPayableAccount != null)
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            pvdPayableAccount.Id, 0, totalPvd, "กองทุนสำรองเลี้ยงชีพค้างจ่าย"));
+                }
+
+                // Dr: กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง (532/533)
+                if (run.TotalProvidentFundEmployer > 0)
+                {
+                    var pvdExpAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode.StartsWith("533") && a.Level >= 4)
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode.StartsWith("532") && a.Level >= 4
+                            && a.AccountCode != (salaryAccount?.AccountCode ?? ""));
+                    if (pvdExpAccount != null)
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            pvdExpAccount.Id, run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
+                }
+
                 // Cr: เงินสด/ธนาคาร (1111) — เงินเดือนสุทธิ
                 var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("1111") && a.Level >= 4);

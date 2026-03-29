@@ -342,13 +342,12 @@ public class ExpenseClaimService : IExpenseClaimService
                     whtAccount.Id, 0, claim.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
         }
 
-        // Cr: เงินสด/ธนาคาร — ยอดที่จ่ายจริง (TotalAmount - WHT)
+        // Cr: เงินสด/ธนาคาร — ยอดที่จ่ายจริง (TotalAmount ซึ่งหัก WHT ไว้แล้ว)
         var cashAccount = await FindAccountAsync(companyId, "1111");
         if (cashAccount != null)
         {
-            var cashPaid = claim.TotalAmount - claim.WithholdingTaxAmount;
             lines.Add(new JournalLineRequest(
-                cashAccount.Id, 0, cashPaid,
+                cashAccount.Id, 0, claim.TotalAmount,
                 $"จ่ายเงินเบิกค่าใช้จ่าย - {claim.ClaimNumber}"));
         }
 
