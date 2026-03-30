@@ -84,6 +84,7 @@ builder.Services.AddScoped<IBudgetService, BudgetService>();
 // Analytics & Reporting modules
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAgingReportService, AgingReportService>();
+builder.Services.AddScoped<IArApAnalysisService, ArApAnalysisService>();
 builder.Services.AddScoped<IExpenseClaimService, ExpenseClaimService>();
 builder.Services.AddScoped<IImportExportService, ImportExportService>();
 builder.Services.AddScoped<IAuditTrailService, AuditTrailService>();

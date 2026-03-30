@@ -386,6 +386,10 @@ const API = {
       getAgingPayables: (q = '') => API.get(`${base}/aging/payables${q}`),
       getContactReceivables: (contactId, q = '') => API.get(`${base}/aging/contacts/${contactId}/receivables${q}`),
       getContactPayables: (contactId, q = '') => API.get(`${base}/aging/contacts/${contactId}/payables${q}`),
+      // AR/AP Analysis
+      getArApOverview: () => API.get(`${base}/arap-analysis/overview`),
+      getArApContactDetail: (contactId, type = 'ar') => API.get(`${base}/arap-analysis/contacts/${contactId}?type=${type}`),
+      getBadDebtAnalysis: () => API.get(`${base}/arap-analysis/bad-debt`),
       // Audit
       getAuditLogs: (q = '') => API.get(`${base}/audit/logs${q}`),
       getAuditSummary: (q = '') => API.get(`${base}/audit/summary${q}`),

@@ -129,6 +129,7 @@ const Layout = {
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },
     { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html' },
+    { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍', href: '/pages/arap-analysis.html' },
     { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html' },
 
     { section: 'โครงการ/องค์กร' },
