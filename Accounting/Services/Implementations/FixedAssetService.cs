@@ -109,10 +109,8 @@ public class FixedAssetService : IFixedAssetService
         asset.DisposalDate = request.DisposalDate;
         asset.DisposalAmount = request.DisposalAmount;
 
-        // Calculate gain/loss on disposal
         var gainLoss = request.DisposalAmount - asset.NetBookValue;
 
-        // Auto-create journal entry for disposal if accounts are configured
         if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
         {
             var entryNumber = $"DEP-DISP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
@@ -129,7 +127,7 @@ public class FixedAssetService : IFixedAssetService
                 CreatedBy = performedBy
             };
 
-            // Debit: Accumulated Depreciation (remove accumulated)
+            // Dr: ค่าเสื่อมราคาสะสม (ล้างยอดสะสม)
             journalEntry.Lines.Add(new JournalEntryLine
             {
                 AccountId = asset.AccumulatedDepreciationAccountId.Value,
@@ -138,7 +136,7 @@ public class FixedAssetService : IFixedAssetService
                 Description = $"ค่าเสื่อมราคาสะสม - {asset.Name}"
             });
 
-            // Credit: Asset account (remove asset at cost)
+            // Cr: สินทรัพย์ (ตัดออกราคาทุน)
             journalEntry.Lines.Add(new JournalEntryLine
             {
                 AccountId = asset.AssetAccountId.Value,
@@ -147,19 +145,15 @@ public class FixedAssetService : IFixedAssetService
                 Description = $"ตัดสินทรัพย์ - {asset.Name}"
             });
 
-            // If disposal amount > 0, debit Bank/Cash
+            // Dr: เงินสด/ธนาคาร (ถ้าขายได้เงิน)
             if (request.DisposalAmount > 0)
             {
-                // Use the first active bank account's linked account or a default
-                var bankAccount = await _db.Set<BankAccount>()
-                    .Where(b => b.CompanyId == companyId && b.IsActive && b.LinkedAccountId.HasValue)
-                    .FirstOrDefaultAsync();
-
-                if (bankAccount?.LinkedAccountId != null)
+                var cashAccount = await FindAccountAsync(companyId, "1111");
+                if (cashAccount != null)
                 {
                     journalEntry.Lines.Add(new JournalEntryLine
                     {
-                        AccountId = bankAccount.LinkedAccountId.Value,
+                        AccountId = cashAccount.Id,
                         DebitAmount = request.DisposalAmount,
                         CreditAmount = 0,
                         Description = $"รับเงินจากจำหน่ายสินทรัพย์ - {asset.Name}"
@@ -167,30 +161,42 @@ public class FixedAssetService : IFixedAssetService
                 }
             }
 
-            // Gain or loss balancing entry
+            // กำไร/ขาดทุนจากการจำหน่าย
             if (gainLoss != 0)
             {
-                // For now, use the depreciation expense account as a proxy for gain/loss
-                var balancingAccountId = asset.DepreciationExpenseAccountId ?? asset.AssetAccountId!.Value;
                 if (gainLoss > 0)
                 {
-                    journalEntry.Lines.Add(new JournalEntryLine
+                    // Cr: กำไรจากการจำหน่ายสินทรัพย์ (รายได้อื่น 42xx)
+                    var gainAccount = await FindAccountAsync(companyId, "4291")
+                        ?? await FindAccountAsync(companyId, "429")
+                        ?? await FindAccountAsync(companyId, "42");
+                    if (gainAccount != null)
                     {
-                        AccountId = balancingAccountId,
-                        DebitAmount = 0,
-                        CreditAmount = gainLoss,
-                        Description = $"กำไรจากการจำหน่ายสินทรัพย์ - {asset.Name}"
-                    });
+                        journalEntry.Lines.Add(new JournalEntryLine
+                        {
+                            AccountId = gainAccount.Id,
+                            DebitAmount = 0,
+                            CreditAmount = gainLoss,
+                            Description = $"กำไรจากการจำหน่ายสินทรัพย์ - {asset.Name}"
+                        });
+                    }
                 }
                 else
                 {
-                    journalEntry.Lines.Add(new JournalEntryLine
+                    // Dr: ขาดทุนจากการจำหน่ายสินทรัพย์ (ค่าใช้จ่ายอื่น 54xx)
+                    var lossAccount = await FindAccountAsync(companyId, "5491")
+                        ?? await FindAccountAsync(companyId, "549")
+                        ?? await FindAccountAsync(companyId, "54");
+                    if (lossAccount != null)
                     {
-                        AccountId = balancingAccountId,
-                        DebitAmount = Math.Abs(gainLoss),
-                        CreditAmount = 0,
-                        Description = $"ขาดทุนจากการจำหน่ายสินทรัพย์ - {asset.Name}"
-                    });
+                        journalEntry.Lines.Add(new JournalEntryLine
+                        {
+                            AccountId = lossAccount.Id,
+                            DebitAmount = Math.Abs(gainLoss),
+                            CreditAmount = 0,
+                            Description = $"ขาดทุนจากการจำหน่ายสินทรัพย์ - {asset.Name}"
+                        });
+                    }
                 }
             }
 
@@ -198,6 +204,110 @@ public class FixedAssetService : IFixedAssetService
             journalEntry.TotalCredit = journalEntry.Lines.Sum(l => l.CreditAmount);
 
             _db.JournalEntries.Add(journalEntry);
+        }
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(asset);
+    }
+
+    public async Task<FixedAssetResponse> WriteOffAsync(Guid companyId, Guid assetId, WriteOffAssetRequest request, string performedBy)
+    {
+        var asset = await _db.FixedAssets
+            .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
+
+        if (asset.Status != AssetStatus.Active && asset.Status != AssetStatus.FullyDepreciated)
+            throw new InvalidOperationException("สินทรัพย์นี้ไม่สามารถตัดจำหน่ายได้");
+
+        var remainingNBV = asset.NetBookValue;
+        asset.Status = AssetStatus.WrittenOff;
+        asset.DisposalDate = request.WriteOffDate;
+        asset.DisposalAmount = 0;
+
+        // Journal entry: ตัดจำหน่ายสินทรัพย์ (NBV เหลือ 0, ไม่ได้รับเงิน)
+        if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
+        {
+            var entryNumber = $"WO-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
+
+            var journalEntry = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = request.WriteOffDate,
+                JournalType = JournalType.General,
+                Description = $"ตัดจำหน่ายสินทรัพย์: {asset.Name} ({asset.AssetCode}){(request.Reason != null ? $" - {request.Reason}" : "")}",
+                Status = JournalEntryStatus.Posted,
+                IsAutoGenerated = true,
+                CreatedBy = performedBy
+            };
+
+            // Dr: ค่าเสื่อมราคาสะสม (ล้างยอดสะสม)
+            journalEntry.Lines.Add(new JournalEntryLine
+            {
+                AccountId = asset.AccumulatedDepreciationAccountId.Value,
+                DebitAmount = asset.AccumulatedDepreciation,
+                CreditAmount = 0,
+                Description = $"ค่าเสื่อมราคาสะสม - {asset.Name}"
+            });
+
+            // Dr: ขาดทุนจากการตัดจำหน่าย (ส่วนที่ยังเหลือ NBV)
+            if (remainingNBV > 0)
+            {
+                var lossAccount = await FindAccountAsync(companyId, "5491")
+                    ?? await FindAccountAsync(companyId, "549")
+                    ?? await FindAccountAsync(companyId, "54");
+                if (lossAccount != null)
+                {
+                    journalEntry.Lines.Add(new JournalEntryLine
+                    {
+                        AccountId = lossAccount.Id,
+                        DebitAmount = remainingNBV,
+                        CreditAmount = 0,
+                        Description = $"ขาดทุนจากการตัดจำหน่ายสินทรัพย์ - {asset.Name}"
+                    });
+                }
+            }
+
+            // Cr: สินทรัพย์ (ตัดออกราคาทุน)
+            journalEntry.Lines.Add(new JournalEntryLine
+            {
+                AccountId = asset.AssetAccountId.Value,
+                DebitAmount = 0,
+                CreditAmount = asset.PurchaseCost,
+                Description = $"ตัดสินทรัพย์ - {asset.Name}"
+            });
+
+            journalEntry.TotalDebit = journalEntry.Lines.Sum(l => l.DebitAmount);
+            journalEntry.TotalCredit = journalEntry.Lines.Sum(l => l.CreditAmount);
+            _db.JournalEntries.Add(journalEntry);
+        }
+
+        // Update asset NBV
+        asset.AccumulatedDepreciation = asset.PurchaseCost;
+        asset.NetBookValue = 0;
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(asset);
+    }
+
+    public async Task<FixedAssetResponse> AdjustUsefulLifeAsync(Guid companyId, Guid assetId, AdjustUsefulLifeRequest request)
+    {
+        var asset = await _db.FixedAssets
+            .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
+
+        if (asset.Status != AssetStatus.Active)
+            throw new InvalidOperationException("สามารถปรับอายุการใช้งานได้เฉพาะสินทรัพย์ที่ Active เท่านั้น");
+
+        if (request.NewUsefulLifeMonths <= 0)
+            throw new ArgumentException("อายุการใช้งานต้องมากกว่า 0 เดือน");
+
+        asset.UsefulLifeMonths = request.NewUsefulLifeMonths;
+        if (request.NewSalvageValue.HasValue)
+        {
+            if (request.NewSalvageValue.Value < 0)
+                throw new ArgumentException("มูลค่าซากต้องไม่ติดลบ");
+            asset.SalvageValue = request.NewSalvageValue.Value;
         }
 
         await _db.SaveChangesAsync();
@@ -236,7 +346,6 @@ public class FixedAssetService : IFixedAssetService
                 .AnyAsync(d => d.FixedAssetId == asset.Id && d.Year == request.Year && d.Month == request.Month);
             if (exists) continue;
 
-            // Check if asset purchase date is before this period
             var periodStart = new DateTime(request.Year, request.Month, 1);
             if (asset.PurchaseDate > periodStart) continue;
 
@@ -278,7 +387,6 @@ public class FixedAssetService : IFixedAssetService
             _db.AssetDepreciations.Add(depreciation);
             results.Add(depreciation);
 
-            // Collect journal entry lines for batch posting
             if (asset.DepreciationExpenseAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
             {
                 journalLines.Add(new JournalEntryLine
@@ -298,7 +406,6 @@ public class FixedAssetService : IFixedAssetService
             }
         }
 
-        // Create batch journal entry for all depreciation
         if (journalLines.Count > 0)
         {
             var entryNumber = $"JV-{request.Year}{request.Month:D2}-DEP{Guid.NewGuid().ToString()[..4].ToUpper()}";
@@ -347,11 +454,9 @@ public class FixedAssetService : IFixedAssetService
         var oldNbv = asset.NetBookValue;
         var surplus = request.NewFairValue - oldNbv;
 
-        // Update asset values
         asset.NetBookValue = request.NewFairValue;
         asset.PurchaseCost = asset.PurchaseCost + surplus;
 
-        // Create revaluation journal entry
         if (asset.AssetAccountId.HasValue && surplus != 0)
         {
             var entryNumber = $"REVAL-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
@@ -369,7 +474,6 @@ public class FixedAssetService : IFixedAssetService
 
             if (surplus > 0)
             {
-                // Debit: Asset account, Credit: Revaluation surplus (use asset account as proxy)
                 journalEntry.Lines.Add(new JournalEntryLine
                 {
                     AccountId = asset.AssetAccountId.Value,
@@ -380,7 +484,6 @@ public class FixedAssetService : IFixedAssetService
             }
             else
             {
-                // Debit: Revaluation loss, Credit: Asset account
                 journalEntry.Lines.Add(new JournalEntryLine
                 {
                     AccountId = asset.AssetAccountId.Value,
@@ -400,6 +503,172 @@ public class FixedAssetService : IFixedAssetService
         return new RevaluationResponse(
             asset.Id, asset.AssetCode, asset.Name,
             oldNbv, request.NewFairValue, surplus, request.RevaluationDate);
+    }
+
+    public async Task<List<AssetCategoryResponse>> GetCategoriesAsync(Guid companyId)
+    {
+        var assets = await _db.FixedAssets
+            .Where(a => a.CompanyId == companyId)
+            .ToListAsync();
+
+        return assets
+            .GroupBy(a => a.Category ?? "ไม่ระบุหมวดหมู่")
+            .Select(g => new AssetCategoryResponse(
+                g.Key,
+                g.Count(),
+                g.Sum(a => a.PurchaseCost),
+                g.Sum(a => a.NetBookValue)))
+            .OrderBy(c => c.Category)
+            .ToList();
+    }
+
+    public async Task<AssetRegisterReport> GetAssetRegisterReportAsync(Guid companyId)
+    {
+        var assets = await _db.FixedAssets
+            .Where(a => a.CompanyId == companyId)
+            .OrderBy(a => a.AssetCode)
+            .ToListAsync();
+
+        var items = assets.Select(a => new AssetRegisterReportItem(
+            a.AssetCode, a.Name, a.Category, a.Location,
+            a.PurchaseDate, a.PurchaseCost, a.SalvageValue,
+            a.UsefulLifeMonths, a.DepreciationMethod.ToString(),
+            a.AccumulatedDepreciation, a.NetBookValue,
+            a.Status.ToString(), a.DisposalDate, a.DisposalAmount)).ToList();
+
+        return new AssetRegisterReport(
+            DateTime.UtcNow,
+            items,
+            assets.Sum(a => a.PurchaseCost),
+            assets.Sum(a => a.AccumulatedDepreciation),
+            assets.Sum(a => a.NetBookValue),
+            assets.Count(a => a.Status == AssetStatus.Active),
+            assets.Count(a => a.Status == AssetStatus.Disposed || a.Status == AssetStatus.WrittenOff),
+            assets.Count(a => a.Status == AssetStatus.FullyDepreciated));
+    }
+
+    public async Task<DepreciationScheduleReport> GetDepreciationScheduleAsync(Guid companyId, Guid assetId)
+    {
+        var asset = await _db.FixedAssets
+            .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
+
+        var schedule = new List<DepreciationScheduleItem>();
+        var nbv = asset.PurchaseCost;
+        var accumulated = 0m;
+        var startDate = asset.PurchaseDate;
+
+        for (int i = 0; i < asset.UsefulLifeMonths; i++)
+        {
+            var periodDate = startDate.AddMonths(i + 1);
+            var openingNBV = nbv;
+
+            var depAmount = asset.DepreciationMethod switch
+            {
+                DepreciationMethod.StraightLine =>
+                    (asset.PurchaseCost - asset.SalvageValue) / asset.UsefulLifeMonths,
+                DepreciationMethod.DecliningBalance =>
+                    nbv * (2.0m / asset.UsefulLifeMonths) / 2,
+                DepreciationMethod.DoubleDecliningBalance =>
+                    nbv * (2.0m / asset.UsefulLifeMonths),
+                _ => 0
+            };
+
+            if (nbv - depAmount < asset.SalvageValue)
+                depAmount = nbv - asset.SalvageValue;
+
+            if (depAmount <= 0) break;
+
+            accumulated += depAmount;
+            nbv -= depAmount;
+
+            schedule.Add(new DepreciationScheduleItem(
+                periodDate.Year, periodDate.Month,
+                openingNBV, depAmount, accumulated, nbv));
+
+            if (nbv <= asset.SalvageValue) break;
+        }
+
+        return new DepreciationScheduleReport(
+            asset.Id, asset.AssetCode, asset.Name,
+            asset.PurchaseCost, asset.SalvageValue,
+            asset.UsefulLifeMonths, asset.DepreciationMethod.ToString(),
+            schedule);
+    }
+
+    public async Task<ImportFixedAssetsResult> ImportAsync(Guid companyId, List<ImportFixedAssetRow> rows, string createdBy)
+    {
+        var errors = new List<string>();
+        var successCount = 0;
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var rowNum = i + 1;
+
+            if (string.IsNullOrWhiteSpace(row.AssetCode))
+            {
+                errors.Add($"แถวที่ {rowNum}: รหัสสินทรัพย์ว่างเปล่า");
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(row.Name))
+            {
+                errors.Add($"แถวที่ {rowNum}: ชื่อสินทรัพย์ว่างเปล่า");
+                continue;
+            }
+            if (row.PurchaseCost <= 0)
+            {
+                errors.Add($"แถวที่ {rowNum}: ราคาทุนต้องมากกว่า 0");
+                continue;
+            }
+
+            var exists = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId && a.AssetCode == row.AssetCode);
+            if (exists)
+            {
+                errors.Add($"แถวที่ {rowNum}: รหัสสินทรัพย์ {row.AssetCode} ซ้ำ");
+                continue;
+            }
+
+            var method = row.DepreciationMethod?.ToLower() switch
+            {
+                "decliningbalance" or "declining" or "ยอดลดลง" => DepreciationMethod.DecliningBalance,
+                "doubledecliningbalance" or "doubledeclining" or "ยอดลดลงทวีคูณ" => DepreciationMethod.DoubleDecliningBalance,
+                _ => DepreciationMethod.StraightLine
+            };
+
+            _db.FixedAssets.Add(new FixedAsset
+            {
+                CompanyId = companyId,
+                AssetCode = row.AssetCode,
+                Name = row.Name,
+                Category = row.Category,
+                Location = row.Location,
+                SerialNumber = row.SerialNumber,
+                PurchaseDate = row.PurchaseDate,
+                PurchaseCost = row.PurchaseCost,
+                SalvageValue = row.SalvageValue,
+                UsefulLifeMonths = row.UsefulLifeMonths > 0 ? row.UsefulLifeMonths : 60,
+                DepreciationMethod = method,
+                NetBookValue = row.PurchaseCost,
+                CreatedBy = createdBy
+            });
+            successCount++;
+        }
+
+        if (successCount > 0)
+            await _db.SaveChangesAsync();
+
+        return new ImportFixedAssetsResult(rows.Count, successCount, errors.Count, errors);
+    }
+
+    private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
+    {
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode == codePrefix)
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync();
     }
 
     private static FixedAssetResponse MapToResponse(FixedAsset a) =>
