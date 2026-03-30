@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>วิเคราะห์ลูกหนี้/เจ้าหนี้ - Nexaacc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">วิเคราะห์ลูกหนี้/เจ้าหนี้</h2><p class="page-subtitle">ภาพรวม DSO/DPO, Aging, หนี้สูญ, รายตัว</p></div>
+    </div>
+    <div class="tabs" id="mainTabs">
+      <div class="tab active" onclick="Page.showTab('overview',this)">ภาพรวม</div>
+      <div class="tab" onclick="Page.showTab('baddebt',this)">วิเคราะห์หนี้สูญ</div>
+      <div class="tab" onclick="Page.showTab('contact',this)">รายลูกค้า/เจ้าหนี้</div>
+    </div>
+
+    <!-- Overview Tab -->
+    <div id="tabOverview">
+      <div id="overviewKpis" style="margin-bottom:20px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        <div class="card" id="arAgingCard"></div>
+        <div class="card" id="apAgingCard"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        <div class="card" id="topArCard"></div>
+        <div class="card" id="topApCard"></div>
+      </div>
+      <div class="card" id="trendCard"></div>
+    </div>
+
+    <!-- Bad Debt Tab -->
+    <div id="tabBaddebt" style="display:none">
+      <div id="bdKpis" style="margin-bottom:20px"></div>
+      <div class="card" id="bdBucketsCard" style="margin-bottom:20px"></div>
+      <div class="card" id="bdRiskCard"></div>
+    </div>
+
+    <!-- Contact Detail Tab -->
+    <div id="tabContact" style="display:none">
+      <div class="toolbar" style="margin-bottom:16px">
+        <select class="filter-select" id="contactType" onchange="Page.loadContactList()">
+          <option value="ar">ลูกหนี้ (AR)</option>
+          <option value="ap">เจ้าหนี้ (AP)</option>
+        </select>
+        <select class="filter-select" id="contactSelect" style="min-width:250px" onchange="Page.loadContactDetail()">
+          <option value="">-- เลือกผู้ติดต่อ --</option>
+        </select>
+      </div>
+      <div id="contactDetailContent"></div>
+    </div>
+
+    <!-- Contact Detail Modal -->
+    <div class="modal-overlay" id="contactModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="cmTitle">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('contactModal')">&times;</button></div>
+        <div class="modal-body" id="cmBody"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('contactModal')">ปิด</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+  const Page = {
+    _overview: null, _contacts: [],
+    async init() {
+      if (!Layout.init('arap-analysis')) return;
+      Layout.setTitle('วิเคราะห์ลูกหนี้/เจ้าหนี้');
+      await this.loadOverview();
+    },
+    showTab(tab, el) {
+      document.querySelectorAll('#mainTabs .tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('tabOverview').style.display = tab === 'overview' ? '' : 'none';
+      document.getElementById('tabBaddebt').style.display = tab === 'baddebt' ? '' : 'none';
+      document.getElementById('tabContact').style.display = tab === 'contact' ? '' : 'none';
+      if (tab === 'baddebt') this.loadBadDebt();
+      if (tab === 'contact') this.loadContactList();
+    },
+
+    // ===== OVERVIEW =====
+    async loadOverview() {
+      const api = Layout.api(); if (!api) return;
+      try {
+        const res = await api.getArApOverview();
+        const d = res.data; this._overview = d;
+        this.renderOverviewKpis(d);
+        this.renderAgingCards(d);
+        this.renderTopContacts(d);
+        this.renderTrend(d);
+      } catch (e) { Layout.toast(e.message, 'error'); }
+    },
+    renderOverviewKpis(d) {
+      document.getElementById('overviewKpis').innerHTML = `
+        <div class="grid grid-4 gap-4" style="margin-bottom:12px">
+          <div class="kpi-card"><div class="kpi-label">ลูกหนี้รวม (AR)</div><div class="kpi-value text-primary">${Layout.money(d.totalReceivables)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">เจ้าหนี้รวม (AP)</div><div class="kpi-value text-warning">${Layout.money(d.totalPayables)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">สถานะสุทธิ (AR-AP)</div><div class="kpi-value ${d.netPosition>=0?'text-success':'text-danger'}">${Layout.money(d.netPosition)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">อัตราเก็บหนี้ได้</div><div class="kpi-value">${d.collectionRate}%</div></div>
+        </div>
+        <div class="grid grid-4 gap-4">
+          <div class="kpi-card"><div class="kpi-label">DSO (วันเก็บหนี้เฉลี่ย)</div><div class="kpi-value">${d.dso} วัน</div></div>
+          <div class="kpi-card"><div class="kpi-label">DPO (วันชำระเฉลี่ย)</div><div class="kpi-value">${d.dpo} วัน</div></div>
+          <div class="kpi-card"><div class="kpi-label">AR เกินกำหนด</div><div class="kpi-value text-danger">${Layout.money(d.overdueArAmount)}</div><div class="text-xs text-gray-400">${d.overdueArCount} รายการ</div></div>
+          <div class="kpi-card"><div class="kpi-label">AP เกินกำหนด</div><div class="kpi-value text-warning">${Layout.money(d.overdueApAmount)}</div><div class="text-xs text-gray-400">${d.overdueApCount} รายการ</div></div>
+        </div>`;
+    },
+    renderAgingCards(d) {
+      const renderAging = (a, title, color) => `
+        <div class="card-header"><h3 class="card-title">${title}</h3></div>
+        <div style="padding:16px">
+          <div style="display:flex;gap:4px;height:24px;border-radius:4px;overflow:hidden;margin-bottom:12px">
+            ${a.total > 0 ? [
+              {v:a.current,c:'var(--success)',l:'ปัจจุบัน'},
+              {v:a.days1To30,c:'var(--primary)',l:'1-30'},
+              {v:a.days31To60,c:'var(--warning)',l:'31-60'},
+              {v:a.days61To90,c:'#f97316',l:'61-90'},
+              {v:a.over90,c:'var(--danger)',l:'>90'}
+            ].filter(x=>x.v>0).map(x=>`<div style="width:${(x.v/a.total*100).toFixed(1)}%;background:${x.c}" title="${x.l}: ${Layout.money(x.v)}"></div>`).join('') : '<div style="width:100%;background:var(--gray-200)"></div>'}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center">
+            <div><div class="text-xs text-gray-500">ปัจจุบัน</div><div class="font-medium">${Layout.money(a.current)}</div></div>
+            <div><div class="text-xs text-gray-500">1-30 วัน</div><div class="font-medium">${Layout.money(a.days1To30)}</div></div>
+            <div><div class="text-xs text-gray-500">31-60 วัน</div><div class="font-medium">${Layout.money(a.days31To60)}</div></div>
+            <div><div class="text-xs text-gray-500">61-90 วัน</div><div class="font-medium">${Layout.money(a.days61To90)}</div></div>
+            <div><div class="text-xs text-gray-500">>90 วัน</div><div class="font-medium text-danger">${Layout.money(a.over90)}</div></div>
+          </div>
+        </div>`;
+      document.getElementById('arAgingCard').innerHTML = renderAging(d.arAging, 'Aging ลูกหนี้', 'primary');
+      document.getElementById('apAgingCard').innerHTML = renderAging(d.apAging, 'Aging เจ้าหนี้', 'warning');
+    },
+    renderTopContacts(d) {
+      const renderTop = (items, title, type) => `
+        <div class="card-header"><h3 class="card-title">${title}</h3></div>
+        <div class="table-container" style="border:none">
+          <table class="table"><thead><tr><th>ชื่อ</th><th class="text-right">ยอดค้าง</th><th class="text-right">เกินกำหนด</th><th class="text-right">เอกสาร</th><th></th></tr></thead>
+          <tbody>${items.length ? items.map(c => `<tr>
+            <td class="font-medium">${c.contactName}</td>
+            <td class="text-right">${Layout.money(c.totalBalance)}</td>
+            <td class="text-right ${c.overdueAmount>0?'text-danger':''}">${Layout.money(c.overdueAmount)}</td>
+            <td class="text-right">${c.documentCount}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openContactModal('${c.contactId}','${type}')">ดู</button></td>
+          </tr>`).join('') : '<tr><td colspan="5" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody></table>
+        </div>`;
+      document.getElementById('topArCard').innerHTML = renderTop(d.topReceivables, 'Top 10 ลูกหนี้', 'ar');
+      document.getElementById('topApCard').innerHTML = renderTop(d.topPayables, 'Top 10 เจ้าหนี้', 'ap');
+    },
+    renderTrend(d) {
+      const items = d.monthlyTrend || [];
+      if (!items.length) { document.getElementById('trendCard').innerHTML = ''; return; }
+      const maxVal = Math.max(...items.map(i => Math.max(i.arBalance, i.apBalance)), 1);
+      document.getElementById('trendCard').innerHTML = `
+        <div class="card-header"><h3 class="card-title">แนวโน้ม AR/AP 12 เดือน</h3></div>
+        <div style="padding:16px">
+          <div style="display:flex;align-items:flex-end;gap:2px;height:150px;margin-bottom:8px">
+            ${items.map(i => {
+              const arH = (i.arBalance / maxVal * 130).toFixed(0);
+              const apH = (i.apBalance / maxVal * 130).toFixed(0);
+              return `<div style="flex:1;display:flex;gap:1px;align-items:flex-end">
+                <div style="flex:1;height:${arH}px;background:var(--primary);border-radius:2px 2px 0 0" title="AR: ${Layout.money(i.arBalance)}"></div>
+                <div style="flex:1;height:${apH}px;background:var(--warning);border-radius:2px 2px 0 0" title="AP: ${Layout.money(i.apBalance)}"></div>
+              </div>`;
+            }).join('')}
+          </div>
+          <div style="display:flex;gap:2px">
+            ${items.map(i => `<div style="flex:1;text-align:center;font-size:10px;color:var(--gray-400)">${i.month}</div>`).join('')}
+          </div>
+          <div style="display:flex;gap:16px;justify-content:center;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:12px;background:var(--primary);border-radius:2px"></div><span class="text-xs">AR</span></div>
+            <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:12px;background:var(--warning);border-radius:2px"></div><span class="text-xs">AP</span></div>
+          </div>
+        </div>`;
+    },
+
+    // ===== BAD DEBT =====
+    async loadBadDebt() {
+      const api = Layout.api(); if (!api) return;
+      try {
+        const res = await api.getBadDebtAnalysis();
+        const d = res.data;
+        document.getElementById('bdKpis').innerHTML = `
+          <div class="grid grid-4 gap-4">
+            <div class="kpi-card"><div class="kpi-label">ลูกหนี้รวม</div><div class="kpi-value">${Layout.money(d.totalReceivables)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">ยอดเกินกำหนด</div><div class="kpi-value text-warning">${Layout.money(d.totalOverdue)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">ประมาณการหนี้สูญ</div><div class="kpi-value text-danger">${Layout.money(d.estimatedBadDebt)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">อัตราหนี้สูญ</div><div class="kpi-value">${d.totalReceivables>0 ? (d.estimatedBadDebt/d.totalReceivables*100).toFixed(1) : '0'}%</div></div>
+          </div>`;
+
+        const buckets = d.buckets || [];
+        document.getElementById('bdBucketsCard').innerHTML = `
+          <div class="card-header"><h3 class="card-title">การตั้งค่าเผื่อหนี้สงสัยจะสูญ (ตามมาตรฐานบัญชี)</h3></div>
+          <div class="table-container" style="border:none">
+            <table class="table"><thead><tr><th>ช่วงอายุหนี้</th><th class="text-right">ยอดค้างชำระ</th><th class="text-right">อัตราตั้งสำรอง</th><th class="text-right">ค่าเผื่อหนี้สูญ</th><th class="text-right">จำนวนเอกสาร</th></tr></thead>
+            <tbody>${buckets.map(b => `<tr>
+              <td>${b.label}</td>
+              <td class="text-right">${Layout.money(b.amount)}</td>
+              <td class="text-right">${b.provisionRate.toFixed(0)}%</td>
+              <td class="text-right font-semibold text-danger">${Layout.money(b.estimatedLoss)}</td>
+              <td class="text-right">${b.documentCount}</td>
+            </tr>`).join('')}</tbody>
+            <tfoot><tr style="background:var(--gray-100)">
+              <td class="font-bold">รวม</td>
+              <td class="text-right font-bold">${Layout.money(buckets.reduce((s,b)=>s+b.amount,0))}</td>
+              <td></td>
+              <td class="text-right font-bold text-danger">${Layout.money(d.estimatedBadDebt)}</td>
+              <td class="text-right font-bold">${buckets.reduce((s,b)=>s+b.documentCount,0)}</td>
+            </tr></tfoot></table>
+          </div>`;
+
+        const risks = d.riskContacts || [];
+        const riskColor = {Critical:'var(--danger)',High:'#f97316',Medium:'var(--warning)',Low:'var(--gray-400)'};
+        document.getElementById('bdRiskCard').innerHTML = `
+          <div class="card-header"><h3 class="card-title">ลูกค้าเสี่ยงสูง (ค้างชำระ > 60 วัน)</h3></div>
+          <div class="table-container" style="border:none">
+            <table class="table"><thead><tr><th>ลูกค้า</th><th class="text-right">ยอดเกินกำหนด</th><th class="text-right">วันค้างสูงสุด</th><th>ระดับเสี่ยง</th><th class="text-right">ประมาณการสูญเสีย</th><th></th></tr></thead>
+            <tbody>${risks.length ? risks.map(c => `<tr>
+              <td class="font-medium">${c.contactName}</td>
+              <td class="text-right">${Layout.money(c.totalOverdue)}</td>
+              <td class="text-right">${c.maxAgingDays} วัน</td>
+              <td><span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;color:#fff;background:${riskColor[c.riskLevel]||'gray'}">${c.riskLevel}</span></td>
+              <td class="text-right font-semibold text-danger">${Layout.money(c.estimatedLoss)}</td>
+              <td><button class="btn btn-sm btn-ghost" onclick="Page.openContactModal('${c.contactId}','ar')">ดู</button></td>
+            </tr>`).join('') : '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีลูกค้าเสี่ยง</td></tr>'}</tbody></table>
+          </div>`;
+      } catch (e) { Layout.toast(e.message, 'error'); }
+    },
+
+    // ===== CONTACT DETAIL =====
+    async loadContactList() {
+      const api = Layout.api(); if (!api) return;
+      const type = document.getElementById('contactType').value;
+      try {
+        const res = type === 'ar' ? await api.getAgingReceivables('') : await api.getAgingPayables('');
+        const details = res.data?.details || [];
+        this._contacts = details;
+        const sel = document.getElementById('contactSelect');
+        sel.innerHTML = '<option value="">-- เลือกผู้ติดต่อ --</option>' +
+          details.map(c => `<option value="${c.contactId}">${c.contactName} (${Layout.money(c.totalBalance)})</option>`).join('');
+        document.getElementById('contactDetailContent').innerHTML = '';
+      } catch (e) { Layout.toast(e.message, 'error'); }
+    },
+    async loadContactDetail() {
+      const contactId = document.getElementById('contactSelect').value;
+      if (!contactId) { document.getElementById('contactDetailContent').innerHTML = ''; return; }
+      const type = document.getElementById('contactType').value;
+      await this._renderContactDetail(contactId, type, 'contactDetailContent');
+    },
+    async openContactModal(contactId, type) {
+      document.getElementById('cmBody').innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</div>';
+      Layout.openModal('contactModal');
+      await this._renderContactDetail(contactId, type, 'cmBody');
+    },
+    async _renderContactDetail(contactId, type, targetId) {
+      const api = Layout.api(); if (!api) return;
+      try {
+        const res = await api.getArApContactDetail(contactId, type);
+        const d = res.data;
+        const target = document.getElementById(targetId);
+        if (targetId === 'cmBody') document.getElementById('cmTitle').textContent = d.contactName;
+
+        const a = d.aging;
+        target.innerHTML = `
+          <div style="margin-bottom:16px">
+            <div style="display:flex;gap:16px;margin-bottom:8px">
+              ${d.taxId ? `<span class="text-xs text-gray-500">เลขภาษี: ${d.taxId}</span>` : ''}
+              ${d.phone ? `<span class="text-xs text-gray-500">โทร: ${d.phone}</span>` : ''}
+              ${d.email ? `<span class="text-xs text-gray-500">${d.email}</span>` : ''}
+              ${d.isOnHold ? '<span style="color:var(--danger);font-weight:600;font-size:12px">ถูกระงับ (On Hold)</span>' : ''}
+            </div>
+          </div>
+          <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+            <div class="kpi-card"><div class="kpi-label">ยอดค้างชำระ</div><div class="kpi-value text-primary">${Layout.money(d.totalOutstanding)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">ยอดเกินกำหนด</div><div class="kpi-value text-danger">${Layout.money(d.totalOverdue)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">DSO</div><div class="kpi-value">${d.dso} วัน</div></div>
+            <div class="kpi-card"><div class="kpi-label">ชำระเฉลี่ย</div><div class="kpi-value">${d.avgPaymentDays} วัน</div></div>
+          </div>
+          <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+            <div class="kpi-card"><div class="kpi-label">ชำระแล้ว 12 เดือน</div><div class="kpi-value">${Layout.money(d.totalPaidLast12Months)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">เอกสารทั้งหมด</div><div class="kpi-value">${d.totalDocuments}</div></div>
+            <div class="kpi-card"><div class="kpi-label">เกินกำหนด</div><div class="kpi-value text-danger">${d.overdueDocuments} รายการ</div></div>
+            <div class="kpi-card"><div class="kpi-label">วงเงินเครดิต</div><div class="kpi-value">${d.creditLimit != null ? Layout.money(d.creditLimit) : 'ไม่จำกัด'}</div></div>
+          </div>
+
+          <!-- Aging bar -->
+          <div style="margin-bottom:20px">
+            <h4 style="margin-bottom:8px">Aging</h4>
+            <div style="display:flex;gap:4px;height:20px;border-radius:4px;overflow:hidden;margin-bottom:8px">
+              ${a.total > 0 ? [
+                {v:a.current,c:'var(--success)'},{v:a.days1To30,c:'var(--primary)'},
+                {v:a.days31To60,c:'var(--warning)'},{v:a.days61To90,c:'#f97316'},{v:a.over90,c:'var(--danger)'}
+              ].filter(x=>x.v>0).map(x=>`<div style="width:${(x.v/a.total*100).toFixed(1)}%;background:${x.c}"></div>`).join('') : '<div style="width:100%;background:var(--gray-200)"></div>'}
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center">
+              <div><div class="text-xs text-gray-500">ปัจจุบัน</div><div class="font-medium">${Layout.money(a.current)}</div></div>
+              <div><div class="text-xs text-gray-500">1-30</div><div class="font-medium">${Layout.money(a.days1To30)}</div></div>
+              <div><div class="text-xs text-gray-500">31-60</div><div class="font-medium">${Layout.money(a.days31To60)}</div></div>
+              <div><div class="text-xs text-gray-500">61-90</div><div class="font-medium">${Layout.money(a.days61To90)}</div></div>
+              <div><div class="text-xs text-gray-500">>90</div><div class="font-medium text-danger">${Layout.money(a.over90)}</div></div>
+            </div>
+          </div>
+
+          <!-- Outstanding documents -->
+          <div style="margin-bottom:20px">
+            <h4 style="margin-bottom:8px">เอกสารค้างชำระ (${d.outstandingDocuments?.length || 0})</h4>
+            ${d.outstandingDocuments?.length ? `<div style="max-height:250px;overflow-y:auto"><table class="table"><thead><tr>
+              <th>เลขที่</th><th>วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดรวม</th><th class="text-right">ชำระแล้ว</th><th class="text-right">คงค้าง</th><th class="text-right">วันเกิน</th><th>สถานะ</th>
+            </tr></thead><tbody>${d.outstandingDocuments.map(doc => `<tr>
+              <td class="font-medium">${doc.documentNumber}</td>
+              <td>${Layout.date(doc.documentDate)}</td>
+              <td>${doc.dueDate ? Layout.date(doc.dueDate) : '-'}</td>
+              <td class="text-right">${Layout.money(doc.totalAmount)}</td>
+              <td class="text-right">${Layout.money(doc.paidAmount)}</td>
+              <td class="text-right font-semibold">${Layout.money(doc.balanceDue)}</td>
+              <td class="text-right ${doc.agingDays>0?'text-danger':''}">${doc.agingDays > 0 ? doc.agingDays+' วัน' : '-'}</td>
+              <td>${Layout.statusBadge(doc.status)}</td>
+            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ไม่มีเอกสารค้างชำระ</div>'}
+          </div>
+
+          <!-- Recent payments -->
+          <div style="margin-bottom:20px">
+            <h4 style="margin-bottom:8px">การชำระเงินล่าสุด</h4>
+            ${d.recentPayments?.length ? `<div style="max-height:200px;overflow-y:auto"><table class="table"><thead><tr>
+              <th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>อ้างอิง</th><th>วิธี</th>
+            </tr></thead><tbody>${d.recentPayments.map(p => `<tr>
+              <td class="font-medium">${p.paymentNumber}</td>
+              <td>${Layout.date(p.paymentDate)}</td>
+              <td class="text-right">${Layout.money(p.amount)}</td>
+              <td>${p.documentNumber || '-'}</td>
+              <td>${p.paymentMethod || '-'}</td>
+            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ไม่มีรายการชำระ</div>'}
+          </div>
+
+          <!-- Monthly trend -->
+          <div>
+            <h4 style="margin-bottom:8px">ยอดรายเดือน (12 เดือน)</h4>
+            ${d.monthlyHistory?.length ? `<table class="table"><thead><tr>
+              <th>เดือน</th><th class="text-right">ออกเอกสาร</th><th class="text-right">ชำระแล้ว</th><th class="text-right">ยอมคงค้าง</th>
+            </tr></thead><tbody>${d.monthlyHistory.map(m => `<tr>
+              <td>${m.month}/${m.year}</td>
+              <td class="text-right">${Layout.money(m.invoiced)}</td>
+              <td class="text-right">${Layout.money(m.paid)}</td>
+              <td class="text-right font-semibold">${Layout.money(m.balance)}</td>
+            </tr>`).join('')}</tbody></table>` : '<div class="text-center text-gray-400">ไม่มีข้อมูล</div>'}
+          </div>`;
+      } catch (e) { Layout.toast(e.message, 'error'); }
+    }
+  };
+  Page.init();
+  </script>
+</body>
+</html>

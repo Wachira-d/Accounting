@@ -9,6 +9,7 @@ public class JournalEntry : TenantEntity
 {
     public string EntryNumber { get; set; } = null!;   // running number
     public DateTime EntryDate { get; set; }
+    public JournalType JournalType { get; set; } = JournalType.General;  // ประเภทสมุดรายวัน
     public string? Description { get; set; }
     public string? Reference { get; set; }             // เลขอ้างอิง
     public JournalEntryStatus Status { get; set; } = JournalEntryStatus.Draft;

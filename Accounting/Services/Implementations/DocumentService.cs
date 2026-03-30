@@ -13,12 +13,14 @@ public class DocumentService : IDocumentService
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;
     private readonly ISubscriptionService _subscriptionService;
+    private readonly IWithholdingTaxCertService _whtService;
 
-    public DocumentService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService subscriptionService)
+    public DocumentService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService)
     {
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
+        _whtService = whtService;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -275,9 +277,14 @@ public class DocumentService : IDocumentService
             doc.Status = DocumentStatus.Approved;
             doc.UpdatedBy = approvedBy;
 
-            // Auto-post to journal if Invoice or TaxInvoice with account mappings
-            if ((doc.DocumentType == DocumentType.Invoice || doc.DocumentType == DocumentType.TaxInvoice)
-                && doc.Lines.Any(l => l.AccountId.HasValue))
+            // Auto-post to journal for document types that affect accounting
+            var autoPostTypes = new[] {
+                DocumentType.Invoice, DocumentType.TaxInvoice,          // สมุดรายวันขาย (SV)
+                DocumentType.PurchaseInvoice, DocumentType.Expense,     // สมุดรายวันซื้อ (UV)
+                DocumentType.Receipt, DocumentType.ReceiptVoucher,      // สมุดรายวันรับ (RV)
+                DocumentType.PaymentVoucher,                            // สมุดรายวันจ่าย (PV)
+            };
+            if (autoPostTypes.Contains(doc.DocumentType) && doc.Lines.Any(l => l.AccountId.HasValue))
             {
                 await AutoPostToJournalAsync(companyId, doc, approvedBy);
             }
@@ -430,6 +437,28 @@ public class DocumentService : IDocumentService
             doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
 
             await _db.SaveChangesAsync();
+
+            // Create journal entry for payment
+            await CreatePaymentJournalAsync(companyId, doc, payment, createdBy);
+
+            await _db.SaveChangesAsync();
+
+            // Auto-generate WHT cert for purchase documents with WHT on first payment
+            if (doc.WithholdingTaxAmount > 0
+                && (doc.DocumentType == DocumentType.PurchaseInvoice
+                    || doc.DocumentType == DocumentType.Expense
+                    || doc.DocumentType == DocumentType.PaymentVoucher))
+            {
+                try
+                {
+                    await _whtService.AutoGenerateFromDocumentAsync(companyId, doc.Id, false, createdBy);
+                }
+                catch
+                {
+                    // Cert may already exist or other non-critical error — don't fail payment
+                }
+            }
+
             await transaction.CommitAsync();
 
             return new PaymentResponse(
@@ -458,45 +487,132 @@ public class DocumentService : IDocumentService
 
     // ==================== Private ====================
 
+    /// <summary>
+    /// ค้นหาบัญชีจากรหัส — รองรับทั้งรหัส 4 หลัก (legacy) และ 6 หลัก (มาตรฐาน)
+    /// เช่น "1121" จะ match "112101" (ลูกหนี้การค้า)
+    /// </summary>
+    private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
+    {
+        // Try exact match first, then prefix match (first child account)
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode == codePrefix)
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync();
+    }
+
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
-        // Debit: AR (1200)
-        var arAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode == "1200");
-
-        if (arAccount != null)
+        // Determine journal type based on document type
+        var journalType = doc.DocumentType switch
         {
-            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                arAccount.Id, doc.TotalAmount, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}"));
-        }
+            DocumentType.Invoice or DocumentType.TaxInvoice => JournalType.Sales,
+            DocumentType.PurchaseInvoice or DocumentType.Expense => JournalType.Purchase,
+            DocumentType.Receipt or DocumentType.ReceiptVoucher => JournalType.CashReceipts,
+            DocumentType.PaymentVoucher => JournalType.CashPayments,
+            _ => JournalType.General
+        };
 
-        // Credit: Revenue accounts from lines
-        foreach (var docLine in doc.Lines.Where(l => l.AccountId.HasValue))
+        // ===== Sales documents (SV): Dr AR, Cr Revenue + VAT Output =====
+        // ใบแจ้งหนี้/ใบกำกับภาษี → สมุดรายวันขาย
+        if (journalType == JournalType.Sales)
         {
-            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                docLine.AccountId!.Value, 0, docLine.Amount, docLine.Description));
-        }
-
-        // Credit: VAT payable (2200)
-        if (doc.VatAmount > 0)
-        {
-            var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == "2200");
-            if (vatAccount != null)
+            // Dr: ลูกหนี้การค้า (112101)
+            var arAccount = await FindAccountAsync(companyId, "1121");
+            if (arAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                    vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
-        }
+                    arAccount.Id, doc.TotalAmount, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}"));
 
-        // Debit: WHT (reduce AR)
-        if (doc.WithholdingTaxAmount > 0)
-        {
-            var whtAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == "2300");
-            if (whtAccount != null)
+            // Cr: บัญชีรายได้ตามรายการ
+            foreach (var docLine in doc.Lines.Where(l => l.AccountId.HasValue))
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                    whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่าย"));
+                    docLine.AccountId!.Value, 0, docLine.Amount, docLine.Description));
+
+            // Cr: ภาษีขาย (212101)
+            if (doc.VatAmount > 0)
+            {
+                var vatAccount = await FindAccountAsync(companyId, "2121");
+                if (vatAccount != null)
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
+            }
+
+            // Cr: ภาษีหัก ณ ที่จ่าย (ลด AR) — ผู้ซื้อหักไว้จากยอดจ่าย
+            if (doc.WithholdingTaxAmount > 0)
+            {
+                var whtAccount = await FindAccountAsync(companyId, "1141");
+                if (whtAccount != null)
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
+            }
+        }
+        // ===== Purchase documents (UV): Dr Expense/Inventory + VAT Input, Cr AP =====
+        // ใบแจ้งหนี้ซื้อ/บันทึกค่าใช้จ่าย → สมุดรายวันซื้อ
+        else if (journalType == JournalType.Purchase)
+        {
+            // Dr: บัญชีค่าใช้จ่าย/สินค้า ตามรายการ
+            foreach (var docLine in doc.Lines.Where(l => l.AccountId.HasValue))
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    docLine.AccountId!.Value, docLine.Amount, 0, docLine.Description));
+
+            // Dr: ภาษีซื้อ (114101)
+            if (doc.VatAmount > 0)
+            {
+                var vatInputAccount = await FindAccountAsync(companyId, "1141");
+                if (vatInputAccount != null)
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ"));
+            }
+
+            // Cr: เจ้าหนี้การค้า (211101)
+            var apAccount = await FindAccountAsync(companyId, "2111");
+            if (apAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}"));
+
+            // Cr: ภาษีหัก ณ ที่จ่าย ค้างจ่าย (212201)
+            if (doc.WithholdingTaxAmount > 0)
+            {
+                var whtAccount = await FindAccountAsync(companyId, "2122");
+                if (whtAccount != null)
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
+            }
+        }
+        // ===== Cash Receipts (RV): Dr Cash/Bank, Cr AR =====
+        // ใบเสร็จรับเงิน/ใบสำคัญรับ → สมุดรายวันรับ
+        else if (journalType == JournalType.CashReceipts)
+        {
+            // Dr: เงินสด/ธนาคาร (111101)
+            var cashAccount = await FindAccountAsync(companyId, "1111");
+            if (cashAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    cashAccount.Id, doc.TotalAmount, 0, $"รับเงิน - {doc.DocumentNumber}"));
+
+            // Cr: ลูกหนี้การค้า (112101) — ลดยอดลูกหนี้
+            var arAccount = await FindAccountAsync(companyId, "1121");
+            if (arAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    arAccount.Id, 0, doc.TotalAmount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+        }
+        // ===== Cash Payments (PV): Dr AP, Cr Cash/Bank =====
+        // ใบสำคัญจ่าย → สมุดรายวันจ่าย
+        else if (journalType == JournalType.CashPayments)
+        {
+            // Dr: เจ้าหนี้การค้า (211101) — ลดยอดเจ้าหนี้
+            var apAccount = await FindAccountAsync(companyId, "2111");
+            if (apAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    apAccount.Id, doc.TotalAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+
+            // Cr: เงินสด/ธนาคาร (111101)
+            var cashAccount = await FindAccountAsync(companyId, "1111");
+            if (cashAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}"));
         }
 
         if (lines.Count >= 2)
@@ -504,18 +620,69 @@ public class DocumentService : IDocumentService
             var entry = await _accountingService.CreateJournalEntryAsync(companyId,
                 new Models.DTOs.Accounting.CreateJournalEntryRequest(
                     doc.DocumentDate, $"Auto-post จาก {doc.DocumentNumber}",
-                    doc.DocumentNumber, lines), createdBy);
+                    doc.DocumentNumber, lines, journalType), createdBy);
 
-            // Auto-post
             await _accountingService.PostJournalEntryAsync(companyId, entry.Id);
 
-            // Link
             var je = await _db.JournalEntries.FindAsync(entry.Id);
             if (je != null)
             {
                 je.IsAutoGenerated = true;
                 je.SourceDocumentId = doc.Id;
                 await _db.SaveChangesAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// สร้าง Journal Entry สำหรับการชำระเงิน
+    /// รับเงิน (ฝั่งขาย): Dr Cash, Cr AR → สมุดรายวันรับ (RV)
+    /// จ่ายเงิน (ฝั่งซื้อ): Dr AP, Cr Cash → สมุดรายวันจ่าย (PV)
+    /// </summary>
+    private async Task CreatePaymentJournalAsync(Guid companyId, Document doc, Payment payment, string createdBy)
+    {
+        var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
+        var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
+            DocumentType.DebitNote, DocumentType.BillingNote, DocumentType.ReceiptVoucher };
+        var isRevenue = revenueTypes.Contains(doc.DocumentType);
+        var journalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments;
+
+        var cashAccount = await FindAccountAsync(companyId, "1111");
+        if (cashAccount == null) return;
+
+        if (isRevenue)
+        {
+            // รับเงินจากลูกค้า: Dr Cash, Cr AR
+            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                cashAccount.Id, payment.Amount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            var arAccount = await FindAccountAsync(companyId, "1121");
+            if (arAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    arAccount.Id, 0, payment.Amount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+        }
+        else
+        {
+            // จ่ายเงินให้ supplier: Dr AP, Cr Cash
+            var apAccount = await FindAccountAsync(companyId, "2111");
+            if (apAccount != null)
+                lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    apAccount.Id, payment.Amount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                cashAccount.Id, 0, payment.Amount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+        }
+
+        if (lines.Count >= 2)
+        {
+            var entry = await _accountingService.CreateJournalEntryAsync(companyId,
+                new Models.DTOs.Accounting.CreateJournalEntryRequest(
+                    payment.PaymentDate, $"ชำระเงิน {payment.PaymentNumber} - {doc.DocumentNumber}",
+                    payment.PaymentNumber, lines, journalType), createdBy);
+            await _accountingService.PostJournalEntryAsync(companyId, entry.Id);
+            var je = await _db.JournalEntries.FindAsync(entry.Id);
+            if (je != null)
+            {
+                je.IsAutoGenerated = true;
+                je.SourceDocumentId = doc.Id;
             }
         }
     }

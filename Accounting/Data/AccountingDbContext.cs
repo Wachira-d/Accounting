@@ -43,6 +43,10 @@ public class AccountingDbContext : DbContext
     // Products & Inventory
     public DbSet<Product> Products => Set<Product>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<UnitConversion> UnitConversions => Set<UnitConversion>();
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+    public DbSet<StockCount> StockCounts => Set<StockCount>();
+    public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
 
     // Bank
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
@@ -706,6 +710,7 @@ public class AccountingDbContext : DbContext
             e.Property(w => w.TotalIncomeAmount).HasPrecision(18, 2);
             e.Property(w => w.TotalTaxAmount).HasPrecision(18, 2);
             e.HasOne(w => w.PayeeContact).WithMany().HasForeignKey(w => w.PayeeContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(w => w.Document).WithMany().HasForeignKey(w => w.DocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(w => !w.IsDeleted);
         });
 

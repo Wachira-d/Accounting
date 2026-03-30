@@ -84,6 +84,7 @@ const API = {
       createJournal: (d) => API.post(`${base}/accounting/journals`, d),
       postJournal: (id) => API.post(`${base}/accounting/journals/${id}/post`),
       voidJournal: (id) => API.post(`${base}/accounting/journals/${id}/void`),
+      generalLedger: (q = '') => API.get(`${base}/accounting/reports/general-ledger${q}`),
       trialBalance: (q = '') => API.get(`${base}/accounting/reports/trial-balance${q}`),
       balanceSheet: (q = '') => API.get(`${base}/accounting/reports/balance-sheet${q}`),
       profitLoss: (q = '') => API.get(`${base}/accounting/reports/profit-loss${q}`),
@@ -108,9 +109,30 @@ const API = {
       createPayment: (d) => API.post(`${base}/document/payments`, d),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
+      getProduct: (id) => API.get(`${base}/product/${id}`),
       createProduct: (d) => API.post(`${base}/product`, d),
       updateProduct: (id, d) => API.put(`${base}/product/${id}`, d),
       deleteProduct: (id) => API.del(`${base}/product/${id}`),
+      adjustStock: (d) => API.post(`${base}/product/stock/adjust`, d),
+      getStockMovements: (productId) => API.get(`${base}/product/${productId}/stock/movements`),
+      getLowStock: () => API.get(`${base}/product/stock/low`),
+      // Unit Conversions
+      getUnitConversions: (productId) => API.get(`${base}/product/${productId}/unit-conversions`),
+      createUnitConversion: (productId, d) => API.post(`${base}/product/${productId}/unit-conversions`, d),
+      deleteUnitConversion: (id) => API.del(`${base}/product/unit-conversions/${id}`),
+      convertUnit: (d) => API.post(`${base}/product/unit-conversions/convert`, d),
+      // Product Categories
+      getProductCategories: () => API.get(`${base}/product/categories`),
+      createProductCategory: (d) => API.post(`${base}/product/categories`, d),
+      deleteProductCategory: (id) => API.del(`${base}/product/categories/${id}`),
+      // Stock Count
+      getStockCounts: () => API.get(`${base}/product/stock-counts`),
+      getStockCount: (id) => API.get(`${base}/product/stock-counts/${id}`),
+      createStockCount: (d) => API.post(`${base}/product/stock-counts`, d),
+      updateStockCountLines: (id, d) => API.put(`${base}/product/stock-counts/${id}/lines`, d),
+      applyStockCount: (id) => API.post(`${base}/product/stock-counts/${id}/apply`),
+      // Inventory Valuation
+      getInventoryValuation: () => API.get(`${base}/product/inventory/valuation`),
       // Bank
       getBankAccounts: () => API.get(`${base}/bank/accounts`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),
@@ -133,6 +155,14 @@ const API = {
       getTaxReport: (id) => API.get(`${base}/tax/${id}`),
       generateTaxReport: (d) => API.post(`${base}/tax/generate`, d),
       fileTaxReport: (id) => API.post(`${base}/tax/${id}/file`),
+      // Tax Filing Export
+      exportPnd1: (year, month) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}`,
+      exportPnd3: (year, month) => `${base}/tax-filing-export/pnd3?year=${year}&month=${month}`,
+      exportPnd53: (year, month) => `${base}/tax-filing-export/pnd53?year=${year}&month=${month}`,
+      exportPnd1k: (year) => `${base}/tax-filing-export/pnd1k?year=${year}`,
+      exportPp30: (year, month) => `${base}/tax-filing-export/pp30?year=${year}&month=${month}`,
+      exportSso110: (year, month) => `${base}/tax-filing-export/sso110?year=${year}&month=${month}`,
+      previewTaxExport: (formCode, year, month) => API.get(`${base}/tax-filing-export/preview/${formCode}?year=${year}&month=${month || 0}`),
       // WHT
       getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),
       getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
@@ -140,14 +170,23 @@ const API = {
       issueWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/issue`),
       voidWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/void`),
       getWhtByContact: (contactId, q = '') => API.get(`${base}/withholding-tax-certs/contacts/${contactId}${q}`),
+      autoGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/auto-generate`, d),
+      getPendingWht: (q = '') => API.get(`${base}/withholding-tax-certs/pending${q}`),
+      bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
       // Fixed Assets
       getAssets: (q = '') => API.get(`${base}/fixedasset${q}`),
       getAsset: (id) => API.get(`${base}/fixedasset/${id}`),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       disposeAsset: (id, d) => API.post(`${base}/fixedasset/${id}/dispose`, d),
+      writeOffAsset: (id, d) => API.post(`${base}/fixedasset/${id}/writeoff`, d),
+      adjustAssetLife: (id, d) => API.put(`${base}/fixedasset/${id}/adjust-life`, d),
       getDepreciations: (id) => API.get(`${base}/fixedasset/${id}/depreciations`),
       runDepreciation: (d) => API.post(`${base}/fixedasset/depreciate`, d),
+      getAssetCategories: () => API.get(`${base}/fixedasset/categories`),
+      getAssetRegisterReport: () => API.get(`${base}/fixedasset/report/register`),
+      getDepreciationSchedule: (id) => API.get(`${base}/fixedasset/${id}/report/depreciation-schedule`),
+      importAssets: (d) => API.post(`${base}/fixedasset/import`, d),
       // Budget
       getBudgets: (q = '') => API.get(`${base}/budget${q}`),
       getBudget: (id) => API.get(`${base}/budget/${id}`),
@@ -379,6 +418,10 @@ const API = {
       getAgingPayables: (q = '') => API.get(`${base}/aging/payables${q}`),
       getContactReceivables: (contactId, q = '') => API.get(`${base}/aging/contacts/${contactId}/receivables${q}`),
       getContactPayables: (contactId, q = '') => API.get(`${base}/aging/contacts/${contactId}/payables${q}`),
+      // AR/AP Analysis
+      getArApOverview: () => API.get(`${base}/arap-analysis/overview`),
+      getArApContactDetail: (contactId, type = 'ar') => API.get(`${base}/arap-analysis/contacts/${contactId}?type=${type}`),
+      getBadDebtAnalysis: () => API.get(`${base}/arap-analysis/bad-debt`),
       // Audit
       getAuditLogs: (q = '') => API.get(`${base}/audit/logs${q}`),
       getAuditSummary: (q = '') => API.get(`${base}/audit/summary${q}`),

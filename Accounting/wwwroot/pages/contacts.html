@@ -71,6 +71,7 @@
       async init() {
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
+        this._attachDbd();
         await this.load();
       },
       setFilter(type, el) {

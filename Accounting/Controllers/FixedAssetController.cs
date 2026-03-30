@@ -60,6 +60,23 @@ public class FixedAssetController : ControllerBase
         return Ok(new ApiResponse<FixedAssetResponse>(true, result, "จำหน่ายสินทรัพย์สำเร็จ"));
     }
 
+    [HttpPost("{assetId:guid}/writeoff")]
+    public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> WriteOff(
+        Guid companyId, Guid assetId, [FromBody] WriteOffAssetRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.WriteOffAsync(companyId, assetId, request, userId);
+        return Ok(new ApiResponse<FixedAssetResponse>(true, result, "ตัดจำหน่ายสินทรัพย์สำเร็จ"));
+    }
+
+    [HttpPut("{assetId:guid}/adjust-life")]
+    public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> AdjustUsefulLife(
+        Guid companyId, Guid assetId, [FromBody] AdjustUsefulLifeRequest request)
+    {
+        var result = await _assetService.AdjustUsefulLifeAsync(companyId, assetId, request);
+        return Ok(new ApiResponse<FixedAssetResponse>(true, result, "ปรับอายุการใช้งานสำเร็จ"));
+    }
+
     [HttpGet("{assetId:guid}/depreciations")]
     public async Task<ActionResult<ApiResponse<List<DepreciationResponse>>>> GetDepreciations(Guid companyId, Guid assetId)
     {
@@ -83,5 +100,37 @@ public class FixedAssetController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.RevalueAsync(companyId, assetId, request, userId);
         return Ok(new ApiResponse<RevaluationResponse>(true, result, "ตีราคาสินทรัพย์ใหม่สำเร็จ"));
+    }
+
+    [HttpGet("categories")]
+    public async Task<ActionResult<ApiResponse<List<AssetCategoryResponse>>>> GetCategories(Guid companyId)
+    {
+        var result = await _assetService.GetCategoriesAsync(companyId);
+        return Ok(new ApiResponse<List<AssetCategoryResponse>>(true, result));
+    }
+
+    [HttpGet("report/register")]
+    public async Task<ActionResult<ApiResponse<AssetRegisterReport>>> GetAssetRegisterReport(Guid companyId)
+    {
+        var result = await _assetService.GetAssetRegisterReportAsync(companyId);
+        return Ok(new ApiResponse<AssetRegisterReport>(true, result));
+    }
+
+    [HttpGet("{assetId:guid}/report/depreciation-schedule")]
+    public async Task<ActionResult<ApiResponse<DepreciationScheduleReport>>> GetDepreciationSchedule(
+        Guid companyId, Guid assetId)
+    {
+        var result = await _assetService.GetDepreciationScheduleAsync(companyId, assetId);
+        return Ok(new ApiResponse<DepreciationScheduleReport>(true, result));
+    }
+
+    [HttpPost("import")]
+    public async Task<ActionResult<ApiResponse<ImportFixedAssetsResult>>> Import(
+        Guid companyId, [FromBody] List<ImportFixedAssetRow> rows)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.ImportAsync(companyId, rows, userId);
+        return Ok(new ApiResponse<ImportFixedAssetsResult>(true, result,
+            $"นำเข้าสำเร็จ {result.SuccessCount}/{result.TotalRows} รายการ"));
     }
 }

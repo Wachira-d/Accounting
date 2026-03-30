@@ -77,13 +77,17 @@ const Layout = {
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html' },
 
     { section: 'รายรับ' },
-    { id: 'documents', label: 'ใบเสนอราคา/แจ้งหนี้', icon: '📄', href: '/pages/documents.html' },
+    { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue' },
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html' },
-    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
 
     { section: 'รายจ่าย' },
+    { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html' },
     { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html' },
-    { id: 'payments', label: 'การชำระเงิน', icon: '💳', href: '/pages/payments.html' },
+    { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense' },
+    { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳', href: '/pages/payments.html' },
+
+    { section: 'รายการอัตโนมัติ' },
+    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
 
     { section: 'ผู้ติดต่อ' },
     { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html' },
@@ -107,6 +111,7 @@ const Layout = {
     { section: 'บัญชี' },
     { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html' },
     { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html' },
+    { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html' },
     { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
 
@@ -115,6 +120,7 @@ const Layout = {
     { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜', href: '/pages/wht.html' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html' },
     { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html' },
+    { id: 'tax-export', label: 'Export ยื่นภาษี/ประกันสังคม', icon: '📤', href: '/pages/tax-export.html' },
 
     { section: 'เงินเดือน' },
     { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html' },
@@ -124,6 +130,7 @@ const Layout = {
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },
     { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html' },
+    { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍', href: '/pages/arap-analysis.html' },
     { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html' },
 
     { section: 'โครงการ/องค์กร' },

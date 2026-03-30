@@ -69,3 +69,39 @@ public enum WithholdingTaxCertStatus
     Voided = 2,
     Printed = 3
 }
+
+// ===== Auto-generate DTOs =====
+public record AutoGenerateWhtRequest(
+    Guid DocumentId,
+    bool AutoIssue = false);
+
+public record BulkGenerateWhtRequest(
+    int Year,
+    int Month,
+    bool AutoIssue = false);
+
+public record BulkGenerateWhtResponse(
+    int TotalDocuments,
+    int Generated,
+    int Skipped,
+    List<string> SkippedReasons,
+    List<WithholdingTaxCertResponse> Certificates);
+
+public record PendingWhtDocumentResponse(
+    Guid DocumentId,
+    string DocumentNumber,
+    string DocumentType,
+    DateTime DocumentDate,
+    Guid ContactId,
+    string ContactName,
+    string? ContactTaxId,
+    decimal SubTotal,
+    decimal WithholdingTaxAmount,
+    List<PendingWhtLineInfo> Lines);
+
+public record PendingWhtLineInfo(
+    string Description,
+    string? IncomeTypeCode,
+    decimal Amount,
+    decimal WithholdingTaxRate,
+    decimal WithholdingTaxAmount);

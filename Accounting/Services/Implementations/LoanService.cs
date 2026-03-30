@@ -276,7 +276,7 @@ public class LoanService : ILoanService
                 LineOrder = 1
             });
         }
-        if (loan.InterestExpenseAccountId.HasValue)
+        if (loan.InterestExpenseAccountId.HasValue && request.InterestPaid > 0)
         {
             lines.Add(new JournalEntryLine
             {
@@ -286,6 +286,22 @@ public class LoanService : ILoanService
                 CreditAmount = 0,
                 Description = "ดอกเบี้ยจ่าย",
                 LineOrder = 2
+            });
+        }
+
+        // Credit: Cash/Bank (total payment)
+        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode.StartsWith("1111") && a.Level >= 4);
+        if (cashAccount != null)
+        {
+            lines.Add(new JournalEntryLine
+            {
+                JournalEntryId = journalEntry.Id,
+                AccountId = cashAccount.Id,
+                DebitAmount = 0,
+                CreditAmount = totalPaid,
+                Description = $"จ่ายชำระสินเชื่อ {loan.LoanNumber}",
+                LineOrder = 3
             });
         }
 

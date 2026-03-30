@@ -67,4 +67,34 @@ public class WithholdingTaxCertController : ControllerBase
         var result = await _whtService.GetByContactAsync(companyId, contactId, year);
         return Ok(new ApiResponse<List<WithholdingTaxCertResponse>>(true, result));
     }
+
+    /// <summary>Auto-generate WHT cert from a document that has withholding tax</summary>
+    [HttpPost("auto-generate")]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> AutoGenerate(
+        Guid companyId, [FromBody] AutoGenerateWhtRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.AutoGenerateFromDocumentAsync(companyId, request.DocumentId, request.AutoIssue, userId);
+        return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายจากเอกสารสำเร็จ"));
+    }
+
+    /// <summary>Get documents with WHT that don't have certs yet</summary>
+    [HttpGet("pending")]
+    public async Task<ActionResult<ApiResponse<List<PendingWhtDocumentResponse>>>> GetPending(
+        Guid companyId, [FromQuery] int? year, [FromQuery] int? month)
+    {
+        var result = await _whtService.GetPendingDocumentsAsync(companyId, year, month);
+        return Ok(new ApiResponse<List<PendingWhtDocumentResponse>>(true, result));
+    }
+
+    /// <summary>Bulk generate WHT certs for all pending documents in a period</summary>
+    [HttpPost("bulk-generate")]
+    public async Task<ActionResult<ApiResponse<BulkGenerateWhtResponse>>> BulkGenerate(
+        Guid companyId, [FromBody] BulkGenerateWhtRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.BulkGenerateAsync(companyId, request, userId);
+        return Ok(new ApiResponse<BulkGenerateWhtResponse>(true, result,
+            $"สร้างสำเร็จ {result.Generated} รายการ" + (result.Skipped > 0 ? $", ข้าม {result.Skipped} รายการ" : "")));
+    }
 }

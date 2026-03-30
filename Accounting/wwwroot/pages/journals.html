@@ -6,16 +6,34 @@
   <title>สมุดรายวัน - Nexaacc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .journal-tabs { display:flex; gap:4px; background:var(--gray-100); padding:4px; border-radius:10px; margin-bottom:16px; flex-wrap:wrap; }
+    .journal-tab { padding:8px 16px; border-radius:8px; border:none; background:transparent; cursor:pointer; font-size:13px; font-weight:500; color:var(--gray-600); transition:all .2s; white-space:nowrap; }
+    .journal-tab:hover { background:var(--gray-200); }
+    .journal-tab.active { background:white; color:var(--primary); box-shadow:0 1px 3px rgba(0,0,0,.1); font-weight:600; }
+    .journal-tab .tab-badge { display:inline-block; background:var(--gray-200); color:var(--gray-600); font-size:11px; padding:1px 6px; border-radius:10px; margin-left:4px; }
+    .journal-tab.active .tab-badge { background:var(--primary-light,#ede9fe); color:var(--primary); }
+  </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">สมุดรายวัน</h2><p class="page-subtitle">บันทึกรายการทางบัญชี</p></div>
+      <div><h2 class="page-title">สมุดรายวัน</h2><p class="page-subtitle">สมุดบัญชี 5 เล่มตามมาตรฐานบัญชีไทย</p></div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
     </div>
 
+    <!-- Journal Type Tabs -->
+    <div class="journal-tabs" id="journalTabs">
+      <button class="journal-tab active" data-type="" onclick="Page.setType('')">ทั้งหมด <span class="tab-badge" id="countAll">-</span></button>
+      <button class="journal-tab" data-type="General" onclick="Page.setType('General')">JV สมุดรายวันทั่วไป <span class="tab-badge" id="countGeneral">-</span></button>
+      <button class="journal-tab" data-type="Sales" onclick="Page.setType('Sales')">SV สมุดรายวันขาย <span class="tab-badge" id="countSales">-</span></button>
+      <button class="journal-tab" data-type="Purchase" onclick="Page.setType('Purchase')">UV สมุดรายวันซื้อ <span class="tab-badge" id="countPurchase">-</span></button>
+      <button class="journal-tab" data-type="CashReceipts" onclick="Page.setType('CashReceipts')">RV สมุดรายวันรับ <span class="tab-badge" id="countCashReceipts">-</span></button>
+      <button class="journal-tab" data-type="CashPayments" onclick="Page.setType('CashPayments')">PV สมุดรายวันจ่าย <span class="tab-badge" id="countCashPayments">-</span></button>
+    </div>
+
     <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput" oninput="Page.debounceSearch()">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -29,8 +47,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>วันที่</th><th>คำอธิบาย</th><th>อ้างอิง</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>คำอธิบาย</th><th>อ้างอิง</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -44,10 +62,22 @@
         </div>
         <div class="modal-body">
           <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ประเภทสมุดรายวัน *</label>
+              <select class="form-select" id="fType">
+                <option value="General">JV - สมุดรายวันทั่วไป</option>
+                <option value="Sales">SV - สมุดรายวันขาย</option>
+                <option value="Purchase">UV - สมุดรายวันซื้อ</option>
+                <option value="CashReceipts">RV - สมุดรายวันรับ</option>
+                <option value="CashPayments">PV - สมุดรายวันจ่าย</option>
+              </select>
+            </div>
             <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
             <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
 
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
@@ -95,7 +125,23 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
-      page: 1, accounts: [],
+      page: 1, accounts: [], currentType: '',
+      journalTypeLabels: {
+        'General': 'JV ทั่วไป',
+        'Sales': 'SV ขาย',
+        'Purchase': 'UV ซื้อ',
+        'CashReceipts': 'RV รับ',
+        'CashPayments': 'PV จ่าย'
+      },
+      journalTypeBadge(type) {
+        const colors = {
+          'General': '#6b7280', 'Sales': '#2563eb', 'Purchase': '#d97706',
+          'CashReceipts': '#059669', 'CashPayments': '#dc2626'
+        };
+        const label = this.journalTypeLabels[type] || 'JV';
+        const color = colors[type] || '#6b7280';
+        return `<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;background:${color}15;color:${color}">${label}</span>`;
+      },
       async init() {
         if (!Layout.init('journals')) return;
         Layout.setTitle('สมุดรายวัน');
@@ -104,14 +150,55 @@
           const res = await api.getAccounts();
           this.accounts = res.data?.items || res.data || [];
         } catch(e) {}
+        // Check URL param for type
+        const urlType = new URLSearchParams(window.location.search).get('type');
+        if (urlType) this.currentType = urlType;
+        this.updateTabs();
         await this.load();
+        this.loadCounts();
+      },
+      setType(type) {
+        this.currentType = type;
+        this.page = 1;
+        this.updateTabs();
+        this.load();
+      },
+      updateTabs() {
+        document.querySelectorAll('.journal-tab').forEach(tab => {
+          tab.classList.toggle('active', tab.dataset.type === this.currentType);
+        });
+      },
+      async loadCounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const types = ['', 'General', 'Sales', 'Purchase', 'CashReceipts', 'CashPayments'];
+          const ids = ['countAll', 'countGeneral', 'countSales', 'countPurchase', 'countCashReceipts', 'countCashPayments'];
+          for (let i = 0; i < types.length; i++) {
+            let q = `?page=1&pageSize=1`;
+            if (types[i]) q += `&journalType=${types[i]}`;
+            try {
+              const res = await api.getJournals(q);
+              const total = res.data?.totalCount ?? res.data?.items?.length ?? 0;
+              const el = document.getElementById(ids[i]);
+              if (el) el.textContent = total;
+            } catch(e) {}
+          }
+        } catch(e) {}
+      },
+      _searchTimer: null,
+      debounceSearch() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
       },
       async load() {
         const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value.trim();
         const status = document.getElementById('statusFilter').value;
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
         let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (this.currentType) q += `&journalType=${this.currentType}`;
         if (status) q += `&status=${status}`;
         if (from) q += `&fromDate=${from}`;
         if (to) q += `&toDate=${to}`;
@@ -120,9 +207,10 @@
           const data = res.data;
           const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(j => `<tr>
             <td class="font-medium">${j.entryNumber}</td>
+            <td>${this.journalTypeBadge(j.journalType)}</td>
             <td>${Layout.date(j.entryDate)}</td>
             <td>${j.description || '-'}</td>
             <td class="text-gray-500">${j.reference || '-'}</td>
@@ -151,7 +239,7 @@
           <td><input type="number" class="form-input text-right line-debit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
           <td><input type="number" class="form-input text-right line-credit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
           <td><input type="text" class="form-input" id="ldesc_${i}" style="font-size:13px"></td>
-          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotals()">✕</button></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotals()">&#10005;</button></td>
         `;
         document.getElementById('linesBody').appendChild(row);
       },
@@ -165,6 +253,7 @@
       },
       openCreate() {
         document.getElementById('formTitle').textContent = 'บันทึกรายการใหม่';
+        document.getElementById('fType').value = this.currentType || 'General';
         document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('fRef').value = '';
         document.getElementById('fDesc').value = '';
@@ -178,14 +267,18 @@
         const api = Layout.api(); if (!api) return;
         const rows = document.querySelectorAll('#linesBody tr');
         const lines = [];
+        let skippedLines = 0;
         rows.forEach((row, i) => {
           const acc = row.querySelector('select')?.value;
           const debit = parseFloat(row.querySelector('.line-debit')?.value) || 0;
           const credit = parseFloat(row.querySelector('.line-credit')?.value) || 0;
           if (acc && (debit > 0 || credit > 0)) {
             lines.push({ accountId: acc, debitAmount: debit, creditAmount: credit, description: row.querySelector('input[type="text"]')?.value || null });
+          } else if (!acc && (debit > 0 || credit > 0)) {
+            skippedLines++;
           }
         });
+        if (skippedLines > 0) { Layout.toast(`มี ${skippedLines} รายการที่ไม่ได้เลือกบัญชี กรุณาเลือกบัญชีให้ครบ`, 'error'); return; }
         if (lines.length < 2) { Layout.toast('ต้องมีอย่างน้อย 2 รายการ', 'error'); return; }
         const totalD = lines.reduce((s, l) => s + l.debitAmount, 0);
         const totalC = lines.reduce((s, l) => s + l.creditAmount, 0);
@@ -195,11 +288,13 @@
             entryDate: document.getElementById('fDate').value,
             description: document.getElementById('fDesc').value || null,
             reference: document.getElementById('fRef').value || null,
+            journalType: document.getElementById('fType').value,
             lines
           });
           Layout.closeModal('formModal');
           Layout.toast('บันทึกรายการสำเร็จ');
           await this.load();
+          this.loadCounts();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async detail(id) {
@@ -210,6 +305,7 @@
           document.getElementById('detailContent').innerHTML = `
             <div class="detail-list" style="margin-bottom:20px">
               <div class="detail-item"><span class="detail-label">เลขที่</span><span class="detail-value">${j.entryNumber}</span></div>
+              <div class="detail-item"><span class="detail-label">ประเภท</span><span class="detail-value">${this.journalTypeBadge(j.journalType)}</span></div>
               <div class="detail-item"><span class="detail-label">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
               <div class="detail-item"><span class="detail-label">สถานะ</span><span class="detail-value">${Layout.statusBadge(j.status)}</span></div>
               <div class="detail-item"><span class="detail-label">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
@@ -243,7 +339,7 @@
       async voidEntry(id) {
         if (!confirm('ต้องการยกเลิกรายการนี้?')) return;
         const api = Layout.api(); if (!api) return;
-        try { await api.voidJournal(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกรายการสำเร็จ'); await this.load(); }
+        try { await api.voidJournal(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกรายการสำเร็จ'); await this.load(); this.loadCounts(); }
         catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

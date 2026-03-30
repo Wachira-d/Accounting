@@ -12,6 +12,8 @@
     <div class="page-header">
       <div><h2 class="page-title">สินทรัพย์ถาวร</h2><p class="page-subtitle">จัดการสินทรัพย์และค่าเสื่อมราคา</p></div>
       <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.showReport()">รายงาน</button>
+        <button class="btn btn-secondary" onclick="Page.openImport()">นำเข้า CSV</button>
         <button class="btn btn-secondary" onclick="Page.runDepreciation()">คำนวณค่าเสื่อม</button>
         <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินทรัพย์</button>
       </div>
@@ -23,6 +25,7 @@
         <option value="Active">ใช้งาน</option>
         <option value="FullyDepreciated">หมดค่าเสื่อม</option>
         <option value="Disposed">จำหน่าย</option>
+        <option value="WrittenOff">ตัดจำหน่าย</option>
       </select>
     </div>
     <div class="table-container">
@@ -75,12 +78,15 @@
 
     <!-- Detail Modal -->
     <div class="modal-overlay" id="detailModal">
-      <div class="modal" style="max-width:800px">
+      <div class="modal" style="max-width:850px">
         <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดสินทรัพย์</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body">
           <div id="detailInfo" style="margin-bottom:16px"></div>
-          <h4 style="margin-bottom:8px">ประวัติค่าเสื่อมราคา</h4>
-          <div id="depreciationHistory" style="max-height:300px;overflow-y:auto"></div>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <button class="btn btn-sm btn-secondary" onclick="Page.showDepHistory()" id="btnDepHist" style="font-weight:600">ประวัติค่าเสื่อม</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.showDepSchedule()" id="btnDepSched">ตารางค่าเสื่อม (Forecast)</button>
+          </div>
+          <div id="depreciationContent" style="max-height:300px;overflow-y:auto"></div>
         </div>
         <div class="modal-footer" id="detailFooter"></div>
       </div>
@@ -119,15 +125,76 @@
         </div>
       </div>
     </div>
+
+    <!-- Write-Off Modal -->
+    <div class="modal-overlay" id="writeOffModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">ตัดจำหน่ายสินทรัพย์</h3><button class="modal-close" onclick="Layout.closeModal('writeOffModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="woId">
+          <p style="color:var(--danger);margin-bottom:12px">ตัดจำหน่ายจะทำให้มูลค่าสุทธิเป็น 0 และบันทึกขาดทุนจากการตัดจำหน่าย</p>
+          <div class="form-group"><label class="form-label">วันที่ตัดจำหน่าย *</label><input type="date" class="form-input" id="woDate"></div>
+          <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="woReason" placeholder="เช่น ชำรุดไม่สามารถซ่อมได้"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('writeOffModal')">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.confirmWriteOff()">ตัดจำหน่าย</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Adjust Life Modal -->
+    <div class="modal-overlay" id="adjustLifeModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">ปรับอายุการใช้งาน</h3><button class="modal-close" onclick="Layout.closeModal('adjustLifeModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="alId">
+          <div class="form-group"><label class="form-label">อายุใช้งานใหม่ (เดือน) *</label><input type="number" class="form-input" id="alLife" min="1"></div>
+          <div class="form-group"><label class="form-label">มูลค่าซากใหม่</label><input type="number" class="form-input" id="alSalvage" step="0.01" placeholder="ไม่เปลี่ยนแปลง"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustLifeModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.confirmAdjustLife()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report Modal -->
+    <div class="modal-overlay" id="reportModal">
+      <div class="modal" style="max-width:950px">
+        <div class="modal-header"><h3 class="modal-title">รายงานทะเบียนสินทรัพย์</h3><button class="modal-close" onclick="Layout.closeModal('reportModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="reportKpis" style="margin-bottom:16px"></div>
+          <div id="reportTable" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')">ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div class="modal-overlay" id="importModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">นำเข้าสินทรัพย์จาก CSV</h3><button class="modal-close" onclick="Layout.closeModal('importModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="margin-bottom:8px;color:var(--gray-500)">รูปแบบ CSV: AssetCode, Name, Category, Location, SerialNumber, PurchaseDate(YYYY-MM-DD), PurchaseCost, SalvageValue, UsefulLifeMonths, DepreciationMethod</p>
+          <textarea class="form-input" id="importCsv" rows="8" placeholder="FA001,คอมพิวเตอร์,อุปกรณ์สำนักงาน,ชั้น 2,,2024-01-15,35000,1000,60,StraightLine"></textarea>
+          <div id="importResult" style="margin-top:12px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ', UnitsOfProduction:'หน่วยผลิต' };
+    const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ' };
+    const statusMap = { Active:'ใช้งาน', Disposed:'จำหน่าย', FullyDepreciated:'หมดค่าเสื่อม', WrittenOff:'ตัดจำหน่าย' };
     const Page = {
-      page: 1,
-      allAssets: [],
+      page: 1, allAssets: [], _currentAsset: null,
       async init() {
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('สินทรัพย์ถาวร');
@@ -183,8 +250,7 @@
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.getAsset(id);
-          const a = res.data;
+          const res = await api.getAsset(id); const a = res.data;
           document.getElementById('formTitle').textContent = 'แก้ไขสินทรัพย์';
           document.getElementById('fId').value = a.id;
           document.getElementById('fCode').value = a.assetCode; document.getElementById('fCode').disabled = true;
@@ -216,22 +282,18 @@
           depreciationMethod: document.getElementById('fMethod').value,
         };
         try {
-          if (id) { await api.updateAsset(id, data); }
-          else { await api.createAsset(data); }
+          if (id) { await api.updateAsset(id, data); } else { await api.createAsset(data); }
           Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มสินทรัพย์สำเร็จ'); await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async viewDetail(id) {
         const api = Layout.api(); if (!api) return;
         try {
-          const [assetRes, depRes] = await Promise.all([
-            api.getAsset(id),
-            api.getDepreciations(id)
-          ]);
-          const a = assetRes.data;
-          const deps = depRes.data?.items || depRes.data || [];
-          const usedPct = a.purchaseCost > 0 ? ((a.accumulatedDepreciation / (a.purchaseCost - (a.salvageValue||0))) * 100).toFixed(0) : 0;
-
+          const [assetRes, depRes] = await Promise.all([api.getAsset(id), api.getDepreciations(id)]);
+          const a = assetRes.data; this._currentAsset = a;
+          this._deps = depRes.data?.items || depRes.data || [];
+          const depBase = a.purchaseCost - (a.salvageValue||0);
+          const usedPct = depBase > 0 ? ((a.accumulatedDepreciation / depBase) * 100).toFixed(0) : 0;
           document.getElementById('detailTitle').textContent = `${a.assetCode} - ${a.name}`;
           document.getElementById('detailInfo').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
@@ -241,6 +303,9 @@
               <div><div class="text-xs text-gray-500">วันที่ซื้อ</div><div>${Layout.date(a.purchaseDate)}</div></div>
               <div><div class="text-xs text-gray-500">หมายเลขเครื่อง</div><div>${a.serialNumber || '-'}</div></div>
               <div><div class="text-xs text-gray-500">วิธีคิดค่าเสื่อม</div><div>${methodMap[a.depreciationMethod] || a.depreciationMethod}</div></div>
+              <div><div class="text-xs text-gray-500">อายุใช้งาน</div><div>${a.usefulLifeMonths} เดือน</div></div>
+              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(a.status)}</div></div>
+              ${a.disposalDate ? `<div><div class="text-xs text-gray-500">วันที่จำหน่าย</div><div>${Layout.date(a.disposalDate)}</div></div>` : ''}
             </div>
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
               <div class="kpi-card"><div class="kpi-label">ราคาทุน</div><div class="kpi-value">${Layout.money(a.purchaseCost)}</div></div>
@@ -254,24 +319,47 @@
                 <div style="width:${Math.min(usedPct,100)}%;background:var(--primary);height:100%;border-radius:4px"></div>
               </div>
             </div>`;
-
-          document.getElementById('depreciationHistory').innerHTML = deps.length ?
-            `<table class="table"><thead><tr><th>งวด</th><th>วันที่</th><th class="text-right">จำนวน</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าสุทธิ</th></tr></thead><tbody>${deps.map(d => `<tr>
-              <td>${d.periodNumber || d.period}</td>
-              <td>${Layout.date(d.depreciationDate || d.date)}</td>
-              <td class="text-right">${Layout.money(d.amount)}</td>
-              <td class="text-right">${Layout.money(d.accumulatedAmount)}</td>
-              <td class="text-right font-semibold">${Layout.money(d.netBookValue)}</td>
-            </tr>`).join('')}</tbody></table>`
-            : '<div class="text-center text-gray-400" style="padding:16px">ยังไม่มีรายการค่าเสื่อม</div>';
-
+          this.showDepHistory();
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
           if (a.status === 'Active') {
-            footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${a.id}', ${a.netBookValue})">ตีราคาใหม่</button>`;
-            footer += ` <button class="btn btn-danger" onclick="Page.openDispose('${a.id}')">จำหน่าย</button>`;
+            footer += ` <button class="btn btn-ghost" onclick="Page.openAdjustLife('${a.id}',${a.usefulLifeMonths},${a.salvageValue})">ปรับอายุ</button>`;
+            footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${a.id}',${a.netBookValue})">ตีราคาใหม่</button>`;
+            footer += ` <button class="btn btn-danger" onclick="Page.openWriteOff('${a.id}')">ตัดจำหน่าย</button>`;
+            footer += ` <button class="btn btn-danger" onclick="Page.openDispose('${a.id}')">จำหน่าย/ขาย</button>`;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      showDepHistory() {
+        document.getElementById('btnDepHist').className = 'btn btn-sm btn-secondary';
+        document.getElementById('btnDepSched').className = 'btn btn-sm btn-ghost';
+        const deps = this._deps || [];
+        document.getElementById('depreciationContent').innerHTML = deps.length ?
+          `<table class="table"><thead><tr><th>งวด</th><th class="text-right">จำนวน</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าสุทธิ</th></tr></thead><tbody>${deps.map(d => `<tr>
+            <td>${d.month}/${d.year}</td>
+            <td class="text-right">${Layout.money(d.amount)}</td>
+            <td class="text-right">${Layout.money(d.accumulatedAmount)}</td>
+            <td class="text-right font-semibold">${Layout.money(d.netBookValue)}</td>
+          </tr>`).join('')}</tbody></table>`
+          : '<div class="text-center text-gray-400" style="padding:16px">ยังไม่มีรายการค่าเสื่อม</div>';
+      },
+      async showDepSchedule() {
+        document.getElementById('btnDepHist').className = 'btn btn-sm btn-ghost';
+        document.getElementById('btnDepSched').className = 'btn btn-sm btn-secondary';
+        const api = Layout.api(); if (!api || !this._currentAsset) return;
+        try {
+          const res = await api.getDepreciationSchedule(this._currentAsset.id);
+          const sched = res.data?.schedule || res.data || [];
+          document.getElementById('depreciationContent').innerHTML = sched.length ?
+            `<table class="table"><thead><tr><th>งวด</th><th class="text-right">มูลค่าเปิด</th><th class="text-right">ค่าเสื่อม</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าปิด</th></tr></thead><tbody>${sched.map(s => `<tr>
+              <td>${s.month}/${s.year}</td>
+              <td class="text-right">${Layout.money(s.openingNBV)}</td>
+              <td class="text-right">${Layout.money(s.depreciationAmount)}</td>
+              <td class="text-right">${Layout.money(s.accumulatedDepreciation)}</td>
+              <td class="text-right font-semibold">${Layout.money(s.closingNBV)}</td>
+            </tr>`).join('')}</tbody></table>`
+            : '<div class="text-center text-gray-400" style="padding:16px">ไม่สามารถสร้างตารางค่าเสื่อมได้</div>';
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openDispose(id) {
@@ -279,19 +367,32 @@
         document.getElementById('dDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('dPrice').value = '0';
         document.getElementById('dReason').value = '';
-        Layout.closeModal('detailModal');
-        Layout.openModal('disposeModal');
+        Layout.closeModal('detailModal'); Layout.openModal('disposeModal');
       },
       async confirmDispose() {
         const api = Layout.api(); if (!api) return;
-        const id = document.getElementById('dId').value;
         try {
-          await api.disposeAsset(id, {
+          await api.disposeAsset(document.getElementById('dId').value, {
             disposalDate: document.getElementById('dDate').value,
-            salePrice: parseFloat(document.getElementById('dPrice').value) || 0,
-            reason: document.getElementById('dReason').value || null,
+            disposalAmount: parseFloat(document.getElementById('dPrice').value) || 0,
           });
           Layout.closeModal('disposeModal'); Layout.toast('จำหน่ายสินทรัพย์สำเร็จ'); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openWriteOff(id) {
+        document.getElementById('woId').value = id;
+        document.getElementById('woDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('woReason').value = '';
+        Layout.closeModal('detailModal'); Layout.openModal('writeOffModal');
+      },
+      async confirmWriteOff() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.writeOffAsset(document.getElementById('woId').value, {
+            writeOffDate: document.getElementById('woDate').value,
+            reason: document.getElementById('woReason').value || null,
+          });
+          Layout.closeModal('writeOffModal'); Layout.toast('ตัดจำหน่ายสินทรัพย์สำเร็จ'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openRevalue(id, currentValue) {
@@ -299,29 +400,94 @@
         document.getElementById('rvNewValue').value = currentValue || '';
         document.getElementById('rvDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('rvReason').value = '';
-        Layout.closeModal('detailModal');
-        Layout.openModal('revalueModal');
+        Layout.closeModal('detailModal'); Layout.openModal('revalueModal');
       },
       async confirmRevalue() {
         const api = Layout.api(); if (!api) return;
-        const id = document.getElementById('rvId').value;
         try {
-          await api.revalueAsset(id, {
-            newValue: parseFloat(document.getElementById('rvNewValue').value),
+          await api.revalueAsset(document.getElementById('rvId').value, {
+            newFairValue: parseFloat(document.getElementById('rvNewValue').value),
             revaluationDate: document.getElementById('rvDate').value,
-            reason: document.getElementById('rvReason').value || null,
+            notes: document.getElementById('rvReason').value || null,
           });
           Layout.closeModal('revalueModal'); Layout.toast('ตีราคาสินทรัพย์ใหม่สำเร็จ'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      openAdjustLife(id, life, salvage) {
+        document.getElementById('alId').value = id;
+        document.getElementById('alLife').value = life;
+        document.getElementById('alSalvage').value = '';
+        document.getElementById('alSalvage').placeholder = `ปัจจุบัน: ${Layout.money(salvage)}`;
+        Layout.closeModal('detailModal'); Layout.openModal('adjustLifeModal');
+      },
+      async confirmAdjustLife() {
+        const api = Layout.api(); if (!api) return;
+        const salvageVal = document.getElementById('alSalvage').value;
+        try {
+          await api.adjustAssetLife(document.getElementById('alId').value, {
+            newUsefulLifeMonths: parseInt(document.getElementById('alLife').value),
+            newSalvageValue: salvageVal !== '' ? parseFloat(salvageVal) : null,
+          });
+          Layout.closeModal('adjustLifeModal'); Layout.toast('ปรับอายุการใช้งานสำเร็จ'); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
       async runDepreciation() {
-        if (!confirm('คำนวณค่าเสื่อมราคาสำหรับสินทรัพย์ที่ใช้งานทั้งหมด?')) return;
+        const now = new Date();
+        const year = now.getFullYear(), month = now.getMonth() + 1;
+        if (!confirm(`คำนวณค่าเสื่อมราคาเดือน ${month}/${year} สำหรับสินทรัพย์ที่ใช้งานทั้งหมด?`)) return;
         const api = Layout.api(); if (!api) return;
         try {
-          const assetIds = this.allAssets.filter(a => a.status === 'Active').map(a => a.id);
-          if (!assetIds.length) { Layout.toast('ไม่มีสินทรัพย์ที่ใช้งาน', 'error'); return; }
-          await api.runDepreciation({ assetIds });
-          Layout.toast('คำนวณค่าเสื่อมสำเร็จ'); this.load();
+          const res = await api.runDepreciation({ year, month });
+          const count = res.data?.length || 0;
+          Layout.toast(`คำนวณค่าเสื่อมสำเร็จ ${count} รายการ`); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async showReport() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAssetRegisterReport();
+          const r = res.data;
+          document.getElementById('reportKpis').innerHTML = `
+            <div class="grid grid-4 gap-4">
+              <div class="kpi-card"><div class="kpi-label">ราคาทุนรวม</div><div class="kpi-value">${Layout.money(r.totalCost)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ค่าเสื่อมสะสมรวม</div><div class="kpi-value text-warning">${Layout.money(r.totalAccumulatedDepreciation)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">มูลค่าสุทธิรวม</div><div class="kpi-value text-primary">${Layout.money(r.totalNetBookValue)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">จำนวน</div><div class="kpi-value">${r.totalActive} ใช้งาน / ${r.totalDisposed} จำหน่าย / ${r.totalFullyDepreciated} หมดค่าเสื่อม</div></div>
+            </div>`;
+          const items = r.items || [];
+          document.getElementById('reportTable').innerHTML = items.length ? `<table class="table"><thead><tr>
+            <th>รหัส</th><th>ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th>วิธี</th>
+            <th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">NBV</th><th>สถานะ</th>
+          </tr></thead><tbody>${items.map(i => `<tr>
+            <td>${i.assetCode}</td><td>${i.name}</td><td>${i.category||'-'}</td><td>${Layout.date(i.purchaseDate)}</td>
+            <td>${methodMap[i.depreciationMethod]||i.depreciationMethod}</td>
+            <td class="text-right">${Layout.money(i.purchaseCost)}</td>
+            <td class="text-right">${Layout.money(i.accumulatedDepreciation)}</td>
+            <td class="text-right font-semibold">${Layout.money(i.netBookValue)}</td>
+            <td>${Layout.statusBadge(i.status)}</td>
+          </tr>`).join('')}</tbody></table>` : '<p class="text-center text-gray-400">ไม่มีข้อมูล</p>';
+          Layout.openModal('reportModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openImport() { document.getElementById('importCsv').value = ''; document.getElementById('importResult').innerHTML = ''; Layout.openModal('importModal'); },
+      async doImport() {
+        const api = Layout.api(); if (!api) return;
+        const csv = document.getElementById('importCsv').value.trim();
+        if (!csv) { Layout.toast('กรุณาใส่ข้อมูล CSV', 'error'); return; }
+        const rows = csv.split('\n').filter(r => r.trim()).map(line => {
+          const c = line.split(',').map(s => s.trim());
+          return { assetCode:c[0], name:c[1], category:c[2]||null, location:c[3]||null, serialNumber:c[4]||null,
+            purchaseDate:c[5], purchaseCost:parseFloat(c[6])||0, salvageValue:parseFloat(c[7])||0,
+            usefulLifeMonths:parseInt(c[8])||60, depreciationMethod:c[9]||'StraightLine' };
+        });
+        try {
+          const res = await api.importAssets(rows);
+          const d = res.data;
+          let html = `<div style="padding:8px;border-radius:6px;background:var(--gray-100)">สำเร็จ ${d.successCount}/${d.totalRows} รายการ`;
+          if (d.errors?.length) html += `<ul style="margin-top:8px;color:var(--danger)">${d.errors.map(e => `<li>${e}</li>`).join('')}</ul>`;
+          html += '</div>';
+          document.getElementById('importResult').innerHTML = html;
+          if (d.successCount > 0) this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

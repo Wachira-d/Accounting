@@ -118,6 +118,18 @@ public enum JournalEntryStatus
     Voided = 2
 }
 
+/// <summary>
+/// ประเภทสมุดรายวัน ตามมาตรฐานบัญชีไทย (พ.ร.บ.การบัญชี 2543)
+/// </summary>
+public enum JournalType
+{
+    General = 0,        // JV - สมุดรายวันทั่วไป
+    Sales = 1,          // SV - สมุดรายวันขาย
+    Purchase = 2,       // UV - สมุดรายวันซื้อ
+    CashReceipts = 3,   // RV - สมุดรายวันรับ
+    CashPayments = 4,   // PV - สมุดรายวันจ่าย
+}
+
 public enum FiscalPeriodStatus
 {
     Open = 1,

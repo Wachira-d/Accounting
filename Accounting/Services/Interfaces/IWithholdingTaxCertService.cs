@@ -12,4 +12,9 @@ public interface IWithholdingTaxCertService
     Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId);
     Task VoidAsync(Guid companyId, Guid certId);
     Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null);
+
+    // Auto-generate from document/payment
+    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy);
+    Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(Guid companyId, int? year = null, int? month = null);
+    Task<BulkGenerateWhtResponse> BulkGenerateAsync(Guid companyId, BulkGenerateWhtRequest request, string createdBy);
 }

@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.DTOs.Expense;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -11,10 +12,12 @@ namespace Accounting.Services.Implementations;
 public class ExpenseClaimService : IExpenseClaimService
 {
     private readonly AccountingDbContext _db;
+    private readonly IAccountingService? _accountingService;
 
-    public ExpenseClaimService(AccountingDbContext db)
+    public ExpenseClaimService(AccountingDbContext db, IAccountingService? accountingService = null)
     {
         _db = db;
+        _accountingService = accountingService;
     }
 
     public async Task<ExpenseClaimResponse> CreateAsync(Guid companyId, CreateExpenseClaimRequest request, Guid submittedByUserId)
@@ -198,7 +201,9 @@ public class ExpenseClaimService : IExpenseClaimService
 
     public async Task<ExpenseClaimResponse> MarkAsPaidAsync(Guid companyId, Guid claimId, PayExpenseClaimRequest request)
     {
-        var claim = await _db.ExpenseClaims.FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
+        var claim = await _db.ExpenseClaims
+            .Include(e => e.Lines).ThenInclude(l => l.Account)
+            .FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 
         if (claim.Status != ExpenseClaimStatus.Approved)
@@ -209,6 +214,17 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.PaidMethod = request.PaymentMethod;
         claim.PaidReference = request.Reference;
         await _db.SaveChangesAsync();
+
+        // Create PV journal entry: Dr Expense accounts, Cr Cash
+        if (_accountingService != null)
+        {
+            try
+            {
+                await CreateExpenseClaimJournalAsync(companyId, claim);
+            }
+            catch { /* ไม่ block การจ่ายเงินหาก journal ผิดพลาด */ }
+        }
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -277,6 +293,87 @@ public class ExpenseClaimService : IExpenseClaimService
 
         if (violations.Count > 0)
             throw new InvalidOperationException($"ไม่ผ่านนโยบายค่าใช้จ่าย: {string.Join("; ", violations)}");
+    }
+
+    /// <summary>
+    /// สร้างรายการบันทึกบัญชี PV สำหรับการจ่ายเงินค่าใช้จ่าย
+    /// Dr: บัญชีค่าใช้จ่าย (ตาม line items) + VAT Input (ถ้ามี)
+    /// Cr: เงินสด/ธนาคาร (111101) + WHT ค้างจ่าย (ถ้ามี)
+    /// </summary>
+    private async Task CreateExpenseClaimJournalAsync(Guid companyId, ExpenseClaim claim)
+    {
+        var lines = new List<JournalLineRequest>();
+
+        // Dr: แต่ละรายการค่าใช้จ่าย
+        foreach (var line in claim.Lines)
+        {
+            if (line.AccountId.HasValue)
+            {
+                lines.Add(new JournalLineRequest(
+                    line.AccountId.Value, line.Amount, 0,
+                    $"ค่าใช้จ่าย - {line.Description}"));
+            }
+            else
+            {
+                // ถ้าไม่ได้ระบุบัญชี ใช้บัญชีค่าใช้จ่ายทั่วไป (529xxx)
+                var defaultExpAccount = await FindAccountAsync(companyId, "5291");
+                if (defaultExpAccount != null)
+                    lines.Add(new JournalLineRequest(
+                        defaultExpAccount.Id, line.Amount, 0,
+                        $"ค่าใช้จ่าย - {line.Description}"));
+            }
+
+            // Dr: VAT Input (ภาษีซื้อ)
+            if (line.VatAmount > 0)
+            {
+                var vatInputAccount = await FindAccountAsync(companyId, "1141");
+                if (vatInputAccount != null)
+                    lines.Add(new JournalLineRequest(
+                        vatInputAccount.Id, line.VatAmount, 0, "ภาษีซื้อ"));
+            }
+        }
+
+        // Cr: WHT ค้างจ่าย (ถ้ามี)
+        if (claim.WithholdingTaxAmount > 0)
+        {
+            var whtAccount = await FindAccountAsync(companyId, "2122");
+            if (whtAccount != null)
+                lines.Add(new JournalLineRequest(
+                    whtAccount.Id, 0, claim.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
+        }
+
+        // Cr: เงินสด/ธนาคาร — ยอดที่จ่ายจริง (TotalAmount ซึ่งหัก WHT ไว้แล้ว)
+        var cashAccount = await FindAccountAsync(companyId, "1111");
+        if (cashAccount != null)
+        {
+            lines.Add(new JournalLineRequest(
+                cashAccount.Id, 0, claim.TotalAmount,
+                $"จ่ายเงินเบิกค่าใช้จ่าย - {claim.ClaimNumber}"));
+        }
+
+        if (lines.Count < 2) return; // ต้องมีอย่างน้อย Dr+Cr
+
+        var journalRequest = new CreateJournalEntryRequest(
+            DateTime.UtcNow,
+            $"เบิกค่าใช้จ่าย {claim.ClaimNumber} - {claim.Title}",
+            claim.ClaimNumber,
+            lines,
+            JournalType.CashPayments);
+
+        await _accountingService!.CreateJournalEntryAsync(companyId, journalRequest, "system");
+    }
+
+    /// <summary>
+    /// ค้นหาบัญชีจากรหัส — รองรับทั้งรหัส 4 หลัก (prefix) และ 6 หลัก (exact)
+    /// </summary>
+    private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
+    {
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode == codePrefix)
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync();
     }
 
     private static ExpenseClaimResponse MapToResponse(ExpenseClaim e) => new(
