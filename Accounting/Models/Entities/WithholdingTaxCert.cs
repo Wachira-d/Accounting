@@ -21,6 +21,10 @@ public class WithholdingTaxCert : TenantEntity
 
     public DateTime? IssuedDate { get; set; }
 
+    // Link to source document (for auto-generated certs)
+    public Guid? DocumentId { get; set; }
+    public Document? Document { get; set; }
+
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }
 

@@ -710,6 +710,7 @@ public class AccountingDbContext : DbContext
             e.Property(w => w.TotalIncomeAmount).HasPrecision(18, 2);
             e.Property(w => w.TotalTaxAmount).HasPrecision(18, 2);
             e.HasOne(w => w.PayeeContact).WithMany().HasForeignKey(w => w.PayeeContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(w => w.Document).WithMany().HasForeignKey(w => w.DocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(w => !w.IsDeleted);
         });
 

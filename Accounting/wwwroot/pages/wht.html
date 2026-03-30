@@ -11,7 +11,11 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">หนังสือรับรองหัก ณ ที่จ่าย</h2><p class="page-subtitle">ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ ออกหนังสือรับรอง</button>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openPending()">รอออกใบ</button>
+        <button class="btn btn-secondary" onclick="Page.openBulkGenerate()">สร้างทั้งเดือน</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ ออกหนังสือรับรอง</button>
+      </div>
     </div>
 
     <!-- Summary Cards -->
@@ -89,6 +93,46 @@
         <div class="modal-header"><h3 class="modal-title">รายละเอียดหนังสือรับรอง</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body" id="detailContent"></div>
         <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+
+    <!-- Pending Documents Modal -->
+    <div class="modal-overlay" id="pendingModal">
+      <div class="modal" style="max-width:850px">
+        <div class="modal-header"><h3 class="modal-title">เอกสารที่รอออกใบหัก ณ ที่จ่าย</h3><button class="modal-close" onclick="Layout.closeModal('pendingModal')">&times;</button></div>
+        <div class="modal-body">
+          <p class="text-gray-500 text-sm" style="margin-bottom:12px">เอกสารซื้อ/ค่าใช้จ่ายที่มีภาษีหัก ณ ที่จ่าย แต่ยังไม่ได้ออกใบหนังสือรับรอง</p>
+          <div class="table-container">
+            <table class="table">
+              <thead><tr><th><input type="checkbox" id="pendingCheckAll" onchange="Page.toggleCheckAll(this)"></th><th>เลขที่เอกสาร</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดก่อน VAT</th><th class="text-right">ภาษีหัก</th><th>จัดการ</th></tr></thead>
+              <tbody id="pendingBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('pendingModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.generateSelected()">สร้างใบที่เลือก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bulk Generate Modal -->
+    <div class="modal-overlay" id="bulkModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">สร้างใบหัก ณ ที่จ่ายทั้งเดือน</h3><button class="modal-close" onclick="Layout.closeModal('bulkModal')">&times;</button></div>
+        <div class="modal-body">
+          <p class="text-gray-500 text-sm" style="margin-bottom:12px">สร้างใบหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติสำหรับเอกสารทั้งหมดในเดือนที่เลือก</p>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ปี *</label><input type="number" class="form-input" id="bulkYear" value="2026"></div>
+            <div class="form-group"><label class="form-label">เดือน *</label><input type="number" class="form-input" id="bulkMonth" min="1" max="12"></div>
+          </div>
+          <div class="form-group"><label class="flex items-center gap-2"><input type="checkbox" id="bulkAutoIssue"> ออกหนังสือรับรองอัตโนมัติ (เปลี่ยนสถานะเป็น "ออกแล้ว")</label></div>
+          <div id="bulkResult" style="display:none;margin-top:12px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkModal')">ปิด</button>
+          <button class="btn btn-primary" id="bulkBtn" onclick="Page.bulkGenerate()">สร้างทั้งหมด</button>
+        </div>
       </div>
     </div>
 
@@ -296,6 +340,93 @@
         document.getElementById('linesBody').innerHTML = '';
         this.addLine();
         Layout.openModal('formModal');
+      },
+      // ==================== Auto-Generate ====================
+      pendingDocs: [],
+      async openPending() {
+        Layout.openModal('pendingModal');
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPendingWht('');
+          this.pendingDocs = res.data || [];
+          const tbody = document.getElementById('pendingBody');
+          if (!this.pendingDocs.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:30px">ไม่มีเอกสารรอออกใบ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = this.pendingDocs.map(d => `<tr>
+            <td><input type="checkbox" class="pending-check" value="${d.documentId}"></td>
+            <td class="font-medium">${d.documentNumber}</td>
+            <td>${Layout.date(d.documentDate)}</td>
+            <td>${d.contactName} ${d.contactTaxId ? '<span class="text-gray-400 text-xs">('+d.contactTaxId+')</span>' : ''}</td>
+            <td class="text-right">${Layout.money(d.subTotal)}</td>
+            <td class="text-right font-semibold text-danger">${Layout.money(d.withholdingTaxAmount)}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button></td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      toggleCheckAll(el) {
+        document.querySelectorAll('.pending-check').forEach(cb => cb.checked = el.checked);
+      },
+      async autoGenerate(docId) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.autoGenerateWht({ documentId: docId, autoIssue: false });
+          Layout.toast('สร้างใบหัก ณ ที่จ่ายสำเร็จ');
+          await this.openPending();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async generateSelected() {
+        const checked = [...document.querySelectorAll('.pending-check:checked')].map(cb => cb.value);
+        if (!checked.length) { Layout.toast('กรุณาเลือกเอกสาร', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        let ok = 0, fail = 0;
+        for (const docId of checked) {
+          try {
+            await api.autoGenerateWht({ documentId: docId, autoIssue: false });
+            ok++;
+          } catch { fail++; }
+        }
+        Layout.toast(`สร้างสำเร็จ ${ok} รายการ` + (fail > 0 ? `, ล้มเหลว ${fail} รายการ` : ''));
+        await this.openPending();
+        await this.load();
+      },
+      openBulkGenerate() {
+        document.getElementById('bulkYear').value = new Date().getFullYear();
+        document.getElementById('bulkMonth').value = new Date().getMonth() + 1;
+        document.getElementById('bulkAutoIssue').checked = false;
+        document.getElementById('bulkResult').style.display = 'none';
+        document.getElementById('bulkBtn').disabled = false;
+        Layout.openModal('bulkModal');
+      },
+      async bulkGenerate() {
+        const api = Layout.api(); if (!api) return;
+        const year = parseInt(document.getElementById('bulkYear').value);
+        const month = parseInt(document.getElementById('bulkMonth').value);
+        const autoIssue = document.getElementById('bulkAutoIssue').checked;
+        if (!year || !month) { Layout.toast('กรุณาระบุปีและเดือน', 'error'); return; }
+        document.getElementById('bulkBtn').disabled = true;
+        document.getElementById('bulkBtn').textContent = 'กำลังสร้าง...';
+        try {
+          const res = await api.bulkGenerateWht({ year, month, autoIssue });
+          const d = res.data;
+          const resultDiv = document.getElementById('bulkResult');
+          resultDiv.style.display = 'block';
+          resultDiv.innerHTML = `
+            <div class="card" style="background:var(--bg-secondary)">
+              <div class="grid grid-3 gap-4">
+                <div><span class="text-gray-500 text-xs">เอกสารทั้งหมด</span><div class="text-lg font-bold">${d.totalDocuments}</div></div>
+                <div><span class="text-gray-500 text-xs">สร้างสำเร็จ</span><div class="text-lg font-bold text-success">${d.generated}</div></div>
+                <div><span class="text-gray-500 text-xs">ข้าม</span><div class="text-lg font-bold text-warning">${d.skipped}</div></div>
+              </div>
+              ${d.skippedReasons && d.skippedReasons.length ? '<div style="margin-top:8px" class="text-xs text-gray-500">' + d.skippedReasons.join('<br>') + '</div>' : ''}
+            </div>`;
+          Layout.toast(`สร้างสำเร็จ ${d.generated} รายการ`);
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        document.getElementById('bulkBtn').disabled = false;
+        document.getElementById('bulkBtn').textContent = 'สร้างทั้งหมด';
       },
       async save() {
         const api = Layout.api(); if (!api) return;

@@ -162,6 +162,9 @@ const API = {
       issueWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/issue`),
       voidWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/void`),
       getWhtByContact: (contactId, q = '') => API.get(`${base}/withholding-tax-certs/contacts/${contactId}${q}`),
+      autoGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/auto-generate`, d),
+      getPendingWht: (q = '') => API.get(`${base}/withholding-tax-certs/pending${q}`),
+      bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
       // Fixed Assets
       getAssets: (q = '') => API.get(`${base}/fixedasset${q}`),
       getAsset: (id) => API.get(`${base}/fixedasset/${id}`),

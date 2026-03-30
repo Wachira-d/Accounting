@@ -13,12 +13,14 @@ public class DocumentService : IDocumentService
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;
     private readonly ISubscriptionService _subscriptionService;
+    private readonly IWithholdingTaxCertService _whtService;
 
-    public DocumentService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService subscriptionService)
+    public DocumentService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService)
     {
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
+        _whtService = whtService;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -440,6 +442,23 @@ public class DocumentService : IDocumentService
             await CreatePaymentJournalAsync(companyId, doc, payment, createdBy);
 
             await _db.SaveChangesAsync();
+
+            // Auto-generate WHT cert for purchase documents with WHT on first payment
+            if (doc.WithholdingTaxAmount > 0
+                && (doc.DocumentType == DocumentType.PurchaseInvoice
+                    || doc.DocumentType == DocumentType.Expense
+                    || doc.DocumentType == DocumentType.PaymentVoucher))
+            {
+                try
+                {
+                    await _whtService.AutoGenerateFromDocumentAsync(companyId, doc.Id, false, createdBy);
+                }
+                catch
+                {
+                    // Cert may already exist or other non-critical error — don't fail payment
+                }
+            }
+
             await transaction.CommitAsync();
 
             return new PaymentResponse(

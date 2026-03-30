@@ -158,6 +158,172 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         _ => $"ประเภทเงินได้ {code}"
     };
 
+    // ==================== Auto-Generate from Document ====================
+
+    public async Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(
+        Guid companyId, Guid documentId, bool autoIssue, string createdBy)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (doc.WithholdingTaxAmount <= 0)
+            throw new InvalidOperationException("เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
+
+        // Check if cert already exists for this document
+        var existing = await _db.WithholdingTaxCerts
+            .AnyAsync(w => w.CompanyId == companyId && w.DocumentId == documentId
+                && w.Status != WithholdingTaxCertStatus.Voided);
+        if (existing)
+            throw new InvalidOperationException("เอกสารนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
+
+        // Determine tax form type: ภ.ง.ด.53 for juristic persons, ภ.ง.ด.3 for individuals
+        var taxFormType = DetermineTaxFormType(doc.Contact);
+
+        var count = await _db.WithholdingTaxCerts.CountAsync(w => w.CompanyId == companyId);
+        var certNumber = $"WHT-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+
+        var cert = new WithholdingTaxCert
+        {
+            CompanyId = companyId,
+            CertificateNumber = certNumber,
+            PayeeContactId = doc.ContactId,
+            TaxFormType = taxFormType,
+            TaxYear = doc.DocumentDate.Year,
+            TaxMonth = doc.DocumentDate.Month,
+            CertificateType = WithholdingTaxCertType.Withhold,
+            DocumentId = documentId,
+            CreatedBy = createdBy
+        };
+
+        // Create lines from document lines that have WHT
+        var order = 1;
+        var whtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
+        if (whtLines.Count == 0)
+        {
+            // Fallback: use document-level WHT with default income type
+            cert.Lines.Add(new WithholdingTaxCertLine
+            {
+                LineOrder = 1,
+                IncomeTypeCode = "8", // ค่าบริการอื่นๆ default
+                IncomeDescription = $"ตามเอกสาร {doc.DocumentNumber}",
+                PaymentDate = doc.DocumentDate,
+                IncomeAmount = doc.SubTotal,
+                TaxRate = doc.SubTotal > 0 ? doc.WithholdingTaxAmount * 100 / doc.SubTotal : 3m,
+                TaxAmount = doc.WithholdingTaxAmount
+            });
+        }
+        else
+        {
+            foreach (var line in whtLines)
+            {
+                cert.Lines.Add(new WithholdingTaxCertLine
+                {
+                    LineOrder = order++,
+                    IncomeTypeCode = line.IncomeTypeCode ?? "8",
+                    IncomeDescription = line.Description,
+                    PaymentDate = doc.DocumentDate,
+                    IncomeAmount = line.Amount,
+                    TaxRate = line.WithholdingTaxRate,
+                    TaxAmount = line.WithholdingTaxAmount
+                });
+            }
+        }
+
+        cert.TotalIncomeAmount = cert.Lines.Sum(l => l.IncomeAmount);
+        cert.TotalTaxAmount = cert.Lines.Sum(l => l.TaxAmount);
+
+        if (autoIssue)
+        {
+            cert.Status = WithholdingTaxCertStatus.Issued;
+            cert.IssuedDate = DateTime.UtcNow;
+        }
+
+        _db.WithholdingTaxCerts.Add(cert);
+        await _db.SaveChangesAsync();
+
+        return await GetByIdAsync(companyId, cert.Id);
+    }
+
+    public async Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(
+        Guid companyId, int? year = null, int? month = null)
+    {
+        // Find documents with WHT that don't have a cert yet (or cert was voided)
+        var existingCertDocIds = await _db.WithholdingTaxCerts
+            .Where(w => w.CompanyId == companyId && w.DocumentId != null
+                && w.Status != WithholdingTaxCertStatus.Voided)
+            .Select(w => w.DocumentId!.Value)
+            .ToListAsync();
+
+        var query = _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId
+                && d.WithholdingTaxAmount > 0
+                && !existingCertDocIds.Contains(d.Id)
+                && (d.DocumentType == DocumentType.PurchaseInvoice
+                    || d.DocumentType == DocumentType.Expense
+                    || d.DocumentType == DocumentType.PaymentVoucher));
+
+        if (year.HasValue)
+            query = query.Where(d => d.DocumentDate.Year == year.Value);
+        if (month.HasValue)
+            query = query.Where(d => d.DocumentDate.Month == month.Value);
+
+        var docs = await query.OrderByDescending(d => d.DocumentDate).ToListAsync();
+
+        return docs.Select(d => new PendingWhtDocumentResponse(
+            d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,
+            d.ContactId, d.Contact.Name, d.Contact.TaxId,
+            d.SubTotal, d.WithholdingTaxAmount,
+            d.Lines.Where(l => l.WithholdingTaxAmount > 0).Select(l => new PendingWhtLineInfo(
+                l.Description, l.IncomeTypeCode, l.Amount,
+                l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList()
+        )).ToList();
+    }
+
+    public async Task<BulkGenerateWhtResponse> BulkGenerateAsync(
+        Guid companyId, BulkGenerateWhtRequest request, string createdBy)
+    {
+        var pending = await GetPendingDocumentsAsync(companyId, request.Year, request.Month);
+        var generated = new List<WithholdingTaxCertResponse>();
+        var skippedReasons = new List<string>();
+        var skipped = 0;
+
+        foreach (var doc in pending)
+        {
+            try
+            {
+                var cert = await AutoGenerateFromDocumentAsync(
+                    companyId, doc.DocumentId, request.AutoIssue, createdBy);
+                generated.Add(cert);
+            }
+            catch (Exception ex)
+            {
+                skipped++;
+                skippedReasons.Add($"{doc.DocumentNumber}: {ex.Message}");
+            }
+        }
+
+        return new BulkGenerateWhtResponse(
+            pending.Count, generated.Count, skipped, skippedReasons, generated);
+    }
+
+    // ==================== Private Helpers ====================
+
+    /// <summary>
+    /// ภ.ง.ด.53 for companies (TaxId 13 digits), ภ.ง.ด.3 for individuals (TaxId 13 digits starting with 0 or no BranchCode)
+    /// Simple heuristic: if contact has BranchCode → juristic person (ภ.ง.ด.53), else → individual (ภ.ง.ด.3)
+    /// </summary>
+    private static TaxType DetermineTaxFormType(Contact contact)
+    {
+        if (!string.IsNullOrEmpty(contact.BranchCode) && contact.BranchCode != "00000")
+            return TaxType.WithholdingTax53;
+        return TaxType.WithholdingTax3;
+    }
+
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
