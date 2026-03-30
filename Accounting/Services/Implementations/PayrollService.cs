@@ -557,11 +557,14 @@ public class PayrollService : IPayrollService
                 var totalPvd = run.TotalProvidentFundEmployee + run.TotalProvidentFundEmployer;
                 if (totalPvd > 0)
                 {
+                    var ssoCode = await _db.ChartOfAccounts
+                        .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("213") && a.Level >= 4)
+                        .Select(a => a.AccountCode).FirstOrDefaultAsync() ?? "";
                     var pvdPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.AccountCode.StartsWith("2132") && a.Level >= 4)
                         ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode.StartsWith("213") && a.Level >= 4
-                            && a.AccountCode != (ssoPayableAccount?.AccountCode ?? ""));
+                            && a.AccountCode != ssoCode);
                     if (pvdPayableAccount != null)
                         lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                             pvdPayableAccount.Id, 0, totalPvd, "กองทุนสำรองเลี้ยงชีพค้างจ่าย"));
@@ -574,7 +577,7 @@ public class PayrollService : IPayrollService
                         a.CompanyId == companyId && a.AccountCode.StartsWith("533") && a.Level >= 4)
                         ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode.StartsWith("532") && a.Level >= 4
-                            && a.AccountCode != (salaryAccount?.AccountCode ?? ""));
+                            && a.AccountCode != (salaryAccount != null ? salaryAccount.AccountCode : ""));
                     if (pvdExpAccount != null)
                         lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                             pvdExpAccount.Id, run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
@@ -591,7 +594,7 @@ public class PayrollService : IPayrollService
                 {
                     var entry = await _accountingService.CreateJournalEntryAsync(companyId,
                         new Models.DTOs.Accounting.CreateJournalEntryRequest(
-                            run.PaymentDate ?? DateTime.UtcNow,
+                            run.PayDate,
                             $"เงินเดือนประจำเดือน {run.Month}/{run.Year} ({run.EmployeeCount} คน)",
                             $"PAYROLL-{run.Year}{run.Month:D2}",
                             lines, JournalType.General), processedBy);

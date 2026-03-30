@@ -37,7 +37,7 @@ public class OpenBankingService : IOpenBankingService
             ConnectionType = request.ConnectionType,
             ApiEndpoint = request.ApiEndpoint,
             ClientId = request.ClientId,
-            EncryptedCredentials = EncryptString(request.Credentials),
+            EncryptedCredentials = EncryptString(request.Credentials ?? ""),
             AutoSync = request.AutoSync,
             SyncIntervalMinutes = request.SyncIntervalMinutes,
             LinkedBankAccountId = request.LinkedBankAccountId,
