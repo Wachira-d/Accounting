@@ -43,6 +43,10 @@ public class AccountingDbContext : DbContext
     // Products & Inventory
     public DbSet<Product> Products => Set<Product>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<UnitConversion> UnitConversions => Set<UnitConversion>();
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+    public DbSet<StockCount> StockCounts => Set<StockCount>();
+    public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
 
     // Bank
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();

@@ -40,6 +40,9 @@ public class Product : TenantEntity
     public bool TrackStock { get; set; } = false;
 
     public bool IsActive { get; set; } = true;
+
+    // Relationships
+    public ICollection<UnitConversion> UnitConversions { get; set; } = new List<UnitConversion>();
 }
 
 /// <summary>
@@ -56,5 +59,58 @@ public class StockMovement : TenantEntity
     public decimal BalanceAfter { get; set; }
     public string? Reference { get; set; }
     public Guid? DocumentId { get; set; }
+    public string? Notes { get; set; }
+}
+
+/// <summary>
+/// การแปลงหน่วยสินค้า เช่น 1 ลัง = 12 ชิ้น, 1 โหล = 12 ชิ้น
+/// </summary>
+public class UnitConversion : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public string FromUnit { get; set; } = null!;    // เช่น "ลัง"
+    public string ToUnit { get; set; } = null!;      // เช่น "ชิ้น"
+    public decimal ConversionRate { get; set; }       // เช่น 12 (1 ลัง = 12 ชิ้น)
+    public decimal? SellingPrice { get; set; }        // ราคาขายต่อหน่วยนี้
+    public decimal? CostPrice { get; set; }           // ราคาทุนต่อหน่วยนี้
+    public string? Barcode { get; set; }              // Barcode สำหรับหน่วยนี้
+}
+
+/// <summary>
+/// หมวดหมู่สินค้า
+/// </summary>
+public class ProductCategory : TenantEntity
+{
+    public string Code { get; set; } = null!;
+    public string Name { get; set; } = null!;
+    public string? Description { get; set; }
+    public Guid? ParentCategoryId { get; set; }
+    public ProductCategory? ParentCategory { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>
+/// ตรวจนับสินค้า (Physical Inventory Count)
+/// </summary>
+public class StockCount : TenantEntity
+{
+    public string CountNumber { get; set; } = null!;
+    public DateTime CountDate { get; set; }
+    public string Status { get; set; } = "Draft";  // Draft, InProgress, Completed, Cancelled
+    public string? Notes { get; set; }
+    public Guid? WarehouseId { get; set; }
+    public ICollection<StockCountLine> Lines { get; set; } = new List<StockCountLine>();
+}
+
+public class StockCountLine : TenantEntity
+{
+    public Guid StockCountId { get; set; }
+    public StockCount StockCount { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public decimal SystemQty { get; set; }
+    public decimal CountedQty { get; set; }
+    public decimal Variance { get; set; }       // CountedQty - SystemQty
     public string? Notes { get; set; }
 }

@@ -109,9 +109,30 @@ const API = {
       createPayment: (d) => API.post(`${base}/document/payments`, d),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
+      getProduct: (id) => API.get(`${base}/product/${id}`),
       createProduct: (d) => API.post(`${base}/product`, d),
       updateProduct: (id, d) => API.put(`${base}/product/${id}`, d),
       deleteProduct: (id) => API.del(`${base}/product/${id}`),
+      adjustStock: (d) => API.post(`${base}/product/stock/adjust`, d),
+      getStockMovements: (productId) => API.get(`${base}/product/${productId}/stock/movements`),
+      getLowStock: () => API.get(`${base}/product/stock/low`),
+      // Unit Conversions
+      getUnitConversions: (productId) => API.get(`${base}/product/${productId}/unit-conversions`),
+      createUnitConversion: (productId, d) => API.post(`${base}/product/${productId}/unit-conversions`, d),
+      deleteUnitConversion: (id) => API.del(`${base}/product/unit-conversions/${id}`),
+      convertUnit: (d) => API.post(`${base}/product/unit-conversions/convert`, d),
+      // Product Categories
+      getProductCategories: () => API.get(`${base}/product/categories`),
+      createProductCategory: (d) => API.post(`${base}/product/categories`, d),
+      deleteProductCategory: (id) => API.del(`${base}/product/categories/${id}`),
+      // Stock Count
+      getStockCounts: () => API.get(`${base}/product/stock-counts`),
+      getStockCount: (id) => API.get(`${base}/product/stock-counts/${id}`),
+      createStockCount: (d) => API.post(`${base}/product/stock-counts`, d),
+      updateStockCountLines: (id, d) => API.put(`${base}/product/stock-counts/${id}/lines`, d),
+      applyStockCount: (id) => API.post(`${base}/product/stock-counts/${id}/apply`),
+      // Inventory Valuation
+      getInventoryValuation: () => API.get(`${base}/product/inventory/valuation`),
       // Bank
       getBankAccounts: () => API.get(`${base}/bank/accounts`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),

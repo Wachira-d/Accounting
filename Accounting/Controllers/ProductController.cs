@@ -55,7 +55,8 @@ public class ProductController : ControllerBase
         return NoContent();
     }
 
-    // Stock
+    // ===== Stock =====
+
     [HttpPost("stock/adjust")]
     public async Task<ActionResult<ApiResponse<StockMovementResponse>>> AdjustStock(Guid companyId, [FromBody] StockAdjustmentRequest request)
     {
@@ -76,5 +77,109 @@ public class ProductController : ControllerBase
     {
         var result = await _productService.GetLowStockProductsAsync(companyId);
         return Ok(new ApiResponse<List<ProductResponse>>(true, result));
+    }
+
+    // ===== Unit Conversions =====
+
+    [HttpPost("{productId:guid}/unit-conversions")]
+    public async Task<ActionResult<ApiResponse<UnitConversionResponse>>> CreateUnitConversion(
+        Guid companyId, Guid productId, [FromBody] CreateUnitConversionRequest request)
+    {
+        var req = request with { ProductId = productId };
+        var result = await _productService.CreateUnitConversionAsync(companyId, req);
+        return StatusCode(201, new ApiResponse<UnitConversionResponse>(true, result, "เพิ่มการแปลงหน่วยสำเร็จ"));
+    }
+
+    [HttpGet("{productId:guid}/unit-conversions")]
+    public async Task<ActionResult<ApiResponse<List<UnitConversionResponse>>>> GetUnitConversions(Guid companyId, Guid productId)
+    {
+        var result = await _productService.GetUnitConversionsAsync(companyId, productId);
+        return Ok(new ApiResponse<List<UnitConversionResponse>>(true, result));
+    }
+
+    [HttpDelete("unit-conversions/{conversionId:guid}")]
+    public async Task<ActionResult> DeleteUnitConversion(Guid companyId, Guid conversionId)
+    {
+        await _productService.DeleteUnitConversionAsync(companyId, conversionId);
+        return NoContent();
+    }
+
+    [HttpPost("unit-conversions/convert")]
+    public async Task<ActionResult<ApiResponse<ConvertUnitResponse>>> ConvertUnit(Guid companyId, [FromBody] ConvertUnitRequest request)
+    {
+        var result = await _productService.ConvertUnitAsync(companyId, request);
+        return Ok(new ApiResponse<ConvertUnitResponse>(true, result));
+    }
+
+    // ===== Product Categories =====
+
+    [HttpGet("categories")]
+    public async Task<ActionResult<ApiResponse<List<ProductCategoryResponse>>>> GetCategories(Guid companyId)
+    {
+        var result = await _productService.GetCategoriesAsync(companyId);
+        return Ok(new ApiResponse<List<ProductCategoryResponse>>(true, result));
+    }
+
+    [HttpPost("categories")]
+    public async Task<ActionResult<ApiResponse<ProductCategoryResponse>>> CreateCategory(Guid companyId, [FromBody] CreateProductCategoryRequest request)
+    {
+        var result = await _productService.CreateCategoryAsync(companyId, request);
+        return StatusCode(201, new ApiResponse<ProductCategoryResponse>(true, result, "สร้างหมวดหมู่สำเร็จ"));
+    }
+
+    [HttpDelete("categories/{categoryId:guid}")]
+    public async Task<ActionResult> DeleteCategory(Guid companyId, Guid categoryId)
+    {
+        await _productService.DeleteCategoryAsync(companyId, categoryId);
+        return NoContent();
+    }
+
+    // ===== Stock Count =====
+
+    [HttpPost("stock-counts")]
+    public async Task<ActionResult<ApiResponse<StockCountResponse>>> CreateStockCount(Guid companyId, [FromBody] CreateStockCountRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _productService.CreateStockCountAsync(companyId, request, userId);
+        return StatusCode(201, new ApiResponse<StockCountResponse>(true, result, "สร้างใบตรวจนับสำเร็จ"));
+    }
+
+    [HttpGet("stock-counts")]
+    public async Task<ActionResult<ApiResponse<List<StockCountResponse>>>> GetStockCounts(Guid companyId)
+    {
+        var result = await _productService.GetStockCountsAsync(companyId);
+        return Ok(new ApiResponse<List<StockCountResponse>>(true, result));
+    }
+
+    [HttpGet("stock-counts/{countId:guid}")]
+    public async Task<ActionResult<ApiResponse<StockCountResponse>>> GetStockCount(Guid companyId, Guid countId)
+    {
+        var result = await _productService.GetStockCountAsync(companyId, countId);
+        return Ok(new ApiResponse<StockCountResponse>(true, result));
+    }
+
+    [HttpPut("stock-counts/{countId:guid}/lines")]
+    public async Task<ActionResult<ApiResponse<StockCountResponse>>> UpdateStockCountLines(
+        Guid companyId, Guid countId, [FromBody] List<StockCountLineInput> lines)
+    {
+        var result = await _productService.UpdateStockCountLinesAsync(companyId, countId, lines);
+        return Ok(new ApiResponse<StockCountResponse>(true, result));
+    }
+
+    [HttpPost("stock-counts/{countId:guid}/apply")]
+    public async Task<ActionResult<ApiResponse<StockCountResponse>>> ApplyStockCount(Guid companyId, Guid countId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _productService.ApplyStockCountAsync(companyId, countId, userId);
+        return Ok(new ApiResponse<StockCountResponse>(true, result, "ปรับสต็อกตามผลตรวจนับสำเร็จ"));
+    }
+
+    // ===== Inventory Valuation =====
+
+    [HttpGet("inventory/valuation")]
+    public async Task<ActionResult<ApiResponse<InventoryValuationReport>>> GetInventoryValuation(Guid companyId)
+    {
+        var result = await _productService.GetInventoryValuationAsync(companyId);
+        return Ok(new ApiResponse<InventoryValuationReport>(true, result));
     }
 }
