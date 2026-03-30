@@ -233,32 +233,140 @@ public class PdfGenerationService : IPdfGenerationService
     {
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
-        sb.AppendLine("<style>body{font-family:'THSarabunNew',sans-serif;font-size:14px;} .title{text-align:center;font-size:18px;font-weight:bold;margin:10px 0;} table{width:100%;border-collapse:collapse;} td,th{border:1px solid #000;padding:4px;} .right{text-align:right;} .center{text-align:center;}</style>");
-        sb.AppendLine("</head><body>");
+        sb.AppendLine(@"<style>
+            @page { size: A4; margin: 15mm; }
+            body { font-family: 'TH Sarabun New', 'Noto Sans Thai', sans-serif; font-size: 14px; line-height: 1.5; color: #000; margin: 0; padding: 20px; }
+            .wht { max-width: 700px; margin: auto; }
+            .title { text-align: center; font-weight: bold; font-size: 18px; margin-bottom: 2px; }
+            .subtitle { text-align: center; font-size: 14px; margin-bottom: 10px; }
+            .section { border: 1.5px solid #000; padding: 8px 12px; margin-bottom: 6px; position: relative; }
+            .section-title { position: absolute; top: -10px; left: 10px; background: #fff; padding: 0 6px; font-weight: bold; font-size: 12px; }
+            .row { display: flex; gap: 8px; margin-bottom: 3px; align-items: baseline; }
+            .lbl { font-weight: bold; white-space: nowrap; }
+            .val { flex: 1; border-bottom: 1px dotted #999; min-height: 18px; }
+            .tid { display: inline-block; width: 16px; height: 20px; border: 1px solid #000; text-align: center; line-height: 20px; font-size: 12px; font-weight: bold; margin: 0 0.5px; }
+            .tid-sep { display: inline-block; width: 6px; text-align: center; font-weight: bold; }
+            .chk { font-size: 15px; }
+            .checks { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0; font-size: 13px; }
+            table.inc { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+            table.inc th, table.inc td { border: 1px solid #000; padding: 3px 6px; }
+            table.inc th { background: #eee; text-align: center; font-weight: bold; }
+            .r { text-align: right; } .c { text-align: center; }
+            .sig { display: flex; justify-content: space-between; margin-top: 30px; }
+            .sig-box { text-align: center; width: 40%; }
+            .sig-line { border-top: 1px solid #000; margin-top: 36px; padding-top: 4px; }
+        </style>");
+        sb.AppendLine("</head><body><div class='wht'>");
+
+        // Title
         sb.AppendLine("<div class='title'>หนังสือรับรองการหักภาษี ณ ที่จ่าย</div>");
-        sb.AppendLine($"<div class='title'>ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</div>");
+        sb.AppendLine("<div class='subtitle'>ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</div>");
+        sb.AppendLine($"<div style='text-align:left;margin-bottom:8px'><strong>เล่มที่</strong> ............... <strong>เลขที่</strong> {WebUtility.HtmlEncode(cert.CertificateNumber)}</div>");
 
-        sb.AppendLine("<table><tr><td colspan='2'><strong>ผู้จ่ายเงิน (ผู้หักภาษี)</strong></td></tr>");
-        sb.AppendLine($"<tr><td>ชื่อ: {company.Name}</td><td>เลขประจำตัวผู้เสียภาษี: {company.TaxId}</td></tr>");
-        if (company.Address != null) sb.AppendLine($"<tr><td colspan='2'>ที่อยู่: {company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}</td></tr>");
-
-        sb.AppendLine("<tr><td colspan='2'><strong>ผู้ถูกหักภาษี</strong></td></tr>");
-        sb.AppendLine($"<tr><td>ชื่อ: {cert.PayeeContact.Name}</td><td>เลขประจำตัวผู้เสียภาษี: {cert.PayeeContact.TaxId}</td></tr>");
-        if (cert.PayeeContact.Address != null) sb.AppendLine($"<tr><td colspan='2'>ที่อยู่: {cert.PayeeContact.Address}</td></tr>");
-        sb.AppendLine("</table>");
-
-        sb.AppendLine($"<div style='margin:10px 0;'>เลขที่: {cert.CertificateNumber} | แบบ: {GetTaxFormName(cert.TaxFormType)} | ปีภาษี: {cert.TaxYear} | เดือน: {cert.TaxMonth}</div>");
-
-        sb.AppendLine("<table><thead><tr><th>ลำดับ</th><th>ประเภทเงินได้</th><th>วันที่จ่าย</th><th>จำนวนเงิน</th><th>อัตราภาษี</th><th>ภาษีที่หัก</th></tr></thead><tbody>");
-        foreach (var line in cert.Lines.OrderBy(l => l.LineOrder))
+        // Helper for tax ID boxes
+        string TaxIdBoxes(string? taxId)
         {
-            sb.AppendLine($"<tr><td class='center'>{line.LineOrder}</td><td>{line.IncomeDescription}</td><td class='center'>{line.PaymentDate:dd/MM/yyyy}</td><td class='right'>{line.IncomeAmount:N2}</td><td class='center'>{line.TaxRate:N2}%</td><td class='right'>{line.TaxAmount:N2}</td></tr>");
+            var digits = (taxId ?? "").PadRight(13).Substring(0, 13);
+            var result = new StringBuilder();
+            int[] groups = { 1, 4, 5, 2, 1 };
+            int pos = 0;
+            for (int g = 0; g < groups.Length; g++)
+            {
+                if (g > 0) result.Append("<span class='tid-sep'>-</span>");
+                for (int i = 0; i < groups[g]; i++)
+                    result.Append($"<span class='tid'>{(pos < digits.Length ? digits[pos].ToString() : " ")}</span>");
+                pos += groups[g];
+            }
+            return result.ToString();
         }
-        sb.AppendLine($"<tr><td colspan='3'><strong>รวม</strong></td><td class='right'><strong>{cert.TotalIncomeAmount:N2}</strong></td><td></td><td class='right'><strong>{cert.TotalTaxAmount:N2}</strong></td></tr>");
+
+        string Chk(bool v) => v ? "&#9745;" : "&#9744;";
+        var fullAddress = string.Join(" ", new[] { company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode }.Where(s => !string.IsNullOrEmpty(s)));
+
+        // Payer section
+        sb.AppendLine("<div class='section'><div class='section-title'>ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>");
+        sb.AppendLine($"<div class='row'><span class='lbl'>เลขประจำตัวผู้เสียภาษีอากร</span><span>{TaxIdBoxes(company.TaxId)}</span></div>");
+        sb.AppendLine($"<div class='row'><span class='lbl'>ชื่อ</span><span class='val'>{WebUtility.HtmlEncode(company.Name)}</span></div>");
+        sb.AppendLine($"<div class='row'><span class='lbl'>ที่อยู่</span><span class='val'>{WebUtility.HtmlEncode(fullAddress)}</span></div>");
+        sb.AppendLine("</div>");
+
+        // Payee section
+        sb.AppendLine("<div class='section'><div class='section-title'>ผู้ถูกหักภาษี ณ ที่จ่าย</div>");
+        sb.AppendLine($"<div class='row'><span class='lbl'>เลขประจำตัวผู้เสียภาษีอากร</span><span>{TaxIdBoxes(cert.PayeeContact.TaxId)}</span></div>");
+        sb.AppendLine($"<div class='row'><span class='lbl'>ชื่อ</span><span class='val'>{WebUtility.HtmlEncode(cert.PayeeContact.Name)}</span>");
+        if (!string.IsNullOrEmpty(cert.PayeeContact.BranchCode))
+            sb.Append($"<span class='lbl' style='margin-left:12px'>สาขา</span><span class='val' style='max-width:80px'>{WebUtility.HtmlEncode(cert.PayeeContact.BranchCode)}</span>");
+        sb.AppendLine("</div>");
+        sb.AppendLine($"<div class='row'><span class='lbl'>ที่อยู่</span><span class='val'>{WebUtility.HtmlEncode(cert.PayeeContact.Address ?? "")}</span></div>");
+        sb.AppendLine("</div>");
+
+        // Form type checkboxes
+        sb.AppendLine("<div style='margin:6px 0'><strong>แบบยื่นรายการภาษี:</strong><div class='checks'>");
+        sb.AppendLine($"<span><span class='chk'>{Chk(cert.TaxFormType == TaxType.WithholdingTax1)}</span> ภ.ง.ด.1</span>");
+        sb.AppendLine($"<span><span class='chk'>&#9744;</span> ภ.ง.ด.1ก</span>");
+        sb.AppendLine($"<span><span class='chk'>&#9744;</span> ภ.ง.ด.2</span>");
+        sb.AppendLine($"<span><span class='chk'>{Chk(cert.TaxFormType == TaxType.WithholdingTax3)}</span> ภ.ง.ด.3</span>");
+        sb.AppendLine($"<span><span class='chk'>&#9744;</span> ภ.ง.ด.2ก</span>");
+        sb.AppendLine($"<span><span class='chk'>&#9744;</span> ภ.ง.ด.3ก</span>");
+        sb.AppendLine($"<span><span class='chk'>{Chk(cert.TaxFormType == TaxType.WithholdingTax53)}</span> ภ.ง.ด.53</span>");
+        sb.AppendLine("</div></div>");
+
+        // Income type table
+        var incomeTypes = new (string code, string label)[]
+        {
+            ("1", "1. เงินเดือน ค่าจ้าง เบี้ยเลี้ยง โบนัส ฯลฯ ตามมาตรา 40(1)"),
+            ("2", "2. ค่าธรรมเนียม ค่านายหน้า ฯลฯ ตามมาตรา 40(2)"),
+            ("3", "3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40(3)"),
+            ("4a", "4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40(4)(ก)"),
+            ("4b", "4. (ข) เงินปันผล เงินส่วนแบ่งกำไร ฯลฯ ตามมาตรา 40(4)(ข)"),
+            ("5", "5. ค่าจ้างตามคำสั่งกรมสรรพากร มาตรา 3 เตรส เช่น ค่าเช่า ค่าขนส่ง ค่าบริการ ฯลฯ"),
+            ("6", "6. อื่นๆ (ระบุ)")
+        };
+
+        var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
+        var paymentDateStr = lines.Count > 0 ? lines[0].PaymentDate.ToString("dd/MM/yyyy") : "";
+
+        sb.AppendLine("<table class='inc'><thead><tr><th style='width:50%'>ประเภทเงินได้พึงประเมินที่จ่าย</th><th style='width:14%'>วันเดือนปีที่จ่าย</th><th style='width:18%'>จำนวนเงินที่จ่าย</th><th style='width:18%'>ภาษีที่หักและนำส่งไว้</th></tr></thead><tbody>");
+
+        foreach (var (code, label) in incomeTypes)
+        {
+            var matchingLines = code switch
+            {
+                "5" => lines.Where(l => l.IncomeTypeCode is "5" or "40(5)" or "3").ToList(),
+                "6" => lines.Where(l => l.IncomeTypeCode is "6" or "7" or "8" or "40(6)" or "40(7)" or "40(8)").ToList(),
+                _ => lines.Where(l => l.IncomeTypeCode == code).ToList()
+            };
+            var hasData = matchingLines.Count > 0;
+            var totalIncome = matchingLines.Sum(l => l.IncomeAmount);
+            var totalTax = matchingLines.Sum(l => l.TaxAmount);
+
+            sb.AppendLine($"<tr><td><span class='chk'>{Chk(hasData)}</span> {label}</td><td class='c'>{(hasData ? paymentDateStr : "")}</td><td class='r'>{(hasData ? totalIncome.ToString("N2") : "")}</td><td class='r'>{(hasData ? totalTax.ToString("N2") : "")}</td></tr>");
+        }
+
+        sb.AppendLine($"<tr style='font-weight:bold;background:#f0f0f0'><td colspan='2' class='c'>รวมเงินที่จ่ายและภาษีที่หักนำส่ง</td><td class='r'>{cert.TotalIncomeAmount:N2}</td><td class='r'>{cert.TotalTaxAmount:N2}</td></tr>");
         sb.AppendLine("</tbody></table>");
 
-        sb.AppendLine("<div style='margin-top:40px;display:flex;justify-content:space-between;'><div style='text-align:center;width:40%;'>________________<br/>ลงชื่อ ผู้จ่ายเงิน</div><div style='text-align:center;width:40%;'>________________<br/>ลงชื่อ ผู้รับเงิน</div></div>");
-        sb.AppendLine("</body></html>");
+        // Conditions
+        var isWithhold = cert.CertificateType == Models.DTOs.Tax.WithholdingTaxCertType.Withhold;
+        var isPayAlways = cert.CertificateType == Models.DTOs.Tax.WithholdingTaxCertType.PayAlways;
+        sb.AppendLine("<div style='margin:6px 0'><strong>เงื่อนไข:</strong><div class='checks'>");
+        sb.AppendLine($"<span><span class='chk'>{Chk(isWithhold)}</span> (1) หักภาษี ณ ที่จ่าย</span>");
+        sb.AppendLine($"<span><span class='chk'>{Chk(isPayAlways)}</span> (2) ออกภาษีให้ตลอดไป</span>");
+        sb.AppendLine("<span><span class='chk'>&#9744;</span> (3) หักภาษี ณ ที่จ่าย และออกภาษีให้สำหรับการจ่ายครั้งนี้</span>");
+        sb.AppendLine("<span><span class='chk'>&#9744;</span> (4) อื่นๆ (ระบุ) ................</span>");
+        sb.AppendLine("</div></div>");
+
+        // Certification
+        sb.AppendLine("<div style='margin:6px 0;font-size:13px'><span class='chk'>&#9745;</span> ข้าพเจ้าผู้จ่ายเงินได้ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>");
+
+        // Signatures
+        var issueDateStr = cert.IssuedDate?.ToString("dd/MM/yyyy") ?? "......./......./........";
+        sb.AppendLine("<div class='sig'>");
+        sb.AppendLine($"<div class='sig-box'><div class='sig-line'>ลงชื่อ ............................ ผู้จ่ายเงิน</div><div style='font-size:12px;margin-top:4px'>วันที่ {issueDateStr}</div></div>");
+        sb.AppendLine("<div class='sig-box'><div class='sig-line'>ลงชื่อ ............................ ผู้รับเงิน</div><div style='font-size:12px;margin-top:4px'>วันที่ ......./......./........</div></div>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("</div></body></html>");
         return sb.ToString();
     }
 
