@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export ข้อมูลยื่นภาษี - Nexaacc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">Export ข้อมูลยื่นภาษี / ประกันสังคม</h2><p class="page-subtitle">ดาวน์โหลดไฟล์สำหรับยื่นกรมสรรพากรและสำนักงานประกันสังคม</p></div>
+    </div>
+
+    <!-- Period Selection -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="form-row" style="align-items:flex-end">
+        <div class="form-group"><label class="form-label">ปี (ค.ศ.)</label><input type="number" class="form-input" id="fYear" value="2026" style="width:100px"></div>
+        <div class="form-group"><label class="form-label">เดือน</label>
+          <select class="form-select" id="fMonth" style="width:140px">
+            <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+            <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+            <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+            <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+          </select>
+        </div>
+        <div class="form-group"><button class="btn btn-primary" onclick="Page.loadPreviews()">ดูข้อมูล</button></div>
+      </div>
+    </div>
+
+    <!-- Export Cards Grid -->
+    <div class="grid grid-2 gap-4">
+
+      <!-- ภ.ง.ด.1 -->
+      <div class="card" id="cardPND1">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.1</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย เงินเดือน (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND1">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND1')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.3 -->
+      <div class="card" id="cardPND3">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.3</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย บุคคลธรรมดา (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND3">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd3')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND3')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.53 -->
+      <div class="card" id="cardPND53">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.53</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย นิติบุคคล (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND53">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd53')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND53')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.พ.30 -->
+      <div class="card" id="cardPP30">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.พ.30</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีมูลค่าเพิ่ม (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPP30">กำหนดยื่น: ภายในวันที่ 15 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pp30')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PP30')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- สปส.1-10 -->
+      <div class="card" id="cardSSO110">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">สปส.1-10</h3><p class="text-gray-500 text-xs" style="margin:0">เงินสมทบประกันสังคม (รายเดือน)</p></div>
+          <span class="badge badge-warning">ประกันสังคม</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewSSO110">กำหนดยื่น: ภายในวันที่ 15 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('sso110')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('SSO110')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.1ก -->
+      <div class="card" id="cardPND1K">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.1ก</h3><p class="text-gray-500 text-xs" style="margin:0">สรุปรายปีภาษีหัก ณ ที่จ่าย เงินเดือน</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND1K">กำหนดยื่น: ภายในเดือนกุมภาพันธ์ของปีถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND1K')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal-overlay" id="previewModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="previewTitle">ดูตัวอย่างข้อมูล</h3><button class="modal-close" onclick="Layout.closeModal('previewModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="previewSummary" style="margin-bottom:12px"></div>
+          <pre id="previewData" style="background:var(--bg-secondary);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;max-height:400px;white-space:pre-wrap;word-break:break-all"></pre>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('previewModal')">ปิด</button>
+          <button class="btn btn-primary" id="previewDownloadBtn">ดาวน์โหลด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('tax-export')) return;
+        Layout.setTitle('Export ข้อมูลยื่นภาษี');
+        document.getElementById('fMonth').value = new Date().getMonth() + 1;
+        document.getElementById('fYear').value = new Date().getFullYear();
+      },
+      getYM() {
+        return { year: parseInt(document.getElementById('fYear').value), month: parseInt(document.getElementById('fMonth').value) };
+      },
+      async loadPreviews() {
+        const api = Layout.api(); if (!api) return;
+        const { year, month } = this.getYM();
+        const forms = ['PND1','PND3','PND53','PP30','SSO110'];
+        for (const code of forms) {
+          try {
+            const res = await api.previewTaxExport(code, year, month);
+            const d = res.data;
+            document.getElementById(`preview${code}`).innerHTML = d.summary || `${d.recordCount} รายการ | รายได้ ${Layout.money(d.totalIncome)} | ภาษี ${Layout.money(d.totalTax)}`;
+          } catch (e) {
+            document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${e.message || 'ไม่มีข้อมูล'}</span>`;
+          }
+        }
+        // PND1K is annual
+        try {
+          const res = await api.previewTaxExport('PND1K', year, 0);
+          const d = res.data;
+          document.getElementById('previewPND1K').innerHTML = d.summary || `${d.recordCount} รายการ`;
+        } catch(e) {
+          document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${e.message || 'ไม่มีข้อมูล'}</span>`;
+        }
+      },
+      download(formCode) {
+        const api = Layout.api(); if (!api) return;
+        const { year, month } = this.getYM();
+        let url;
+        switch(formCode) {
+          case 'pnd1': url = api.exportPnd1(year, month); break;
+          case 'pnd3': url = api.exportPnd3(year, month); break;
+          case 'pnd53': url = api.exportPnd53(year, month); break;
+          case 'pnd1k': url = api.exportPnd1k(year); break;
+          case 'pp30': url = api.exportPp30(year, month); break;
+          case 'sso110': url = api.exportSso110(year, month); break;
+        }
+        if (url) {
+          const token = localStorage.getItem('token');
+          // Download via fetch with auth header
+          fetch(url, { headers: { 'Authorization': `Bearer ${token}` }})
+            .then(r => {
+              if (!r.ok) throw new Error('Export failed');
+              return r.blob();
+            })
+            .then(blob => {
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = url.split('/').pop().split('?')[0] || `${formCode}.txt`;
+              // Extract filename from Content-Disposition if available
+              a.download = `${formCode.toUpperCase()}_${year}${month ? String(month).padStart(2,'0') : ''}.txt`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+              Layout.toast('ดาวน์โหลดสำเร็จ');
+            })
+            .catch(e => Layout.toast(e.message, 'error'));
+        }
+      },
+      async preview(formCode) {
+        const api = Layout.api(); if (!api) return;
+        const { year, month } = this.getYM();
+        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10' };
+        document.getElementById('previewTitle').textContent = `ตัวอย่างข้อมูล ${formNames[formCode] || formCode}`;
+        try {
+          // Fetch actual file content
+          const m = formCode === 'PND1K' ? 0 : month;
+          let url;
+          switch(formCode) {
+            case 'PND1': url = api.exportPnd1(year, month); break;
+            case 'PND3': url = api.exportPnd3(year, month); break;
+            case 'PND53': url = api.exportPnd53(year, month); break;
+            case 'PND1K': url = api.exportPnd1k(year); break;
+            case 'PP30': url = api.exportPp30(year, month); break;
+            case 'SSO110': url = api.exportSso110(year, month); break;
+          }
+          const token = localStorage.getItem('token');
+          const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` }});
+          const text = await r.text();
+
+          // Summary
+          const res = await api.previewTaxExport(formCode, year, m);
+          const d = res.data;
+          document.getElementById('previewSummary').innerHTML = `
+            <div class="grid grid-3 gap-4">
+              <div><span class="text-gray-500 text-xs">จำนวนรายการ</span><div class="text-lg font-bold">${d.recordCount}</div></div>
+              <div><span class="text-gray-500 text-xs">รายได้/ฐานรวม</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
+              <div><span class="text-gray-500 text-xs">ภาษี/สมทบรวม</span><div class="text-lg font-bold text-danger">${Layout.money(d.totalTax)}</div></div>
+            </div>
+            <div class="text-sm text-gray-500" style="margin-top:8px">${d.summary || ''}</div>`;
+
+          document.getElementById('previewData').textContent = text;
+          document.getElementById('previewDownloadBtn').onclick = () => this.download(formCode.toLowerCase());
+          Layout.openModal('previewModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

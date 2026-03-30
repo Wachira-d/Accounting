@@ -65,6 +65,7 @@ builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
+builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules
 builder.Services.AddScoped<IProductService, ProductService>();

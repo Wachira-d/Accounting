@@ -120,6 +120,7 @@ const Layout = {
     { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜', href: '/pages/wht.html' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html' },
     { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html' },
+    { id: 'tax-export', label: 'Export ยื่นภาษี/ประกันสังคม', icon: '📤', href: '/pages/tax-export.html' },
 
     { section: 'เงินเดือน' },
     { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html' },

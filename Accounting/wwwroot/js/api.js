@@ -155,6 +155,14 @@ const API = {
       getTaxReport: (id) => API.get(`${base}/tax/${id}`),
       generateTaxReport: (d) => API.post(`${base}/tax/generate`, d),
       fileTaxReport: (id) => API.post(`${base}/tax/${id}/file`),
+      // Tax Filing Export
+      exportPnd1: (year, month) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}`,
+      exportPnd3: (year, month) => `${base}/tax-filing-export/pnd3?year=${year}&month=${month}`,
+      exportPnd53: (year, month) => `${base}/tax-filing-export/pnd53?year=${year}&month=${month}`,
+      exportPnd1k: (year) => `${base}/tax-filing-export/pnd1k?year=${year}`,
+      exportPp30: (year, month) => `${base}/tax-filing-export/pp30?year=${year}&month=${month}`,
+      exportSso110: (year, month) => `${base}/tax-filing-export/sso110?year=${year}&month=${month}`,
+      previewTaxExport: (formCode, year, month) => API.get(`${base}/tax-filing-export/preview/${formCode}?year=${year}&month=${month || 0}`),
       // WHT
       getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),
       getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
