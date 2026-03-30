@@ -273,7 +273,7 @@ public class EtaxInvoiceService : IEtaxInvoiceService
         signedXmlObj.AddReference(reference);
 
         // Signature method
-        signedXmlObj.SignedInfo.CanonicalizationMethod = "http://www.w3.org/2001/10/xml-exc-c14n#";
+        signedXmlObj.SignedInfo!.CanonicalizationMethod = "http://www.w3.org/2001/10/xml-exc-c14n#";
         signedXmlObj.SignedInfo.SignatureMethod = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 
         // Include X.509 certificate data
@@ -307,7 +307,7 @@ public class EtaxInvoiceService : IEtaxInvoiceService
         reference.AddTransform(new XmlDsigExcC14NTransform());
         signedXmlObj.AddReference(reference);
 
-        signedXmlObj.SignedInfo.CanonicalizationMethod = "http://www.w3.org/2001/10/xml-exc-c14n#";
+        signedXmlObj.SignedInfo!.CanonicalizationMethod = "http://www.w3.org/2001/10/xml-exc-c14n#";
         signedXmlObj.SignedInfo.SignatureMethod = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 
         // Add RSA key value info
