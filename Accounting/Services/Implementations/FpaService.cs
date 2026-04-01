@@ -424,34 +424,32 @@ public class FpaService : IFpaService
                       && b.AccountCode.Length >= 2 && b.AccountCode[1] == '1')
             .Sum(b => b.TotalDebit - b.TotalCredit);
 
-        // Inventory: codes starting with 115x or 14xx
+        // Inventory: codes starting with 115xx
         decimal Inventory() => glBalances
-            .Where(b => b.AccountType == AccountType.Asset
-                      && (b.AccountCode.StartsWith("115") || b.AccountCode.StartsWith("14")))
+            .Where(b => b.AccountType == AccountType.Asset && b.AccountCode.StartsWith("115"))
             .Sum(b => b.TotalDebit - b.TotalCredit);
 
-        // Accounts receivable: codes starting with 112x or 11200-11299
+        // Accounts receivable: codes starting with 113xx
         decimal AccountsReceivable() => glBalances
-            .Where(b => b.AccountType == AccountType.Asset && b.AccountCode.StartsWith("112"))
+            .Where(b => b.AccountType == AccountType.Asset && b.AccountCode.StartsWith("113"))
             .Sum(b => b.TotalDebit - b.TotalCredit);
 
         // Current liabilities: codes starting with 21xx
         decimal CurrentLiabilities() => glBalances
-            .Where(b => b.AccountType == AccountType.Liability && b.AccountCode.StartsWith("2")
-                      && b.AccountCode.Length >= 2 && b.AccountCode[1] == '1')
+            .Where(b => b.AccountType == AccountType.Liability && b.AccountCode.StartsWith("21"))
             .Sum(b => b.TotalCredit - b.TotalDebit);
 
-        // Accounts payable: codes starting with 211x
+        // Accounts payable: codes starting with 212xx
         decimal AccountsPayable() => glBalances
-            .Where(b => b.AccountType == AccountType.Liability && b.AccountCode.StartsWith("211"))
+            .Where(b => b.AccountType == AccountType.Liability && b.AccountCode.StartsWith("212"))
             .Sum(b => b.TotalCredit - b.TotalDebit);
 
-        // Interest expense: codes starting with 53xx or containing "interest"
+        // Interest expense (Finance costs): codes starting with 55xx
         decimal InterestExpense() => glBalances
-            .Where(b => b.AccountType == AccountType.Expense && b.AccountCode.StartsWith("53"))
+            .Where(b => b.AccountType == AccountType.Expense && b.AccountCode.StartsWith("55"))
             .Sum(b => b.TotalDebit - b.TotalCredit);
 
-        // COGS: codes starting with 5100 or 51xx
+        // COGS: codes starting with 51xx
         decimal CostOfGoodsSold() => glBalances
             .Where(b => b.AccountType == AccountType.Expense && b.AccountCode.StartsWith("51"))
             .Sum(b => b.TotalDebit - b.TotalCredit);

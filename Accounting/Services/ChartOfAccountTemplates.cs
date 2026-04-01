@@ -4,646 +4,438 @@ namespace Accounting.Services;
 
 /// <summary>
 /// ผังบัญชีมาตรฐานไทย (Thai Standard Chart of Accounts)
-/// อ้างอิงตามมาตรฐานการรายงานทางการเงิน (TFRS/TAS) และ PEAK Account
-/// รหัส 6 หลัก: หลักที่ 1 = ประเภท, หลัก 1-2 = หมวด, หลัก 1-3 = กลุ่ม, หลัก 1-6 = บัญชีย่อย
+/// อ้างอิงตามมาตรฐานการรายงานทางการเงิน (TFRS/TAS)
+/// รหัส: หลักที่ 1 = ประเภท (1-5), หลัก 1-2 = หมวด, หลัก 1-3 = กลุ่ม, หลัก 1-5 = บัญชีย่อย
 /// </summary>
 public static class ChartOfAccountTemplates
 {
-    // (code, nameTh, nameEn, type, level)
     public record AccountTemplate(string Code, string NameTh, string NameEn, AccountType Type, int Level);
 
-    /// <summary>
-    /// ผังบัญชีพื้นฐานที่ใช้ร่วมกันทุกประเภทธุรกิจ (ยกเว้นหมวด 3 ส่วนของเจ้าของ)
-    /// </summary>
+    /// <summary>ผังบัญชีพื้นฐานที่ใช้ร่วมกันทุกประเภทธุรกิจ (ยกเว้นหมวด 3 ส่วนของเจ้าของ)</summary>
     public static List<AccountTemplate> GetCommonAccounts()
     {
         return new List<AccountTemplate>
         {
             // ==================== 1. สินทรัพย์ (Assets) ====================
-            new("10", "สินทรัพย์", "Assets", AccountType.Asset, 1),
+            new("1", "ทรัพย์สิน", "Asset", AccountType.Asset, 1),
 
-            // 11 - สินทรัพย์หมุนเวียน
             new("11", "สินทรัพย์หมุนเวียน", "Current Assets", AccountType.Asset, 2),
+            new("111", "เงินสดและรายการเทียบเท่าเงินสด", "Cash and Cash Equivalents", AccountType.Asset, 3),
+            new("11111", "เงินสด", "Cash", AccountType.Asset, 4),
+            new("11112", "เงินสดย่อย", "Petty Cash", AccountType.Asset, 4),
+            new("11113", "กระเป๋าเงิน Digital", "Digital Wallet", AccountType.Asset, 4),
+            new("11121", "เงินฝากกระแสรายวัน", "Current Account / Checking Account", AccountType.Asset, 4),
+            new("11122", "เงินฝากออมทรัพย์", "Savings Account", AccountType.Asset, 4),
+            new("11123", "เงินฝากประจำ", "Fixed Deposit Account / Time Deposit", AccountType.Asset, 4),
+            new("11131", "เช็คในมือ", "Cheques on Hand", AccountType.Asset, 4),
+            new("112", "เงินลงทุนชั่วคราว", "Temporary Investments / Short-term Investments", AccountType.Asset, 3),
+            new("11200", "เงินลงทุนชั่วคราว", "Short-term Investments", AccountType.Asset, 4),
+            new("113", "ลูกหนี้การค้าและลูกหนี้อื่น", "Trade and Other Receivables", AccountType.Asset, 3),
+            new("11310", "ลูกหนี้การค้า", "Trade Receivables", AccountType.Asset, 4),
+            new("11320", "ลูกหนี้อื่น", "Other Receivables", AccountType.Asset, 4),
+            new("114", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 3),
+            new("11400", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 4),
+            new("115", "สินค้าคงเหลือ", "Inventories", AccountType.Asset, 3),
+            new("11500", "สินค้าคงเหลือ", "Inventory", AccountType.Asset, 4),
+            new("119", "สินทรัพย์หมุนเวียนอื่น", "Other Current Assets", AccountType.Asset, 3),
+            new("11900", "สินทรัพย์หมุนเวียนอื่น", "Other Current Assets", AccountType.Asset, 4),
 
-            new("111", "เงินสดและเงินฝากธนาคาร", "Cash and Bank Deposits", AccountType.Asset, 3),
-            new("111101", "เงินสด", "Cash on Hand", AccountType.Asset, 4),
-            new("111201", "เงินฝากธนาคาร - ออมทรัพย์", "Bank Deposit - Savings", AccountType.Asset, 4),
-            new("111202", "เงินฝากธนาคาร - กระแสรายวัน", "Bank Deposit - Current", AccountType.Asset, 4),
-            new("111301", "เงินสดย่อย", "Petty Cash", AccountType.Asset, 4),
-
-            new("112", "ลูกหนี้การค้าและตั๋วเงินรับ", "Trade Receivables", AccountType.Asset, 3),
-            new("112101", "ลูกหนี้การค้า", "Accounts Receivable", AccountType.Asset, 4),
-            new("112102", "ลูกหนี้การค้า - เช็ครับ", "Cheque Receivable", AccountType.Asset, 4),
-            new("112103", "ตั๋วเงินรับ", "Notes Receivable", AccountType.Asset, 4),
-            new("112199", "ค่าเผื่อหนี้สงสัยจะสูญ", "Allowance for Doubtful Accounts", AccountType.Asset, 4),
-
-            new("113", "สินค้าคงเหลือ", "Inventories", AccountType.Asset, 3),
-            new("113101", "สินค้าสำเร็จรูป", "Finished Goods", AccountType.Asset, 4),
-            new("113102", "วัตถุดิบ", "Raw Materials", AccountType.Asset, 4),
-            new("113103", "งานระหว่างทำ", "Work in Process", AccountType.Asset, 4),
-            new("113104", "สินค้าระหว่างทาง", "Goods in Transit", AccountType.Asset, 4),
-
-            new("114", "สินทรัพย์หมุนเวียนอื่น", "Other Current Assets", AccountType.Asset, 3),
-            new("114101", "ภาษีซื้อ", "Input VAT", AccountType.Asset, 4),
-            new("114102", "ภาษีซื้อยังไม่ถึงกำหนด", "Deferred Input VAT", AccountType.Asset, 4),
-            new("114103", "ภาษีหัก ณ ที่จ่าย", "Withholding Tax Receivable", AccountType.Asset, 4),
-            new("114104", "เงินมัดจำ", "Deposits", AccountType.Asset, 4),
-            new("114105", "ค่าใช้จ่ายจ่ายล่วงหน้า", "Prepaid Expenses", AccountType.Asset, 4),
-            new("114106", "รายได้ค้างรับ", "Accrued Revenue", AccountType.Asset, 4),
-            new("114107", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 4),
-
-            // 12 - สินทรัพย์ไม่หมุนเวียน
             new("12", "สินทรัพย์ไม่หมุนเวียน", "Non-Current Assets", AccountType.Asset, 2),
+            new("121", "เงินให้กู้ยืมระยะยาว", "Long-term Loans", AccountType.Asset, 3),
+            new("12110", "เงินให้กู้ยืมระยะยาว", "Long-term Loans", AccountType.Asset, 4),
+            new("122", "ที่ดิน อาคารและอุปกรณ์", "Property, Plant and Equipment (PPE)", AccountType.Asset, 3),
+            new("12210", "อุปกรณ์สำนักงาน", "Office Equipment", AccountType.Asset, 4),
+            new("12220", "คอมพิวเตอร์", "Computer Equipment", AccountType.Asset, 4),
+            new("12230", "เครื่องตกแต่งสำนักงาน", "Office Furniture and Fixtures", AccountType.Asset, 4),
+            new("12240", "ยานพาหนะ", "Vehicles", AccountType.Asset, 4),
+            new("12250", "สินทรัพย์ตามสัญญาเช่า", "Right-of-Use Assets", AccountType.Asset, 4),
+            new("12260", "เครื่องจักรและอุปกรณ์", "Machinery and Equipment", AccountType.Asset, 4),
+            new("12270", "อาคาร", "Buildings", AccountType.Asset, 4),
+            new("12280", "งานระหว่างก่อสร้าง", "Construction in Progress", AccountType.Asset, 4),
+            new("12290", "ที่ดิน", "Land", AccountType.Asset, 4),
+            new("123", "สินทรัพย์ไม่มีตัวตน", "Intangible Assets", AccountType.Asset, 3),
+            new("12310", "ซอฟต์แวร์คอมพิวเตอร์", "Computer Software", AccountType.Asset, 4),
+            new("124", "ค่าใช้จ่ายรอตัดจ่ายระยะยาว", "Long-term Deferred Expenses", AccountType.Asset, 3),
+            new("12410", "ค่าใช้จ่ายรอตัดจ่ายระยะยาว", "Deferred Expenses (Long-term)", AccountType.Asset, 4),
+            new("125", "สินทรัพย์ไม่หมุนเวียนอื่น", "Other Non-current Assets", AccountType.Asset, 3),
+            new("12510", "เงินมัดจำระยะยาว", "Long-term Deposits", AccountType.Asset, 4),
+            new("12520", "เงินประกันระยะยาว", "Long-term Guarantees", AccountType.Asset, 4),
 
-            new("121", "ที่ดิน อาคารและอุปกรณ์", "Property, Plant and Equipment", AccountType.Asset, 3),
-            new("121101", "ที่ดิน", "Land", AccountType.Asset, 4),
-            new("121201", "อาคาร", "Building", AccountType.Asset, 4),
-            new("121202", "ค่าเสื่อมราคาสะสม - อาคาร", "Accum. Depreciation - Building", AccountType.Asset, 4),
-            new("121301", "อุปกรณ์สำนักงาน", "Office Equipment", AccountType.Asset, 4),
-            new("121302", "ค่าเสื่อมราคาสะสม - อุปกรณ์สำนักงาน", "Accum. Depreciation - Office Equipment", AccountType.Asset, 4),
-            new("121401", "เครื่องจักร", "Machinery", AccountType.Asset, 4),
-            new("121402", "ค่าเสื่อมราคาสะสม - เครื่องจักร", "Accum. Depreciation - Machinery", AccountType.Asset, 4),
-            new("121501", "ยานพาหนะ", "Vehicles", AccountType.Asset, 4),
-            new("121502", "ค่าเสื่อมราคาสะสม - ยานพาหนะ", "Accum. Depreciation - Vehicles", AccountType.Asset, 4),
-            new("121601", "คอมพิวเตอร์และอุปกรณ์", "Computer and Equipment", AccountType.Asset, 4),
-            new("121602", "ค่าเสื่อมราคาสะสม - คอมพิวเตอร์", "Accum. Depreciation - Computer", AccountType.Asset, 4),
-            new("121701", "ส่วนปรับปรุงอาคารเช่า", "Leasehold Improvement", AccountType.Asset, 4),
-            new("121702", "ค่าตัดจำหน่ายสะสม - ส่วนปรับปรุงอาคารเช่า", "Accum. Amort. - Leasehold Improvement", AccountType.Asset, 4),
-
-            new("122", "สินทรัพย์ไม่มีตัวตน", "Intangible Assets", AccountType.Asset, 3),
-            new("122101", "ซอฟต์แวร์คอมพิวเตอร์", "Computer Software", AccountType.Asset, 4),
-            new("122102", "ค่าตัดจำหน่ายสะสม - ซอฟต์แวร์", "Accum. Amort. - Software", AccountType.Asset, 4),
-            new("122201", "ค่าลิขสิทธิ์/สิทธิบัตร", "Copyright/Patent", AccountType.Asset, 4),
-
-            new("123", "สินทรัพย์ไม่หมุนเวียนอื่น", "Other Non-Current Assets", AccountType.Asset, 3),
-            new("123101", "เงินมัดจำค้ำประกัน", "Guarantee Deposits", AccountType.Asset, 4),
-            new("123102", "เงินลงทุนระยะยาว", "Long-term Investments", AccountType.Asset, 4),
+            new("18", "ค่าเสื่อมราคา ด้อยค่า และการตีราคา", "Depreciation, Impairment and Revaluations", AccountType.Asset, 2),
+            new("181", "ค่าเผื่อหนี้สงสัยจะสูญ ลูกหนี้การค้าและลูกหนี้อื่น", "Allowance for Doubtful Accounts", AccountType.Asset, 3),
+            new("18100", "ค่าเผื่อหนี้สงสัยจะสูญ ลูกหนี้การค้าและลูกหนี้อื่น", "Allowance for Doubtful Accounts", AccountType.Asset, 4),
+            new("182", "ค่าเผื่อการด้อยค่า/การตีราคา สินค้าคงเหลือ", "Allowance for Inventory Obsolescence / Devaluation", AccountType.Asset, 3),
+            new("18200", "ค่าเผื่อการด้อยค่า/การตีราคา สินค้าคงเหลือ", "Allowance for Inventory Obsolescence", AccountType.Asset, 4),
+            new("183", "ค่าเสื่อมราคาสะสม-ที่ดินอาคารและอุปกรณ์", "Accumulated Depreciation - PPE", AccountType.Asset, 3),
+            new("18310", "ค่าเสื่อมราคาสะสม-อุปกรณ์สำนักงาน", "Accumulated Depreciation - Office Equipment", AccountType.Asset, 4),
+            new("18320", "ค่าเสื่อมราคาสะสม-คอมพิวเตอร์", "Accumulated Depreciation - Computer Equipment", AccountType.Asset, 4),
+            new("18330", "ค่าเสื่อมราคาสะสม-เครื่องตกแต่งสำนักงาน", "Accumulated Depreciation - Furniture and Fixtures", AccountType.Asset, 4),
+            new("18340", "ค่าเสื่อมราคาสะสม-ยานพาหนะ", "Accumulated Depreciation - Vehicles", AccountType.Asset, 4),
+            new("18350", "ค่าเสื่อมราคาสะสม-สินทรัพย์ตามสัญญาเช่า", "Accumulated Depreciation - Right-of-Use Assets", AccountType.Asset, 4),
+            new("18360", "ค่าเสื่อมราคาสะสม-เครื่องจักรและอุปกรณ์", "Accumulated Depreciation - Machinery and Equipment", AccountType.Asset, 4),
+            new("18370", "ค่าเสื่อมราคาสะสม-อาคาร", "Accumulated Depreciation - Buildings", AccountType.Asset, 4),
+            new("184", "ค่าเผื่อการด้อยค่าสะสม-ซอฟต์แวร์คอมพิวเตอร์", "Accumulated Impairment - Computer Software", AccountType.Asset, 3),
+            new("18410", "ค่าเผื่อการด้อยค่าสะสม-ซอฟต์แวร์คอมพิวเตอร์", "Accumulated Impairment - Software", AccountType.Asset, 4),
 
             // ==================== 2. หนี้สิน (Liabilities) ====================
-            new("20", "หนี้สิน", "Liabilities", AccountType.Liability, 1),
+            new("2", "หนี้สิน", "Liabilities", AccountType.Liability, 1),
 
-            // 21 - หนี้สินหมุนเวียน
             new("21", "หนี้สินหมุนเวียน", "Current Liabilities", AccountType.Liability, 2),
+            new("211", "เงินเบิกเกินบัญชี/เงินกู้ยืมธนาคารระยะสั้น", "Bank Overdrafts and Short-term Borrowings", AccountType.Liability, 3),
+            new("21100", "เงินเบิกเกินบัญชี/เงินกู้ยืมธนาคารระยะสั้น", "Bank Overdrafts and Short-term Borrowings", AccountType.Liability, 4),
+            new("212", "เจ้าหนี้การค้าและเจ้าหนี้ไม่หมุนเวียนอื่น", "Trade and Other Non-current Payables", AccountType.Liability, 3),
+            new("21210", "เจ้าหนี้การค้า", "Trade Payables", AccountType.Liability, 4),
+            new("21220", "เจ้าหนี้อื่น", "Other Current Payables", AccountType.Liability, 4),
+            new("213", "เงินกู้ยืมระยะสั้น", "Short-term Borrowings / Short-term Loans", AccountType.Liability, 3),
+            new("21300", "เงินกู้ยืมระยะสั้น", "Short-term Loans", AccountType.Liability, 4),
+            new("214", "หนี้สินที่ถึงกำหนดชำระภายใน 1 ปี", "Current Portion of Long-term Liabilities", AccountType.Liability, 3),
+            new("21400", "หนี้สินที่ถึงกำหนดชำระภายใน 1 ปี", "Current Portion of Long-term Liabilities", AccountType.Liability, 4),
+            new("215", "ค่าสาธารณูปโภคค้างจ่าย", "Accrued Utilities Expenses", AccountType.Liability, 3),
+            new("21511", "ค่าไฟฟ้าค้างจ่าย", "Accrued Electricity Expenses", AccountType.Liability, 4),
+            new("21512", "ค่าน้ำประปาค้างจ่าย", "Accrued Water Supply Expenses", AccountType.Liability, 4),
+            new("21513", "ค่าโทรศัพท์ค้างจ่าย", "Accrued Telephone Expenses", AccountType.Liability, 4),
+            new("21514", "ค่าอินเทอร์เน็ตค้างจ่าย", "Accrued Internet Expenses", AccountType.Liability, 4),
+            new("21515", "ค่าสาธารณูปโภคอื่นๆ", "Other Utilities Expenses", AccountType.Liability, 4),
+            new("21516", "ค่าใช้จ่ายค้างจ่ายอื่นๆ", "Other Accrued Expenses", AccountType.Liability, 4),
+            new("216", "เงินมัดจำและเงินรับล่วงหน้าอื่น", "Deposits and Other Advances Received", AccountType.Liability, 3),
+            new("21610", "เงินมัดจำรับ", "Deposit Received", AccountType.Liability, 4),
+            new("21620", "เงินค้ำประกัน", "Security Deposit / Guarantee Deposit", AccountType.Liability, 4),
+            new("217", "รายได้รับล่วงหน้า", "Unearned Revenue / Deferred Revenue", AccountType.Liability, 3),
+            new("21711", "ค่าเช่ารับล่วงหน้า", "Unearned Rental Income", AccountType.Liability, 4),
+            new("21712", "ค่าสินค้ารับล่วงหน้า", "Advance Received from Customers", AccountType.Liability, 4),
+            new("21713", "ค่าบริการรับล่วงหน้า", "Unearned Service Income", AccountType.Liability, 4),
+            new("21714", "ดอกเบี้ยค้างจ่าย", "Accrued Interest Expense", AccountType.Liability, 4),
+            new("218", "ค่าใช้จ่ายบุคลากรค้างจ่าย", "Accrued Staff Expenses / Salaries Payable", AccountType.Liability, 3),
+            new("21811", "เงินเดือน/ค่าจ้างค้างจ่าย", "Accrued Salaries and Wages", AccountType.Liability, 4),
+            new("21812", "โบนัสค้างจ่าย", "Accrued Bonus", AccountType.Liability, 4),
+            new("21813", "ค่านายหน้าค้างจ่าย", "Accrued Commission", AccountType.Liability, 4),
+            new("21814", "เงินเดือน/ค่าจ้างค้างจ่ายอื่นๆ", "Other Accrued Salaries and Wages", AccountType.Liability, 4),
+            new("21815", "เงินประกันสังคมรอนำส่ง", "Social Security Fund Payable", AccountType.Liability, 4),
+            new("21816", "กองทุนเงินทดแทนค้างจ่าย", "Workmen's Compensation Fund Payable", AccountType.Liability, 4),
+            new("21817", "กองทุนสงเคราะห์ลูกจ้างรอนำส่ง", "Employee Welfare Fund Payable", AccountType.Liability, 4),
+            new("21818", "กองทุนสำรองเลี้ยงชีพรอนำส่ง", "Provident Fund Payable", AccountType.Liability, 4),
+            new("21819", "สวัสดิการค้างจ่าย", "Accrued Employee Benefits", AccountType.Liability, 4),
+            new("21820", "ค่าตอบแทนกรรมการค้างจ่าย", "Accrued Director's Remuneration", AccountType.Liability, 4),
+            new("219", "ภาษีค้างจ่าย", "Taxes Payable", AccountType.Liability, 3),
+            new("21911", "ภาษีขาย ภ.พ. 30", "Output VAT (P.P. 30)", AccountType.Liability, 4),
+            new("21912", "ภาษีขาย ภ.พ. 36", "Output VAT (P.P. 36)", AccountType.Liability, 4),
+            new("21913", "ภาษีขายรอเรียกเก็บ", "Deferred Output VAT", AccountType.Liability, 4),
+            new("21914", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 1", "Withholding Tax Payable (P.N.D. 1)", AccountType.Liability, 4),
+            new("21915", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 2", "Withholding Tax Payable (P.N.D. 2)", AccountType.Liability, 4),
+            new("21916", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 3", "Withholding Tax Payable (P.N.D. 3)", AccountType.Liability, 4),
+            new("21917", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 53", "Withholding Tax Payable (P.N.D. 53)", AccountType.Liability, 4),
+            new("21918", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 54", "Withholding Tax Payable (P.N.D. 54)", AccountType.Liability, 4),
+            new("21920", "ภาษีเงินได้นิติบุคคลค้างจ่าย", "Corporate Income Tax Payable", AccountType.Liability, 4),
+            new("21921", "ภาษีอื่นๆ ค้างจ่าย", "Other Taxes Payable", AccountType.Liability, 4),
+            new("21922", "เจ้าหนี้สรรพากร", "Revenue Department Payable", AccountType.Liability, 4),
 
-            new("211", "เจ้าหนี้การค้าและตั๋วเงินจ่าย", "Trade Payables", AccountType.Liability, 3),
-            new("211101", "เจ้าหนี้การค้า", "Accounts Payable", AccountType.Liability, 4),
-            new("211102", "เจ้าหนี้การค้า - เช็คจ่าย", "Cheque Payable", AccountType.Liability, 4),
-            new("211103", "ตั๋วเงินจ่าย", "Notes Payable", AccountType.Liability, 4),
-
-            new("212", "ภาษีค้างจ่าย", "Taxes Payable", AccountType.Liability, 3),
-            new("212101", "ภาษีขาย", "Output VAT", AccountType.Liability, 4),
-            new("212102", "ภาษีขายยังไม่ถึงกำหนด", "Deferred Output VAT", AccountType.Liability, 4),
-            new("212103", "ภาษีมูลค่าเพิ่มค้างจ่าย", "VAT Payable", AccountType.Liability, 4),
-            new("212201", "ภาษีเงินได้หัก ณ ที่จ่ายค้างจ่าย", "Withholding Tax Payable", AccountType.Liability, 4),
-            new("212202", "ภาษีเงินได้นิติบุคคลค้างจ่าย", "Corporate Income Tax Payable", AccountType.Liability, 4),
-
-            new("213", "ค่าใช้จ่ายค้างจ่ายและหนี้สินหมุนเวียนอื่น", "Accrued Expenses and Other CL", AccountType.Liability, 3),
-            new("213101", "เงินเดือนค้างจ่าย", "Accrued Salaries", AccountType.Liability, 4),
-            new("213102", "ประกันสังคมค้างจ่าย", "Social Security Payable", AccountType.Liability, 4),
-            new("213103", "ค่าใช้จ่ายค้างจ่าย", "Accrued Expenses", AccountType.Liability, 4),
-            new("213104", "เงินรับล่วงหน้า", "Unearned Revenue", AccountType.Liability, 4),
-            new("213105", "เงินกู้ยืมระยะสั้น", "Short-term Borrowings", AccountType.Liability, 4),
-            new("213106", "ส่วนของเงินกู้ยืมระยะยาวที่ถึงกำหนดชำระ", "Current Portion of LT Debt", AccountType.Liability, 4),
-
-            // 22 - หนี้สินไม่หมุนเวียน
             new("22", "หนี้สินไม่หมุนเวียน", "Non-Current Liabilities", AccountType.Liability, 2),
-
-            new("221", "เงินกู้ยืมระยะยาว", "Long-term Borrowings", AccountType.Liability, 3),
-            new("221101", "เงินกู้ยืมระยะยาวจากธนาคาร", "Long-term Bank Loans", AccountType.Liability, 4),
-            new("221102", "เงินกู้ยืมระยะยาวจากบุคคลที่เกี่ยวข้อง", "Long-term Loans from Related Parties", AccountType.Liability, 4),
-            new("221201", "หนี้สินตามสัญญาเช่า", "Lease Liabilities", AccountType.Liability, 4),
-
-            new("222", "หนี้สินไม่หมุนเวียนอื่น", "Other Non-Current Liabilities", AccountType.Liability, 3),
-            new("222101", "เงินประกันรับ", "Deposits Received", AccountType.Liability, 4),
-            new("222102", "ประมาณการหนี้สินระยะยาว", "Long-term Provisions", AccountType.Liability, 4),
+            new("221", "เงินกู้ยืมระยะยาว", "Long-term Borrowings / Long-term Loans", AccountType.Liability, 3),
+            new("22100", "เงินกู้ยืมระยะยาว", "Long-term Loans", AccountType.Liability, 4),
+            new("229", "หนี้สินอื่นๆ", "Other Liabilities", AccountType.Liability, 3),
+            new("22900", "หนี้สินอื่นๆ", "Other Liabilities", AccountType.Liability, 4),
 
             // ==================== 4. รายได้ (Revenue) ====================
-            new("40", "รายได้", "Revenue", AccountType.Revenue, 1),
+            new("4", "รายได้", "Revenue", AccountType.Revenue, 1),
 
-            new("41", "รายได้จากการดำเนินงาน", "Operating Revenue", AccountType.Revenue, 2),
+            new("41", "รายได้จากการขาย", "Sales Revenue", AccountType.Revenue, 2),
+            new("410", "รายได้จากการขาย", "Sales Revenue", AccountType.Revenue, 3),
+            new("41000", "รายได้จากการขาย", "Sales Revenue", AccountType.Revenue, 4),
 
-            new("411", "รายได้จากการขายสินค้า", "Sales Revenue", AccountType.Revenue, 3),
-            new("411101", "รายได้จากการขายสินค้า", "Sales Revenue", AccountType.Revenue, 4),
-            new("411102", "รับคืนสินค้าและส่วนลด", "Sales Returns and Allowances", AccountType.Revenue, 4),
+            new("42", "รายได้จากการบริการ", "Service Revenue", AccountType.Revenue, 2),
+            new("420", "รายได้จากการบริการ", "Service Revenue", AccountType.Revenue, 3),
+            new("42000", "รายได้จากการบริการ", "Service Revenue", AccountType.Revenue, 4),
 
-            new("412", "รายได้จากการให้บริการ", "Service Revenue", AccountType.Revenue, 3),
-            new("412101", "รายได้จากการให้บริการ", "Service Revenue", AccountType.Revenue, 4),
-
-            new("42", "รายได้อื่น", "Other Income", AccountType.Revenue, 2),
-
-            new("421", "รายได้อื่น", "Other Income", AccountType.Revenue, 3),
-            new("421101", "ดอกเบี้ยรับ", "Interest Income", AccountType.Revenue, 4),
-            new("421102", "กำไรจากการขายสินทรัพย์", "Gain on Sale of Assets", AccountType.Revenue, 4),
-            new("421103", "กำไรจากอัตราแลกเปลี่ยน", "Foreign Exchange Gain", AccountType.Revenue, 4),
-            new("421104", "รายได้เบ็ดเตล็ด", "Miscellaneous Income", AccountType.Revenue, 4),
-            new("421105", "ส่วนลดรับ", "Discounts Received", AccountType.Revenue, 4),
+            new("43", "รายได้อื่น", "Other Income", AccountType.Revenue, 2),
+            new("430", "รายได้อื่น", "Other Income", AccountType.Revenue, 3),
+            new("43010", "รายได้ดอกเบี้ย", "Interest Income", AccountType.Revenue, 4),
+            new("43020", "รายได้เงินปันผล", "Dividend Income", AccountType.Revenue, 4),
+            new("43030", "รายได้จากการขายสินทรัพย์", "Gain on Sale of Assets", AccountType.Revenue, 4),
+            new("43040", "รายได้จากการเช่า", "Rental Income", AccountType.Revenue, 4),
+            new("43050", "รายได้จากอัตราแลกเปลี่ยน", "Foreign Exchange Gain", AccountType.Revenue, 4),
+            new("43060", "ส่วนลดรับ", "Discounts Received", AccountType.Revenue, 4),
+            new("43070", "รายได้อื่นๆ", "Other Income", AccountType.Revenue, 4),
+            new("43080", "รายได้ค่าปรับ/ค่าเสียหายที่ได้รับ", "Penalties and Damages Received", AccountType.Revenue, 4),
 
             // ==================== 5. ค่าใช้จ่าย (Expenses) ====================
-            new("50", "ค่าใช้จ่าย", "Expenses", AccountType.Expense, 1),
+            new("5", "ค่าใช้จ่าย", "Expenses", AccountType.Expense, 1),
 
-            new("51", "ต้นทุนขายและบริการ", "Cost of Sales and Services", AccountType.Expense, 2),
-
+            // --- 51 ต้นทุนขาย ---
+            new("51", "ต้นทุนขาย", "Cost of Goods Sold (COGS)", AccountType.Expense, 2),
             new("511", "ต้นทุนขาย", "Cost of Goods Sold", AccountType.Expense, 3),
-            new("511101", "ต้นทุนสินค้าที่ขาย", "Cost of Goods Sold", AccountType.Expense, 4),
-            new("511102", "ซื้อสินค้า/วัตถุดิบ", "Purchases", AccountType.Expense, 4),
-            new("511103", "ค่าขนส่งขาเข้า", "Freight-In", AccountType.Expense, 4),
-            new("511104", "ส่งคืนสินค้าและส่วนลดรับ", "Purchase Returns and Allowances", AccountType.Expense, 4),
+            new("51110", "ต้นทุนสินค้า", "Cost of Goods", AccountType.Expense, 4),
+            new("51120", "ค่าขนส่งสินค้า", "Freight-in / Delivery Cost", AccountType.Expense, 4),
+            new("51130", "ค่าแรงงานในการผลิต", "Direct Labor Cost", AccountType.Expense, 4),
+            new("51140", "ค่าใช้จ่ายในการผลิต", "Manufacturing Overhead", AccountType.Expense, 4),
 
-            new("512", "ต้นทุนบริการ", "Cost of Services", AccountType.Expense, 3),
-            new("512101", "ต้นทุนการให้บริการ", "Cost of Services Rendered", AccountType.Expense, 4),
+            // --- 52 ต้นทุนบริการ ---
+            new("52", "ต้นทุนบริการ", "Cost of Services", AccountType.Expense, 2),
+            new("521", "ต้นทุนบริการ", "Cost of Services", AccountType.Expense, 3),
+            new("52110", "ค่าแรงงาน (บริการ)", "Direct Labor (Service)", AccountType.Expense, 4),
+            new("52120", "ค่าวัสดุสิ้นเปลือง (บริการ)", "Supplies (Service)", AccountType.Expense, 4),
+            new("52130", "ค่าเหมาช่วง/Subcontract", "Subcontract Cost", AccountType.Expense, 4),
 
-            new("52", "ค่าใช้จ่ายในการขาย", "Selling Expenses", AccountType.Expense, 2),
+            // --- 53 ค่าใช้จ่ายในการขาย ---
+            new("53", "ค่าใช้จ่ายในการขาย", "Selling Expenses", AccountType.Expense, 2),
+            new("531", "ค่าใช้จ่ายในการขาย", "Selling Expenses", AccountType.Expense, 3),
+            new("53110", "เงินเดือน/ค่าจ้าง (ฝ่ายขาย)", "Salaries - Sales", AccountType.Expense, 4),
+            new("53120", "ค่าโฆษณาและส่งเสริมการขาย", "Advertising and Promotion", AccountType.Expense, 4),
+            new("53130", "ค่าขนส่ง (ฝ่ายขาย)", "Freight-out / Delivery (Sales)", AccountType.Expense, 4),
+            new("53140", "ค่านายหน้าการขาย", "Sales Commission", AccountType.Expense, 4),
+            new("53150", "ค่าใช้จ่ายในการขายอื่นๆ", "Other Selling Expenses", AccountType.Expense, 4),
 
-            new("521", "ค่าใช้จ่ายในการขาย", "Selling Expenses", AccountType.Expense, 3),
-            new("521101", "เงินเดือนพนักงานขาย", "Sales Staff Salaries", AccountType.Expense, 4),
-            new("521102", "ค่าคอมมิชชั่น", "Commission Expense", AccountType.Expense, 4),
-            new("521103", "ค่าโฆษณาและส่งเสริมการขาย", "Advertising and Promotion", AccountType.Expense, 4),
-            new("521104", "ค่าขนส่งขาออก", "Freight-Out", AccountType.Expense, 4),
-            new("521105", "ค่าเสื่อมราคา - ส่วนขาย", "Depreciation - Selling", AccountType.Expense, 4),
+            // --- 54 ค่าใช้จ่ายในการบริหาร ---
+            new("54", "ค่าใช้จ่ายในการบริหาร", "Administrative Expenses", AccountType.Expense, 2),
+            new("541", "ค่าใช้จ่ายบุคลากร", "Staff Expenses", AccountType.Expense, 3),
+            new("54111", "เงินเดือน/ค่าจ้าง (บริหาร)", "Salaries and Wages (Admin)", AccountType.Expense, 4),
+            new("54112", "ค่าล่วงเวลา", "Overtime Pay", AccountType.Expense, 4),
+            new("54113", "โบนัส", "Bonus", AccountType.Expense, 4),
+            new("54114", "ค่าตอบแทนกรรมการ", "Director's Remuneration", AccountType.Expense, 4),
+            new("54120", "เงินสมทบประกันสังคม (นายจ้าง)", "Social Security Fund (Employer Portion)", AccountType.Expense, 4),
+            new("54121", "กองทุนเงินทดแทน", "Workmen's Compensation Fund", AccountType.Expense, 4),
+            new("54122", "กองทุนสงเคราะห์ลูกจ้าง", "Employee Welfare Fund", AccountType.Expense, 4),
+            new("54123", "สวัสดิการพนักงาน", "Employee Benefits", AccountType.Expense, 4),
+            new("54124", "เงินสมทบกองทุนสำรองเลี้ยงชีพ (นายจ้าง)", "Provident Fund (Employer Portion)", AccountType.Expense, 4),
+            new("54125", "ค่าใช้จ่ายบุคลากรอื่นๆ", "Other Staff Expenses", AccountType.Expense, 4),
+            new("542", "ค่าโฆษณาและการตลาด", "Advertising and Marketing", AccountType.Expense, 3),
+            new("54210", "ค่าโฆษณาและประชาสัมพันธ์", "Advertising and PR", AccountType.Expense, 4),
+            new("54220", "ค่าการตลาด", "Marketing Expenses", AccountType.Expense, 4),
+            new("543", "ค่าสาธารณูปโภค", "Utilities Expenses", AccountType.Expense, 3),
+            new("54310", "ค่าไฟฟ้า", "Electricity Expense", AccountType.Expense, 4),
+            new("54320", "ค่าน้ำประปา", "Water Supply Expense", AccountType.Expense, 4),
+            new("54330", "ค่าโทรศัพท์", "Telephone Expense", AccountType.Expense, 4),
+            new("54340", "ค่าอินเทอร์เน็ต", "Internet Expense", AccountType.Expense, 4),
+            new("54350", "ค่าสาธารณูปโภคอื่นๆ", "Other Utilities", AccountType.Expense, 4),
+            new("544", "ค่าใช้จ่ายสำนักงาน", "Office Expenses", AccountType.Expense, 3),
+            new("54410", "ค่าเช่าสำนักงาน", "Office Rental", AccountType.Expense, 4),
+            new("54420", "ค่าวัสดุสิ้นเปลืองสำนักงาน", "Office Supplies", AccountType.Expense, 4),
+            new("54430", "ค่าซ่อมแซมและบำรุงรักษา", "Repairs and Maintenance", AccountType.Expense, 4),
+            new("54440", "ค่าเดินทางและพาหนะ", "Travel and Transportation", AccountType.Expense, 4),
+            new("54450", "ค่าเบี้ยเลี้ยง", "Per Diem / Subsistence Allowance", AccountType.Expense, 4),
+            new("54460", "ค่ารับรอง / เลี้ยงรับรอง", "Entertainment / Hospitality", AccountType.Expense, 4),
+            new("545", "ค่าเบี้ยประกันภัย", "Insurance Expenses", AccountType.Expense, 3),
+            new("54510", "ค่าเบี้ยประกันภัย", "Insurance Premium", AccountType.Expense, 4),
+            new("546", "ค่าธรรมเนียมวิชาชีพ", "Professional Fees", AccountType.Expense, 3),
+            new("54610", "ค่าสอบบัญชี/ค่าตรวจสอบ", "Audit Fee", AccountType.Expense, 4),
+            new("54620", "ค่าที่ปรึกษากฎหมาย", "Legal Fees", AccountType.Expense, 4),
+            new("54630", "ค่าที่ปรึกษาอื่นๆ", "Other Consulting Fees", AccountType.Expense, 4),
+            new("547", "ค่าบริการต่างๆ", "Service Charges", AccountType.Expense, 3),
+            new("54710", "ค่าธรรมเนียมธนาคาร", "Bank Charges", AccountType.Expense, 4),
+            new("54720", "ค่าบริการ IT / Software", "IT / Software Service Fee", AccountType.Expense, 4),
+            new("54730", "ค่าบริการอื่นๆ", "Other Service Charges", AccountType.Expense, 4),
+            new("548", "ค่าธรรมเนียมและค่าปรับ", "Fees and Penalties", AccountType.Expense, 3),
+            new("54810", "ค่าธรรมเนียมราชการ", "Government Fees", AccountType.Expense, 4),
+            new("54820", "ค่าปรับ/เบี้ยปรับ", "Fines and Penalties", AccountType.Expense, 4),
+            new("549", "ค่าใช้จ่ายบริหารอื่นๆ", "Other Administrative Expenses", AccountType.Expense, 3),
+            new("54910", "ค่าใช้จ่ายบริหารอื่นๆ", "Other Admin Expenses", AccountType.Expense, 4),
+            new("54920", "ค่าฝึกอบรม/สัมมนา", "Training and Seminar", AccountType.Expense, 4),
+            new("54930", "ค่าหนังสือพิมพ์/วารสาร", "Newspapers and Periodicals", AccountType.Expense, 4),
+            new("54940", "เงินบริจาค/การกุศล", "Donations / Charity", AccountType.Expense, 4),
+            new("54950", "ขาดทุนจากอัตราแลกเปลี่ยน", "Foreign Exchange Loss", AccountType.Expense, 4),
 
-            new("53", "ค่าใช้จ่ายในการบริหาร", "Administrative Expenses", AccountType.Expense, 2),
+            // --- 55 ต้นทุนทางการเงิน ---
+            new("55", "ต้นทุนทางการเงิน", "Finance Costs", AccountType.Expense, 2),
+            new("551", "ต้นทุนทางการเงิน", "Finance Costs", AccountType.Expense, 3),
+            new("55110", "ดอกเบี้ยจ่าย - เงินกู้ยืม", "Interest Expense - Loans", AccountType.Expense, 4),
+            new("55120", "ดอกเบี้ยจ่าย - สัญญาเช่า", "Interest Expense - Lease Liabilities", AccountType.Expense, 4),
+            new("55130", "ดอกเบี้ยจ่ายอื่นๆ", "Other Interest Expense", AccountType.Expense, 4),
 
-            new("531", "ค่าใช้จ่ายเกี่ยวกับพนักงาน", "Employee Expenses", AccountType.Expense, 3),
-            new("531101", "เงินเดือนและค่าจ้าง", "Salaries and Wages", AccountType.Expense, 4),
-            new("531102", "ค่าล่วงเวลา", "Overtime", AccountType.Expense, 4),
-            new("531103", "โบนัส", "Bonus", AccountType.Expense, 4),
-            new("531104", "เงินสมทบประกันสังคม", "Social Security Contribution", AccountType.Expense, 4),
-            new("531105", "เงินสมทบกองทุนสำรองเลี้ยงชีพ", "Provident Fund Contribution", AccountType.Expense, 4),
-            new("531106", "สวัสดิการพนักงาน", "Employee Benefits", AccountType.Expense, 4),
+            // --- 56 ค่าเสื่อมราคาและค่าตัดจำหน่าย ---
+            new("56", "ค่าเสื่อมราคาและค่าตัดจำหน่าย", "Depreciation and Amortization", AccountType.Expense, 2),
+            new("561", "ค่าเสื่อมราคา", "Depreciation Expense", AccountType.Expense, 3),
+            new("56110", "ค่าเสื่อมราคา-อุปกรณ์สำนักงาน", "Depreciation - Office Equipment", AccountType.Expense, 4),
+            new("56120", "ค่าเสื่อมราคา-คอมพิวเตอร์", "Depreciation - Computer Equipment", AccountType.Expense, 4),
+            new("56130", "ค่าเสื่อมราคา-เครื่องตกแต่งสำนักงาน", "Depreciation - Furniture and Fixtures", AccountType.Expense, 4),
+            new("56140", "ค่าเสื่อมราคา-ยานพาหนะ", "Depreciation - Vehicles", AccountType.Expense, 4),
+            new("56150", "ค่าเสื่อมราคา-สินทรัพย์ตามสัญญาเช่า", "Depreciation - Right-of-Use Assets", AccountType.Expense, 4),
+            new("56160", "ค่าเสื่อมราคา-เครื่องจักรและอุปกรณ์", "Depreciation - Machinery", AccountType.Expense, 4),
+            new("56170", "ค่าเสื่อมราคา-อาคาร", "Depreciation - Buildings", AccountType.Expense, 4),
+            new("562", "ค่าตัดจำหน่าย", "Amortization Expense", AccountType.Expense, 3),
+            new("56210", "ค่าตัดจำหน่าย-ซอฟต์แวร์", "Amortization - Software", AccountType.Expense, 4),
 
-            new("532", "ค่าใช้จ่ายสำนักงาน", "Office Expenses", AccountType.Expense, 3),
-            new("532101", "ค่าเช่าสำนักงาน", "Office Rent", AccountType.Expense, 4),
-            new("532102", "ค่าไฟฟ้า", "Electricity Expense", AccountType.Expense, 4),
-            new("532103", "ค่าน้ำประปา", "Water Expense", AccountType.Expense, 4),
-            new("532104", "ค่าโทรศัพท์และอินเทอร์เน็ต", "Telephone and Internet", AccountType.Expense, 4),
-            new("532105", "ค่าเครื่องเขียนและวัสดุสิ้นเปลือง", "Stationery and Supplies", AccountType.Expense, 4),
-            new("532106", "ค่าไปรษณีย์และขนส่ง", "Postage and Delivery", AccountType.Expense, 4),
-            new("532107", "ค่าซ่อมแซมและบำรุงรักษา", "Repairs and Maintenance", AccountType.Expense, 4),
-            new("532108", "ค่าประกันภัย", "Insurance Expense", AccountType.Expense, 4),
+            // --- 57 ค่าใช้จ่ายอื่น ---
+            new("57", "ค่าใช้จ่ายอื่น", "Other Expenses", AccountType.Expense, 2),
+            new("571", "ค่าใช้จ่ายอื่น", "Other Expenses", AccountType.Expense, 3),
+            new("57110", "ขาดทุนจากการขายสินทรัพย์", "Loss on Disposal of Assets", AccountType.Expense, 4),
+            new("57120", "ขาดทุนจากการด้อยค่า", "Impairment Loss", AccountType.Expense, 4),
+            new("57130", "หนี้สงสัยจะสูญ/หนี้สูญ", "Bad Debt Expense / Doubtful Accounts", AccountType.Expense, 4),
 
-            new("533", "ค่าเสื่อมราคาและค่าตัดจำหน่าย", "Depreciation and Amortization", AccountType.Expense, 3),
-            new("533101", "ค่าเสื่อมราคา", "Depreciation Expense", AccountType.Expense, 4),
-            new("533102", "ค่าตัดจำหน่าย", "Amortization Expense", AccountType.Expense, 4),
-
-            new("534", "ค่าใช้จ่ายวิชาชีพ", "Professional Expenses", AccountType.Expense, 3),
-            new("534101", "ค่าทำบัญชี", "Accounting Fee", AccountType.Expense, 4),
-            new("534102", "ค่าสอบบัญชี", "Audit Fee", AccountType.Expense, 4),
-            new("534103", "ค่าที่ปรึกษากฎหมาย", "Legal Fee", AccountType.Expense, 4),
-            new("534104", "ค่าที่ปรึกษาอื่น", "Other Consulting Fee", AccountType.Expense, 4),
-
-            new("535", "ค่าใช้จ่ายเกี่ยวกับภาษี", "Tax Expenses", AccountType.Expense, 3),
-            new("535101", "ค่าอากรแสตมป์", "Stamp Duty", AccountType.Expense, 4),
-            new("535102", "ค่าภาษีโรงเรือนและที่ดิน", "Property Tax", AccountType.Expense, 4),
-            new("535103", "ค่าภาษีป้าย", "Signboard Tax", AccountType.Expense, 4),
-
-            new("54", "ค่าใช้จ่ายอื่น", "Other Expenses", AccountType.Expense, 2),
-
-            new("541", "ค่าใช้จ่ายอื่น", "Other Expenses", AccountType.Expense, 3),
-            new("541101", "ดอกเบี้ยจ่าย", "Interest Expense", AccountType.Expense, 4),
-            new("541102", "ค่าธรรมเนียมธนาคาร", "Bank Charges", AccountType.Expense, 4),
-            new("541103", "ขาดทุนจากการขายสินทรัพย์", "Loss on Sale of Assets", AccountType.Expense, 4),
-            new("541104", "ขาดทุนจากอัตราแลกเปลี่ยน", "Foreign Exchange Loss", AccountType.Expense, 4),
-            new("541105", "หนี้สูญ", "Bad Debt Expense", AccountType.Expense, 4),
-            new("541106", "ค่าปรับและเงินเพิ่ม", "Fines and Penalties", AccountType.Expense, 4),
-            new("541107", "ค่าใช้จ่ายเบ็ดเตล็ด", "Miscellaneous Expenses", AccountType.Expense, 4),
-            new("541108", "ค่าเลี้ยงรับรอง", "Entertainment Expense", AccountType.Expense, 4),
-            new("541109", "ค่าเดินทาง", "Travel Expense", AccountType.Expense, 4),
-
-            new("55", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 2),
-            new("551", "ภาษีเงินได้นิติบุคคล", "Corporate Income Tax", AccountType.Expense, 3),
-            new("551101", "ภาษีเงินได้นิติบุคคล", "Corporate Income Tax", AccountType.Expense, 4),
+            // --- 58 ภาษีเงินได้ ---
+            new("58", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 2),
+            new("580", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 3),
+            new("58000", "ภาษีเงินได้นิติบุคคล", "Corporate Income Tax", AccountType.Expense, 4),
         };
     }
 
-    /// <summary>
-    /// หมวด 3 ส่วนของเจ้าของ - นิติบุคคล (บริษัทจำกัด)
-    /// </summary>
-    public static List<AccountTemplate> GetEquityJuristicPerson()
+    // ==================== 3. ส่วนของเจ้าของ (Equity) ====================
+
+    /// <summary>ส่วนของเจ้าของ - นิติบุคคล (บริษัทจำกัด)</summary>
+    public static List<AccountTemplate> GetEquityJuristicPerson() => new()
     {
-        return new List<AccountTemplate>
-        {
-            new("30", "ส่วนของผู้ถือหุ้น", "Shareholders' Equity", AccountType.Equity, 1),
+        new("3", "ส่วนของเจ้าของ", "Equity", AccountType.Equity, 1),
+        new("31", "ทุน", "Share Capital", AccountType.Equity, 2),
+        new("310", "ทุนจดทะเบียน", "Authorized Share Capital", AccountType.Equity, 3),
+        new("31010", "ทุนจดทะเบียน", "Authorized Share Capital", AccountType.Equity, 4),
+        new("31020", "ทุนที่ออกและชำระแล้ว", "Issued and Paid-up Capital", AccountType.Equity, 4),
+        new("31030", "ส่วนเกินมูลค่าหุ้น", "Share Premium", AccountType.Equity, 4),
+        new("32", "กำไร(ขาดทุน)สะสม", "Retained Earnings (Deficit)", AccountType.Equity, 2),
+        new("320", "กำไร(ขาดทุน)สะสม", "Retained Earnings", AccountType.Equity, 3),
+        new("32010", "กำไรสะสม – จัดสรรแล้ว (สำรองตามกฎหมาย)", "Appropriated - Legal Reserve", AccountType.Equity, 4),
+        new("32020", "กำไรสะสม – ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
+        new("33", "องค์ประกอบอื่นของส่วนของเจ้าของ", "Other Components of Equity", AccountType.Equity, 2),
+        new("330", "องค์ประกอบอื่นของส่วนของเจ้าของ", "Other Components of Equity", AccountType.Equity, 3),
+        new("33010", "ผลต่างจากการแปลงค่างบการเงิน", "Translation Differences", AccountType.Equity, 4),
+        new("33020", "กำไร(ขาดทุน)เบ็ดเสร็จอื่น", "Other Comprehensive Income (Loss)", AccountType.Equity, 4),
+    };
 
-            new("31", "ทุนเรือนหุ้น", "Share Capital", AccountType.Equity, 2),
-            new("311", "ทุนจดทะเบียน", "Authorized Share Capital", AccountType.Equity, 3),
-            new("311101", "ทุนจดทะเบียน - หุ้นสามัญ", "Authorized Capital - Common Shares", AccountType.Equity, 4),
-            new("311201", "ทุนที่ออกและชำระแล้ว - หุ้นสามัญ", "Issued and Paid-up Capital", AccountType.Equity, 4),
-            new("311301", "ส่วนเกินมูลค่าหุ้นสามัญ", "Share Premium", AccountType.Equity, 4),
-
-            new("32", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 2),
-            new("321", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 3),
-            new("321101", "กำไรสะสม - จัดสรรแล้ว (สำรองตามกฎหมาย)", "Appropriated - Legal Reserve", AccountType.Equity, 4),
-            new("321201", "กำไรสะสม - ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
-            new("321301", "กำไร(ขาดทุน)สุทธิประจำปี", "Net Income (Loss) for the Year", AccountType.Equity, 4),
-
-            new("33", "องค์ประกอบอื่นของส่วนของผู้ถือหุ้น", "Other Components of Equity", AccountType.Equity, 2),
-            new("331", "องค์ประกอบอื่น", "Other Components", AccountType.Equity, 3),
-            new("331101", "เงินปันผลจ่าย", "Dividends", AccountType.Equity, 4),
-        };
-    }
-
-    /// <summary>
-    /// หมวด 3 ส่วนของเจ้าของ - บริษัทมหาชน
-    /// </summary>
-    public static List<AccountTemplate> GetEquityPublicCompany()
+    /// <summary>ส่วนของเจ้าของ - บริษัทมหาชน</summary>
+    public static List<AccountTemplate> GetEquityPublicCompany() => new()
     {
-        return new List<AccountTemplate>
-        {
-            new("30", "ส่วนของผู้ถือหุ้น", "Shareholders' Equity", AccountType.Equity, 1),
+        new("3", "ส่วนของผู้ถือหุ้น", "Shareholders' Equity", AccountType.Equity, 1),
+        new("31", "ทุนเรือนหุ้น", "Share Capital", AccountType.Equity, 2),
+        new("310", "ทุนเรือนหุ้น", "Share Capital", AccountType.Equity, 3),
+        new("31010", "ทุนจดทะเบียน", "Authorized Share Capital", AccountType.Equity, 4),
+        new("31020", "หุ้นสามัญ", "Common Stock", AccountType.Equity, 4),
+        new("31030", "หุ้นบุริมสิทธิ", "Preferred Stock", AccountType.Equity, 4),
+        new("31040", "ส่วนเกินมูลค่าหุ้นสามัญ", "Share Premium - Common", AccountType.Equity, 4),
+        new("31050", "ส่วนเกินมูลค่าหุ้นบุริมสิทธิ", "Share Premium - Preferred", AccountType.Equity, 4),
+        new("31060", "หุ้นทุนซื้อคืน", "Treasury Stock", AccountType.Equity, 4),
+        new("32", "กำไร(ขาดทุน)สะสม", "Retained Earnings (Deficit)", AccountType.Equity, 2),
+        new("320", "กำไร(ขาดทุน)สะสม", "Retained Earnings", AccountType.Equity, 3),
+        new("32010", "สำรองตามกฎหมาย", "Legal Reserve", AccountType.Equity, 4),
+        new("32020", "กำไรสะสม – ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
+        new("33", "องค์ประกอบอื่นของส่วนของผู้ถือหุ้น", "Other Components of Equity", AccountType.Equity, 2),
+        new("330", "องค์ประกอบอื่นของส่วนของผู้ถือหุ้น", "Other Components of Equity", AccountType.Equity, 3),
+        new("33010", "ผลต่างจากการแปลงค่างบการเงิน", "Translation Differences", AccountType.Equity, 4),
+        new("33020", "กำไร(ขาดทุน)เบ็ดเสร็จอื่น", "Other Comprehensive Income (Loss)", AccountType.Equity, 4),
+    };
 
-            new("31", "ทุนเรือนหุ้น", "Share Capital", AccountType.Equity, 2),
-            new("311", "ทุนจดทะเบียน", "Authorized Share Capital", AccountType.Equity, 3),
-            new("311101", "ทุนจดทะเบียน - หุ้นสามัญ", "Authorized Capital - Common Shares", AccountType.Equity, 4),
-            new("311102", "ทุนจดทะเบียน - หุ้นบุริมสิทธิ", "Authorized Capital - Preferred Shares", AccountType.Equity, 4),
-            new("311201", "ทุนที่ออกและชำระแล้ว - หุ้นสามัญ", "Issued and Paid-up - Common", AccountType.Equity, 4),
-            new("311202", "ทุนที่ออกและชำระแล้ว - หุ้นบุริมสิทธิ", "Issued and Paid-up - Preferred", AccountType.Equity, 4),
-            new("311301", "ส่วนเกินมูลค่าหุ้นสามัญ", "Share Premium - Common", AccountType.Equity, 4),
-            new("311302", "ส่วนเกินมูลค่าหุ้นบุริมสิทธิ", "Share Premium - Preferred", AccountType.Equity, 4),
-            new("311401", "หุ้นทุนซื้อคืน", "Treasury Shares", AccountType.Equity, 4),
-
-            new("32", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 2),
-            new("321", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 3),
-            new("321101", "กำไรสะสม - จัดสรรแล้ว (สำรองตามกฎหมาย)", "Appropriated - Legal Reserve", AccountType.Equity, 4),
-            new("321102", "กำไรสะสม - จัดสรรแล้ว (สำรองอื่น)", "Appropriated - Other Reserve", AccountType.Equity, 4),
-            new("321201", "กำไรสะสม - ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
-            new("321301", "กำไร(ขาดทุน)สุทธิประจำปี", "Net Income (Loss) for the Year", AccountType.Equity, 4),
-
-            new("33", "องค์ประกอบอื่นของส่วนของผู้ถือหุ้น", "Other Components of Equity", AccountType.Equity, 2),
-            new("331", "องค์ประกอบอื่น", "Other Components", AccountType.Equity, 3),
-            new("331101", "ผลต่างจากการแปลงค่างบการเงิน", "Translation Adjustments", AccountType.Equity, 4),
-            new("331102", "ผลกำไร(ขาดทุน)จากการวัดมูลค่า", "Revaluation Surplus", AccountType.Equity, 4),
-            new("331201", "เงินปันผลจ่าย", "Dividends", AccountType.Equity, 4),
-        };
-    }
-
-    /// <summary>
-    /// หมวด 3 ส่วนของเจ้าของ - ห้างหุ้นส่วน
-    /// </summary>
-    public static List<AccountTemplate> GetEquityPartnership()
+    /// <summary>ส่วนของเจ้าของ - ห้างหุ้นส่วน</summary>
+    public static List<AccountTemplate> GetEquityPartnership() => new()
     {
-        return new List<AccountTemplate>
-        {
-            new("30", "ส่วนของผู้เป็นหุ้นส่วน", "Partners' Equity", AccountType.Equity, 1),
+        new("3", "ส่วนของผู้เป็นหุ้นส่วน", "Partners' Equity", AccountType.Equity, 1),
+        new("31", "ทุน", "Partners' Capital", AccountType.Equity, 2),
+        new("310", "ทุนหุ้นส่วน", "Partners' Capital", AccountType.Equity, 3),
+        new("31010", "ทุน – หุ้นส่วนผู้จัดการ", "Capital - Managing Partner", AccountType.Equity, 4),
+        new("31020", "ทุน – หุ้นส่วนสามัญ", "Capital - General Partner", AccountType.Equity, 4),
+        new("31030", "ถอนใช้ส่วนตัว – หุ้นส่วนผู้จัดการ", "Drawings - Managing Partner", AccountType.Equity, 4),
+        new("31040", "ถอนใช้ส่วนตัว – หุ้นส่วนสามัญ", "Drawings - General Partner", AccountType.Equity, 4),
+        new("32", "กำไร(ขาดทุน)สะสม", "Retained Earnings (Deficit)", AccountType.Equity, 2),
+        new("320", "กำไร(ขาดทุน)สะสม", "Retained Earnings", AccountType.Equity, 3),
+        new("32010", "กำไรสะสม – ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
+    };
 
-            new("31", "ทุนหุ้นส่วน", "Partners' Capital", AccountType.Equity, 2),
-            new("311", "ทุนหุ้นส่วน", "Partners' Capital", AccountType.Equity, 3),
-            new("311101", "ทุน - หุ้นส่วนผู้จัดการ", "Capital - Managing Partner", AccountType.Equity, 4),
-            new("311102", "ทุน - หุ้นส่วนคนที่ 2", "Capital - Partner 2", AccountType.Equity, 4),
-            new("311201", "เงินถอน - หุ้นส่วนผู้จัดการ", "Drawings - Managing Partner", AccountType.Equity, 4),
-            new("311202", "เงินถอน - หุ้นส่วนคนที่ 2", "Drawings - Partner 2", AccountType.Equity, 4),
-
-            new("32", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 2),
-            new("321", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 3),
-            new("321101", "กำไรสะสม - ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
-            new("321201", "กำไร(ขาดทุน)สุทธิประจำปี", "Net Income (Loss) for the Year", AccountType.Equity, 4),
-        };
-    }
-
-    /// <summary>
-    /// หมวด 3 ส่วนของเจ้าของ - บุคคลธรรมดา
-    /// </summary>
-    public static List<AccountTemplate> GetEquityIndividual()
+    /// <summary>ส่วนของเจ้าของ - กิจการเจ้าของคนเดียว</summary>
+    public static List<AccountTemplate> GetEquityIndividual() => new()
     {
-        return new List<AccountTemplate>
-        {
-            new("30", "ส่วนของเจ้าของ", "Owner's Equity", AccountType.Equity, 1),
+        new("3", "ส่วนของเจ้าของ", "Owner's Equity", AccountType.Equity, 1),
+        new("31", "ทุน", "Owner's Capital", AccountType.Equity, 2),
+        new("310", "ทุนเจ้าของ", "Owner's Capital", AccountType.Equity, 3),
+        new("31010", "ทุน – เจ้าของกิจการ", "Owner's Capital", AccountType.Equity, 4),
+        new("31020", "ถอนใช้ส่วนตัว", "Owner's Drawings", AccountType.Equity, 4),
+        new("32", "กำไร(ขาดทุน)สะสม", "Retained Earnings (Deficit)", AccountType.Equity, 2),
+        new("320", "กำไร(ขาดทุน)สะสม", "Retained Earnings", AccountType.Equity, 3),
+        new("32010", "กำไรสะสม – ยังไม่ได้จัดสรร", "Unappropriated Retained Earnings", AccountType.Equity, 4),
+    };
 
-            new("31", "ทุนเจ้าของกิจการ", "Owner's Capital", AccountType.Equity, 2),
-            new("311", "ทุนเจ้าของกิจการ", "Owner's Capital", AccountType.Equity, 3),
-            new("311101", "ทุนเจ้าของกิจการ", "Owner's Capital", AccountType.Equity, 4),
-            new("311201", "เงินถอนส่วนตัว", "Owner's Drawings", AccountType.Equity, 4),
-
-            new("32", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 2),
-            new("321", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 3),
-            new("321101", "กำไรสะสม", "Retained Earnings", AccountType.Equity, 4),
-            new("321201", "กำไร(ขาดทุน)สุทธิประจำปี", "Net Income (Loss) for the Year", AccountType.Equity, 4),
-        };
-    }
-
-    /// <summary>
-    /// หมวด 3 ส่วนของเจ้าของ - มูลนิธิ/สมาคม
-    /// </summary>
-    public static List<AccountTemplate> GetEquityFoundation()
+    /// <summary>ส่วนของเจ้าของ - มูลนิธิ/สมาคม</summary>
+    public static List<AccountTemplate> GetEquityFoundation() => new()
     {
-        return new List<AccountTemplate>
-        {
-            new("30", "สินทรัพย์สุทธิ", "Net Assets", AccountType.Equity, 1),
-
-            new("31", "ทุนสะสม", "Accumulated Funds", AccountType.Equity, 2),
-            new("311", "ทุนสะสม", "Accumulated Funds", AccountType.Equity, 3),
-            new("311101", "ทุนเริ่มแรก", "Initial Fund", AccountType.Equity, 4),
-            new("311102", "เงินรับบริจาคสะสม", "Accumulated Donations", AccountType.Equity, 4),
-            new("311201", "ทุนสำรอง", "Reserve Fund", AccountType.Equity, 4),
-
-            new("32", "รายได้สูง(ต่ำ)กว่าค่าใช้จ่ายสะสม", "Accumulated Surplus (Deficit)", AccountType.Equity, 2),
-            new("321", "รายได้สูง(ต่ำ)กว่าค่าใช้จ่ายสะสม", "Accumulated Surplus (Deficit)", AccountType.Equity, 3),
-            new("321101", "รายได้สูง(ต่ำ)กว่าค่าใช้จ่ายสะสม", "Accumulated Surplus (Deficit)", AccountType.Equity, 4),
-            new("321201", "รายได้สูง(ต่ำ)กว่าค่าใช้จ่ายประจำปี", "Surplus (Deficit) for the Year", AccountType.Equity, 4),
-        };
-    }
+        new("3", "ทุนสะสม", "Accumulated Fund", AccountType.Equity, 1),
+        new("31", "ทุนสะสม", "Accumulated Fund", AccountType.Equity, 2),
+        new("310", "ทุนสะสม", "Accumulated Fund", AccountType.Equity, 3),
+        new("31010", "ทุนจดทะเบียน (มูลนิธิ)", "Registered Fund", AccountType.Equity, 4),
+        new("31020", "เงินบริจาค/เงินอุดหนุน", "Donations / Grants Received", AccountType.Equity, 4),
+        new("32", "ทุนสะสมจากการดำเนินงาน", "Accumulated Operating Fund", AccountType.Equity, 2),
+        new("320", "ทุนสะสมจากการดำเนินงาน", "Accumulated Operating Fund", AccountType.Equity, 3),
+        new("32010", "ทุนสะสม – ยังไม่ได้จัดสรร", "Unappropriated Accumulated Fund", AccountType.Equity, 4),
+    };
 
     // ==================== Industry-specific accounts ====================
 
-    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจซื้อมาขายไป / ค้าปลีก</summary>
-    public static List<AccountTemplate> GetIndustryTrading()
+    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจซื้อมาขายไป</summary>
+    public static List<AccountTemplate> GetIndustryTrading() => new()
     {
-        return new List<AccountTemplate>
+        new("51150", "ส่วนลดรับ (สินค้า)", "Purchase Discount", AccountType.Expense, 4),
+        new("51160", "ส่งคืนสินค้า", "Purchase Returns", AccountType.Expense, 4),
+    };
+
+    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจผลิต</summary>
+    public static List<AccountTemplate> GetIndustryManufacturing() => new()
+    {
+        new("51210", "วัตถุดิบ", "Raw Materials", AccountType.Expense, 4),
+        new("51220", "ค่าแรงงานทางตรง", "Direct Labor", AccountType.Expense, 4),
+        new("51230", "โสหุ้ยการผลิต", "Factory Overhead", AccountType.Expense, 4),
+        new("51240", "งานระหว่างทำ", "Work in Process", AccountType.Expense, 4),
+    };
+
+    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจบริการ</summary>
+    public static List<AccountTemplate> GetIndustryService() => new()
+    {
+        new("52140", "ค่าเครื่องมือ/อุปกรณ์บริการ", "Service Tools and Equipment", AccountType.Expense, 4),
+    };
+
+    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจอสังหาริมทรัพย์</summary>
+    public static List<AccountTemplate> GetIndustryRealEstate() => new()
+    {
+        new("51310", "ต้นทุนโครงการพัฒนาอสังหาริมทรัพย์", "Real Estate Development Cost", AccountType.Expense, 4),
+        new("51320", "ต้นทุนที่ดิน", "Land Cost", AccountType.Expense, 4),
+        new("51330", "ต้นทุนก่อสร้าง", "Construction Cost", AccountType.Expense, 4),
+    };
+
+    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจร้านอาหาร</summary>
+    public static List<AccountTemplate> GetIndustryRestaurant() => new()
+    {
+        new("51410", "ต้นทุนวัตถุดิบอาหาร", "Food Ingredient Cost", AccountType.Expense, 4),
+        new("51420", "ต้นทุนเครื่องดื่ม", "Beverage Cost", AccountType.Expense, 4),
+        new("51430", "ต้นทุนบรรจุภัณฑ์", "Packaging Cost", AccountType.Expense, 4),
+    };
+
+    // ==================== Metadata & Builder ====================
+
+    public static List<BusinessType> GetAllBusinessTypes() =>
+        Enum.GetValues<BusinessType>().ToList();
+
+    public static List<IndustryType> GetAllIndustryTypes() =>
+        Enum.GetValues<IndustryType>().ToList();
+
+    /// <summary>สร้างผังบัญชีตามประเภทธุรกิจและอุตสาหกรรม</summary>
+    public static List<AccountTemplate> GetTemplateByBusinessType(
+        BusinessType businessType,
+        IndustryType industryType = IndustryType.General)
+    {
+        var accounts = new List<AccountTemplate>();
+
+        // 1. Common accounts (1,2,4,5)
+        accounts.AddRange(GetCommonAccounts());
+
+        // 2. Equity accounts (3) based on business type
+        accounts.AddRange(businessType switch
         {
-            new("113105", "สินค้าระหว่างตรวจนับ", "Goods Under Count", AccountType.Asset, 4),
-            new("113106", "สินค้าชำรุด/เสื่อมสภาพ", "Damaged Goods", AccountType.Asset, 4),
-            new("114108", "ค่ามัดจำสินค้า", "Goods Deposit", AccountType.Asset, 4),
-            new("411103", "ส่วนลดการค้า", "Trade Discount", AccountType.Revenue, 4),
-            new("411104", "รายได้จากการขายออนไลน์", "Online Sales Revenue", AccountType.Revenue, 4),
-            new("511105", "ค่าบรรจุภัณฑ์", "Packaging Cost", AccountType.Expense, 4),
-            new("521106", "ค่าตลาดออนไลน์/แพลตฟอร์ม", "Online Platform Fee", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจบริการ / ความงาม / สปา</summary>
-    public static List<AccountTemplate> GetIndustryService()
-    {
-        return new List<AccountTemplate>
-        {
-            new("412102", "รายได้จากแพ็คเกจบริการ", "Package Service Revenue", AccountType.Revenue, 4),
-            new("412103", "รายได้จากค่าบริการเสริม", "Additional Service Revenue", AccountType.Revenue, 4),
-            new("412104", "รายได้จากสมาชิก/บัตรเติมเงิน", "Membership/Prepaid Card Revenue", AccountType.Revenue, 4),
-            new("213107", "รายได้รับล่วงหน้า - แพ็คเกจ", "Deferred Revenue - Packages", AccountType.Liability, 4),
-            new("213108", "รายได้รับล่วงหน้า - บัตรสมาชิก", "Deferred Revenue - Membership", AccountType.Liability, 4),
-            new("512102", "ค่าวัสดุสิ้นเปลือง - บริการ", "Service Supplies", AccountType.Expense, 4),
-            new("531107", "ค่าคอมมิชชั่นพนักงาน", "Staff Commission", AccountType.Expense, 4),
-            new("531108", "ค่าคอมมิชชั่นช่าง/ผู้ให้บริการ", "Technician Commission", AccountType.Expense, 4),
-            new("532109", "ค่าอุปกรณ์บริการ", "Service Equipment Expense", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับร้านอาหาร</summary>
-    public static List<AccountTemplate> GetIndustryRestaurant()
-    {
-        return new List<AccountTemplate>
-        {
-            new("113105", "วัตถุดิบอาหาร", "Food Ingredients", AccountType.Asset, 4),
-            new("113106", "เครื่องดื่มคงเหลือ", "Beverage Inventory", AccountType.Asset, 4),
-            new("411103", "รายได้จากร้านอาหาร", "Restaurant Revenue", AccountType.Revenue, 4),
-            new("411104", "รายได้จากเดลิเวอรี่", "Delivery Revenue", AccountType.Revenue, 4),
-            new("411105", "รายได้ค่าบริการ (Service Charge)", "Service Charge Revenue", AccountType.Revenue, 4),
-            new("511105", "ต้นทุนวัตถุดิบอาหาร", "Food Cost", AccountType.Expense, 4),
-            new("511106", "ต้นทุนเครื่องดื่ม", "Beverage Cost", AccountType.Expense, 4),
-            new("511107", "วัตถุดิบเสียหาย/หมดอายุ", "Food Waste/Spoilage", AccountType.Expense, 4),
-            new("532109", "ค่าแก๊ส/เชื้อเพลิงครัว", "Kitchen Gas/Fuel", AccountType.Expense, 4),
-            new("532110", "ค่าแพลตฟอร์มเดลิเวอรี่", "Delivery Platform Fee", AccountType.Expense, 4),
-            new("531107", "ค่าคอมมิชชั่นพนักงาน", "Staff Commission", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับคาเฟ่/เครื่องดื่ม</summary>
-    public static List<AccountTemplate> GetIndustryCafe()
-    {
-        return new List<AccountTemplate>
-        {
-            new("113105", "เมล็ดกาแฟ/ชา คงเหลือ", "Coffee/Tea Beans Inventory", AccountType.Asset, 4),
-            new("113106", "วัตถุดิบเครื่องดื่ม", "Beverage Ingredients", AccountType.Asset, 4),
-            new("113107", "บรรจุภัณฑ์/แก้ว", "Cups & Packaging", AccountType.Asset, 4),
-            new("411103", "รายได้จากเครื่องดื่ม", "Beverage Revenue", AccountType.Revenue, 4),
-            new("411104", "รายได้จากเบเกอรี่/ขนม", "Bakery Revenue", AccountType.Revenue, 4),
-            new("411105", "รายได้จากเดลิเวอรี่", "Delivery Revenue", AccountType.Revenue, 4),
-            new("511105", "ต้นทุนวัตถุดิบเครื่องดื่ม", "Beverage Material Cost", AccountType.Expense, 4),
-            new("511106", "ต้นทุนเบเกอรี่/ขนม", "Bakery Cost", AccountType.Expense, 4),
-            new("511107", "ค่าบรรจุภัณฑ์/แก้ว", "Cup & Packaging Cost", AccountType.Expense, 4),
-            new("532109", "ค่าแพลตฟอร์มเดลิเวอรี่", "Delivery Platform Fee", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับรับเหมาก่อสร้าง</summary>
-    public static List<AccountTemplate> GetIndustryConstruction()
-    {
-        return new List<AccountTemplate>
-        {
-            new("113105", "วัสดุก่อสร้าง", "Construction Materials", AccountType.Asset, 4),
-            new("114108", "ค่างานระหว่างก่อสร้าง", "Construction Work in Progress", AccountType.Asset, 4),
-            new("411103", "รายได้จากงานก่อสร้าง", "Construction Revenue", AccountType.Revenue, 4),
-            new("411104", "รายได้จากงานรับเหมาช่วง", "Sub-contract Revenue", AccountType.Revenue, 4),
-            new("511105", "ต้นทุนวัสดุก่อสร้าง", "Construction Material Cost", AccountType.Expense, 4),
-            new("511106", "ค่าแรงงานก่อสร้าง", "Construction Labor Cost", AccountType.Expense, 4),
-            new("511107", "ค่ารับเหมาช่วง", "Sub-contractor Cost", AccountType.Expense, 4),
-            new("511108", "ค่าเช่าเครื่องจักร/อุปกรณ์", "Equipment Rental", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับเทคโนโลยี/ซอฟต์แวร์</summary>
-    public static List<AccountTemplate> GetIndustryTechnology()
-    {
-        return new List<AccountTemplate>
-        {
-            new("412102", "รายได้จากพัฒนาซอฟต์แวร์", "Software Development Revenue", AccountType.Revenue, 4),
-            new("412103", "รายได้จาก SaaS/สมาชิก", "SaaS/Subscription Revenue", AccountType.Revenue, 4),
-            new("412104", "รายได้จากที่ปรึกษา IT", "IT Consulting Revenue", AccountType.Revenue, 4),
-            new("213107", "รายได้รับล่วงหน้า - สมาชิก", "Deferred Revenue - Subscription", AccountType.Liability, 4),
-            new("512102", "ต้นทุนเซิร์ฟเวอร์/โฮสติ้ง", "Server/Hosting Cost", AccountType.Expense, 4),
-            new("512103", "ค่าบริการ Cloud", "Cloud Service Cost", AccountType.Expense, 4),
-            new("532109", "ค่าลิขสิทธิ์ซอฟต์แวร์", "Software License", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับโรงแรม/ที่พัก</summary>
-    public static List<AccountTemplate> GetIndustryHotel()
-    {
-        return new List<AccountTemplate>
-        {
-            new("113105", "วัสดุสิ้นเปลืองห้องพัก", "Room Supplies", AccountType.Asset, 4),
-            new("411103", "รายได้จากห้องพัก", "Room Revenue", AccountType.Revenue, 4),
-            new("412102", "รายได้จากอาหารและเครื่องดื่ม", "F&B Revenue", AccountType.Revenue, 4),
-            new("412103", "รายได้จากบริการซักรีด", "Laundry Revenue", AccountType.Revenue, 4),
-            new("412104", "รายได้จากห้องประชุม/จัดเลี้ยง", "Banquet Revenue", AccountType.Revenue, 4),
-            new("213107", "เงินจอง/มัดจำห้องพัก", "Room Deposit Liability", AccountType.Liability, 4),
-            new("511105", "ต้นทุนอาหารและเครื่องดื่ม", "F&B Cost", AccountType.Expense, 4),
-            new("532109", "ค่าซักรีด", "Laundry Expense", AccountType.Expense, 4),
-            new("532110", "ค่าแพลตฟอร์ม OTA", "OTA Commission", AccountType.Expense, 4),
-            new("531107", "ค่าคอมมิชชั่นพนักงาน", "Staff Commission", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับอีคอมเมิร์ซ</summary>
-    public static List<AccountTemplate> GetIndustryEcommerce()
-    {
-        return new List<AccountTemplate>
-        {
-            new("113105", "สินค้าคงเหลือ - คลังออนไลน์", "Online Warehouse Stock", AccountType.Asset, 4),
-            new("411103", "รายได้จากขายออนไลน์", "Online Sales Revenue", AccountType.Revenue, 4),
-            new("411104", "รายได้จากค่าจัดส่ง", "Shipping Revenue", AccountType.Revenue, 4),
-            new("511105", "ค่าบรรจุภัณฑ์", "Packaging Cost", AccountType.Expense, 4),
-            new("521106", "ค่าแพลตฟอร์มออนไลน์", "Marketplace Platform Fee", AccountType.Expense, 4),
-            new("521107", "ค่าโฆษณาออนไลน์", "Online Advertising", AccountType.Expense, 4),
-            new("521108", "ค่าจัดส่ง/ขนส่ง", "Shipping/Delivery Cost", AccountType.Expense, 4),
-            new("521109", "ค่า Payment Gateway", "Payment Gateway Fee", AccountType.Expense, 4),
-        };
-    }
-
-    /// <summary>บัญชีเพิ่มเติมสำหรับการผลิต/โรงงาน</summary>
-    public static List<AccountTemplate> GetIndustryManufacturing()
-    {
-        return new List<AccountTemplate>
-        {
-            new("113105", "วัตถุดิบทางตรง", "Direct Materials", AccountType.Asset, 4),
-            new("113106", "วัตถุดิบทางอ้อม", "Indirect Materials", AccountType.Asset, 4),
-            new("113107", "สินค้าระหว่างผลิต", "Work in Process - Production", AccountType.Asset, 4),
-            new("511105", "ค่าวัตถุดิบทางตรง", "Direct Material Cost", AccountType.Expense, 4),
-            new("511106", "ค่าแรงงานทางตรง", "Direct Labor Cost", AccountType.Expense, 4),
-            new("511107", "ค่าโสหุ้ยการผลิต", "Manufacturing Overhead", AccountType.Expense, 4),
-            new("511108", "ค่าเสื่อมราคาเครื่องจักร", "Machine Depreciation", AccountType.Expense, 4),
-            new("511109", "ค่าซ่อมบำรุงเครื่องจักร", "Machine Maintenance", AccountType.Expense, 4),
-            new("511110", "ค่าพลังงาน/ไฟฟ้าโรงงาน", "Factory Utilities", AccountType.Expense, 4),
-            new("511111", "ของเสียจากการผลิต", "Production Waste", AccountType.Expense, 4),
-        };
-    }
-
-    // ==================== Industry metadata ====================
-
-    public record IndustryInfo(IndustryType Type, string NameTh, string NameEn, string Description, string Icon);
-
-    public static List<IndustryInfo> GetAllIndustryTypes()
-    {
-        return new List<IndustryInfo>
-        {
-            new(IndustryType.General, "ทั่วไป", "General", "ธุรกิจทั่วไป ใช้ผังบัญชีมาตรฐาน", "🏢"),
-            new(IndustryType.Trading, "ซื้อมาขายไป", "Trading", "ธุรกิจซื้อสินค้ามาจำหน่ายต่อ ทั้งค้าส่งและค้าปลีก", "🛒"),
-            new(IndustryType.Service, "บริการ", "Service", "ธุรกิจให้บริการ เช่น ร้านทำเล็บ สปา ซ่อม ทำความสะอาด", "💅"),
-            new(IndustryType.Manufacturing, "ผลิต/โรงงาน", "Manufacturing", "ธุรกิจผลิตสินค้าจากวัตถุดิบ มีสายการผลิต", "🏭"),
-            new(IndustryType.Restaurant, "ร้านอาหาร", "Restaurant", "ร้านอาหาร ภัตตาคาร ครัวกลาง รองรับ dine-in/delivery", "🍜"),
-            new(IndustryType.Cafe, "คาเฟ่/เครื่องดื่ม", "Cafe", "ร้านกาแฟ ชานมไข่มุก เครื่องดื่ม เบเกอรี่", "☕"),
-            new(IndustryType.Retail, "ค้าปลีก", "Retail", "ร้านค้าปลีก ร้านสะดวกซื้อ มินิมาร์ท", "🏪"),
-            new(IndustryType.Construction, "รับเหมาก่อสร้าง", "Construction", "ธุรกิจรับเหมาก่อสร้าง ปรับปรุงอาคาร งานโครงการ", "🏗️"),
-            new(IndustryType.RealEstate, "อสังหาริมทรัพย์", "Real Estate", "ธุรกิจพัฒนาอสังหาริมทรัพย์ นายหน้า บ้านจัดสรร", "🏠"),
-            new(IndustryType.Technology, "เทคโนโลยี/IT", "Technology", "ธุรกิจซอฟต์แวร์ SaaS ที่ปรึกษา IT พัฒนาเว็บ/แอป", "💻"),
-            new(IndustryType.Healthcare, "สุขภาพ/คลินิก", "Healthcare", "คลินิก ร้านยา ศูนย์สุขภาพ ทันตกรรม", "🏥"),
-            new(IndustryType.Education, "การศึกษา", "Education", "โรงเรียนกวดวิชา สถาบันสอน คอร์สออนไลน์", "🎓"),
-            new(IndustryType.Beauty, "ความงาม/สปา", "Beauty & Spa", "ร้านทำเล็บ ร้านทำผม สปา คลินิกเสริมความงาม", "💆"),
-            new(IndustryType.Transportation, "ขนส่ง/โลจิสติกส์", "Transportation", "ธุรกิจขนส่ง โลจิสติกส์ รถเช่า Messenger", "🚛"),
-            new(IndustryType.Agriculture, "เกษตร", "Agriculture", "เกษตรกรรม ฟาร์ม ปศุสัตว์ ประมง", "🌾"),
-            new(IndustryType.Hotel, "โรงแรม/ที่พัก", "Hotel", "โรงแรม รีสอร์ท เกสต์เฮาส์ Airbnb", "🏨"),
-            new(IndustryType.Ecommerce, "อีคอมเมิร์ซ", "E-commerce", "ขายสินค้าออนไลน์ Shopee Lazada Facebook", "📱"),
-            new(IndustryType.Freelance, "ฟรีแลนซ์", "Freelance", "ทำงานอิสระ รับงานเป็นโปรเจค กราฟิก เขียนโปรแกรม", "🎨"),
-            new(IndustryType.Other, "อื่นๆ", "Other", "ธุรกิจประเภทอื่นที่ไม่อยู่ในรายการ", "📋"),
-        };
-    }
-
-    // ==================== Business type metadata ====================
-
-    public record BusinessTypeInfo(BusinessType Type, string NameTh, string NameEn, string Description, string Icon, string EquityLabel);
-
-    public static List<BusinessTypeInfo> GetAllBusinessTypes()
-    {
-        return new List<BusinessTypeInfo>
-        {
-            new(BusinessType.Individual, "บุคคลธรรมดา", "Individual", "เจ้าของคนเดียว ไม่จดทะเบียนนิติบุคคล เสียภาษีเงินได้บุคคลธรรมดา", "👤", "ทุนเจ้าของกิจการ"),
-            new(BusinessType.JuristicPerson, "บริษัทจำกัด", "Limited Company", "จดทะเบียนเป็นบริษัทจำกัด มีผู้ถือหุ้น เสียภาษีเงินได้นิติบุคคล", "🏢", "ทุนเรือนหุ้น (หุ้นสามัญ)"),
-            new(BusinessType.Partnership, "ห้างหุ้นส่วน", "Partnership", "ห้างหุ้นส่วนสามัญ/จำกัด มีหุ้นส่วนตั้งแต่ 2 คนขึ้นไป", "🤝", "ทุนหุ้นส่วน"),
-            new(BusinessType.PublicCompany, "บริษัทมหาชน", "Public Company", "บริษัทมหาชนจำกัด จดทะเบียนในตลาดหลักทรัพย์", "🏛️", "ทุนเรือนหุ้น (สามัญ+บุริมสิทธิ)"),
-            new(BusinessType.Foundation, "มูลนิธิ", "Foundation", "มูลนิธิ องค์กรไม่แสวงหากำไร ได้รับยกเว้นภาษีเงินได้", "🏫", "ทุนสะสม/เงินบริจาค"),
-            new(BusinessType.Association, "สมาคม", "Association", "สมาคม สโมสร องค์กรสมาชิก", "🏟️", "ทุนสะสม/ค่าสมาชิก"),
-            new(BusinessType.Other, "อื่นๆ", "Other", "ประเภทกิจการอื่นที่ไม่อยู่ในรายการ", "📋", "ส่วนของเจ้าของ"),
-        };
-    }
-
-    // ==================== Main template builder ====================
-
-    /// <summary>
-    /// ดึงผังบัญชีตามประเภทธุรกิจ (backward compatible)
-    /// </summary>
-    public static List<AccountTemplate> GetTemplateByBusinessType(BusinessType businessType)
-    {
-        return GetTemplateByBusinessType(businessType, IndustryType.General);
-    }
-
-    /// <summary>
-    /// ดึงผังบัญชีตามประเภทธุรกิจ + ลักษณะธุรกิจ
-    /// </summary>
-    public static List<AccountTemplate> GetTemplateByBusinessType(BusinessType businessType, IndustryType industryType)
-    {
-        var accounts = GetCommonAccounts();
-
-        var equityAccounts = businessType switch
-        {
-            BusinessType.Individual => GetEquityIndividual(),
-            BusinessType.Partnership => GetEquityPartnership(),
-            BusinessType.PublicCompany => GetEquityPublicCompany(),
+            BusinessType.JuristicPerson => GetEquityJuristicPerson(),
+            BusinessType.PublicCompany  => GetEquityPublicCompany(),
+            BusinessType.Partnership    => GetEquityPartnership(),
+            BusinessType.Individual     => GetEquityIndividual(),
             BusinessType.Foundation or BusinessType.Association => GetEquityFoundation(),
-            _ => GetEquityJuristicPerson(), // Default: JuristicPerson, Other
-        };
+            _ => GetEquityJuristicPerson()
+        });
 
-        // Insert equity accounts after liabilities (position after "22" group)
-        var insertIndex = accounts.FindIndex(a => a.Code == "40");
-        if (insertIndex >= 0)
-            accounts.InsertRange(insertIndex, equityAccounts);
-        else
-            accounts.AddRange(equityAccounts);
-
-        // For Individual business type, replace corporate income tax with personal income tax
-        if (businessType == BusinessType.Individual)
+        // 3. Industry-specific accounts
+        if (industryType != IndustryType.General)
         {
-            var corpTaxIdx = accounts.FindIndex(a => a.Code == "551101");
-            if (corpTaxIdx >= 0)
-                accounts[corpTaxIdx] = new AccountTemplate("551101", "ภาษีเงินได้บุคคลธรรมดา", "Personal Income Tax", AccountType.Expense, 4);
-
-            var corpTaxGroupIdx = accounts.FindIndex(a => a.Code == "551");
-            if (corpTaxGroupIdx >= 0)
-                accounts[corpTaxGroupIdx] = new AccountTemplate("551", "ภาษีเงินได้บุคคลธรรมดา", "Personal Income Tax", AccountType.Expense, 3);
-
-            var corpTaxParentIdx = accounts.FindIndex(a => a.Code == "55");
-            if (corpTaxParentIdx >= 0)
-                accounts[corpTaxParentIdx] = new AccountTemplate("55", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 2);
-
-            var corpTaxPayableIdx = accounts.FindIndex(a => a.Code == "212202");
-            if (corpTaxPayableIdx >= 0)
-                accounts[corpTaxPayableIdx] = new AccountTemplate("212202", "ภาษีเงินได้บุคคลธรรมดาค้างจ่าย", "Personal Income Tax Payable", AccountType.Liability, 4);
-        }
-
-        // For Foundation/Association, modify revenue/expense labels
-        if (businessType is BusinessType.Foundation or BusinessType.Association)
-        {
-            var otherIncomeIdx = accounts.FindIndex(a => a.Code == "421105");
-            if (otherIncomeIdx >= 0)
+            accounts.AddRange(industryType switch
             {
-                accounts.InsertRange(otherIncomeIdx + 1, new[]
-                {
-                    new AccountTemplate("421106", "เงินรับบริจาค", "Donation Income", AccountType.Revenue, 4),
-                    new AccountTemplate("421107", "เงินอุดหนุนจากรัฐ", "Government Grants", AccountType.Revenue, 4),
-                    new AccountTemplate("421108", "ค่าสมาชิก", "Membership Fees", AccountType.Revenue, 4),
-                });
-            }
-            accounts.RemoveAll(a => a.Code.StartsWith("55"));
+                IndustryType.Trading or IndustryType.Retail => GetIndustryTrading(),
+                IndustryType.Manufacturing or IndustryType.Construction => GetIndustryManufacturing(),
+                IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
+                    or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation => GetIndustryService(),
+                IndustryType.RealEstate    => GetIndustryRealEstate(),
+                IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
+                _ => new List<AccountTemplate>()
+            });
         }
 
-        // Add industry-specific accounts
-        var industryAccounts = industryType switch
-        {
-            IndustryType.Trading or IndustryType.Retail => GetIndustryTrading(),
-            IndustryType.Service or IndustryType.Beauty or IndustryType.Healthcare => GetIndustryService(),
-            IndustryType.Restaurant => GetIndustryRestaurant(),
-            IndustryType.Cafe => GetIndustryCafe(),
-            IndustryType.Construction => GetIndustryConstruction(),
-            IndustryType.Technology => GetIndustryTechnology(),
-            IndustryType.Hotel => GetIndustryHotel(),
-            IndustryType.Ecommerce => GetIndustryEcommerce(),
-            IndustryType.Manufacturing => GetIndustryManufacturing(),
-            IndustryType.Freelance => GetIndustryService(), // Freelance uses service template
-            _ => new List<AccountTemplate>()
-        };
-
-        // Merge industry accounts: insert after matching parent group
-        foreach (var ia in industryAccounts)
-        {
-            // Check for duplicates
-            if (accounts.Any(a => a.Code == ia.Code)) continue;
-
-            // Find insert position: after last account in same group
-            var groupPrefix = ia.Code.Length >= 3 ? ia.Code[..3] : ia.Code[..2];
-            var lastInGroup = accounts.FindLastIndex(a => a.Code.StartsWith(groupPrefix) && a.Code != groupPrefix);
-            if (lastInGroup >= 0)
-                accounts.Insert(lastInGroup + 1, ia);
-            else
-                accounts.Add(ia);
-        }
-
-        return accounts;
+        // Sort by code for proper hierarchy
+        return accounts.OrderBy(a => a.Code).ToList();
     }
 }
