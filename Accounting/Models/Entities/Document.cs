@@ -76,6 +76,7 @@ public class Contact : TenantEntity
     public string Name { get; set; } = null!;
     public string? TaxId { get; set; }
     public string? BranchCode { get; set; }
+    public ContactType ContactType { get; set; } = ContactType.Individual;
     public bool IsCustomer { get; set; }
     public bool IsSupplier { get; set; }
     public string? Address { get; set; }

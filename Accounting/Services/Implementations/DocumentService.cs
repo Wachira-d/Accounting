@@ -346,6 +346,7 @@ public class DocumentService : IDocumentService
             Name = request.Name,
             TaxId = request.TaxId,
             BranchCode = request.BranchCode,
+            ContactType = request.ContactType ?? InferContactType(request.TaxId, request.BranchCode),
             IsCustomer = request.IsCustomer,
             IsSupplier = request.IsSupplier,
             Address = request.Address,
@@ -378,6 +379,9 @@ public class DocumentService : IDocumentService
         if (request.Name != null) contact.Name = request.Name;
         if (request.TaxId != null) contact.TaxId = request.TaxId;
         if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
+        if (request.ContactType.HasValue) contact.ContactType = request.ContactType.Value;
+        else if (request.TaxId != null || request.BranchCode != null)
+            contact.ContactType = InferContactType(request.TaxId ?? contact.TaxId, request.BranchCode ?? contact.BranchCode);
         if (request.IsCustomer.HasValue) contact.IsCustomer = request.IsCustomer.Value;
         if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
         if (request.Address != null) contact.Address = request.Address;
@@ -388,6 +392,13 @@ public class DocumentService : IDocumentService
 
         await _db.SaveChangesAsync();
         return MapContactToResponse(contact);
+    }
+
+    public async Task<ContactSmartDefaults> GetContactSmartDefaultsAsync(Guid companyId, Guid contactId)
+    {
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        return GetSmartDefaults(contact);
     }
 
     // ==================== Payments ====================
@@ -700,6 +711,86 @@ public class DocumentService : IDocumentService
         d.CreatedAt);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
-        c.Id, c.Name, c.TaxId, c.BranchCode, c.IsCustomer, c.IsSupplier,
+        c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
         c.Address, c.Phone, c.Email, c.ContactPerson, c.IsActive);
+
+    // ==================== Smart Defaults ====================
+
+    /// <summary>
+    /// วิเคราะห์ประเภทผู้ติดต่อจาก TaxId และ BranchCode อัตโนมัติ
+    /// - มี BranchCode (ไม่ใช่ 00000) → นิติบุคคล (มีสำนักงานสาขา)
+    /// - TaxId 13 หลัก ขึ้นต้นด้วย 0 → นิติบุคคล (เลขทะเบียนนิติบุคคล)
+    /// - อื่นๆ → บุคคลธรรมดา
+    /// </summary>
+    public static ContactType InferContactType(string? taxId, string? branchCode)
+    {
+        // BranchCode ≠ null/empty/"00000" → clearly juristic (has branch offices)
+        if (!string.IsNullOrWhiteSpace(branchCode) && branchCode != "00000")
+            return ContactType.JuristicPerson;
+
+        // TaxId 13 digits starting with 0 → juristic person registration number
+        if (!string.IsNullOrWhiteSpace(taxId) && taxId.Length == 13 && taxId[0] == '0')
+            return ContactType.JuristicPerson;
+
+        // BranchCode "00000" (สำนักงานใหญ่) with valid TaxId → also juristic
+        if (branchCode == "00000" && !string.IsNullOrWhiteSpace(taxId) && taxId.Length == 13)
+            return ContactType.JuristicPerson;
+
+        return ContactType.Individual;
+    }
+
+    /// <summary>ค่าเริ่มต้นอัตโนมัติจากข้อมูลผู้ติดต่อ</summary>
+    public static ContactSmartDefaults GetSmartDefaults(Contact contact)
+    {
+        var contactType = contact.ContactType;
+
+        // WHT form type: นิติบุคคล → ภ.ง.ด.53, บุคคลธรรมดา → ภ.ง.ด.3
+        var taxFormType = contactType switch
+        {
+            ContactType.JuristicPerson => TaxType.WithholdingTax53,
+            ContactType.GovernmentAgency => TaxType.WithholdingTax53,
+            _ => TaxType.WithholdingTax3
+        };
+        var taxFormLabel = taxFormType switch
+        {
+            TaxType.WithholdingTax53 => "ภ.ง.ด.53",
+            TaxType.WithholdingTax3 => "ภ.ง.ด.3",
+            _ => taxFormType.ToString()
+        };
+
+        // Document type: supplier → ซื้อ, customer → ขาย
+        DocumentType? docType = null;
+        string? docTypeLabel = null;
+        if (contact.IsSupplier && !contact.IsCustomer)
+        {
+            docType = DocumentType.PurchaseInvoice;
+            docTypeLabel = "ใบกำกับซื้อ";
+        }
+        else if (contact.IsCustomer && !contact.IsSupplier)
+        {
+            docType = DocumentType.Invoice;
+            docTypeLabel = "ใบแจ้งหนี้";
+        }
+
+        // WHT rate & income type: นิติบุคคล default = ค่าบริการ 3%, บุคคลธรรมดา = ค่าจ้าง 3%
+        var defaultWhtRate = 3m;
+        var defaultIncomeCode = contactType == ContactType.JuristicPerson ? "8" : "6";
+        var defaultIncomeLabel = contactType == ContactType.JuristicPerson
+            ? "ค่าบริการอื่นๆ (40(8))"
+            : "ค่าวิชาชีพอิสระ (40(6))";
+
+        var contactTypeLabel = contactType switch
+        {
+            ContactType.Individual => "บุคคลธรรมดา",
+            ContactType.JuristicPerson => "นิติบุคคล",
+            ContactType.GovernmentAgency => "หน่วยงานราชการ",
+            _ => contactType.ToString()
+        };
+
+        return new ContactSmartDefaults(
+            contactType, contactTypeLabel,
+            taxFormType, taxFormLabel,
+            docType, docTypeLabel,
+            defaultWhtRate, defaultIncomeCode, defaultIncomeLabel);
+    }
 }

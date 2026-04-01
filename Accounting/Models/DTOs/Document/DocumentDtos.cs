@@ -72,6 +72,7 @@ public record CreateContactRequest(
     string Name,
     string? TaxId,
     string? BranchCode,
+    ContactType? ContactType,
     bool IsCustomer,
     bool IsSupplier,
     string? Address,
@@ -83,6 +84,7 @@ public record UpdateContactRequest(
     string? Name,
     string? TaxId,
     string? BranchCode,
+    ContactType? ContactType,
     bool? IsCustomer,
     bool? IsSupplier,
     string? Address,
@@ -96,6 +98,7 @@ public record ContactResponse(
     string Name,
     string? TaxId,
     string? BranchCode,
+    ContactType ContactType,
     bool IsCustomer,
     bool IsSupplier,
     string? Address,
@@ -103,6 +106,18 @@ public record ContactResponse(
     string? Email,
     string? ContactPerson,
     bool IsActive);
+
+/// <summary>ค่าเริ่มต้นอัตโนมัติ ระบบวิเคราะห์จากข้อมูลผู้ติดต่อ</summary>
+public record ContactSmartDefaults(
+    ContactType ContactType,
+    string ContactTypeLabel,
+    TaxType SuggestedTaxFormType,
+    string SuggestedTaxFormLabel,
+    DocumentType? SuggestedDocumentType,
+    string? SuggestedDocumentTypeLabel,
+    decimal DefaultWhtRate,
+    string DefaultIncomeTypeCode,
+    string DefaultIncomeTypeLabel);
 
 // ===== Payment =====
 public record CreatePaymentRequest(

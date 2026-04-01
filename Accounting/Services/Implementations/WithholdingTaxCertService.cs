@@ -19,6 +19,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
     public async Task<WithholdingTaxCertResponse> CreateAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy)
     {
+        // Auto-determine TaxFormType from contact if not specified
+        var taxFormType = request.TaxFormType;
+        if (!taxFormType.HasValue)
+        {
+            var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+            taxFormType = DetermineTaxFormType(contact);
+        }
+
         var count = await _db.WithholdingTaxCerts.CountAsync(w => w.CompanyId == companyId);
         var certNumber = $"WHT-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
 
@@ -27,7 +36,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             CompanyId = companyId,
             CertificateNumber = certNumber,
             PayeeContactId = request.PayeeContactId,
-            TaxFormType = request.TaxFormType,
+            TaxFormType = taxFormType.Value,
             TaxYear = request.TaxYear,
             TaxMonth = request.TaxMonth,
             CertificateType = request.CertificateType,
@@ -314,14 +323,17 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     // ==================== Private Helpers ====================
 
     /// <summary>
-    /// ภ.ง.ด.53 for companies (TaxId 13 digits), ภ.ง.ด.3 for individuals (TaxId 13 digits starting with 0 or no BranchCode)
-    /// Simple heuristic: if contact has BranchCode → juristic person (ภ.ง.ด.53), else → individual (ภ.ง.ด.3)
+    /// วิเคราะห์แบบ ภ.ง.ด. อัตโนมัติจาก ContactType ของผู้ติดต่อ
+    /// นิติบุคคล → ภ.ง.ด.53, บุคคลธรรมดา → ภ.ง.ด.3
     /// </summary>
     private static TaxType DetermineTaxFormType(Contact contact)
     {
-        if (!string.IsNullOrEmpty(contact.BranchCode) && contact.BranchCode != "00000")
-            return TaxType.WithholdingTax53;
-        return TaxType.WithholdingTax3;
+        return contact.ContactType switch
+        {
+            ContactType.JuristicPerson => TaxType.WithholdingTax53,
+            ContactType.GovernmentAgency => TaxType.WithholdingTax53,
+            _ => TaxType.WithholdingTax3
+        };
     }
 
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(

@@ -97,4 +97,25 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<BulkGenerateWhtResponse>(true, result,
             $"สร้างสำเร็จ {result.Generated} รายการ" + (result.Skipped > 0 ? $", ข้าม {result.Skipped} รายการ" : "")));
     }
+
+    /// <summary>ข้อมูลอ้างอิง: ประเภทเงินได้ + อัตราหัก ณ ที่จ่ายตามกฎหมาย</summary>
+    [HttpGet("~/api/reference/income-types")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<object>> GetIncomeTypes()
+    {
+        var incomeTypes = new[]
+        {
+            new { Code = "1", Name = "เงินเดือน ค่าจ้าง บำนาญ", TaxSection = "40(1)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.1" } },
+            new { Code = "2", Name = "ค่านายหน้า", TaxSection = "40(2)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "3", Name = "ค่าแห่งลิขสิทธิ์", TaxSection = "40(3)", DefaultRate = 5m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "4a", Name = "ดอกเบี้ย", TaxSection = "40(4)(a)", DefaultRate = 15m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "4b", Name = "เงินปันผล", TaxSection = "40(4)(b)", DefaultRate = 10m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "5", Name = "ค่าเช่าทรัพย์สิน", TaxSection = "40(5)", DefaultRate = 5m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "6", Name = "ค่าวิชาชีพอิสระ", TaxSection = "40(6)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3" } },
+            new { Code = "7", Name = "ค่ารับเหมา", TaxSection = "40(7)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3" } },
+            new { Code = "8", Name = "ค่าจ้างทำของ/ค่าบริการ", TaxSection = "40(8)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+        };
+
+        return Ok(new ApiResponse<object>(true, incomeTypes));
+    }
 }

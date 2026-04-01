@@ -28,6 +28,14 @@ public enum CompanyStatus
     Suspended = 3
 }
 
+/// <summary>ประเภทผู้ติดต่อ — ใช้กำหนดแบบ ภ.ง.ด. อัตโนมัติ</summary>
+public enum ContactType
+{
+    Individual = 1,         // บุคคลธรรมดา → ภ.ง.ด.3
+    JuristicPerson = 2,     // นิติบุคคล (บริษัท/ห้างหุ้นส่วน) → ภ.ง.ด.53
+    GovernmentAgency = 3    // หน่วยงานราชการ → ไม่หัก ณ ที่จ่าย
+}
+
 public enum BusinessType
 {
     Individual = 1,        // บุคคลธรรมดา
