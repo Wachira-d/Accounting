@@ -539,6 +539,23 @@ public static class DatabaseMigrationHelper
                 ALTER TABLE [JournalEntries] ADD [JournalType] int NOT NULL DEFAULT 0;
             """,
             """
+            -- ===== WithholdingTaxCerts: DocumentId column =====
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('WithholdingTaxCerts') AND name = 'DocumentId')
+                ALTER TABLE [WithholdingTaxCerts] ADD [DocumentId] uniqueidentifier NULL;
+            """,
+            """
+            -- ===== Contacts: ContactType column =====
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Contacts') AND name = 'ContactType')
+                ALTER TABLE [Contacts] ADD [ContactType] int NOT NULL DEFAULT 1;
+            """,
+            """
+            -- ===== Auto-classify existing contacts: BranchCode != NULL/00000 → JuristicPerson =====
+            IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Contacts') AND name = 'ContactType')
+                UPDATE [Contacts] SET [ContactType] = 2
+                WHERE [ContactType] = 1
+                  AND [BranchCode] IS NOT NULL AND [BranchCode] <> '' AND [BranchCode] <> '00000';
+            """,
+            """
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ContactInquiries')
             CREATE TABLE [ContactInquiries] (
                 [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),

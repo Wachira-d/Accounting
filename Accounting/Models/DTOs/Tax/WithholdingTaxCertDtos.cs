@@ -5,7 +5,7 @@ namespace Accounting.Models.DTOs.Tax;
 // ===== Withholding Tax Certificate (หนังสือรับรองหัก ณ ที่จ่าย) =====
 public record CreateWithholdingTaxCertRequest(
     Guid PayeeContactId,
-    TaxType TaxFormType,
+    TaxType? TaxFormType,
     int TaxYear,
     int TaxMonth,
     WithholdingTaxCertType CertificateType,

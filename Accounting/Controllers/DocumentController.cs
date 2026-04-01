@@ -100,6 +100,17 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<ContactResponse>(true, result));
     }
 
+    /// <summary>
+    /// วิเคราะห์ค่าเริ่มต้นอัตโนมัติจากข้อมูลผู้ติดต่อ
+    /// เช่น แบบ ภ.ง.ด., ประเภทเอกสาร, อัตราหัก ณ ที่จ่าย
+    /// </summary>
+    [HttpGet("contacts/{contactId:guid}/smart-defaults")]
+    public async Task<ActionResult<ApiResponse<ContactSmartDefaults>>> GetContactSmartDefaults(Guid companyId, Guid contactId)
+    {
+        var result = await _documentService.GetContactSmartDefaultsAsync(companyId, contactId);
+        return Ok(new ApiResponse<ContactSmartDefaults>(true, result));
+    }
+
     // ===== Payments =====
 
     [HttpGet("payments")]
