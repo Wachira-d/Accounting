@@ -1,6 +1,6 @@
 {
-  "name": "Nexaacc - ระบบบัญชีออนไลน์",
-  "short_name": "Nexaacc",
+  "name": "Next Acc - ระบบบัญชีออนไลน์",
+  "short_name": "Next Acc",
   "description": "ระบบบัญชี SaaS ที่ดีที่สุดสำหรับธุรกิจไทย",
   "start_url": "/app.html",
   "display": "standalone",
