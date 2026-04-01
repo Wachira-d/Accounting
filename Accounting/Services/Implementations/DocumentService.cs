@@ -488,8 +488,8 @@ public class DocumentService : IDocumentService
     // ==================== Private ====================
 
     /// <summary>
-    /// ค้นหาบัญชีจากรหัส — รองรับทั้งรหัส 4 หลัก (legacy) และ 6 หลัก (มาตรฐาน)
-    /// เช่น "1121" จะ match "112101" (ลูกหนี้การค้า)
+    /// ค้นหาบัญชีจากรหัส — exact match ก่อน แล้ว prefix match (level 4)
+    /// เช่น "113" จะ match "11310" (ลูกหนี้การค้า)
     /// </summary>
     private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
     {
@@ -521,7 +521,7 @@ public class DocumentService : IDocumentService
         if (journalType == JournalType.Sales)
         {
             // Dr: ลูกหนี้การค้า (112101)
-            var arAccount = await FindAccountAsync(companyId, "1121");
+            var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     arAccount.Id, doc.TotalAmount, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}"));
@@ -534,16 +534,16 @@ public class DocumentService : IDocumentService
             // Cr: ภาษีขาย (212101)
             if (doc.VatAmount > 0)
             {
-                var vatAccount = await FindAccountAsync(companyId, "2121");
+                var vatAccount = await FindAccountAsync(companyId, "219");
                 if (vatAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
             }
 
-            // Cr: ภาษีหัก ณ ที่จ่าย (ลด AR) — ผู้ซื้อหักไว้จากยอดจ่าย
+            // Dr: ภาษีถูกหัก ณ ที่จ่าย (สินทรัพย์) — ผู้ซื้อหักไว้จากยอดจ่าย
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await FindAccountAsync(companyId, "1141");
+                var whtAccount = await FindAccountAsync(companyId, "11910");
                 if (whtAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
@@ -561,14 +561,14 @@ public class DocumentService : IDocumentService
             // Dr: ภาษีซื้อ (114101)
             if (doc.VatAmount > 0)
             {
-                var vatInputAccount = await FindAccountAsync(companyId, "1141");
+                var vatInputAccount = await FindAccountAsync(companyId, "116");
                 if (vatInputAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ"));
             }
 
             // Cr: เจ้าหนี้การค้า (211101)
-            var apAccount = await FindAccountAsync(companyId, "2111");
+            var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}"));
@@ -576,7 +576,7 @@ public class DocumentService : IDocumentService
             // Cr: ภาษีหัก ณ ที่จ่าย ค้างจ่าย (212201)
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await FindAccountAsync(companyId, "2122");
+                var whtAccount = await FindAccountAsync(companyId, "219");
                 if (whtAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
@@ -587,13 +587,13 @@ public class DocumentService : IDocumentService
         else if (journalType == JournalType.CashReceipts)
         {
             // Dr: เงินสด/ธนาคาร (111101)
-            var cashAccount = await FindAccountAsync(companyId, "1111");
+            var cashAccount = await FindAccountAsync(companyId, "111");
             if (cashAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     cashAccount.Id, doc.TotalAmount, 0, $"รับเงิน - {doc.DocumentNumber}"));
 
             // Cr: ลูกหนี้การค้า (112101) — ลดยอดลูกหนี้
-            var arAccount = await FindAccountAsync(companyId, "1121");
+            var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     arAccount.Id, 0, doc.TotalAmount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
@@ -603,13 +603,13 @@ public class DocumentService : IDocumentService
         else if (journalType == JournalType.CashPayments)
         {
             // Dr: เจ้าหนี้การค้า (211101) — ลดยอดเจ้าหนี้
-            var apAccount = await FindAccountAsync(companyId, "2111");
+            var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     apAccount.Id, doc.TotalAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
 
             // Cr: เงินสด/ธนาคาร (111101)
-            var cashAccount = await FindAccountAsync(companyId, "1111");
+            var cashAccount = await FindAccountAsync(companyId, "111");
             if (cashAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}"));
@@ -647,7 +647,7 @@ public class DocumentService : IDocumentService
         var isRevenue = revenueTypes.Contains(doc.DocumentType);
         var journalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments;
 
-        var cashAccount = await FindAccountAsync(companyId, "1111");
+        var cashAccount = await FindAccountAsync(companyId, "111");
         if (cashAccount == null) return;
 
         if (isRevenue)
@@ -655,7 +655,7 @@ public class DocumentService : IDocumentService
             // รับเงินจากลูกค้า: Dr Cash, Cr AR
             lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                 cashAccount.Id, payment.Amount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
-            var arAccount = await FindAccountAsync(companyId, "1121");
+            var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     arAccount.Id, 0, payment.Amount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
@@ -663,7 +663,7 @@ public class DocumentService : IDocumentService
         else
         {
             // จ่ายเงินให้ supplier: Dr AP, Cr Cash
-            var apAccount = await FindAccountAsync(companyId, "2111");
+            var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     apAccount.Id, payment.Amount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
