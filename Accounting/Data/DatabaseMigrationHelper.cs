@@ -534,7 +534,7 @@ public static class DatabaseMigrationHelper
 
             // Contact Inquiries (public contact form)
             """
-            // ===== JournalEntries: JournalType column =====
+            -- ===== JournalEntries: JournalType column =====
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('JournalEntries') AND name = 'JournalType')
                 ALTER TABLE [JournalEntries] ADD [JournalType] int NOT NULL DEFAULT 0;
             """,
