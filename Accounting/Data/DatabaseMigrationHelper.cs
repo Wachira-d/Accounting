@@ -539,6 +539,11 @@ public static class DatabaseMigrationHelper
                 ALTER TABLE [JournalEntries] ADD [JournalType] int NOT NULL DEFAULT 0;
             """,
             """
+            -- ===== WithholdingTaxCerts: DocumentId column =====
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('WithholdingTaxCerts') AND name = 'DocumentId')
+                ALTER TABLE [WithholdingTaxCerts] ADD [DocumentId] uniqueidentifier NULL;
+            """,
+            """
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ContactInquiries')
             CREATE TABLE [ContactInquiries] (
                 [Id] uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
