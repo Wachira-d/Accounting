@@ -148,7 +148,7 @@ public class FixedAssetService : IFixedAssetService
             // Dr: เงินสด/ธนาคาร (ถ้าขายได้เงิน)
             if (request.DisposalAmount > 0)
             {
-                var cashAccount = await FindAccountAsync(companyId, "1111");
+                var cashAccount = await FindAccountAsync(companyId, "111");
                 if (cashAccount != null)
                 {
                     journalEntry.Lines.Add(new JournalEntryLine
@@ -167,9 +167,9 @@ public class FixedAssetService : IFixedAssetService
                 if (gainLoss > 0)
                 {
                     // Cr: กำไรจากการจำหน่ายสินทรัพย์ (รายได้อื่น 42xx)
-                    var gainAccount = await FindAccountAsync(companyId, "4291")
-                        ?? await FindAccountAsync(companyId, "429")
-                        ?? await FindAccountAsync(companyId, "42");
+                    var gainAccount = await FindAccountAsync(companyId, "43030")
+                        ?? await FindAccountAsync(companyId, "430")
+                        ?? await FindAccountAsync(companyId, "43");
                     if (gainAccount != null)
                     {
                         journalEntry.Lines.Add(new JournalEntryLine
@@ -184,9 +184,9 @@ public class FixedAssetService : IFixedAssetService
                 else
                 {
                     // Dr: ขาดทุนจากการจำหน่ายสินทรัพย์ (ค่าใช้จ่ายอื่น 54xx)
-                    var lossAccount = await FindAccountAsync(companyId, "5491")
-                        ?? await FindAccountAsync(companyId, "549")
-                        ?? await FindAccountAsync(companyId, "54");
+                    var lossAccount = await FindAccountAsync(companyId, "57110")
+                        ?? await FindAccountAsync(companyId, "571")
+                        ?? await FindAccountAsync(companyId, "57");
                     if (lossAccount != null)
                     {
                         journalEntry.Lines.Add(new JournalEntryLine
@@ -253,9 +253,9 @@ public class FixedAssetService : IFixedAssetService
             // Dr: ขาดทุนจากการตัดจำหน่าย (ส่วนที่ยังเหลือ NBV)
             if (remainingNBV > 0)
             {
-                var lossAccount = await FindAccountAsync(companyId, "5491")
-                    ?? await FindAccountAsync(companyId, "549")
-                    ?? await FindAccountAsync(companyId, "54");
+                var lossAccount = await FindAccountAsync(companyId, "57110")
+                    ?? await FindAccountAsync(companyId, "571")
+                    ?? await FindAccountAsync(companyId, "57");
                 if (lossAccount != null)
                 {
                     journalEntry.Lines.Add(new JournalEntryLine

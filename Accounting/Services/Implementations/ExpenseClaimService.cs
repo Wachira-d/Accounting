@@ -316,7 +316,7 @@ public class ExpenseClaimService : IExpenseClaimService
             else
             {
                 // ถ้าไม่ได้ระบุบัญชี ใช้บัญชีค่าใช้จ่ายทั่วไป (529xxx)
-                var defaultExpAccount = await FindAccountAsync(companyId, "5291");
+                var defaultExpAccount = await FindAccountAsync(companyId, "549");
                 if (defaultExpAccount != null)
                     lines.Add(new JournalLineRequest(
                         defaultExpAccount.Id, line.Amount, 0,
@@ -326,7 +326,7 @@ public class ExpenseClaimService : IExpenseClaimService
             // Dr: VAT Input (ภาษีซื้อ)
             if (line.VatAmount > 0)
             {
-                var vatInputAccount = await FindAccountAsync(companyId, "1141");
+                var vatInputAccount = await FindAccountAsync(companyId, "116");
                 if (vatInputAccount != null)
                     lines.Add(new JournalLineRequest(
                         vatInputAccount.Id, line.VatAmount, 0, "ภาษีซื้อ"));
@@ -336,14 +336,14 @@ public class ExpenseClaimService : IExpenseClaimService
         // Cr: WHT ค้างจ่าย (ถ้ามี)
         if (claim.WithholdingTaxAmount > 0)
         {
-            var whtAccount = await FindAccountAsync(companyId, "2122");
+            var whtAccount = await FindAccountAsync(companyId, "219");
             if (whtAccount != null)
                 lines.Add(new JournalLineRequest(
                     whtAccount.Id, 0, claim.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
         }
 
         // Cr: เงินสด/ธนาคาร — ยอดที่จ่ายจริง (TotalAmount ซึ่งหัก WHT ไว้แล้ว)
-        var cashAccount = await FindAccountAsync(companyId, "1111");
+        var cashAccount = await FindAccountAsync(companyId, "111");
         if (cashAccount != null)
         {
             lines.Add(new JournalLineRequest(

@@ -291,7 +291,9 @@ public class LoanService : ILoanService
 
         // Credit: Cash/Bank (total payment)
         var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode.StartsWith("1111") && a.Level >= 4);
+            a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
         if (cashAccount != null)
         {
             lines.Add(new JournalEntryLine

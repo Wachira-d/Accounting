@@ -145,16 +145,16 @@ public class AccountingService : IAccountingService
                     IsActive = true
                 };
 
-                // Find parent based on code hierarchy
-                // Level 1: 2-digit (e.g., "10") -> no parent
-                // Level 2: 2-digit (e.g., "11") -> parent is the category prefix (e.g., "10")
+                // Find parent based on code hierarchy (5-digit structure)
+                // Level 1: 1-digit (e.g., "1") -> no parent
+                // Level 2: 2-digit (e.g., "11") -> parent is 1-digit (e.g., "1")
                 // Level 3: 3-digit (e.g., "111") -> parent is 2-digit (e.g., "11")
-                // Level 4: 6-digit (e.g., "111101") -> parent is 3-digit (e.g., "111")
+                // Level 4: 5-digit (e.g., "11111") -> parent is 3-digit (e.g., "111")
                 string? parentCode = tpl.Level switch
                 {
-                    2 => tpl.Code.Length >= 2 ? tpl.Code[0] + "0" : null,
-                    3 => tpl.Code.Length >= 2 ? tpl.Code[..2] : null,
-                    4 => tpl.Code.Length >= 3 ? tpl.Code[..3] : null,
+                    2 => tpl.Code[..1],
+                    3 => tpl.Code[..2],
+                    4 => tpl.Code[..3],
                     _ => null
                 };
 
@@ -540,57 +540,57 @@ public class AccountingService : IAccountingService
         var netIncome = revenue - expenses;
         operatingItems.Add(new CashFlowLineItem("กำไร(ขาดทุน)สุทธิ", null, netIncome));
 
-        // Depreciation add-back (non-cash expense) - 533xxx ค่าเสื่อมราคาและค่าตัดจำหน่าย
+        // Depreciation add-back (non-cash expense) - 56xxx ค่าเสื่อมราคาและค่าตัดจำหน่าย
         var depreciation = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("533") || l.Account.AccountCode.StartsWith("55"))
+            .Where(l => l.Account.AccountCode.StartsWith("56"))
             .Sum(l => l.DebitAmount - l.CreditAmount);
         if (depreciation != 0)
-            operatingItems.Add(new CashFlowLineItem("ค่าเสื่อมราคา (บวกกลับ)", "533", depreciation));
+            operatingItems.Add(new CashFlowLineItem("ค่าเสื่อมราคา (บวกกลับ)", "56", depreciation));
 
-        // Changes in AR - 112xxx ลูกหนี้การค้า
+        // Changes in AR - 113xx ลูกหนี้การค้า
         var arChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("112") || l.Account.AccountCode.StartsWith("12"))
+            .Where(l => l.Account.AccountCode.StartsWith("113"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (arChange != 0)
-            operatingItems.Add(new CashFlowLineItem("ลูกหนี้การค้า (เพิ่มขึ้น)/ลดลง", "112", arChange));
+            operatingItems.Add(new CashFlowLineItem("ลูกหนี้การค้า (เพิ่มขึ้น)/ลดลง", "113", arChange));
 
-        // Changes in Inventory - 113xxx สินค้าคงเหลือ
+        // Changes in Inventory - 115xx สินค้าคงเหลือ
         var inventoryChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("113") || l.Account.AccountCode.StartsWith("13"))
+            .Where(l => l.Account.AccountCode.StartsWith("115"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (inventoryChange != 0)
-            operatingItems.Add(new CashFlowLineItem("สินค้าคงเหลือ (เพิ่มขึ้น)/ลดลง", "113", inventoryChange));
+            operatingItems.Add(new CashFlowLineItem("สินค้าคงเหลือ (เพิ่มขึ้น)/ลดลง", "115", inventoryChange));
 
-        // Changes in AP - 211xxx เจ้าหนี้การค้า
+        // Changes in AP - 212xx เจ้าหนี้การค้า
         var apChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("211") || l.Account.AccountCode.StartsWith("21"))
+            .Where(l => l.Account.AccountCode.StartsWith("212"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (apChange != 0)
-            operatingItems.Add(new CashFlowLineItem("เจ้าหนี้การค้า เพิ่มขึ้น/(ลดลง)", "211", apChange));
+            operatingItems.Add(new CashFlowLineItem("เจ้าหนี้การค้า เพิ่มขึ้น/(ลดลง)", "212", apChange));
 
-        // Tax payable changes - 212xxx ภาษีค้างจ่าย
+        // Tax payable changes - 219xx ภาษีค้างจ่าย
         var taxPayableChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("212") || l.Account.AccountCode.StartsWith("22") || l.Account.AccountCode.StartsWith("23"))
+            .Where(l => l.Account.AccountCode.StartsWith("219"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (taxPayableChange != 0)
-            operatingItems.Add(new CashFlowLineItem("ภาษีค้างจ่าย เพิ่มขึ้น/(ลดลง)", "212", taxPayableChange));
+            operatingItems.Add(new CashFlowLineItem("ภาษีค้างจ่าย เพิ่มขึ้น/(ลดลง)", "219", taxPayableChange));
 
         var operatingTotal = operatingItems.Sum(i => i.Amount);
 
-        // Investing Activities: Fixed asset accounts - 121xxx ที่ดิน อาคาร อุปกรณ์
+        // Investing Activities: Fixed asset accounts - 122xx ที่ดิน อาคาร อุปกรณ์
         var investingItems = new List<CashFlowLineItem>();
         var fixedAssetChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("121") || l.Account.AccountCode.StartsWith("15"))
+            .Where(l => l.Account.AccountCode.StartsWith("122") || l.Account.AccountCode.StartsWith("123"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (fixedAssetChange != 0)
-            investingItems.Add(new CashFlowLineItem("ซื้อ/ขาย ที่ดิน อาคาร อุปกรณ์", "121", fixedAssetChange));
+            investingItems.Add(new CashFlowLineItem("ซื้อ/ขาย ที่ดิน อาคาร อุปกรณ์", "122", fixedAssetChange));
 
         var investingTotal = investingItems.Sum(i => i.Amount);
 
         // Financing Activities: Long-term liabilities (221xxx) + Equity (31xxx)
         var financingItems = new List<CashFlowLineItem>();
         var longTermDebtChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("221") || l.Account.AccountCode.StartsWith("25"))
+            .Where(l => l.Account.AccountCode.StartsWith("22"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (longTermDebtChange != 0)
             financingItems.Add(new CashFlowLineItem("เงินกู้ยืมระยะยาว เพิ่มขึ้น/(ลดลง)", "221", longTermDebtChange));
