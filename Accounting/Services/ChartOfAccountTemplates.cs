@@ -393,11 +393,42 @@ public static class ChartOfAccountTemplates
 
     // ==================== Metadata & Builder ====================
 
-    public static List<BusinessType> GetAllBusinessTypes() =>
-        Enum.GetValues<BusinessType>().ToList();
+    public record BusinessTypeInfo(BusinessType Type, string NameTh, string NameEn, string Description, string Icon, string EquityLabel);
+    public record IndustryTypeInfo(IndustryType Type, string NameTh, string NameEn, string Description, string Icon);
 
-    public static List<IndustryType> GetAllIndustryTypes() =>
-        Enum.GetValues<IndustryType>().ToList();
+    public static List<BusinessTypeInfo> GetAllBusinessTypes() => new()
+    {
+        new(BusinessType.JuristicPerson, "บริษัทจำกัด", "Limited Company", "บริษัทจำกัดตามประมวลกฎหมายแพ่งและพาณิชย์", "🏢", "ส่วนของผู้ถือหุ้น"),
+        new(BusinessType.PublicCompany, "บริษัทมหาชนจำกัด", "Public Limited Company", "บริษัทมหาชนจำกัดตาม พ.ร.บ.บริษัทมหาชน", "🏛️", "ส่วนของผู้ถือหุ้น"),
+        new(BusinessType.Partnership, "ห้างหุ้นส่วน", "Partnership", "ห้างหุ้นส่วนสามัญ/จำกัด", "🤝", "ส่วนของผู้เป็นหุ้นส่วน"),
+        new(BusinessType.Individual, "กิจการเจ้าของคนเดียว", "Sole Proprietorship", "บุคคลธรรมดาประกอบกิจการ", "👤", "ส่วนของเจ้าของ"),
+        new(BusinessType.Foundation, "มูลนิธิ", "Foundation", "มูลนิธิตามประมวลกฎหมายแพ่งและพาณิชย์", "🏥", "ทุนสะสม"),
+        new(BusinessType.Association, "สมาคม", "Association", "สมาคมตามประมวลกฎหมายแพ่งและพาณิชย์", "🏘️", "ทุนสะสม"),
+        new(BusinessType.Other, "อื่นๆ", "Other", "ประเภทธุรกิจอื่นๆ", "📋", "ส่วนของเจ้าของ"),
+    };
+
+    public static List<IndustryTypeInfo> GetAllIndustryTypes() => new()
+    {
+        new(IndustryType.General, "ทั่วไป", "General", "ธุรกิจทั่วไป", "📊"),
+        new(IndustryType.Trading, "ซื้อมาขายไป", "Trading", "ธุรกิจซื้อมาขายไป", "🛒"),
+        new(IndustryType.Service, "บริการ", "Service", "ธุรกิจบริการ", "🔧"),
+        new(IndustryType.Manufacturing, "ผลิต/โรงงาน", "Manufacturing", "ธุรกิจผลิตสินค้า", "🏭"),
+        new(IndustryType.Restaurant, "ร้านอาหาร", "Restaurant", "ธุรกิจร้านอาหาร", "🍽️"),
+        new(IndustryType.Cafe, "คาเฟ่/เครื่องดื่ม", "Cafe", "ธุรกิจคาเฟ่และเครื่องดื่ม", "☕"),
+        new(IndustryType.Retail, "ค้าปลีก", "Retail", "ธุรกิจค้าปลีก", "🏪"),
+        new(IndustryType.Construction, "รับเหมาก่อสร้าง", "Construction", "ธุรกิจรับเหมาก่อสร้าง", "🏗️"),
+        new(IndustryType.RealEstate, "อสังหาริมทรัพย์", "Real Estate", "ธุรกิจอสังหาริมทรัพย์", "🏠"),
+        new(IndustryType.Technology, "เทคโนโลยี/ซอฟต์แวร์", "Technology", "ธุรกิจเทคโนโลยีและซอฟต์แวร์", "💻"),
+        new(IndustryType.Healthcare, "สุขภาพ/คลินิก", "Healthcare", "ธุรกิจดูแลสุขภาพและคลินิก", "🏥"),
+        new(IndustryType.Education, "การศึกษา", "Education", "ธุรกิจการศึกษา", "📚"),
+        new(IndustryType.Beauty, "ความงาม/สปา", "Beauty", "ธุรกิจความงามและสปา", "💅"),
+        new(IndustryType.Transportation, "ขนส่ง/โลจิสติกส์", "Transportation", "ธุรกิจขนส่งและโลจิสติกส์", "🚛"),
+        new(IndustryType.Agriculture, "เกษตร", "Agriculture", "ธุรกิจเกษตรกรรม", "🌾"),
+        new(IndustryType.Hotel, "โรงแรม/ที่พัก", "Hotel", "ธุรกิจโรงแรมและที่พัก", "🏨"),
+        new(IndustryType.Ecommerce, "อีคอมเมิร์ซ/ออนไลน์", "E-Commerce", "ธุรกิจออนไลน์", "🛍️"),
+        new(IndustryType.Freelance, "ฟรีแลนซ์", "Freelance", "ฟรีแลนซ์/อาชีพอิสระ", "💼"),
+        new(IndustryType.Other, "อื่นๆ", "Other", "ประเภทอุตสาหกรรมอื่นๆ", "📋"),
+    };
 
     /// <summary>สร้างผังบัญชีตามประเภทธุรกิจและอุตสาหกรรม</summary>
     public static List<AccountTemplate> GetTemplateByBusinessType(
@@ -425,10 +456,11 @@ public static class ChartOfAccountTemplates
         {
             accounts.AddRange(industryType switch
             {
-                IndustryType.Trading or IndustryType.Retail => GetIndustryTrading(),
-                IndustryType.Manufacturing or IndustryType.Construction => GetIndustryManufacturing(),
+                IndustryType.Trading or IndustryType.Retail or IndustryType.Ecommerce => GetIndustryTrading(),
+                IndustryType.Manufacturing or IndustryType.Construction or IndustryType.Agriculture => GetIndustryManufacturing(),
                 IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
-                    or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation => GetIndustryService(),
+                    or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation
+                    or IndustryType.Freelance or IndustryType.Hotel => GetIndustryService(),
                 IndustryType.RealEstate    => GetIndustryRealEstate(),
                 IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
                 _ => new List<AccountTemplate>()
