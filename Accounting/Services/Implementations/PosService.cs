@@ -63,17 +63,21 @@ public partial class PosService : IPosService
 
     public async Task<SessionResponse> OpenSessionAsync(Guid companyId, Guid userId, OpenSessionRequest request)
     {
-        var terminal = await _db.PosTerminals.FirstOrDefaultAsync(t => t.Id == request.TerminalId && t.CompanyId == companyId)
+        if (request.TerminalId == null || request.TerminalId == Guid.Empty)
+            throw new InvalidOperationException("กรุณาเลือก Terminal ก่อนเปิดกะ");
+
+        var terminalId = request.TerminalId.Value;
+        var terminal = await _db.PosTerminals.FirstOrDefaultAsync(t => t.Id == terminalId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ POS Terminal");
         if (!terminal.IsActive) throw new InvalidOperationException("Terminal นี้ถูกปิดใช้งาน");
 
-        var existingOpen = await _db.PosSessions.AnyAsync(s => s.TerminalId == request.TerminalId && s.Status == PosSessionStatus.Open);
+        var existingOpen = await _db.PosSessions.AnyAsync(s => s.TerminalId == terminalId && s.Status == PosSessionStatus.Open);
         if (existingOpen) throw new InvalidOperationException("มีกะที่เปิดอยู่แล้ว กรุณาปิดกะก่อน");
 
         var session = new PosSession
         {
             CompanyId = companyId,
-            TerminalId = request.TerminalId,
+            TerminalId = terminalId,
             OpenedByUserId = userId,
             OpeningBalance = request.OpeningBalance,
             Notes = request.Notes

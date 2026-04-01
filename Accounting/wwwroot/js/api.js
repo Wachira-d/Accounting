@@ -41,7 +41,14 @@ const API = {
         return { success: false, data: null, message: 'กรุณารอสักครู่' };
       }
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || json.title || `Error ${res.status}`);
+      if (!res.ok) {
+        let msg = json.message || json.title || `Error ${res.status}`;
+        if (json.errors) {
+          const details = Object.entries(json.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ');
+          if (details) msg += ' — ' + details;
+        }
+        throw new Error(msg);
+      }
       return json;
     } catch (err) {
       if (err.message === 'Failed to fetch') throw new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
