@@ -235,6 +235,11 @@ public class AccountingDbContext : DbContext
     // Site Settings (global, singleton)
     public DbSet<SiteSettings> SiteSettings => Set<SiteSettings>();
 
+    // External Integration
+    public DbSet<ExternalIntegration> ExternalIntegrations => Set<ExternalIntegration>();
+    public DbSet<IntegrationSyncLog> IntegrationSyncLogs => Set<IntegrationSyncLog>();
+    public DbSet<IntegrationAccountMapping> IntegrationAccountMappings => Set<IntegrationAccountMapping>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1654,6 +1659,33 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteSettings>(e =>
         {
             e.Property(s => s.ServicesJson).HasColumnType("jsonb");
+        });
+
+        // External Integration
+        modelBuilder.Entity<ExternalIntegration>(e =>
+        {
+            e.HasIndex(i => new { i.CompanyId, i.IsActive }).HasDatabaseName("IX_ExternalIntegrations_CompanyId_IsActive");
+            e.HasIndex(i => i.ApiKeyPrefix).HasDatabaseName("IX_ExternalIntegrations_ApiKeyPrefix");
+            e.Property(i => i.MappingConfigJson).HasColumnType("jsonb");
+            e.Property(i => i.SettingsJson).HasColumnType("jsonb");
+            e.HasQueryFilter(i => !i.IsDeleted);
+        });
+        modelBuilder.Entity<IntegrationSyncLog>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.IntegrationId, l.CreatedAt }).HasDatabaseName("IX_IntegrationSyncLogs_Company_Integration_Date");
+            e.HasIndex(l => l.ExternalId).HasDatabaseName("IX_IntegrationSyncLogs_ExternalId");
+            e.Property(l => l.RequestPayloadJson).HasColumnType("jsonb");
+            e.Property(l => l.ResponseJson).HasColumnType("jsonb");
+            e.HasOne(l => l.Integration).WithMany(i => i.SyncLogs).HasForeignKey(l => l.IntegrationId);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+        modelBuilder.Entity<IntegrationAccountMapping>(e =>
+        {
+            e.HasIndex(m => new { m.IntegrationId, m.ExternalCategory }).HasDatabaseName("IX_IntegrationAccountMappings_Integration_Category");
+            e.HasOne(m => m.Integration).WithMany(i => i.AccountMappings).HasForeignKey(m => m.IntegrationId);
+            e.HasOne(m => m.DebitAccount).WithMany().HasForeignKey(m => m.DebitAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(m => m.CreditAccount).WithMany().HasForeignKey(m => m.CreditAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(m => !m.IsDeleted);
         });
 
         // --- Covering indexes for hot query paths ---

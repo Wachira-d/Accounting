@@ -83,50 +83,47 @@ public class DashboardService : IDashboardService
         var prevRevenue = (prevRevGroup?.TotalCredit ?? 0) - (prevRevGroup?.TotalDebit ?? 0);
         var prevExpenses = (prevExpGroup?.TotalDebit ?? 0) - (prevExpGroup?.TotalCredit ?? 0);
 
-        // Parallel independent queries
-        var receivablesTask = _db.Documents
+        // Sequential queries — DbContext is NOT thread-safe, cannot use Task.WhenAll
+        var receivables = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
             .SumAsync(d => d.BalanceDue);
 
-        var payablesTask = _db.Documents
+        var payables = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.DocumentType == DocumentType.PurchaseInvoice
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
             .SumAsync(d => d.BalanceDue);
 
-        var bankBalanceTask = _db.BankAccounts
+        var bankBalance = await _db.BankAccounts
             .Where(a => a.CompanyId == companyId && a.IsActive)
             .SumAsync(a => a.CurrentBalance);
 
         // Cash accounts balance — server-side sum, no Include needed
-        var cashBalanceTask = _db.JournalEntryLines
+        var cashBalance = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.Account.AccountCode.StartsWith("111"))
             .SumAsync(l => l.DebitAmount - l.CreditAmount);
 
-        var totalInvoicesTask = _db.Documents.CountAsync(d =>
+        var totalInvoices = await _db.Documents.CountAsync(d =>
             d.CompanyId == companyId
             && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
             && d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
 
-        var overdueCountTask = _db.Documents.CountAsync(d =>
+        var overdueCount = await _db.Documents.CountAsync(d =>
             d.CompanyId == companyId && d.Status == DocumentStatus.Overdue);
 
-        var pendingApprovalsTask = _db.Documents.CountAsync(d =>
+        var pendingApprovals = await _db.Documents.CountAsync(d =>
             d.CompanyId == companyId && d.Status == DocumentStatus.WaitingApproval);
-
-        await Task.WhenAll(receivablesTask, payablesTask, bankBalanceTask, cashBalanceTask,
-            totalInvoicesTask, overdueCountTask, pendingApprovalsTask);
 
         var revenueGrowth = prevRevenue != 0 ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
         var expenseGrowth = prevExpenses != 0 ? ((totalExpenses - prevExpenses) / prevExpenses) * 100 : 0;
 
         return new DashboardKpis(totalRevenue, totalExpenses, totalRevenue - totalExpenses,
-            receivablesTask.Result, payablesTask.Result, cashBalanceTask.Result, bankBalanceTask.Result,
-            totalInvoicesTask.Result, overdueCountTask.Result, pendingApprovalsTask.Result,
+            receivables, payables, cashBalance, bankBalance,
+            totalInvoices, overdueCount, pendingApprovals,
             Math.Round(revenueGrowth, 2), Math.Round(expenseGrowth, 2));
     }
 
@@ -258,7 +255,7 @@ public class DashboardService : IDashboardService
     private async Task<List<OverdueInvoice>> GetOverdueInvoicesAsync(Guid companyId, int top = 20)
     {
         var today = DateTime.UtcNow.Date;
-        return await _db.Documents
+        var overdues = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
@@ -267,16 +264,18 @@ public class DashboardService : IDashboardService
                 && d.BalanceDue > 0)
             .OrderBy(d => d.DueDate)
             .Take(top)
-            .Select(d => new OverdueInvoice(d.Id, d.DocumentNumber, d.Contact.Name,
-                d.TotalAmount, d.BalanceDue, d.DueDate!.Value, (int)(today - d.DueDate.Value).TotalDays))
+            .Select(d => new { d.Id, d.DocumentNumber, ContactName = d.Contact.Name, d.TotalAmount, d.BalanceDue, DueDate = d.DueDate!.Value })
             .ToListAsync();
+
+        return overdues.Select(d => new OverdueInvoice(d.Id, d.DocumentNumber, d.ContactName,
+            d.TotalAmount, d.BalanceDue, d.DueDate, (int)(today - d.DueDate).TotalDays)).ToList();
     }
 
     private async Task<List<UpcomingPayable>> GetUpcomingPayablesAsync(Guid companyId, int daysAhead = 30)
     {
         var today = DateTime.UtcNow.Date;
         var cutoff = today.AddDays(daysAhead);
-        return await _db.Documents
+        var payables = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentType == DocumentType.PurchaseInvoice
@@ -284,9 +283,11 @@ public class DashboardService : IDashboardService
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid
                 && d.BalanceDue > 0)
             .OrderBy(d => d.DueDate)
-            .Select(d => new UpcomingPayable(d.Id, d.DocumentNumber, d.Contact.Name,
-                d.TotalAmount, d.BalanceDue, d.DueDate!.Value, (int)(d.DueDate.Value - today).TotalDays))
+            .Select(d => new { d.Id, d.DocumentNumber, ContactName = d.Contact.Name, d.TotalAmount, d.BalanceDue, DueDate = d.DueDate!.Value })
             .ToListAsync();
+
+        return payables.Select(d => new UpcomingPayable(d.Id, d.DocumentNumber, d.ContactName,
+            d.TotalAmount, d.BalanceDue, d.DueDate, (int)(d.DueDate - today).TotalDays)).ToList();
     }
 
     private async Task<BankBalanceSummary> GetBankBalancesAsync(Guid companyId)

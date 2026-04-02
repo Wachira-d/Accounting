@@ -79,4 +79,7 @@ const AdminAPI = {
   // Site Settings
   siteSettings() { return this.get('/site-settings'); },
   updateSiteSettings(data) { return this.put('/site-settings', data); },
+
+  // Integrations
+  integrations() { return this.get('/integrations'); },
 };

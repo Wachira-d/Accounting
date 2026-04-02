@@ -603,6 +603,58 @@ public class AdminController : ControllerBase
     }
 }
 
+    // ===== Integration Overview (Admin) =====
+
+    [HttpGet("integrations")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAllIntegrations()
+    {
+        var integrations = await _db.ExternalIntegrations
+            .Where(i => !i.IsDeleted)
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => new
+            {
+                i.Id, i.SystemName, i.SystemType, i.SystemVersion, i.BaseUrl,
+                i.ApiKeyPrefix, i.IsActive, i.LastSyncAt,
+                i.TotalSyncCount, i.ErrorCount, i.ConsecutiveErrors,
+                i.RateLimitPerMinute, i.CreatedAt,
+                CompanyId = i.CompanyId,
+                CompanyName = _db.Companies.Where(c => c.Id == i.CompanyId).Select(c => c.Name).FirstOrDefault()
+            })
+            .ToListAsync();
+
+        var totalSyncsToday = await _db.IntegrationSyncLogs
+            .Where(l => l.CreatedAt >= DateTime.UtcNow.Date)
+            .CountAsync();
+
+        var errorsToday = await _db.IntegrationSyncLogs
+            .Where(l => l.CreatedAt >= DateTime.UtcNow.Date && l.Status == "Failed")
+            .CountAsync();
+
+        var recentLogs = await _db.IntegrationSyncLogs
+            .Include(l => l.Integration)
+            .OrderByDescending(l => l.CreatedAt)
+            .Take(30)
+            .Select(l => new
+            {
+                l.Id, l.EventType, l.ExternalRef, l.Status, l.ErrorMessage,
+                l.ProcessingTimeMs, l.CreatedAt,
+                SystemName = l.Integration.SystemName,
+                CompanyId = l.CompanyId
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            TotalIntegrations = integrations.Count,
+            ActiveIntegrations = integrations.Count(i => i.IsActive),
+            TotalSyncsToday = totalSyncsToday,
+            ErrorsToday = errorsToday,
+            Integrations = integrations,
+            RecentLogs = recentLogs
+        }));
+    }
+}
+
 // ===== Admin-specific DTOs =====
 
 public record UpdateCustomerStatusRequest(CompanyStatus Status);

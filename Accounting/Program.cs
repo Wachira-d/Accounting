@@ -163,6 +163,9 @@ builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 
+// External Integration (TakeTime, PMS, etc.)
+builder.Services.AddScoped<IIntegrationService, IntegrationService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
@@ -573,6 +576,52 @@ app.MapFallbackToFile("index.html");
                       ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
                       ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
                       CONSTRAINT ""PK_ContactInquiries"" PRIMARY KEY (""Id"")
+                  );",
+                // External Integration tables
+                @"CREATE TABLE IF NOT EXISTS ""ExternalIntegrations"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""SystemName"" varchar(200) NOT NULL, ""SystemType"" varchar(50) NOT NULL DEFAULT 'PMS',
+                      ""SystemVersion"" text NULL, ""BaseUrl"" text NULL,
+                      ""ApiKey"" text NOT NULL DEFAULT '', ""ApiKeyHash"" text NOT NULL DEFAULT '',
+                      ""ApiKeyPrefix"" varchar(20) NOT NULL DEFAULT '', ""SecretKey"" text NULL,
+                      ""IsActive"" boolean NOT NULL DEFAULT true,
+                      ""LastSyncAt"" timestamp NULL, ""TotalSyncCount"" integer NOT NULL DEFAULT 0,
+                      ""ErrorCount"" integer NOT NULL DEFAULT 0, ""ConsecutiveErrors"" integer NOT NULL DEFAULT 0,
+                      ""MappingConfigJson"" jsonb NULL, ""SettingsJson"" jsonb NULL,
+                      ""RateLimitPerMinute"" integer NOT NULL DEFAULT 60,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_ExternalIntegrations"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_ExternalIntegrations_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );",
+                @"CREATE TABLE IF NOT EXISTS ""IntegrationSyncLogs"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""IntegrationId"" uuid NOT NULL,
+                      ""EventType"" varchar(100) NOT NULL, ""ExternalId"" text NULL, ""ExternalRef"" text NULL,
+                      ""Status"" varchar(50) NOT NULL DEFAULT 'Pending',
+                      ""RequestPayloadJson"" jsonb NULL, ""ResponseJson"" jsonb NULL, ""ErrorMessage"" text NULL,
+                      ""CreatedDocumentId"" uuid NULL, ""CreatedContactId"" uuid NULL,
+                      ""CreatedJournalEntryId"" uuid NULL, ""CreatedPaymentId"" uuid NULL,
+                      ""ProcessingTimeMs"" integer NOT NULL DEFAULT 0,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_IntegrationSyncLogs"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_IntegrationSyncLogs_ExternalIntegrations"" FOREIGN KEY (""IntegrationId"") REFERENCES ""ExternalIntegrations""(""Id""),
+                      CONSTRAINT ""FK_IntegrationSyncLogs_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );",
+                @"CREATE TABLE IF NOT EXISTS ""IntegrationAccountMappings"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""IntegrationId"" uuid NOT NULL,
+                      ""ExternalCategory"" varchar(200) NOT NULL, ""ExternalCode"" varchar(100) NULL,
+                      ""ExternalDescription"" text NULL,
+                      ""DebitAccountId"" uuid NULL, ""CreditAccountId"" uuid NULL,
+                      ""JournalDescription"" text NULL,
+                      ""IsActive"" boolean NOT NULL DEFAULT true, ""AutoCreateJournal"" boolean NOT NULL DEFAULT true,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_IntegrationAccountMappings"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_IntegrationAccountMappings_ExternalIntegrations"" FOREIGN KEY (""IntegrationId"") REFERENCES ""ExternalIntegrations""(""Id""),
+                      CONSTRAINT ""FK_IntegrationAccountMappings_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
                   );"
             };
             foreach (var sql in rawSqlStatements)
@@ -584,6 +633,36 @@ app.MapFallbackToFile("index.html");
                 }
                 catch { /* table/column already exists or FK target missing — safe to skip */ }
             }
+
+            // Fix timestamp column types: convert any 'timestamptz' to 'timestamp without time zone'
+            // This prevents "Cannot apply binary operation on timestamp with/without time zone" errors
+            // when columns were created before Npgsql.EnableLegacyTimestampBehavior was set.
+            try
+            {
+                var fixTimestampSql = @"
+                    DO $$
+                    DECLARE r RECORD;
+                    BEGIN
+                        FOR r IN
+                            SELECT table_name, column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND data_type = 'timestamp with time zone'
+                        LOOP
+                            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE timestamp without time zone USING %I AT TIME ZONE ''UTC''',
+                                r.table_name, r.column_name, r.column_name);
+                        END LOOP;
+                    END $$;";
+                using var fixCmd = new Npgsql.NpgsqlCommand(fixTimestampSql, rawConn);
+                fixCmd.CommandTimeout = 120;
+                fixCmd.ExecuteNonQuery();
+            }
+            catch (Exception tsEx)
+            {
+                var tsLogger = app.Services.GetRequiredService<ILogger<Program>>();
+                tsLogger.LogWarning(tsEx, "Timestamp column type fix had issues (non-critical)");
+            }
+
             rawConn.Close();
         }
         catch (Exception rawEx)

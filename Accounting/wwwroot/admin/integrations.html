@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Integration - Admin Panel</title>
+  <link rel="stylesheet" href="/admin/admin-styles.css">
+</head>
+<body>
+<div id="pageContent">
+
+  <!-- Stats -->
+  <div class="admin-stats-grid" id="statsGrid">
+    <div class="admin-stat-card"><div class="stat-value" id="statTotal">-</div><div class="stat-label">Integrations ทั้งหมด</div></div>
+    <div class="admin-stat-card"><div class="stat-value" id="statActive">-</div><div class="stat-label">Active</div></div>
+    <div class="admin-stat-card"><div class="stat-value" id="statSyncsToday">-</div><div class="stat-label">Sync วันนี้</div></div>
+    <div class="admin-stat-card"><div class="stat-value" id="statErrorsToday" style="color:#ef4444">-</div><div class="stat-label">Errors วันนี้</div></div>
+  </div>
+
+  <!-- Integrations List -->
+  <div class="admin-card" style="margin-top:24px">
+    <div class="admin-card-header">
+      <h2>External Integrations</h2>
+      <p style="color:#64748b;font-size:13px;margin-top:4px">ระบบภายนอกที่เชื่อมต่อ (TakeTime, PMS, ERP, etc.)</p>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>ระบบ</th>
+            <th>ประเภท</th>
+            <th>บริษัท</th>
+            <th>สถานะ</th>
+            <th>API Key</th>
+            <th>Sync ล่าสุด</th>
+            <th>Total Sync</th>
+            <th>Errors</th>
+            <th>สร้างเมื่อ</th>
+          </tr>
+        </thead>
+        <tbody id="integrationsBody">
+          <tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent Sync Logs -->
+  <div class="admin-card" style="margin-top:24px">
+    <div class="admin-card-header">
+      <h2>Sync Logs ล่าสุด</h2>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>เวลา</th>
+            <th>ระบบ</th>
+            <th>Event</th>
+            <th>Reference</th>
+            <th>สถานะ</th>
+            <th>Error</th>
+            <th>เวลาประมวลผล</th>
+          </tr>
+        </thead>
+        <tbody id="logsBody">
+          <tr><td colspan="7" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Integration Guide -->
+  <div class="admin-card" style="margin-top:24px">
+    <div class="admin-card-header">
+      <h2>API Integration Guide</h2>
+    </div>
+    <div style="padding:20px;font-size:14px;line-height:1.8">
+      <h3 style="margin-bottom:12px">Endpoints สำหรับระบบภายนอก</h3>
+      <p style="color:#64748b;margin-bottom:16px">ระบบภายนอก (เช่น TakeTime) จะเรียก API เหล่านี้ โดยส่ง API Key ผ่าน header <code>X-Integration-Key</code></p>
+      <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:13px;overflow-x:auto">
+<pre style="margin:0;white-space:pre">
+<span style="color:#22d3ee">POST</span> /api/integration/customers      - Sync ข้อมูลลูกค้า
+<span style="color:#22d3ee">POST</span> /api/integration/invoices       - สร้างใบแจ้งหนี้/ใบกำกับภาษี
+<span style="color:#22d3ee">POST</span> /api/integration/payments       - บันทึกการชำระเงิน
+<span style="color:#22d3ee">POST</span> /api/integration/credit-notes   - สร้างใบลดหนี้
+<span style="color:#22d3ee">POST</span> /api/integration/debit-notes    - สร้างใบเพิ่มหนี้
+<span style="color:#22d3ee">POST</span> /api/integration/daily-summary  - สรุปรายวัน (Auto Journal)
+
+<span style="color:#94a3b8"># Header ที่ต้องส่ง:</span>
+X-Integration-Key: int_xxxxxxxxxxxxxxxx
+Content-Type: application/json
+</pre>
+      </div>
+
+      <h3 style="margin-top:24px;margin-bottom:12px">ตัวอย่าง: สร้างใบแจ้งหนี้</h3>
+      <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:12px;overflow-x:auto">
+<pre style="margin:0;white-space:pre">{
+  "externalRef": "TT-RES-2024-001",
+  "customerName": "John Smith",
+  "customerTaxId": "1234567890123",
+  "documentDate": "2024-04-02",
+  "dueDate": "2024-04-09",
+  "lines": [
+    { "itemCode": "ROOM", "itemName": "Deluxe Room (3 nights)", "quantity": 3, "unitPrice": 2500 },
+    { "itemCode": "FB", "itemName": "Breakfast", "quantity": 6, "unitPrice": 350 }
+  ],
+  "notes": "Reservation #TT-2024-001"
+}</pre>
+      </div>
+
+      <h3 style="margin-top:24px;margin-bottom:12px">ตัวอย่าง: สรุปรายวัน</h3>
+      <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:12px;overflow-x:auto">
+<pre style="margin:0;white-space:pre">{
+  "summaryDate": "2024-04-02",
+  "description": "สรุปรายรับประจำวัน",
+  "lines": [
+    { "category": "ROOM_REVENUE", "description": "รายได้ค่าห้องพัก", "amount": 45000 },
+    { "category": "F&B_REVENUE", "description": "รายได้อาหาร/เครื่องดื่ม", "amount": 12500 },
+    { "category": "DEPOSIT_RECEIVED", "description": "มัดจำรับ", "amount": 8000 }
+  ]
+}</pre>
+      </div>
+      <p style="margin-top:16px;color:#f59e0b;font-size:13px">
+        หมายเหตุ: category ใน daily-summary ต้องตรงกับ Account Mapping ที่ตั้งค่าไว้ในระบบ
+        (ตั้งค่าได้ที่หน้า Settings > Integration ของแต่ละบริษัท)
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<script src="/admin/admin-api.js"></script>
+<script src="/admin/admin-layout.js"></script>
+<script>
+  AdminLayout.init('integrations');
+
+  async function loadData() {
+    try {
+      const res = await AdminAPI.integrations();
+      const d = res.data;
+
+      // Stats
+      document.getElementById('statTotal').textContent = d.totalIntegrations;
+      document.getElementById('statActive').textContent = d.activeIntegrations;
+      document.getElementById('statSyncsToday').textContent = d.totalSyncsToday;
+      document.getElementById('statErrorsToday').textContent = d.errorsToday;
+
+      // Integrations table
+      const tbody = document.getElementById('integrationsBody');
+      if (!d.integrations || d.integrations.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มี Integration<br><small>สร้างได้จากหน้า Settings ของแต่ละบริษัท</small></td></tr>';
+      } else {
+        tbody.innerHTML = d.integrations.map(i => `
+          <tr>
+            <td><strong>${i.systemName}</strong>${i.systemVersion ? ` <small style="color:#94a3b8">v${i.systemVersion}</small>` : ''}</td>
+            <td><span class="admin-badge-sm bg-blue">${i.systemType}</span></td>
+            <td>${i.companyName || '-'}</td>
+            <td>${i.isActive
+              ? '<span class="admin-badge-sm bg-green">Active</span>'
+              : '<span class="admin-badge-sm bg-gray">Inactive</span>'}</td>
+            <td><code style="font-size:11px;background:#f1f5f9;padding:2px 6px;border-radius:4px">${i.apiKeyPrefix}...</code></td>
+            <td>${AdminLayout.datetime(i.lastSyncAt)}</td>
+            <td style="text-align:right">${(i.totalSyncCount || 0).toLocaleString()}</td>
+            <td style="text-align:right;${i.errorCount > 0 ? 'color:#ef4444;font-weight:600' : ''}">${i.errorCount || 0}${i.consecutiveErrors > 5 ? ' <span title="Consecutive errors" style="color:#ef4444">!!!</span>' : ''}</td>
+            <td>${AdminLayout.date(i.createdAt)}</td>
+          </tr>
+        `).join('');
+      }
+
+      // Logs table
+      const logsTbody = document.getElementById('logsBody');
+      if (!d.recentLogs || d.recentLogs.length === 0) {
+        logsTbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มีรายการ Sync</td></tr>';
+      } else {
+        logsTbody.innerHTML = d.recentLogs.map(l => {
+          const statusColor = l.status === 'Success' ? 'bg-green' : l.status === 'Failed' ? 'bg-red' : 'bg-yellow';
+          return `
+            <tr>
+              <td>${AdminLayout.datetime(l.createdAt)}</td>
+              <td>${l.systemName}</td>
+              <td><code style="font-size:12px">${l.eventType}</code></td>
+              <td>${l.externalRef || '-'}</td>
+              <td><span class="admin-badge-sm ${statusColor}">${l.status}</span></td>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ef4444;font-size:12px">${l.errorMessage || '-'}</td>
+              <td>${l.processingTimeMs}ms</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+    } catch (err) {
+      AdminLayout.toast('โหลดข้อมูลไม่สำเร็จ: ' + err.message, 'error');
+    }
+  }
+
+  loadData();
+</script>
+</body>
+</html>
