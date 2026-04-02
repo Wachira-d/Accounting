@@ -18,10 +18,17 @@ builder.Services.AddDbContext<AccountingDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // ===== Authentication (JWT) =====
-// JWT secret: prefer environment variable, fallback to config
+// JWT secret: MUST be set via env var in production. Config file fallback for dev only.
 var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET")
-    ?? builder.Configuration["Jwt:Secret"]
-    ?? throw new InvalidOperationException("JWT secret is not configured. Set JWT_SECRET environment variable or Jwt:Secret in appsettings.");
+    ?? builder.Configuration["Jwt:Secret"];
+if (string.IsNullOrEmpty(jwtSecret))
+{
+    if (builder.Environment.IsProduction())
+        throw new InvalidOperationException("JWT_SECRET environment variable is required in production!");
+    // Dev-only auto-generated secret (changes each restart — tokens won't persist)
+    jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
+    Console.WriteLine("⚠ WARNING: Using auto-generated JWT secret. Set JWT_SECRET env var for persistent sessions.");
+}
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -237,19 +244,11 @@ app.UseMiddleware<ExceptionMiddleware>();
 // 2. Rate limiting (protect from abuse early)
 app.UseMiddleware<RateLimitMiddleware>();
 
-// 3. Security headers
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHsts();
-}
-app.Use(async (context, next) =>
-{
-    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-    context.Response.Headers.Append("X-Frame-Options", "DENY");
-    context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
-    context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
-    await next();
-});
+// 3. Security headers & path protection
+app.UseMiddleware<SecurityMiddleware>();
+
+// 3.5 Input sanitization (SQL injection / XSS defense-in-depth)
+app.UseMiddleware<InputSanitizationMiddleware>();
 
 // 4. Swagger (before auth)
 if (app.Environment.IsDevelopment())

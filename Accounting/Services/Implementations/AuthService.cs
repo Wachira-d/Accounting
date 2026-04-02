@@ -16,15 +16,17 @@ public class AuthService : IAuthService
     private readonly IConfiguration _config;
     private readonly IEmailService _emailService;
 
-    // Account lockout settings
-    private const int MaxFailedAttempts = 5;
-    private const int LockoutMinutes = 15;
+    // Account lockout settings (configurable via appsettings Security section)
+    private readonly int _maxFailedAttempts;
+    private readonly int _lockoutMinutes;
 
     public AuthService(AccountingDbContext db, IConfiguration config, IEmailService emailService)
     {
         _db = db;
         _config = config;
         _emailService = emailService;
+        _maxFailedAttempts = int.Parse(config["Security:MaxLoginAttemptsBeforeLockout"] ?? "5");
+        _lockoutMinutes = int.Parse(config["Security:_lockoutMinutes"] ?? "15");
     }
 
     public async Task<LoginResponse> RegisterAsync(RegisterRequest request)
@@ -94,13 +96,13 @@ public class AuthService : IAuthService
             // Increment failed attempts
             user.FailedLoginAttempts = (user.FailedLoginAttempts ?? 0) + 1;
 
-            if (user.FailedLoginAttempts >= MaxFailedAttempts)
+            if (user.FailedLoginAttempts >= _maxFailedAttempts)
             {
-                user.LockoutEnd = DateTime.UtcNow.AddMinutes(LockoutMinutes);
+                user.LockoutEnd = DateTime.UtcNow.AddMinutes(_lockoutMinutes);
                 user.FailedLoginAttempts = 0;
                 await _db.SaveChangesAsync();
                 throw new UnauthorizedAccessException(
-                    $"เข้าสู่ระบบผิดพลาดเกินกำหนด บัญชีถูกล็อค {LockoutMinutes} นาที");
+                    $"เข้าสู่ระบบผิดพลาดเกินกำหนด บัญชีถูกล็อค {_lockoutMinutes} นาที");
             }
 
             await _db.SaveChangesAsync();
@@ -145,8 +147,8 @@ public class AuthService : IAuthService
         if (user == null)
             return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
 
-        var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray())
-            + Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+        var token = Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
         user.PasswordResetToken = token;
         user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
         await _db.SaveChangesAsync();
