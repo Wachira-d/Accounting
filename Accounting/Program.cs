@@ -13,6 +13,11 @@ using FluentValidation.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// PostgreSQL: Allow DateTime without explicit UTC Kind (legacy timestamp behavior)
+// This prevents "Cannot write DateTime with Kind=Unspecified" and
+// "Cannot apply binary operation on timestamp with/without time zone" errors
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 // ===== Database (PostgreSQL) =====
 builder.Services.AddDbContext<AccountingDbContext>(options =>
     options.UseNpgsql(
@@ -23,11 +28,6 @@ builder.Services.AddDbContext<AccountingDbContext>(options =>
             npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
             // Command timeout for complex reports/aggregations
             npgsqlOptions.CommandTimeout(120);
-            // Enable retry on transient failures
-            npgsqlOptions.EnableRetryOnFailure(
-                maxRetryCount: 3,
-                maxRetryDelay: TimeSpan.FromSeconds(5),
-                errorCodesToAdd: null);
         })
     // Log slow queries in development
     .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
