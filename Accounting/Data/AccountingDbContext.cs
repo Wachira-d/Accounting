@@ -232,6 +232,9 @@ public class AccountingDbContext : DbContext
     // Contact Inquiries (public contact form)
     public DbSet<ContactInquiry> ContactInquiries => Set<ContactInquiry>();
 
+    // Site Settings (global, singleton)
+    public DbSet<SiteSettings> SiteSettings => Set<SiteSettings>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1645,6 +1648,12 @@ public class AccountingDbContext : DbContext
         {
             e.Property(m => m.SampleValuesJson).HasColumnType("jsonb");
             e.Property(m => m.SuggestionsJson).HasColumnType("jsonb");
+        });
+
+        // SiteSettings: JSONB for services
+        modelBuilder.Entity<SiteSettings>(e =>
+        {
+            e.Property(s => s.ServicesJson).HasColumnType("jsonb");
         });
 
         // --- Covering indexes for hot query paths ---

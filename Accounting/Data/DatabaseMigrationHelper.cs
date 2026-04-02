@@ -518,6 +518,31 @@ public static class DatabaseMigrationHelper
                 CONSTRAINT "PK_ContactInquiries" PRIMARY KEY ("Id")
             );
             """,
+
+            // ===== SiteSettings: global site configuration (singleton) =====
+            """
+            CREATE TABLE IF NOT EXISTS "SiteSettings" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "ContactPhone" varchar(50) NULL,
+                "ContactLine" varchar(100) NULL,
+                "ContactEmail" varchar(256) NULL,
+                "ServicesJson" jsonb NULL,
+                "PricingSectionTitle" varchar(500) NULL,
+                "PricingSectionSubtitle" varchar(1000) NULL,
+                "SiteName" varchar(200) NULL,
+                "SiteDescription" varchar(1000) NULL,
+                "SiteLogoUrl" varchar(500) NULL,
+                "FacebookUrl" varchar(500) NULL,
+                "LineOfficialUrl" varchar(500) NULL,
+                "WebsiteUrl" varchar(500) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SiteSettings" PRIMARY KEY ("Id")
+            );
+            """,
         ];
     }
 

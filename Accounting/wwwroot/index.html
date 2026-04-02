@@ -659,12 +659,20 @@
     };
     Pricing.init();
 
-    // ===== Load Accounting Services from API =====
+    // ===== Load Site Settings & Accounting Services from API =====
     (async function() {
       try {
-        const res = await fetch('/api/landing/services');
-        const json = await res.json();
-        const d = json.data;
+        // Try new site settings API first, fallback to legacy
+        let d = null;
+        try {
+          const res = await fetch('/api/site/landing');
+          const json = await res.json();
+          d = json.data;
+        } catch {
+          const res = await fetch('/api/landing/services');
+          const json = await res.json();
+          d = json.data;
+        }
         if (!d) return;
 
         // Show contact bar if any contact info exists

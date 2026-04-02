@@ -145,11 +145,6 @@ public class AccountingService : IAccountingService
                     IsActive = true
                 };
 
-                // Find parent based on code hierarchy (5-digit structure)
-                // Level 1: 1-digit (e.g., "1") -> no parent
-                // Level 2: 2-digit (e.g., "11") -> parent is 1-digit (e.g., "1")
-                // Level 3: 3-digit (e.g., "111") -> parent is 2-digit (e.g., "11")
-                // Level 4: 5-digit (e.g., "11111") -> parent is 3-digit (e.g., "111")
                 string? parentCode = tpl.Level switch
                 {
                     2 => tpl.Code[..1],
