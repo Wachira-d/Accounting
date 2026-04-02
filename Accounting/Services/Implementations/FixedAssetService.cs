@@ -62,7 +62,10 @@ public class FixedAssetService : IFixedAssetService
         var query = _db.FixedAssets.Where(a => a.CompanyId == companyId);
 
         if (!string.IsNullOrEmpty(request.Search))
-            query = query.Where(a => a.Name.Contains(request.Search) || a.AssetCode.Contains(request.Search));
+        {
+            var search = $"%{request.Search}%";
+            query = query.Where(a => EF.Functions.ILike(a.Name, search) || EF.Functions.ILike(a.AssetCode, search));
+        }
 
         var total = await query.CountAsync();
         var items = await query

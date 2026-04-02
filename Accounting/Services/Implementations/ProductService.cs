@@ -63,7 +63,10 @@ public class ProductService : IProductService
     {
         var query = _db.Products.Where(p => p.CompanyId == companyId && !p.IsDeleted);
         if (!string.IsNullOrEmpty(request.Search))
-            query = query.Where(p => p.Name.Contains(request.Search) || p.Code.Contains(request.Search));
+        {
+            var search = $"%{request.Search}%";
+            query = query.Where(p => EF.Functions.ILike(p.Name, search) || EF.Functions.ILike(p.Code, search));
+        }
 
         var total = await query.CountAsync();
         var items = await query.OrderBy(p => p.Code)

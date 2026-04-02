@@ -520,4 +520,99 @@ public static class DatabaseMigrationHelper
             """,
         ];
     }
+
+    /// <summary>
+    /// Creates PostgreSQL extensions and GIN indexes for full-text search and trigram matching.
+    /// This dramatically improves LIKE '%term%' and text search performance on hot search paths.
+    /// </summary>
+    public static void ApplyFullTextSearchIndexes(AccountingDbContext db)
+    {
+        var statements = new[]
+        {
+            // Enable pg_trgm for trigram-based LIKE/ILIKE optimization
+            """CREATE EXTENSION IF NOT EXISTS pg_trgm;""",
+            // Enable unaccent for accent-insensitive search (useful for Thai + multilingual)
+            """CREATE EXTENSION IF NOT EXISTS unaccent;""",
+
+            // === Documents: searched by DocumentNumber + Contact name ===
+            """
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Documents_DocumentNumber_trgm"
+            ON "Documents" USING gin ("DocumentNumber" gin_trgm_ops);
+            """,
+
+            // === Contacts: searched by Name, TaxId ===
+            """
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Contacts_Name_trgm"
+            ON "Contacts" USING gin ("Name" gin_trgm_ops);
+            """,
+            """
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Contacts_TaxId_trgm"
+            ON "Contacts" USING gin ("TaxId" gin_trgm_ops);
+            """,
+
+            // === Products: searched by Name, Code ===
+            """
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Products_Name_trgm"
+            ON "Products" USING gin ("Name" gin_trgm_ops);
+            """,
+            """
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Products_Code_trgm"
+            ON "Products" USING gin ("Code" gin_trgm_ops);
+            """,
+
+            // === ChartOfAccounts: searched by AccountCode, AccountName ===
+            """
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_ChartOfAccounts_AccountName_trgm"
+            ON "ChartOfAccounts" USING gin ("AccountName" gin_trgm_ops);
+            """,
+
+            // === FixedAssets: searched by Name, AssetCode ===
+            """
+            DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'FixedAssets') THEN
+                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_FixedAssets_Name_trgm" ON "FixedAssets" USING gin ("Name" gin_trgm_ops)';
+            END IF;
+            END $$;
+            """,
+
+            // === Loans: searched by LoanNumber, Name ===
+            """
+            DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Loans') THEN
+                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Loans_Name_trgm" ON "Loans" USING gin ("Name" gin_trgm_ops)';
+            END IF;
+            END $$;
+            """,
+
+            // === Projects: searched by Code, Name ===
+            """
+            DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Projects') THEN
+                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Projects_Name_trgm" ON "Projects" USING gin ("Name" gin_trgm_ops)';
+            END IF;
+            END $$;
+            """,
+
+            // === Employees: searched by EmployeeCode, FirstNameTh, LastNameTh, FirstNameEn ===
+            """
+            DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Employees') THEN
+                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Employees_Names_trgm" ON "Employees" USING gin (("EmployeeCode" || '' '' || COALESCE("FirstNameTh",'''') || '' '' || COALESCE("LastNameTh",'''') || '' '' || COALESCE("FirstNameEn",'''')) gin_trgm_ops)';
+            END IF;
+            END $$;
+            """,
+        };
+
+        foreach (var sql in statements)
+        {
+            try
+            {
+                db.Database.ExecuteSqlRaw(sql);
+            }
+            catch
+            {
+                // Index may already exist or table may not exist — safe to skip
+            }
+        }
+    }
 }

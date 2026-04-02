@@ -39,102 +39,114 @@ public class DashboardService : IDashboardService
 
     public async Task<DashboardKpis> GetKpisAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
-        var postedLines = await _db.JournalEntryLines
-            .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
+        // Server-side aggregation by AccountType — avoids loading all lines into memory
+        var periodSums = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate)
+            .GroupBy(l => l.Account.AccountType)
+            .Select(g => new
+            {
+                AccountType = g.Key,
+                TotalCredit = g.Sum(l => l.CreditAmount),
+                TotalDebit = g.Sum(l => l.DebitAmount)
+            })
             .ToListAsync();
 
-        var totalRevenue = postedLines
-            .Where(l => l.Account.AccountType == AccountType.Revenue)
-            .Sum(l => l.CreditAmount - l.DebitAmount);
-
-        var totalExpenses = postedLines
-            .Where(l => l.Account.AccountType == AccountType.Expense)
-            .Sum(l => l.DebitAmount - l.CreditAmount);
-
-        // AR: unpaid invoices
-        var receivables = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
-            .SumAsync(d => d.BalanceDue);
-
-        // AP: unpaid purchase invoices
-        var payables = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && d.DocumentType == DocumentType.PurchaseInvoice
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
-            .SumAsync(d => d.BalanceDue);
-
-        // Bank balance
-        var bankBalance = await _db.BankAccounts
-            .Where(a => a.CompanyId == companyId && a.IsActive)
-            .SumAsync(a => a.CurrentBalance);
-
-        // Cash accounts balance
-        var cashBalance = await _db.JournalEntryLines
-            .Include(l => l.Account).Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.Account.AccountCode.StartsWith("111"))
-            .SumAsync(l => l.DebitAmount - l.CreditAmount);
-
-        var totalInvoices = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId
-            && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
-            && d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
-
-        var overdueCount = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId && d.Status == DocumentStatus.Overdue);
-
-        var pendingApprovals = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId && d.Status == DocumentStatus.WaitingApproval);
+        var revGroup = periodSums.FirstOrDefault(g => g.AccountType == AccountType.Revenue);
+        var expGroup = periodSums.FirstOrDefault(g => g.AccountType == AccountType.Expense);
+        var totalRevenue = (revGroup?.TotalCredit ?? 0) - (revGroup?.TotalDebit ?? 0);
+        var totalExpenses = (expGroup?.TotalDebit ?? 0) - (expGroup?.TotalCredit ?? 0);
 
         // Previous period for growth calculation
         var periodLength = (toDate - fromDate).TotalDays;
         var prevFromDate = fromDate.AddDays(-periodLength);
         var prevToDate = fromDate.AddDays(-1);
 
-        var prevLines = await _db.JournalEntryLines
-            .Include(l => l.Account).Include(l => l.JournalEntry)
+        var prevSums = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= prevFromDate
                 && l.JournalEntry.EntryDate <= prevToDate)
+            .GroupBy(l => l.Account.AccountType)
+            .Select(g => new
+            {
+                AccountType = g.Key,
+                TotalCredit = g.Sum(l => l.CreditAmount),
+                TotalDebit = g.Sum(l => l.DebitAmount)
+            })
             .ToListAsync();
 
-        var prevRevenue = prevLines.Where(l => l.Account.AccountType == AccountType.Revenue)
-            .Sum(l => l.CreditAmount - l.DebitAmount);
-        var prevExpenses = prevLines.Where(l => l.Account.AccountType == AccountType.Expense)
-            .Sum(l => l.DebitAmount - l.CreditAmount);
+        var prevRevGroup = prevSums.FirstOrDefault(g => g.AccountType == AccountType.Revenue);
+        var prevExpGroup = prevSums.FirstOrDefault(g => g.AccountType == AccountType.Expense);
+        var prevRevenue = (prevRevGroup?.TotalCredit ?? 0) - (prevRevGroup?.TotalDebit ?? 0);
+        var prevExpenses = (prevExpGroup?.TotalDebit ?? 0) - (prevExpGroup?.TotalCredit ?? 0);
+
+        // Parallel independent queries
+        var receivablesTask = _db.Documents
+            .Where(d => d.CompanyId == companyId
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
+            .SumAsync(d => d.BalanceDue);
+
+        var payablesTask = _db.Documents
+            .Where(d => d.CompanyId == companyId
+                && d.DocumentType == DocumentType.PurchaseInvoice
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
+            .SumAsync(d => d.BalanceDue);
+
+        var bankBalanceTask = _db.BankAccounts
+            .Where(a => a.CompanyId == companyId && a.IsActive)
+            .SumAsync(a => a.CurrentBalance);
+
+        // Cash accounts balance — server-side sum, no Include needed
+        var cashBalanceTask = _db.JournalEntryLines
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.Account.AccountCode.StartsWith("111"))
+            .SumAsync(l => l.DebitAmount - l.CreditAmount);
+
+        var totalInvoicesTask = _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId
+            && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+            && d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
+
+        var overdueCountTask = _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId && d.Status == DocumentStatus.Overdue);
+
+        var pendingApprovalsTask = _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId && d.Status == DocumentStatus.WaitingApproval);
+
+        await Task.WhenAll(receivablesTask, payablesTask, bankBalanceTask, cashBalanceTask,
+            totalInvoicesTask, overdueCountTask, pendingApprovalsTask);
 
         var revenueGrowth = prevRevenue != 0 ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
         var expenseGrowth = prevExpenses != 0 ? ((totalExpenses - prevExpenses) / prevExpenses) * 100 : 0;
 
         return new DashboardKpis(totalRevenue, totalExpenses, totalRevenue - totalExpenses,
-            receivables, payables, cashBalance, bankBalance,
-            totalInvoices, overdueCount, pendingApprovals,
+            receivablesTask.Result, payablesTask.Result, cashBalanceTask.Result, bankBalanceTask.Result,
+            totalInvoicesTask.Result, overdueCountTask.Result, pendingApprovalsTask.Result,
             Math.Round(revenueGrowth, 2), Math.Round(expenseGrowth, 2));
     }
 
     public async Task<CashFlowSummary> GetCashFlowSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
-        var bankTxns = await _db.BankTransactions
+        // Server-side GroupBy — only returns aggregated results, not all rows
+        var txnSums = await _db.BankTransactions
             .Where(t => t.CompanyId == companyId
                 && t.TransactionDate >= fromDate && t.TransactionDate <= toDate)
+            .GroupBy(t => t.TransactionType)
+            .Select(g => new { TransactionType = g.Key, Total = g.Sum(t => t.Amount) })
             .ToListAsync();
 
-        var deposits = bankTxns.Where(t => t.TransactionType == BankTransactionType.Deposit || t.TransactionType == BankTransactionType.Interest);
-        var withdrawals = bankTxns.Where(t => t.TransactionType == BankTransactionType.Withdrawal || t.TransactionType == BankTransactionType.Fee || t.TransactionType == BankTransactionType.Transfer);
+        var depositTypes = new[] { BankTransactionType.Deposit, BankTransactionType.Interest };
+        var withdrawalTypes = new[] { BankTransactionType.Withdrawal, BankTransactionType.Fee, BankTransactionType.Transfer };
 
-        var inflows = deposits.GroupBy(t => t.TransactionType.ToString())
-            .Select(g => new CashFlowItem(g.Key, g.Sum(t => t.Amount))).ToList();
-        var outflows = withdrawals.GroupBy(t => t.TransactionType.ToString())
-            .Select(g => new CashFlowItem(g.Key, g.Sum(t => t.Amount))).ToList();
+        var inflows = txnSums.Where(t => depositTypes.Contains(t.TransactionType))
+            .Select(t => new CashFlowItem(t.TransactionType.ToString(), t.Total)).ToList();
+        var outflows = txnSums.Where(t => withdrawalTypes.Contains(t.TransactionType))
+            .Select(t => new CashFlowItem(t.TransactionType.ToString(), t.Total)).ToList();
 
         var totalIn = inflows.Sum(i => i.Amount);
         var totalOut = outflows.Sum(o => o.Amount);
@@ -151,21 +163,27 @@ public class DashboardService : IDashboardService
         var now = DateTime.UtcNow;
         var startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-months + 1);
 
-        var lines = await _db.JournalEntryLines
-            .Include(l => l.Account).Include(l => l.JournalEntry)
+        // Server-side GROUP BY year/month — single query, no in-memory loop
+        var monthlyData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= startDate
                 && l.Account.AccountType == AccountType.Revenue)
+            .GroupBy(l => new { l.JournalEntry.EntryDate.Year, l.JournalEntry.EntryDate.Month })
+            .Select(g => new
+            {
+                g.Key.Year,
+                g.Key.Month,
+                Amount = g.Sum(l => l.CreditAmount - l.DebitAmount)
+            })
             .ToListAsync();
 
+        var lookup = monthlyData.ToDictionary(m => (m.Year, m.Month), m => m.Amount);
         var trends = new List<RevenueTrend>();
         for (int i = 0; i < months; i++)
         {
             var monthStart = startDate.AddMonths(i);
-            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
-            var amount = lines.Where(l => l.JournalEntry.EntryDate >= monthStart && l.JournalEntry.EntryDate <= monthEnd)
-                .Sum(l => l.CreditAmount - l.DebitAmount);
+            var amount = lookup.GetValueOrDefault((monthStart.Year, monthStart.Month), 0);
             trends.Add(new RevenueTrend(monthStart.Year, monthStart.Month, monthStart.ToString("MMM yyyy"), amount));
         }
         return trends;
@@ -176,21 +194,27 @@ public class DashboardService : IDashboardService
         var now = DateTime.UtcNow;
         var startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-months + 1);
 
-        var lines = await _db.JournalEntryLines
-            .Include(l => l.Account).Include(l => l.JournalEntry)
+        // Server-side GROUP BY year/month — single query, no in-memory loop
+        var monthlyData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= startDate
                 && l.Account.AccountType == AccountType.Expense)
+            .GroupBy(l => new { l.JournalEntry.EntryDate.Year, l.JournalEntry.EntryDate.Month })
+            .Select(g => new
+            {
+                g.Key.Year,
+                g.Key.Month,
+                Amount = g.Sum(l => l.DebitAmount - l.CreditAmount)
+            })
             .ToListAsync();
 
+        var lookup = monthlyData.ToDictionary(m => (m.Year, m.Month), m => m.Amount);
         var trends = new List<ExpenseTrend>();
         for (int i = 0; i < months; i++)
         {
             var monthStart = startDate.AddMonths(i);
-            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
-            var amount = lines.Where(l => l.JournalEntry.EntryDate >= monthStart && l.JournalEntry.EntryDate <= monthEnd)
-                .Sum(l => l.DebitAmount - l.CreditAmount);
+            var amount = lookup.GetValueOrDefault((monthStart.Year, monthStart.Month), 0);
             trends.Add(new ExpenseTrend(monthStart.Year, monthStart.Month, monthStart.ToString("MMM yyyy"), amount));
         }
         return trends;
@@ -198,40 +222,32 @@ public class DashboardService : IDashboardService
 
     private async Task<List<TopCustomer>> GetTopCustomersAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
     {
-        var docs = await _db.Documents
-            .Include(d => d.Contact)
+        // Server-side GroupBy + OrderBy + Take — only top N rows returned
+        return await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.Status != DocumentStatus.Voided
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .Select(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : "ไม่ระบุ", d.TotalAmount })
-            .ToListAsync();
-
-        return docs
-            .GroupBy(d => new { d.ContactId, d.ContactName })
+            .GroupBy(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : "ไม่ระบุ" })
             .Select(g => new TopCustomer(g.Key.ContactId, g.Key.ContactName, g.Sum(d => d.TotalAmount), g.Count()))
             .OrderByDescending(c => c.TotalAmount)
             .Take(top)
-            .ToList();
+            .ToListAsync();
     }
 
     private async Task<List<TopExpenseCategory>> GetTopExpenseCategoriesAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
     {
-        var rawLines = await _db.JournalEntryLines
-            .Include(l => l.Account).Include(l => l.JournalEntry)
+        // Server-side GroupBy — aggregation happens in PostgreSQL
+        var expenseLines = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Expense)
-            .Select(l => new { l.Account.AccountCode, l.Account.AccountName, l.DebitAmount, l.CreditAmount })
-            .ToListAsync();
-
-        var expenseLines = rawLines
-            .GroupBy(l => new { l.AccountCode, l.AccountName })
+            .GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName })
             .Select(g => new { g.Key.AccountCode, g.Key.AccountName, Amount = g.Sum(l => l.DebitAmount - l.CreditAmount) })
             .OrderByDescending(e => e.Amount)
             .Take(top)
-            .ToList();
+            .ToListAsync();
 
         var totalExpenses = expenseLines.Sum(e => e.Amount);
         return expenseLines.Select(e => new TopExpenseCategory(
