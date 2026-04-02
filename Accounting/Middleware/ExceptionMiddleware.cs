@@ -78,12 +78,12 @@ public class ExceptionMiddleware
                 var connStr = config?.GetConnectionString("DefaultConnection");
                 if (!string.IsNullOrEmpty(connStr))
                 {
-                    using var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
+                    using var conn = new Npgsql.NpgsqlConnection(connStr);
                     await conn.OpenAsync();
-                    var sql = @"IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ErrorLogs')
-                        INSERT INTO [ErrorLogs] ([Id],[RequestPath],[HttpMethod],[QueryString],[StatusCode],[ExceptionType],[Message],[StackTrace],[InnerException],[UserId],[IpAddress],[UserAgent],[Timestamp],[CreatedAt],[IsDeleted])
-                        VALUES (NEWID(),@p,@m,@q,@s,@et,@msg,@st,@ie,@u,@ip,@ua,GETUTCDATE(),GETUTCDATE(),0)";
-                    using var cmd = new Microsoft.Data.SqlClient.SqlCommand(sql, conn);
+                    var sql = @"INSERT INTO ""ErrorLogs"" (""Id"",""RequestPath"",""HttpMethod"",""QueryString"",""StatusCode"",""ExceptionType"",""Message"",""StackTrace"",""InnerException"",""UserId"",""IpAddress"",""UserAgent"",""Timestamp"",""CreatedAt"",""IsDeleted"")
+                        SELECT gen_random_uuid(),@p,@m,@q,@s,@et,@msg,@st,@ie,@u,@ip,@ua,now(),now(),false
+                        WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE lower(table_name)='errorlogs')";
+                    using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
                     cmd.Parameters.AddWithValue("@p", context.Request.Path.ToString() ?? "");
                     cmd.Parameters.AddWithValue("@m", context.Request.Method ?? "");
                     cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString() ?? "");
