@@ -27,7 +27,7 @@ public record TerminalResponse(
 
 // ===== POS Session =====
 public record OpenSessionRequest(
-    Guid TerminalId,
+    Guid? TerminalId,
     decimal OpeningBalance,
     string? Notes);
 

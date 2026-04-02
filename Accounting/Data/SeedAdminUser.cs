@@ -11,7 +11,7 @@ public static class SeedAdminUser
 {
     public static async Task SeedAsync(AccountingDbContext db, IConfiguration? configuration = null)
     {
-        const string adminEmail = "admin@nexaacc.com";
+        const string adminEmail = "admin@nextacc.com";
 
         if (await db.Users.AnyAsync(u => u.Email == adminEmail))
             return;

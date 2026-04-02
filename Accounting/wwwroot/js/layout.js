@@ -161,7 +161,7 @@ const Layout = {
     sidebar.id = 'sidebar';
     sidebar.innerHTML = `
       <div class="sidebar-header">
-        <div class="sidebar-logo"><span>Nexaacc</span></div>
+        <div class="sidebar-logo"><span>Next Acc</span></div>
       </div>
       <div style="padding:12px 16px;border-bottom:1px solid var(--gray-800)">
         <select id="companySelect" class="form-select" style="background:var(--gray-800);color:#fff;border-color:var(--gray-700);font-size:13px;padding:8px 10px">
@@ -472,7 +472,7 @@ const Layout = {
     pageContent.innerHTML = `
       <div style="max-width:600px;margin:40px auto;text-align:center">
         <div style="font-size:48px;margin-bottom:12px">🏢</div>
-        <h2 style="margin-bottom:4px">ยินดีต้อนรับสู่ Nexaacc!</h2>
+        <h2 style="margin-bottom:4px">ยินดีต้อนรับสู่ Next Acc!</h2>
         <p style="color:var(--gray-500);margin-bottom:24px">กรอกข้อมูลกิจการเพื่อเริ่มต้นใช้งานระบบบัญชี</p>
         ${stepBar}
         <div class="card" style="text-align:left;padding:24px">
@@ -703,7 +703,7 @@ const Layout = {
 
   setTitle(title) {
     document.getElementById('headerTitle').textContent = title;
-    document.title = title + ' - Nexaacc';
+    document.title = title + ' - Next Acc';
   },
 
   // Toast notifications (with deduplication - max 3 visible, no duplicate messages)
@@ -861,7 +861,7 @@ const Layout = {
   },
 
   // Print specific element
-  printElement(selector, title = 'Nexaacc') {
+  printElement(selector, title = 'Next Acc') {
     const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
     if (!el) return;
     const win = window.open('', '_blank');

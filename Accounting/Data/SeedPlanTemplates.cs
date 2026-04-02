@@ -142,7 +142,7 @@ public static class SeedPlanTemplates
             {
                 Id = Guid.NewGuid(),
                 Name = "ทดลองใช้ฟรี",
-                Description = "ทดลองใช้งานระบบบัญชี Nexaacc ฟรี 14 วัน ไม่ต้องผูกบัตรเครดิต ใช้งานฟีเจอร์พื้นฐานครบถ้วน ออกเอกสาร ดูรายงาน จัดการภาษี ยกเลิกได้ตลอดเวลา",
+                Description = "ทดลองใช้งานระบบบัญชี Next Acc ฟรี 14 วัน ไม่ต้องผูกบัตรเครดิต ใช้งานฟีเจอร์พื้นฐานครบถ้วน ออกเอกสาร ดูรายงาน จัดการภาษี ยกเลิกได้ตลอดเวลา",
                 Plan = SubscriptionPlan.FreeTrial,
                 IsActive = true,
                 Currency = "THB",
