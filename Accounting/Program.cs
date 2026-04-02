@@ -46,6 +46,8 @@ if (string.IsNullOrEmpty(jwtSecret))
     jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
     Console.WriteLine("⚠ WARNING: Using auto-generated JWT secret. Set JWT_SECRET env var for persistent sessions.");
 }
+// Write back to configuration so JwtHelper.GenerateToken() uses the same key
+builder.Configuration["Jwt:Secret"] = jwtSecret;
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
