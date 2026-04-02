@@ -119,10 +119,13 @@ public class PayrollService : IPayrollService
             .Where(e => e.CompanyId == companyId && !e.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
-            query = query.Where(e => e.EmployeeCode.Contains(request.Search)
-                || e.FirstNameTh.Contains(request.Search)
-                || e.LastNameTh.Contains(request.Search)
-                || (e.FirstNameEn != null && e.FirstNameEn.Contains(request.Search)));
+        {
+            var search = $"%{request.Search}%";
+            query = query.Where(e => EF.Functions.ILike(e.EmployeeCode, search)
+                || EF.Functions.ILike(e.FirstNameTh, search)
+                || EF.Functions.ILike(e.LastNameTh, search)
+                || (e.FirstNameEn != null && EF.Functions.ILike(e.FirstNameEn, search)));
+        }
 
         var total = await query.CountAsync();
         var items = await query

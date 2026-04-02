@@ -78,7 +78,10 @@ public class LoanService : ILoanService
             query = query.Where(l => l.Status == status);
 
         if (!string.IsNullOrEmpty(request.Search))
-            query = query.Where(l => l.LoanNumber.Contains(request.Search) || l.Name.Contains(request.Search));
+        {
+            var search = $"%{request.Search}%";
+            query = query.Where(l => EF.Functions.ILike(l.LoanNumber, search) || EF.Functions.ILike(l.Name, search));
+        }
 
         var totalCount = await query.CountAsync();
 

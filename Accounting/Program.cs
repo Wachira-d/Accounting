@@ -15,7 +15,24 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ===== Database (PostgreSQL) =====
 builder.Services.AddDbContext<AccountingDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsqlOptions =>
+        {
+            // Split queries for multi-Include chains (prevents cartesian explosion)
+            npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+            // Command timeout for complex reports/aggregations
+            npgsqlOptions.CommandTimeout(120);
+            // Enable retry on transient failures
+            npgsqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 3,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorCodesToAdd: null);
+        })
+    // Log slow queries in development
+    .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
+    .EnableDetailedErrors(builder.Environment.IsDevelopment())
+);
 
 // ===== Authentication (JWT) =====
 // JWT secret: MUST be set via env var in production. Config file fallback for dev only.
@@ -29,6 +46,8 @@ if (string.IsNullOrEmpty(jwtSecret))
     jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
     Console.WriteLine("⚠ WARNING: Using auto-generated JWT secret. Set JWT_SECRET env var for persistent sessions.");
 }
+// Write back to configuration so JwtHelper.GenerateToken() uses the same key
+builder.Configuration["Jwt:Secret"] = jwtSecret;
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -624,6 +643,9 @@ try
     // CRITICAL: Always run ApplyMissingColumns even if the above migration fails.
     // This ensures new columns (like IndustryType) are added to existing tables.
     DatabaseMigrationHelper.ApplyMissingColumns(db);
+
+    // PostgreSQL full-text search: pg_trgm GIN indexes for fast LIKE/ILIKE searches
+    DatabaseMigrationHelper.ApplyFullTextSearchIndexes(db);
 
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);

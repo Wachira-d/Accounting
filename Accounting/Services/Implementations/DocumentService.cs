@@ -179,7 +179,11 @@ public class DocumentService : IDocumentService
             query = query.Where(d => d.DocumentType == type.Value);
 
         if (!string.IsNullOrEmpty(request.Search))
-            query = query.Where(d => d.DocumentNumber.Contains(request.Search) || d.Contact.Name.Contains(request.Search));
+        {
+            var search = $"%{request.Search}%";
+            query = query.Where(d => EF.Functions.ILike(d.DocumentNumber, search)
+                || (d.Contact != null && EF.Functions.ILike(d.Contact.Name, search)));
+        }
 
         var total = await query.CountAsync();
         var items = await query

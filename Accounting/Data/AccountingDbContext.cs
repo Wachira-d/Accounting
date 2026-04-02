@@ -580,7 +580,7 @@ public class AccountingDbContext : DbContext
         // ===== NumberSeries =====
         modelBuilder.Entity<NumberSeries>(e =>
         {
-            e.HasIndex(n => new { n.CompanyId, n.DocumentType }).IsUnique().HasFilter("[IsActive] = 1");
+            e.HasIndex(n => new { n.CompanyId, n.DocumentType }).IsUnique().HasFilter("\"IsActive\" = true");
             e.Property(n => n.Prefix).HasMaxLength(20);
             e.Property(n => n.Format).HasMaxLength(200);
         });
@@ -642,7 +642,7 @@ public class AccountingDbContext : DbContext
         // ===== DocumentTemplate =====
         modelBuilder.Entity<DocumentTemplate>(e =>
         {
-            e.HasIndex(t => new { t.CompanyId, t.DocumentType, t.IsDefault }).HasFilter("[IsDefault] = 1 AND [IsDeleted] = 0");
+            e.HasIndex(t => new { t.CompanyId, t.DocumentType, t.IsDefault }).HasFilter("\"IsDefault\" = true AND \"IsDeleted\" = false");
             e.Property(t => t.Name).HasMaxLength(256);
             e.Property(t => t.PaperSize).HasMaxLength(10);
             e.Property(t => t.Orientation).HasMaxLength(20);
@@ -1625,6 +1625,166 @@ public class AccountingDbContext : DbContext
             e.Property(s => s.PaidAmount).HasPrecision(18, 2);
             e.Property(s => s.RemainingAmount).HasPrecision(18, 2);
             e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        // =================================================================
+        // PostgreSQL Performance Optimizations
+        // =================================================================
+
+        // --- JSONB columns (PostgreSQL native JSON with indexing support) ---
+        modelBuilder.Entity<CompanySettings>(e =>
+            e.Property(s => s.LandingServicesJson).HasColumnType("jsonb"));
+        modelBuilder.Entity<Models.Entities.PosTerminal>(e =>
+            e.Property(t => t.SettingsJson).HasColumnType("jsonb"));
+        modelBuilder.Entity<Models.Entities.SmartImportSession>(e =>
+        {
+            e.Property(s => s.RawDataJson).HasColumnType("jsonb");
+            e.Property(s => s.ErrorsJson).HasColumnType("jsonb");
+        });
+        modelBuilder.Entity<Models.Entities.SmartImportColumnMapping>(e =>
+        {
+            e.Property(m => m.SampleValuesJson).HasColumnType("jsonb");
+            e.Property(m => m.SuggestionsJson).HasColumnType("jsonb");
+        });
+
+        // --- Covering indexes for hot query paths ---
+
+        // JournalEntry: most queried table — filter by company + date range + status
+        modelBuilder.Entity<JournalEntry>(e =>
+        {
+            e.HasIndex(j => new { j.CompanyId, j.EntryDate })
+                .HasDatabaseName("IX_JournalEntries_CompanyId_EntryDate");
+            e.HasIndex(j => new { j.CompanyId, j.Status, j.EntryDate })
+                .HasDatabaseName("IX_JournalEntries_CompanyId_Status_EntryDate");
+        });
+
+        // JournalEntryLine: heaviest table — joins + aggregations
+        modelBuilder.Entity<JournalEntryLine>(e =>
+        {
+            e.HasIndex(l => l.AccountId)
+                .HasDatabaseName("IX_JournalEntryLines_AccountId");
+            e.HasIndex(l => new { l.JournalEntryId, l.AccountId })
+                .HasDatabaseName("IX_JournalEntryLines_JournalEntryId_AccountId");
+        });
+
+        // Document: filter by company + type + status + date
+        modelBuilder.Entity<Document>(e =>
+        {
+            e.HasIndex(d => new { d.CompanyId, d.DocumentType, d.Status })
+                .HasDatabaseName("IX_Documents_CompanyId_DocType_Status");
+            e.HasIndex(d => new { d.CompanyId, d.DocumentDate })
+                .HasDatabaseName("IX_Documents_CompanyId_DocumentDate");
+            e.HasIndex(d => d.ContactId)
+                .HasDatabaseName("IX_Documents_ContactId");
+            // Partial index: only overdue documents (for dashboard counts)
+            e.HasIndex(d => new { d.CompanyId, d.DueDate })
+                .HasFilter("\"Status\" = 5") // DocumentStatus.Overdue
+                .HasDatabaseName("IX_Documents_Overdue");
+        });
+
+        // Contact: search by name, filter by company
+        modelBuilder.Entity<Contact>(e =>
+        {
+            e.HasIndex(c => new { c.CompanyId, c.IsCustomer })
+                .HasDatabaseName("IX_Contacts_CompanyId_IsCustomer");
+            e.HasIndex(c => new { c.CompanyId, c.IsSupplier })
+                .HasDatabaseName("IX_Contacts_CompanyId_IsSupplier");
+        });
+
+        // BankTransaction: reconciliation + date range queries
+        modelBuilder.Entity<BankTransaction>(e =>
+        {
+            e.HasIndex(t => new { t.BankAccountId, t.TransactionDate })
+                .HasDatabaseName("IX_BankTransactions_BankAccId_TxDate");
+        });
+
+        // Payment: lookup by document
+        modelBuilder.Entity<Payment>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.DocumentId })
+                .HasDatabaseName("IX_Payments_CompanyId_DocumentId");
+            e.HasIndex(p => new { p.CompanyId, p.PaymentDate })
+                .HasDatabaseName("IX_Payments_CompanyId_PaymentDate");
+        });
+
+        // ChartOfAccount: frequently queried with parent lookups
+        modelBuilder.Entity<ChartOfAccount>(e =>
+        {
+            e.HasIndex(a => new { a.CompanyId, a.AccountType })
+                .HasDatabaseName("IX_ChartOfAccounts_CompanyId_AccType");
+            e.HasIndex(a => a.ParentAccountId)
+                .HasDatabaseName("IX_ChartOfAccounts_ParentAccountId");
+        });
+
+        // AuditLog: timestamp-based queries, BRIN index ideal for append-only
+        modelBuilder.Entity<AuditLog>(e =>
+        {
+            e.HasIndex(a => new { a.CompanyId, a.Timestamp })
+                .HasDatabaseName("IX_AuditLogs_CompanyId_Timestamp");
+        });
+
+        // ErrorLog: recent errors lookup
+        modelBuilder.Entity<ErrorLog>(e =>
+        {
+            e.HasIndex(e2 => e2.Timestamp)
+                .HasDatabaseName("IX_ErrorLogs_Timestamp")
+                .IsDescending();
+        });
+
+        // POS: session + order hot paths
+        modelBuilder.Entity<Models.Entities.PosSession>(e =>
+        {
+            e.HasIndex(s => new { s.TerminalId, s.Status })
+                .HasDatabaseName("IX_PosSessions_TerminalId_Status");
+        });
+        modelBuilder.Entity<Models.Entities.PosOrder>(e =>
+        {
+            e.HasIndex(o => new { o.SessionId, o.Status })
+                .HasDatabaseName("IX_PosOrders_SessionId_Status");
+            e.HasIndex(o => new { o.CompanyId, o.CreatedAt })
+                .HasDatabaseName("IX_PosOrders_CompanyId_CreatedAt");
+        });
+
+        // Notification: user inbox query
+        modelBuilder.Entity<Notification>(e =>
+        {
+            e.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt })
+                .HasDatabaseName("IX_Notifications_UserId_IsRead_CreatedAt");
+        });
+
+        // Product: search + category filter
+        modelBuilder.Entity<Product>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.IsActive })
+                .HasDatabaseName("IX_Products_CompanyId_IsActive");
+        });
+
+        // FiscalPeriod: period lookups
+        modelBuilder.Entity<FiscalPeriod>(e =>
+        {
+            e.HasIndex(f => new { f.CompanyId, f.StartDate, f.EndDate })
+                .HasDatabaseName("IX_FiscalPeriods_CompanyId_Dates");
+        });
+
+        // FixedAsset: depreciation queries
+        modelBuilder.Entity<FixedAsset>(e =>
+        {
+            e.HasIndex(a => new { a.CompanyId, a.Status })
+                .HasDatabaseName("IX_FixedAssets_CompanyId_Status");
+        });
+
+        // WithholdingTaxCert: tax period queries
+        modelBuilder.Entity<WithholdingTaxCert>(e =>
+        {
+            e.HasIndex(w => new { w.CompanyId, w.TaxMonth, w.TaxYear })
+                .HasDatabaseName("IX_WhtCerts_CompanyId_TaxMonth_TaxYear");
+        });
+
+        // ExpenseClaim: status-based queries
+        modelBuilder.Entity<ExpenseClaim>(e =>
+        {
+            e.HasIndex(ec => new { ec.CompanyId, ec.Status })
+                .HasDatabaseName("IX_ExpenseClaims_CompanyId_Status");
         });
     }
 
