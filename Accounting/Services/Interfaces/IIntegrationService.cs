@@ -17,6 +17,9 @@ public interface IIntegrationService
     Task<AccountMappingResponse> UpdateMappingAsync(Guid companyId, Guid integrationId, Guid mappingId, UpdateAccountMappingRequest request);
     Task DeleteMappingAsync(Guid companyId, Guid integrationId, Guid mappingId);
 
+    // Mapping templates
+    List<MappingTemplateResponse> GetMappingTemplates();
+
     // Sync logs
     Task<List<SyncLogResponse>> GetSyncLogsAsync(Guid companyId, Guid? integrationId, int page = 1, int pageSize = 50);
 
@@ -30,6 +33,16 @@ public interface IIntegrationService
     Task<InboundSyncResponse> ProcessCreditNoteAsync(Guid companyId, Guid integrationId, InboundCreditNoteRequest request);
     Task<InboundSyncResponse> ProcessDebitNoteAsync(Guid companyId, Guid integrationId, InboundDebitNoteRequest request);
     Task<InboundSyncResponse> ProcessDailySummaryAsync(Guid companyId, Guid integrationId, InboundDailySummaryRequest request);
+    Task<InboundSyncResponse> ProcessExpenseAsync(Guid companyId, Guid integrationId, InboundExpenseRequest request);
+    Task<InboundSyncResponse> ProcessProductAsync(Guid companyId, Guid integrationId, InboundProductRequest request);
+    Task<InboundSyncResponse> ProcessJournalAsync(Guid companyId, Guid integrationId, InboundJournalRequest request);
+    Task<InboundBatchResponse> ProcessBatchAsync(Guid companyId, Guid integrationId, InboundBatchRequest request);
+
+    // Outbound data (external systems read FROM Next Acc)
+    Task<OutboundPagedResponse<OutboundDocumentResponse>> GetDocumentsForExternalAsync(Guid companyId, OutboundQueryParams query);
+    Task<OutboundPagedResponse<OutboundContactResponse>> GetContactsForExternalAsync(Guid companyId, OutboundQueryParams query);
+    Task<OutboundPagedResponse<OutboundPaymentResponse>> GetPaymentsForExternalAsync(Guid companyId, OutboundQueryParams query);
+    Task<List<OutboundAccountBalanceResponse>> GetAccountBalancesForExternalAsync(Guid companyId);
 
     // Authentication
     Task<(Guid CompanyId, Guid IntegrationId)?> ValidateApiKeyAsync(string apiKey);

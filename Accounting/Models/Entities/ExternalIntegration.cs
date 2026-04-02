@@ -29,6 +29,10 @@ public class ExternalIntegration : TenantEntity
     public string? MappingConfigJson { get; set; }          // Account mapping config
     public string? SettingsJson { get; set; }                // Additional settings
 
+    // Webhook
+    public string? WebhookUrl { get; set; }
+    public bool WebhookEnabled { get; set; }
+
     // Rate limiting
     public int RateLimitPerMinute { get; set; } = 60;
 

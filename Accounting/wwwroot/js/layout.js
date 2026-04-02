@@ -148,6 +148,7 @@ const Layout = {
     { section: 'ตั้งค่า' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html' },
+    { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html' },
     { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html' },
     { id: 'subscription', label: 'แพ็กเกจ', icon: '💎', href: '/pages/subscription.html' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html' },

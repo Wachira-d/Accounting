@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Accounting.Controllers;
 
 /// <summary>
-/// Integration Management — ตั้งค่าและจัดการการเชื่อมต่อระบบภายนอก
+/// Integration Management — ตั้งค่าและจัดการการเชื่อมต่อระบบภายนอก (per-company)
 /// </summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/integrations")]
@@ -88,6 +88,15 @@ public class IntegrationController : ControllerBase
         return NoContent();
     }
 
+    // ===== Mapping Templates =====
+
+    [HttpGet("mapping-templates")]
+    public ActionResult<ApiResponse<List<MappingTemplateResponse>>> GetMappingTemplates()
+    {
+        var result = _service.GetMappingTemplates();
+        return Ok(new ApiResponse<List<MappingTemplateResponse>>(true, result));
+    }
+
     // ===== Sync Logs =====
 
     [HttpGet("sync-logs")]
@@ -106,7 +115,7 @@ public class IntegrationController : ControllerBase
         return Ok(new ApiResponse<IntegrationDashboardResponse>(true, result));
     }
 
-    // ===== Revenue Reports (Hotel / PMS integration) =====
+    // ===== Revenue Reports =====
 
     [HttpGet("reports/revenue-by-category")]
     public async Task<ActionResult<ApiResponse<List<RevenueByCategoryItem>>>> GetRevenueByCategory(Guid companyId, [FromQuery] DateTime? from, [FromQuery] DateTime? to)
@@ -138,7 +147,8 @@ public class IntegrationController : ControllerBase
 }
 
 /// <summary>
-/// External Integration API — endpoints สำหรับระบบภายนอกเรียกเข้ามา (authenticated by Integration API Key)
+/// External Integration API — Universal endpoints for ANY external system
+/// Authenticated by Integration API Key via X-Integration-Key header
 /// </summary>
 [ApiController]
 [Route("api/integration")]
@@ -152,7 +162,7 @@ public class ExternalIntegrationController : ControllerBase
         _service = service;
     }
 
-    // ===== Inbound endpoints (called by external systems) =====
+    // ===== Inbound endpoints (external systems push data TO Next Acc) =====
 
     [HttpPost("customers")]
     public async Task<ActionResult<InboundSyncResponse>> SyncCustomer([FromBody] InboundCustomerRequest request)
@@ -204,6 +214,36 @@ public class ExternalIntegrationController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    [HttpPost("expenses")]
+    public async Task<ActionResult<InboundSyncResponse>> CreateExpense([FromBody] InboundExpenseRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessExpenseAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("products")]
+    public async Task<ActionResult<InboundSyncResponse>> SyncProduct([FromBody] InboundProductRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessProductAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("journals")]
+    public async Task<ActionResult<InboundSyncResponse>> CreateJournal([FromBody] InboundJournalRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessJournalAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("daily-summary")]
     public async Task<ActionResult<InboundSyncResponse>> DailySummary([FromBody] InboundDailySummaryRequest request)
     {
@@ -212,6 +252,58 @@ public class ExternalIntegrationController : ControllerBase
 
         var result = await _service.ProcessDailySummaryAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
         return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("batch")]
+    public async Task<ActionResult<InboundBatchResponse>> BatchImport([FromBody] InboundBatchRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundBatchResponse(0, 0, 0, new List<BatchResultItem>()));
+
+        var result = await _service.ProcessBatchAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        return Ok(result);
+    }
+
+    // ===== Outbound endpoints (external systems read data FROM Next Acc) =====
+
+    [HttpGet("documents")]
+    public async Task<ActionResult<OutboundPagedResponse<OutboundDocumentResponse>>> GetDocuments([FromQuery] OutboundQueryParams query)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized();
+
+        var result = await _service.GetDocumentsForExternalAsync(auth.Value.CompanyId, query);
+        return Ok(result);
+    }
+
+    [HttpGet("contacts")]
+    public async Task<ActionResult<OutboundPagedResponse<OutboundContactResponse>>> GetContacts([FromQuery] OutboundQueryParams query)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized();
+
+        var result = await _service.GetContactsForExternalAsync(auth.Value.CompanyId, query);
+        return Ok(result);
+    }
+
+    [HttpGet("payments-list")]
+    public async Task<ActionResult<OutboundPagedResponse<OutboundPaymentResponse>>> GetPayments([FromQuery] OutboundQueryParams query)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized();
+
+        var result = await _service.GetPaymentsForExternalAsync(auth.Value.CompanyId, query);
+        return Ok(result);
+    }
+
+    [HttpGet("account-balances")]
+    public async Task<ActionResult<List<OutboundAccountBalanceResponse>>> GetAccountBalances()
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized();
+
+        var result = await _service.GetAccountBalancesForExternalAsync(auth.Value.CompanyId);
+        return Ok(result);
     }
 
     private async Task<(Guid CompanyId, Guid IntegrationId)?> AuthenticateIntegration()

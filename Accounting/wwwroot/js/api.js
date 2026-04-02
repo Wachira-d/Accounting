@@ -526,6 +526,23 @@ const API = {
       // POS - Reports
       getPosDailySummary: (q = '') => API.get(`${base}/pos/daily-summary${q}`),
       getPosCommissionSummary: (q) => API.get(`${base}/pos/commission-summary${q}`),
+      // Integration
+      getIntegrations: () => API.get(`${base}/integrations`),
+      createIntegration: (d) => API.post(`${base}/integrations`, d),
+      updateIntegration: (id, d) => API.put(`${base}/integrations/${id}`, d),
+      deleteIntegration: (id) => API.del(`${base}/integrations/${id}`),
+      regenerateIntegrationKey: (id) => API.post(`${base}/integrations/${id}/regenerate-key`),
+      getIntegrationMappings: (id) => API.get(`${base}/integrations/${id}/mappings`),
+      createIntegrationMapping: (id, d) => API.post(`${base}/integrations/${id}/mappings`, d),
+      updateIntegrationMapping: (id, mid, d) => API.put(`${base}/integrations/${id}/mappings/${mid}`, d),
+      deleteIntegrationMapping: (id, mid) => API.del(`${base}/integrations/${id}/mappings/${mid}`),
+      getIntegrationMappingTemplates: () => API.get(`${base}/integrations/mapping-templates`),
+      getIntegrationSyncLogs: (q = '') => API.get(`${base}/integrations/sync-logs${q}`),
+      getIntegrationDashboard: () => API.get(`${base}/integrations/dashboard`),
+      getIntegrationRevenueByCategory: (q = '') => API.get(`${base}/integrations/reports/revenue-by-category${q}`),
+      getIntegrationRevenueBySource: (q = '') => API.get(`${base}/integrations/reports/revenue-by-source${q}`),
+      getIntegrationDepositSummary: (q = '') => API.get(`${base}/integrations/reports/deposit-summary${q}`),
+      getIntegrationDailyRevenue: (q = '') => API.get(`${base}/integrations/reports/daily-revenue${q}`),
     };
   },
 

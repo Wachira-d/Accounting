@@ -21,7 +21,7 @@
   <div class="admin-card" style="margin-top:24px">
     <div class="admin-card-header">
       <h2>External Integrations</h2>
-      <p style="color:#64748b;font-size:13px;margin-top:4px">ระบบภายนอกที่เชื่อมต่อ (TakeTime, PMS, ERP, etc.)</p>
+      <p style="color:#64748b;font-size:13px;margin-top:4px">ระบบภายนอกที่เชื่อมต่อจากทุกบริษัท (POS, PMS, ERP, E-Commerce, etc.)</p>
     </div>
     <div class="admin-table-wrap">
       <table class="admin-table">
@@ -76,16 +76,20 @@
       <h2>API Integration Guide</h2>
     </div>
     <div style="padding:20px;font-size:14px;line-height:1.8">
-      <h3 style="margin-bottom:12px">Endpoints สำหรับระบบภายนอก</h3>
-      <p style="color:#64748b;margin-bottom:16px">ระบบภายนอก (เช่น TakeTime) จะเรียก API เหล่านี้ โดยส่ง API Key ผ่าน header <code>X-Integration-Key</code></p>
+      <h3 style="margin-bottom:12px">Inbound Endpoints (ระบบภายนอกส่งเข้า Next Acc)</h3>
+      <p style="color:#64748b;margin-bottom:16px">ระบบภายนอก (POS, PMS, ERP, E-Commerce) จะเรียก API โดยส่ง API Key ผ่าน header <code>X-Integration-Key</code></p>
       <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:13px;overflow-x:auto">
 <pre style="margin:0;white-space:pre">
-<span style="color:#22d3ee">POST</span> /api/integration/customers      - Sync ข้อมูลลูกค้า
-<span style="color:#22d3ee">POST</span> /api/integration/invoices       - สร้างใบแจ้งหนี้/ใบกำกับภาษี
-<span style="color:#22d3ee">POST</span> /api/integration/payments       - บันทึกการชำระเงิน
-<span style="color:#22d3ee">POST</span> /api/integration/credit-notes   - สร้างใบลดหนี้
-<span style="color:#22d3ee">POST</span> /api/integration/debit-notes    - สร้างใบเพิ่มหนี้
-<span style="color:#22d3ee">POST</span> /api/integration/daily-summary  - สรุปรายวัน (Auto Journal)
+<span style="color:#22d3ee">POST</span> /api/integration/customers       - Sync ข้อมูลลูกค้า/ผู้จำหน่าย
+<span style="color:#22d3ee">POST</span> /api/integration/invoices        - สร้างใบแจ้งหนี้/ใบกำกับภาษี
+<span style="color:#22d3ee">POST</span> /api/integration/payments        - บันทึกการชำระเงิน
+<span style="color:#22d3ee">POST</span> /api/integration/expenses        - บันทึกค่าใช้จ่าย
+<span style="color:#22d3ee">POST</span> /api/integration/credit-notes    - สร้างใบลดหนี้
+<span style="color:#22d3ee">POST</span> /api/integration/debit-notes     - สร้างใบเพิ่มหนี้
+<span style="color:#22d3ee">POST</span> /api/integration/products        - Sync สินค้า/บริการ
+<span style="color:#22d3ee">POST</span> /api/integration/journals        - บันทึกบัญชีโดยตรง
+<span style="color:#22d3ee">POST</span> /api/integration/daily-summary   - สรุปรายวัน (Auto Journal)
+<span style="color:#22d3ee">POST</span> /api/integration/batch           - Batch import หลายรายการ
 
 <span style="color:#94a3b8"># Header ที่ต้องส่ง:</span>
 X-Integration-Key: int_xxxxxxxxxxxxxxxx
@@ -93,19 +97,32 @@ Content-Type: application/json
 </pre>
       </div>
 
+      <h3 style="margin-top:24px;margin-bottom:12px">Outbound Endpoints (ดึงข้อมูลจาก Next Acc)</h3>
+      <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:13px;overflow-x:auto">
+<pre style="margin:0;white-space:pre">
+<span style="color:#a78bfa">GET</span> /api/integration/documents        - ดึงเอกสาร (invoice, receipt, etc.)
+<span style="color:#a78bfa">GET</span> /api/integration/contacts          - ดึงข้อมูลลูกค้า/ผู้จำหน่าย
+<span style="color:#a78bfa">GET</span> /api/integration/payments-list     - ดึงรายการชำระเงิน
+<span style="color:#a78bfa">GET</span> /api/integration/account-balances  - ดึงยอดคงเหลือบัญชี
+
+<span style="color:#94a3b8"># Query Params: ?fromDate=&toDate=&status=&type=&page=1&pageSize=50</span>
+</pre>
+      </div>
+
       <h3 style="margin-top:24px;margin-bottom:12px">ตัวอย่าง: สร้างใบแจ้งหนี้</h3>
       <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:12px;overflow-x:auto">
 <pre style="margin:0;white-space:pre">{
-  "externalRef": "TT-RES-2024-001",
-  "customerName": "John Smith",
-  "customerTaxId": "1234567890123",
+  "externalRef": "INV-2024-001",
+  "customerName": "บริษัท ตัวอย่าง จำกัด",
+  "customerTaxId": "0123456789012",
   "documentDate": "2024-04-02",
-  "dueDate": "2024-04-09",
+  "dueDate": "2024-05-02",
   "lines": [
-    { "itemCode": "ROOM", "itemName": "Deluxe Room (3 nights)", "quantity": 3, "unitPrice": 2500 },
-    { "itemCode": "FB", "itemName": "Breakfast", "quantity": 6, "unitPrice": 350 }
+    { "itemCode": "SVC01", "itemName": "ค่าบริการ", "quantity": 1, "unitPrice": 10000 },
+    { "itemCode": "PROD01", "itemName": "สินค้า A", "quantity": 5, "unitPrice": 500 }
   ],
-  "notes": "Reservation #TT-2024-001"
+  "includeVat": true,
+  "notes": "อ้างอิง: PO-2024-001"
 }</pre>
       </div>
 
@@ -115,15 +132,28 @@ Content-Type: application/json
   "summaryDate": "2024-04-02",
   "description": "สรุปรายรับประจำวัน",
   "lines": [
-    { "category": "ROOM_REVENUE", "description": "รายได้ค่าห้องพัก", "amount": 45000 },
-    { "category": "F&B_REVENUE", "description": "รายได้อาหาร/เครื่องดื่ม", "amount": 12500 },
+    { "category": "REVENUE", "description": "รายได้จากการขาย", "amount": 45000 },
+    { "category": "SERVICE_REVENUE", "description": "รายได้ค่าบริการ", "amount": 12500 },
     { "category": "DEPOSIT_RECEIVED", "description": "มัดจำรับ", "amount": 8000 }
+  ]
+}</pre>
+      </div>
+
+      <h3 style="margin-top:24px;margin-bottom:12px">ตัวอย่าง: Batch Import</h3>
+      <div style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:monospace;font-size:12px;overflow-x:auto">
+<pre style="margin:0;white-space:pre">{
+  "customers": [
+    { "name": "ลูกค้า A", "taxId": "0123456789012", "phone": "081-xxx-xxxx" }
+  ],
+  "invoices": [
+    { "externalRef": "INV-001", "customerName": "ลูกค้า A", "documentDate": "2024-04-02",
+      "lines": [{ "itemName": "สินค้า", "quantity": 1, "unitPrice": 1000 }] }
   ]
 }</pre>
       </div>
       <p style="margin-top:16px;color:#f59e0b;font-size:13px">
         หมายเหตุ: category ใน daily-summary ต้องตรงกับ Account Mapping ที่ตั้งค่าไว้ในระบบ
-        (ตั้งค่าได้ที่หน้า Settings > Integration ของแต่ละบริษัท)
+        (ตั้งค่าได้ที่หน้า Settings > เชื่อมต่อระบบ ของแต่ละบริษัท)
       </p>
     </div>
   </div>
@@ -149,7 +179,7 @@ Content-Type: application/json
       // Integrations table
       const tbody = document.getElementById('integrationsBody');
       if (!d.integrations || d.integrations.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มี Integration<br><small>สร้างได้จากหน้า Settings ของแต่ละบริษัท</small></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มี Integration<br><small>สร้างได้จากหน้า Settings > เชื่อมต่อระบบ ของแต่ละบริษัท</small></td></tr>';
       } else {
         tbody.innerHTML = d.integrations.map(i => `
           <tr>

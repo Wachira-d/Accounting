@@ -32,7 +32,7 @@ public class IntegrationService : IIntegrationService
             .Select(i => new IntegrationResponse(
                 i.Id, i.SystemName, i.SystemType, i.SystemVersion, i.BaseUrl,
                 i.ApiKeyPrefix, i.IsActive, i.LastSyncAt, i.TotalSyncCount, i.ErrorCount,
-                i.RateLimitPerMinute, i.CreatedAt))
+                i.RateLimitPerMinute, i.WebhookUrl, i.WebhookEnabled, i.CreatedAt))
             .ToListAsync();
     }
 
@@ -58,7 +58,9 @@ public class IntegrationService : IIntegrationService
             ApiKeyHash = keyHash,
             ApiKeyPrefix = keyPrefix,
             SecretKey = secretKey,
-            RateLimitPerMinute = request.RateLimitPerMinute
+            RateLimitPerMinute = request.RateLimitPerMinute,
+            WebhookUrl = request.WebhookUrl,
+            WebhookEnabled = request.WebhookEnabled
         };
 
         _db.Set<ExternalIntegration>().Add(integration);
@@ -83,13 +85,16 @@ public class IntegrationService : IIntegrationService
         if (request.BaseUrl != null) integration.BaseUrl = request.BaseUrl;
         if (request.IsActive.HasValue) integration.IsActive = request.IsActive.Value;
         if (request.RateLimitPerMinute.HasValue) integration.RateLimitPerMinute = request.RateLimitPerMinute.Value;
+        if (request.WebhookUrl != null) integration.WebhookUrl = request.WebhookUrl;
+        if (request.WebhookEnabled.HasValue) integration.WebhookEnabled = request.WebhookEnabled.Value;
 
         await _db.SaveChangesAsync();
 
         return new IntegrationResponse(
             integration.Id, integration.SystemName, integration.SystemType, integration.SystemVersion,
             integration.BaseUrl, integration.ApiKeyPrefix, integration.IsActive, integration.LastSyncAt,
-            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute, integration.CreatedAt);
+            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute,
+            integration.WebhookUrl, integration.WebhookEnabled, integration.CreatedAt);
     }
 
     public async Task DeleteIntegrationAsync(Guid companyId, Guid integrationId)
@@ -119,7 +124,8 @@ public class IntegrationService : IIntegrationService
         return new IntegrationResponse(
             integration.Id, integration.SystemName, integration.SystemType, integration.SystemVersion,
             integration.BaseUrl, integration.ApiKeyPrefix, integration.IsActive, integration.LastSyncAt,
-            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute, integration.CreatedAt);
+            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute,
+            integration.WebhookUrl, integration.WebhookEnabled, integration.CreatedAt);
     }
 
     // ===== Account Mapping =====
@@ -1010,29 +1016,475 @@ public class IntegrationService : IIntegrationService
             .Select(g => new { Date = g.Key, Count = g.Count(), Total = g.Sum(d => d.TotalAmount) })
             .ToListAsync();
 
-        // Get daily revenue by category from journal entries (hotel accounts 411xx, 412xx, 413xx)
+        // Get daily revenue by account code prefix (generic — works for any industry)
         var journalData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Revenue)
-            .GroupBy(l => new { Date = l.JournalEntry.EntryDate.Date, CodePrefix = l.Account.AccountCode.Substring(0, 3) })
-            .Select(g => new { g.Key.Date, g.Key.CodePrefix, Amount = g.Sum(l => l.CreditAmount - l.DebitAmount) })
+            .GroupBy(l => new { Date = l.JournalEntry.EntryDate.Date, CodePrefix = l.Account.AccountCode.Substring(0, 3), l.Account.AccountName })
+            .Select(g => new { g.Key.Date, g.Key.CodePrefix, g.Key.AccountName, Amount = g.Sum(l => l.CreditAmount - l.DebitAmount) })
             .ToListAsync();
 
         var result = new List<DailyRevenueItem>();
         for (var d = fromDate; d <= toDate; d = d.AddDays(1))
         {
             var inv = invoiceData.FirstOrDefault(x => x.Date == d);
-            var room = journalData.Where(x => x.Date == d && x.CodePrefix == "411").Sum(x => x.Amount);
-            var fnb = journalData.Where(x => x.Date == d && x.CodePrefix == "412").Sum(x => x.Amount);
-            var other = journalData.Where(x => x.Date == d && x.CodePrefix != "411" && x.CodePrefix != "412").Sum(x => x.Amount);
+            var dayCategories = journalData
+                .Where(x => x.Date == d)
+                .GroupBy(x => x.CodePrefix)
+                .Select(g => new DailyRevenueCategoryItem(g.Key, g.First().AccountName, g.Sum(x => x.Amount)))
+                .ToList();
 
-            result.Add(new DailyRevenueItem(d, inv?.Total ?? (room + fnb + other), inv?.Count ?? 0, room, fnb, other));
+            var totalRevenue = dayCategories.Sum(c => c.Amount);
+            result.Add(new DailyRevenueItem(d, inv?.Total ?? totalRevenue, inv?.Count ?? 0, dayCategories));
         }
 
         return result;
+    }
+
+    // ===== New Generic Inbound Processing =====
+
+    public async Task<InboundSyncResponse> ProcessExpenseAsync(Guid companyId, Guid integrationId, InboundExpenseRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "expense.created", request.ExternalId, request.ExternalRef);
+
+        try
+        {
+            // Resolve supplier contact
+            Contact? supplier = null;
+            if (!string.IsNullOrEmpty(request.SupplierTaxId))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
+            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == request.SupplierName && !c.IsDeleted);
+
+            if (supplier == null)
+            {
+                supplier = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
+                    TaxId = request.SupplierTaxId,
+                    IsCustomer = false,
+                    IsActive = true
+                };
+                _db.Set<Contact>().Add(supplier);
+                await _db.SaveChangesAsync();
+            }
+
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense);
+            var vatRate = request.VatRate ?? 7m;
+            var lines = BuildDocumentLines(request.Lines, vatRate);
+            var subTotal = lines.Sum(l => l.Amount);
+            var totalVat = lines.Sum(l => l.VatAmount);
+            var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+
+            var document = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = DocumentType.Expense,
+                Status = DocumentStatus.Approved,
+                DocumentDate = request.DocumentDate,
+                DueDate = request.DueDate ?? request.DocumentDate.AddDays(30),
+                ContactId = supplier.Id,
+                Reference = request.ExternalRef,
+                SubTotal = subTotal,
+                VatAmount = totalVat,
+                TotalAmount = totalAmount,
+                BalanceDue = totalAmount,
+                Notes = request.Notes,
+                Lines = lines
+            };
+
+            _db.Documents.Add(document);
+            await _db.SaveChangesAsync();
+
+            var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
+
+            log.Status = "Success";
+            log.CreatedDocumentId = document.Id;
+            log.CreatedContactId = supplier.Id;
+            log.CreatedJournalEntryId = journalEntryId;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+
+            return new InboundSyncResponse(true, "Expense created", document.Id, supplier.Id, journalEntryId, null, docNumber);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    public async Task<InboundSyncResponse> ProcessProductAsync(Guid companyId, Guid integrationId, InboundProductRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "product.sync", request.ExternalId, request.Code);
+
+        try
+        {
+            // Find existing product by code
+            var product = await _db.Set<Product>()
+                .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Code == request.Code && !p.IsDeleted);
+
+            if (product == null)
+            {
+                product = new Product
+                {
+                    CompanyId = companyId,
+                    Code = request.Code,
+                    Name = request.Name,
+                    Unit = request.Unit ?? "หน่วย",
+                    Price = request.Price ?? 0,
+                    CostPrice = request.CostPrice ?? 0,
+                    IsActive = request.IsActive ?? true
+                };
+                _db.Set<Product>().Add(product);
+            }
+            else
+            {
+                product.Name = request.Name;
+                if (request.Unit != null) product.Unit = request.Unit;
+                if (request.Price.HasValue) product.Price = request.Price.Value;
+                if (request.CostPrice.HasValue) product.CostPrice = request.CostPrice.Value;
+                if (request.IsActive.HasValue) product.IsActive = request.IsActive.Value;
+            }
+
+            await _db.SaveChangesAsync();
+
+            log.Status = "Success";
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+
+            return new InboundSyncResponse(true, "Product synced", null, null, null, null, product.Code);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    public async Task<InboundSyncResponse> ProcessJournalAsync(Guid companyId, Guid integrationId, InboundJournalRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "journal.created", request.ExternalId, request.ExternalRef);
+
+        try
+        {
+            var journalLines = new List<JournalEntryLine>();
+            int lineOrder = 1;
+
+            foreach (var line in request.Lines)
+            {
+                var account = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == line.AccountCode && a.IsActive);
+
+                if (account == null)
+                    throw new KeyNotFoundException($"ไม่พบผังบัญชี: {line.AccountCode}");
+
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = account.Id,
+                    DebitAmount = line.DebitAmount,
+                    CreditAmount = line.CreditAmount,
+                    Description = line.Description ?? request.Description,
+                    LineOrder = lineOrder++
+                });
+            }
+
+            if (journalLines.Sum(l => l.DebitAmount) != journalLines.Sum(l => l.CreditAmount))
+                throw new InvalidOperationException("ยอดเดบิตไม่เท่ากับเครดิต");
+
+            var journalType = request.JournalType?.ToLower() switch
+            {
+                "sales" => JournalType.Sales,
+                "purchase" => JournalType.Purchase,
+                "cashreceipts" or "cash_receipts" => JournalType.CashReceipts,
+                "cashpayments" or "cash_payments" => JournalType.CashPayments,
+                _ => JournalType.General
+            };
+
+            var jeCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+            var je = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = $"JV-INT-{DateTime.UtcNow:yyyyMM}-{(jeCount + 1):D4}",
+                EntryDate = request.EntryDate,
+                JournalType = journalType,
+                Description = request.Description ?? "บันทึกจากระบบภายนอก",
+                Reference = request.ExternalRef,
+                Status = JournalEntryStatus.Posted,
+                IsAutoGenerated = true,
+                TotalDebit = journalLines.Sum(l => l.DebitAmount),
+                TotalCredit = journalLines.Sum(l => l.CreditAmount),
+                Lines = journalLines
+            };
+
+            _db.JournalEntries.Add(je);
+            await _db.SaveChangesAsync();
+
+            log.Status = "Success";
+            log.CreatedJournalEntryId = je.Id;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+
+            return new InboundSyncResponse(true, "Journal entry created", null, null, je.Id, null, je.EntryNumber);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    public async Task<InboundBatchResponse> ProcessBatchAsync(Guid companyId, Guid integrationId, InboundBatchRequest request)
+    {
+        var results = new List<BatchResultItem>();
+        int success = 0, errors = 0;
+
+        // Process customers
+        if (request.Customers != null)
+        {
+            foreach (var c in request.Customers)
+            {
+                var r = await ProcessCustomerAsync(companyId, integrationId, c);
+                results.Add(new BatchResultItem("Customer", c.Name, r.Success, r.Message, r.ContactId, null));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        // Process invoices
+        if (request.Invoices != null)
+        {
+            foreach (var inv in request.Invoices)
+            {
+                var r = await ProcessInvoiceAsync(companyId, integrationId, inv);
+                results.Add(new BatchResultItem("Invoice", inv.ExternalRef, r.Success, r.Message, r.DocumentId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        // Process payments
+        if (request.Payments != null)
+        {
+            foreach (var p in request.Payments)
+            {
+                var r = await ProcessPaymentAsync(companyId, integrationId, p);
+                results.Add(new BatchResultItem("Payment", p.ExternalRef, r.Success, r.Message, r.PaymentId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        // Process expenses
+        if (request.Expenses != null)
+        {
+            foreach (var e in request.Expenses)
+            {
+                var r = await ProcessExpenseAsync(companyId, integrationId, e);
+                results.Add(new BatchResultItem("Expense", e.ExternalRef, r.Success, r.Message, r.DocumentId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        // Process products
+        if (request.Products != null)
+        {
+            foreach (var p in request.Products)
+            {
+                var r = await ProcessProductAsync(companyId, integrationId, p);
+                results.Add(new BatchResultItem("Product", p.Code, r.Success, r.Message, null, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        // Process journals
+        if (request.Journals != null)
+        {
+            foreach (var j in request.Journals)
+            {
+                var r = await ProcessJournalAsync(companyId, integrationId, j);
+                results.Add(new BatchResultItem("Journal", j.ExternalRef, r.Success, r.Message, r.JournalEntryId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        return new InboundBatchResponse(success + errors, success, errors, results);
+    }
+
+    // ===== Outbound Data (external systems read FROM Next Acc) =====
+
+    public async Task<OutboundPagedResponse<OutboundDocumentResponse>> GetDocumentsForExternalAsync(Guid companyId, OutboundQueryParams query)
+    {
+        var q = _db.Documents
+            .Include(d => d.Contact)
+            .Include(d => d.Lines)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted);
+
+        if (query.FromDate.HasValue) q = q.Where(d => d.DocumentDate >= query.FromDate.Value);
+        if (query.ToDate.HasValue) q = q.Where(d => d.DocumentDate <= query.ToDate.Value);
+        if (!string.IsNullOrEmpty(query.Status) && Enum.TryParse<DocumentStatus>(query.Status, true, out var status))
+            q = q.Where(d => d.Status == status);
+        if (!string.IsNullOrEmpty(query.Type) && Enum.TryParse<DocumentType>(query.Type, true, out var docType))
+            q = q.Where(d => d.DocumentType == docType);
+
+        var total = await q.CountAsync();
+        var items = await q
+            .OrderByDescending(d => d.DocumentDate)
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(d => new OutboundDocumentResponse(
+                d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.Status.ToString(),
+                d.DocumentDate, d.DueDate,
+                d.Contact != null ? d.Contact.Name : null, d.Contact != null ? d.Contact.TaxId : null,
+                d.SubTotal, d.VatAmount, d.TotalAmount, d.PaidAmount, d.BalanceDue,
+                d.Reference, d.Notes,
+                d.Lines.Select(l => new OutboundDocumentLineResponse(
+                    l.ProductCode, l.Description, l.Quantity, l.Unit, l.UnitPrice,
+                    l.DiscountAmount, l.Amount, l.VatRate, l.VatAmount)).ToList(),
+                d.CreatedAt))
+            .ToListAsync();
+
+        var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
+        return new OutboundPagedResponse<OutboundDocumentResponse>(items, total, query.Page, query.PageSize, totalPages);
+    }
+
+    public async Task<OutboundPagedResponse<OutboundContactResponse>> GetContactsForExternalAsync(Guid companyId, OutboundQueryParams query)
+    {
+        var q = _db.Set<Contact>()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted);
+
+        if (!string.IsNullOrEmpty(query.Type))
+        {
+            if (query.Type.Equals("customer", StringComparison.OrdinalIgnoreCase))
+                q = q.Where(c => c.IsCustomer);
+            else if (query.Type.Equals("supplier", StringComparison.OrdinalIgnoreCase))
+                q = q.Where(c => !c.IsCustomer);
+        }
+
+        var total = await q.CountAsync();
+        var items = await q
+            .OrderBy(c => c.Name)
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(c => new OutboundContactResponse(
+                c.Id, c.Name, c.TaxId, c.BranchCode,
+                c.ContactType.ToString(), c.IsCustomer, false,
+                c.Address, c.Phone, c.Email, c.CreatedAt))
+            .ToListAsync();
+
+        var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
+        return new OutboundPagedResponse<OutboundContactResponse>(items, total, query.Page, query.PageSize, totalPages);
+    }
+
+    public async Task<OutboundPagedResponse<OutboundPaymentResponse>> GetPaymentsForExternalAsync(Guid companyId, OutboundQueryParams query)
+    {
+        var q = _db.Set<Payment>()
+            .Include(p => p.Document)
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted);
+
+        if (query.FromDate.HasValue) q = q.Where(p => p.PaymentDate >= query.FromDate.Value);
+        if (query.ToDate.HasValue) q = q.Where(p => p.PaymentDate <= query.ToDate.Value);
+
+        var total = await q.CountAsync();
+        var items = await q
+            .OrderByDescending(p => p.PaymentDate)
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(p => new OutboundPaymentResponse(
+                p.Id, p.PaymentNumber, p.DocumentId, p.Document != null ? p.Document.DocumentNumber : null,
+                p.PaymentDate, p.Amount, p.PaymentMethod.ToString(),
+                p.Reference, p.Notes, p.CreatedAt))
+            .ToListAsync();
+
+        var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
+        return new OutboundPagedResponse<OutboundPaymentResponse>(items, total, query.Page, query.PageSize, totalPages);
+    }
+
+    public async Task<List<OutboundAccountBalanceResponse>> GetAccountBalancesForExternalAsync(Guid companyId)
+    {
+        return await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
+            .Select(a => new OutboundAccountBalanceResponse(
+                a.AccountCode, a.AccountName, a.AccountType.ToString(),
+                _db.JournalEntryLines
+                    .Where(l => l.AccountId == a.Id && l.JournalEntry.Status == JournalEntryStatus.Posted)
+                    .Sum(l => l.DebitAmount),
+                _db.JournalEntryLines
+                    .Where(l => l.AccountId == a.Id && l.JournalEntry.Status == JournalEntryStatus.Posted)
+                    .Sum(l => l.CreditAmount),
+                _db.JournalEntryLines
+                    .Where(l => l.AccountId == a.Id && l.JournalEntry.Status == JournalEntryStatus.Posted)
+                    .Sum(l => l.DebitAmount - l.CreditAmount)))
+            .OrderBy(a => a.AccountCode)
+            .ToListAsync();
+    }
+
+    // ===== Mapping Templates =====
+
+    public List<MappingTemplateResponse> GetMappingTemplates()
+    {
+        return new List<MappingTemplateResponse>
+        {
+            new("hotel", "โรงแรม / ที่พัก", new List<MappingTemplateItem>
+            {
+                new("ROOM_REVENUE", "รายได้ค่าห้องพัก", "113", "411"),
+                new("F&B_REVENUE", "รายได้อาหาร/เครื่องดื่ม", "113", "412"),
+                new("SPA_REVENUE", "รายได้สปา", "113", "413"),
+                new("LAUNDRY_REVENUE", "รายได้ซักรีด", "113", "414"),
+                new("DEPOSIT_RECEIVED", "มัดจำรับ", "111", "215"),
+                new("MINIBAR_REVENUE", "รายได้มินิบาร์", "113", "412"),
+                new("TRANSPORT_REVENUE", "รายได้รถรับส่ง", "113", "419")
+            }),
+            new("restaurant", "ร้านอาหาร / คาเฟ่", new List<MappingTemplateItem>
+            {
+                new("FOOD_REVENUE", "รายได้อาหาร", "111", "411"),
+                new("BEVERAGE_REVENUE", "รายได้เครื่องดื่ม", "111", "412"),
+                new("DELIVERY_REVENUE", "รายได้เดลิเวอรี่", "113", "413"),
+                new("SERVICE_CHARGE", "ค่าบริการ", "111", "419"),
+                new("TIPS", "ทิปส์", "111", "419")
+            }),
+            new("retail", "ร้านค้าปลีก", new List<MappingTemplateItem>
+            {
+                new("PRODUCT_SALES", "รายได้ขายสินค้า", "113", "411"),
+                new("SHIPPING_INCOME", "รายได้ค่าส่ง", "111", "419"),
+                new("REFUND", "คืนเงิน", "411", "113"),
+                new("DISCOUNT", "ส่วนลด", "411", "113")
+            }),
+            new("ecommerce", "E-Commerce / ออนไลน์", new List<MappingTemplateItem>
+            {
+                new("PRODUCT_SALES", "รายได้ขายสินค้า", "113", "411"),
+                new("SHIPPING_INCOME", "รายได้ค่าจัดส่ง", "111", "419"),
+                new("PLATFORM_FEE", "ค่าธรรมเนียมแพลตฟอร์ม", "519", "112"),
+                new("REFUND", "คืนเงิน", "411", "113"),
+                new("COD_RECEIVED", "รับเงิน COD", "111", "113")
+            }),
+            new("service", "ธุรกิจบริการ", new List<MappingTemplateItem>
+            {
+                new("SERVICE_REVENUE", "รายได้ค่าบริการ", "113", "411"),
+                new("CONSULTING_FEE", "รายได้ที่ปรึกษา", "113", "411"),
+                new("RETAINER_FEE", "ค่ารักษาสิทธิ์", "113", "411"),
+                new("DEPOSIT_RECEIVED", "มัดจำรับ", "111", "215"),
+                new("EXPENSE_REIMBURSEMENT", "เบิกคืนค่าใช้จ่าย", "113", "419")
+            }),
+            new("clinic", "คลินิก / โรงพยาบาล", new List<MappingTemplateItem>
+            {
+                new("TREATMENT_REVENUE", "รายได้ค่ารักษา", "113", "411"),
+                new("MEDICINE_REVENUE", "รายได้ค่ายา", "113", "412"),
+                new("LAB_REVENUE", "รายได้ค่าแล็บ", "113", "413"),
+                new("MEDICAL_SUPPLY", "เวชภัณฑ์", "113", "414"),
+                new("DEPOSIT_RECEIVED", "มัดจำรับ", "111", "215")
+            }),
+            new("general", "ทั่วไป", new List<MappingTemplateItem>
+            {
+                new("REVENUE", "รายได้", "113", "411"),
+                new("EXPENSE", "ค่าใช้จ่าย", "511", "112"),
+                new("PAYMENT_RECEIVED", "รับชำระเงิน", "111", "113"),
+                new("PAYMENT_MADE", "จ่ายชำระเงิน", "211", "112"),
+                new("DEPOSIT_RECEIVED", "มัดจำรับ", "111", "215")
+            })
+        };
     }
 
     private static ContactType ParseContactType(string? type) => type?.ToLower() switch

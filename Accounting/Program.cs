@@ -589,6 +589,7 @@ app.MapFallbackToFile("index.html");
                       ""ErrorCount"" integer NOT NULL DEFAULT 0, ""ConsecutiveErrors"" integer NOT NULL DEFAULT 0,
                       ""MappingConfigJson"" jsonb NULL, ""SettingsJson"" jsonb NULL,
                       ""RateLimitPerMinute"" integer NOT NULL DEFAULT 60,
+                      ""WebhookUrl"" text NULL, ""WebhookEnabled"" boolean NOT NULL DEFAULT false,
                       ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
                       ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
                       CONSTRAINT ""PK_ExternalIntegrations"" PRIMARY KEY (""Id""),
@@ -622,7 +623,13 @@ app.MapFallbackToFile("index.html");
                       CONSTRAINT ""PK_IntegrationAccountMappings"" PRIMARY KEY (""Id""),
                       CONSTRAINT ""FK_IntegrationAccountMappings_ExternalIntegrations"" FOREIGN KEY (""IntegrationId"") REFERENCES ""ExternalIntegrations""(""Id""),
                       CONSTRAINT ""FK_IntegrationAccountMappings_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
-                  );"
+                  );",
+                // Add webhook columns to ExternalIntegrations (safe for existing DBs)
+                @"DO $$ BEGIN
+                    ALTER TABLE ""ExternalIntegrations"" ADD COLUMN IF NOT EXISTS ""WebhookUrl"" text NULL;
+                    ALTER TABLE ""ExternalIntegrations"" ADD COLUMN IF NOT EXISTS ""WebhookEnabled"" boolean NOT NULL DEFAULT false;
+                  EXCEPTION WHEN others THEN NULL;
+                  END $$;"
             };
             foreach (var sql in rawSqlStatements)
             {
