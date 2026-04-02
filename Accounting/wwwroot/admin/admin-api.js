@@ -75,4 +75,8 @@ const AdminAPI = {
   processExpiredTrials() { return this.post('/trial/process-expired'); },
   processExpiredSubs() { return this.post('/subscription/process-expired'); },
   processNotifications() { return this.post('/subscription/process-notifications'); },
+
+  // Site Settings
+  siteSettings() { return this.get('/site-settings'); },
+  updateSiteSettings(data) { return this.put('/site-settings', data); },
 };

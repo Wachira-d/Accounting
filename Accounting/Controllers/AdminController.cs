@@ -1,12 +1,15 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Settings;
 using Accounting.Models.DTOs.Subscription;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Helpers;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace Accounting.Controllers;
 
@@ -503,6 +506,100 @@ public class AdminController : ControllerBase
     {
         await _recurringService.ProcessDueRecurringTransactionsAsync();
         return Ok(new ApiResponse<string>(true, null, "ประมวลผลรายการที่เกิดซ้ำสำเร็จ"));
+    }
+
+    // ===== Site Settings (Global) =====
+
+    [HttpGet("site-settings")]
+    public async Task<ActionResult<ApiResponse<SiteSettingsResponse>>> GetSiteSettings()
+    {
+        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (settings == null)
+            return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
+                null, null, null, null, new List<LandingServiceItem>(),
+                null, null, null, null, null, null, null, null)));
+
+        var services = DeserializeServices(settings.ServicesJson);
+        return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
+            settings.Id, settings.SiteName, settings.SiteDescription, settings.SiteLogoUrl,
+            services, settings.ContactPhone, settings.ContactLine, settings.ContactEmail,
+            settings.PricingSectionTitle, settings.PricingSectionSubtitle,
+            settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl)));
+    }
+
+    [HttpPut("site-settings")]
+    public async Task<ActionResult<ApiResponse<SiteSettingsResponse>>> UpdateSiteSettings([FromBody] UpdateSiteSettingsRequest request)
+    {
+        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (settings == null)
+        {
+            settings = new SiteSettings();
+            _db.SiteSettings.Add(settings);
+        }
+
+        settings.SiteName = request.SiteName;
+        settings.SiteDescription = request.SiteDescription;
+        settings.SiteLogoUrl = request.SiteLogoUrl;
+        settings.ContactPhone = request.ContactPhone;
+        settings.ContactLine = request.ContactLine;
+        settings.ContactEmail = request.ContactEmail;
+        settings.PricingSectionTitle = request.PricingSectionTitle;
+        settings.PricingSectionSubtitle = request.PricingSectionSubtitle;
+        settings.FacebookUrl = request.FacebookUrl;
+        settings.LineOfficialUrl = request.LineOfficialUrl;
+        settings.WebsiteUrl = request.WebsiteUrl;
+
+        if (request.Services != null)
+        {
+            settings.ServicesJson = JsonSerializer.Serialize(request.Services,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        }
+
+        settings.UpdatedAt = DateTime.UtcNow;
+        settings.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+
+        var services = DeserializeServices(settings.ServicesJson);
+        return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
+            settings.Id, settings.SiteName, settings.SiteDescription, settings.SiteLogoUrl,
+            services, settings.ContactPhone, settings.ContactLine, settings.ContactEmail,
+            settings.PricingSectionTitle, settings.PricingSectionSubtitle,
+            settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl),
+            "บันทึกการตั้งค่าสำเร็จ"));
+    }
+
+    // Public endpoint for landing page
+    [HttpGet("/api/site/landing")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<LandingPageResponse>>> GetLandingPage()
+    {
+        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
+
+        var services = DeserializeServices(settings?.ServicesJson);
+
+        // Also get active plans for pricing section
+        var plans = await _db.PlanTemplates
+            .Where(p => p.IsActive)
+            .OrderBy(p => p.MonthlyPrice)
+            .ToListAsync();
+
+        return Ok(new ApiResponse<LandingPageResponse>(true, new LandingPageResponse(
+            settings?.SiteName, settings?.SiteDescription, settings?.SiteLogoUrl,
+            settings?.ContactPhone, settings?.ContactLine, settings?.ContactEmail,
+            services,
+            settings?.PricingSectionTitle, settings?.PricingSectionSubtitle,
+            settings?.FacebookUrl, settings?.LineOfficialUrl, settings?.WebsiteUrl)));
+    }
+
+    private static List<LandingServiceItem> DeserializeServices(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return new List<LandingServiceItem>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<LandingServiceItem>>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+        }
+        catch { return new(); }
     }
 }
 

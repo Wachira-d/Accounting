@@ -118,6 +118,50 @@ public record LandingServiceItem(
     string? PriceLabel,
     List<string>? Features);
 
+// ===== Site Settings (Global Admin) =====
+public record SiteSettingsResponse(
+    Guid? Id,
+    string? SiteName,
+    string? SiteDescription,
+    string? SiteLogoUrl,
+    List<LandingServiceItem> Services,
+    string? ContactPhone,
+    string? ContactLine,
+    string? ContactEmail,
+    string? PricingSectionTitle,
+    string? PricingSectionSubtitle,
+    string? FacebookUrl,
+    string? LineOfficialUrl,
+    string? WebsiteUrl);
+
+public record UpdateSiteSettingsRequest(
+    string? SiteName,
+    string? SiteDescription,
+    string? SiteLogoUrl,
+    List<LandingServiceItem>? Services,
+    string? ContactPhone,
+    string? ContactLine,
+    string? ContactEmail,
+    string? PricingSectionTitle,
+    string? PricingSectionSubtitle,
+    string? FacebookUrl,
+    string? LineOfficialUrl,
+    string? WebsiteUrl);
+
+public record LandingPageResponse(
+    string? SiteName,
+    string? SiteDescription,
+    string? SiteLogoUrl,
+    string? ContactPhone,
+    string? ContactLine,
+    string? ContactEmail,
+    List<LandingServiceItem> Services,
+    string? PricingSectionTitle,
+    string? PricingSectionSubtitle,
+    string? FacebookUrl,
+    string? LineOfficialUrl,
+    string? WebsiteUrl);
+
 // ===== Number Series =====
 public record CreateNumberSeriesRequest(
     DocumentType DocumentType,
