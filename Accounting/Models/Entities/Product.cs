@@ -34,6 +34,12 @@ public class Product : TenantEntity
     public Guid? InventoryAccountId { get; set; }
     public ChartOfAccount? InventoryAccount { get; set; }
 
+    // Supplies-specific account mapping (วัสดุสิ้นเปลือง)
+    public Guid? SuppliesAccountId { get; set; }        // บัญชีวัสดุสิ้นเปลือง (118xx)
+    public ChartOfAccount? SuppliesAccount { get; set; }
+    public Guid? SuppliesExpenseAccountId { get; set; }  // บัญชีค่าวัสดุสิ้นเปลือง (5xxxxx)
+    public ChartOfAccount? SuppliesExpenseAccount { get; set; }
+
     // Stock (สำหรับ ProductType = Product)
     public decimal CurrentStock { get; set; }
     public decimal MinimumStock { get; set; }
@@ -140,4 +146,23 @@ public class InventorySnapshotLine : TenantEntity
     public decimal Quantity { get; set; }
     public decimal UnitCost { get; set; }
     public decimal TotalValue { get; set; }
+}
+
+/// <summary>
+/// บันทึกการเบิกใช้วัสดุสิ้นเปลือง (Supplies Usage Log)
+/// ทุกครั้งที่เบิก → Dr ค่าวัสดุสิ้นเปลือง (5xxxxx) / Cr วัสดุสิ้นเปลือง (118xx)
+/// </summary>
+public class SuppliesUsageLog : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public DateTime UsageDate { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+    public decimal TotalCost { get; set; }
+    public string? Department { get; set; }      // แผนก/ห้องที่เบิก
+    public string? Purpose { get; set; }         // วัตถุประสงค์
+    public string? Reference { get; set; }       // เลขที่อ้างอิง
+    public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
 }

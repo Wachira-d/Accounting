@@ -240,4 +240,41 @@ public class ProductController : ControllerBase
         var result = await _productService.GetStockMovementSummaryAsync(companyId, request);
         return Ok(new ApiResponse<StockMovementSummaryReport>(true, result));
     }
+
+    // ===== Supplies (วัสดุสิ้นเปลือง) =====
+
+    [HttpPost("supplies/use")]
+    public async Task<ActionResult<ApiResponse<SuppliesUsageResponse>>> UseSupplies(
+        Guid companyId, [FromBody] SuppliesUsageRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _productService.UseSuppliesAsync(companyId, request, userId);
+        return Ok(new ApiResponse<SuppliesUsageResponse>(true, result, "เบิกใช้วัสดุสำเร็จ"));
+    }
+
+    [HttpGet("{productId:guid}/supplies/usage")]
+    public async Task<ActionResult<ApiResponse<List<SuppliesUsageResponse>>>> GetSuppliesUsageHistory(
+        Guid companyId, Guid productId)
+    {
+        var result = await _productService.GetSuppliesUsageHistoryAsync(companyId, productId);
+        return Ok(new ApiResponse<List<SuppliesUsageResponse>>(true, result));
+    }
+
+    [HttpGet("supplies/usage-summary")]
+    public async Task<ActionResult<ApiResponse<SuppliesUsageSummaryReport>>> GetSuppliesUsageSummary(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] string? department, [FromQuery] string? category, [FromQuery] Guid? productId)
+    {
+        var request = new SuppliesUsageSummaryRequest(fromDate, toDate, department, category, productId);
+        var result = await _productService.GetSuppliesUsageSummaryAsync(companyId, request);
+        return Ok(new ApiResponse<SuppliesUsageSummaryReport>(true, result));
+    }
+
+    [HttpGet("supplies/balance")]
+    public async Task<ActionResult<ApiResponse<SuppliesBalanceReport>>> GetSuppliesBalance(
+        Guid companyId, [FromQuery] string? category)
+    {
+        var result = await _productService.GetSuppliesBalanceAsync(companyId, category);
+        return Ok(new ApiResponse<SuppliesBalanceReport>(true, result));
+    }
 }

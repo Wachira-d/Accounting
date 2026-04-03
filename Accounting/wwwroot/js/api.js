@@ -146,6 +146,11 @@ const API = {
       createInventorySnapshot: (d) => API.post(`${base}/product/inventory/snapshots`, d),
       getInventorySnapshots: () => API.get(`${base}/product/inventory/snapshots`),
       getInventorySnapshotDetail: (id) => API.get(`${base}/product/inventory/snapshots/${id}`),
+      // Supplies (วัสดุสิ้นเปลือง)
+      useSupplies: (d) => API.post(`${base}/product/supplies/use`, d),
+      getSuppliesUsageHistory: (productId) => API.get(`${base}/product/${productId}/supplies/usage`),
+      getSuppliesUsageSummary: (q) => API.get(`${base}/product/supplies/usage-summary${q}`),
+      getSuppliesBalance: (q = '') => API.get(`${base}/product/supplies/balance${q}`),
       // Bank
       getBankAccounts: () => API.get(`${base}/bank/accounts`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),

@@ -666,6 +666,32 @@ app.MapFallbackToFile("index.html");
                       CONSTRAINT ""FK_InventorySnapshotLines_Snapshots"" FOREIGN KEY (""SnapshotId"") REFERENCES ""InventorySnapshots""(""Id""),
                       CONSTRAINT ""FK_InventorySnapshotLines_Products"" FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""Id""),
                       CONSTRAINT ""FK_InventorySnapshotLines_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );",
+                // Supplies columns on Products
+                @"DO $$ BEGIN
+                    ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""SuppliesAccountId"" uuid NULL;
+                    ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""SuppliesExpenseAccountId"" uuid NULL;
+                  END $$;",
+                // Supplies Usage Log (วัสดุสิ้นเปลือง - บันทึกการเบิกใช้)
+                @"CREATE TABLE IF NOT EXISTS ""SuppliesUsageLogs"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""ProductId"" uuid NOT NULL,
+                      ""UsageDate"" timestamp NOT NULL DEFAULT now(),
+                      ""Quantity"" decimal(18,4) NOT NULL,
+                      ""UnitCost"" decimal(18,4) NOT NULL,
+                      ""TotalCost"" decimal(18,2) NOT NULL,
+                      ""Department"" varchar(200) NULL,
+                      ""Purpose"" text NULL,
+                      ""Reference"" varchar(100) NULL,
+                      ""JournalEntryId"" uuid NULL,
+                      ""CompanyId"" uuid NOT NULL,
+                      ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL,
+                      ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_SuppliesUsageLogs"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_SuppliesUsageLogs_Products"" FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""Id""),
+                      CONSTRAINT ""FK_SuppliesUsageLogs_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                      CONSTRAINT ""FK_SuppliesUsageLogs_JournalEntries"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
                   );"
             };
             foreach (var sql in rawSqlStatements)

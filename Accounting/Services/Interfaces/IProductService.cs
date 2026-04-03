@@ -50,4 +50,10 @@ public interface IProductService
 
     // Stock Movement Summary (สรุปเคลื่อนไหวสินค้า)
     Task<StockMovementSummaryReport> GetStockMovementSummaryAsync(Guid companyId, StockMovementSummaryRequest request);
+
+    // Supplies (วัสดุสิ้นเปลือง)
+    Task<SuppliesUsageResponse> UseSuppliesAsync(Guid companyId, SuppliesUsageRequest request, string userId);
+    Task<List<SuppliesUsageResponse>> GetSuppliesUsageHistoryAsync(Guid companyId, Guid productId);
+    Task<SuppliesUsageSummaryReport> GetSuppliesUsageSummaryAsync(Guid companyId, SuppliesUsageSummaryRequest request);
+    Task<SuppliesBalanceReport> GetSuppliesBalanceAsync(Guid companyId, string? category);
 }

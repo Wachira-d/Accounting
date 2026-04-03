@@ -49,6 +49,7 @@ public class AccountingDbContext : DbContext
     public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
     public DbSet<InventorySnapshot> InventorySnapshots => Set<InventorySnapshot>();
     public DbSet<InventorySnapshotLine> InventorySnapshotLines => Set<InventorySnapshotLine>();
+    public DbSet<SuppliesUsageLog> SuppliesUsageLogs => Set<SuppliesUsageLog>();
 
     // Bank
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();

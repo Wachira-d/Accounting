@@ -42,7 +42,9 @@ public class ProductService : IProductService
             IsVatIncluded = request.IsVatIncluded,
             SalesAccountId = request.SalesAccountId,
             PurchaseAccountId = request.PurchaseAccountId,
-            TrackStock = request.TrackStock,
+            SuppliesAccountId = request.SuppliesAccountId,
+            SuppliesExpenseAccountId = request.SuppliesExpenseAccountId,
+            TrackStock = request.TrackStock || request.ProductType == ProductType.Supplies,
             MinimumStock = request.MinimumStock
         };
 
@@ -803,6 +805,234 @@ public class ProductService : IProductService
         return new StockMovementSummaryReport(
             request.FromDate, request.ToDate, items,
             totalOpeningValue, totalClosingValue, totalCOGS);
+    }
+
+    // ===== SUPPLIES (วัสดุสิ้นเปลือง) =====
+
+    public async Task<SuppliesUsageResponse> UseSuppliesAsync(Guid companyId, SuppliesUsageRequest request, string userId)
+    {
+        var product = await _db.Products
+            .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.CompanyId == companyId && p.ProductType == ProductType.Supplies)
+            ?? throw new KeyNotFoundException("ไม่พบวัสดุสิ้นเปลือง หรือสินค้าไม่ใช่ประเภทวัสดุสิ้นเปลือง");
+
+        if (request.Quantity <= 0)
+            throw new ArgumentException("จำนวนที่เบิกต้องมากกว่า 0");
+
+        if (product.CurrentStock < request.Quantity)
+            throw new InvalidOperationException($"วัสดุคงเหลือไม่เพียงพอ (คงเหลือ: {product.CurrentStock} {product.Unit})");
+
+        // Calculate weighted average cost
+        var inMovements = await _db.StockMovements
+            .Where(m => m.ProductId == product.Id && m.MovementType == "IN" && !m.IsDeleted)
+            .ToListAsync();
+        var totalCost = inMovements.Sum(m => m.Quantity * m.UnitCost);
+        var totalQty = inMovements.Sum(m => m.Quantity);
+        var avgCost = totalQty > 0 ? totalCost / totalQty : product.CostPrice;
+
+        var usageCost = request.Quantity * avgCost;
+
+        // Deduct stock
+        product.CurrentStock -= request.Quantity;
+
+        // Create stock movement
+        _db.StockMovements.Add(new StockMovement
+        {
+            CompanyId = companyId,
+            ProductId = product.Id,
+            MovementDate = DateTime.UtcNow,
+            MovementType = "OUT",
+            Quantity = request.Quantity,
+            UnitCost = avgCost,
+            BalanceAfter = product.CurrentStock,
+            Reference = request.Reference,
+            Notes = $"เบิกใช้วัสดุ: {request.Purpose ?? "-"} แผนก: {request.Department ?? "-"}",
+            CreatedBy = userId
+        });
+
+        // Create usage log
+        var usage = new SuppliesUsageLog
+        {
+            CompanyId = companyId,
+            ProductId = product.Id,
+            UsageDate = DateTime.UtcNow,
+            Quantity = request.Quantity,
+            UnitCost = avgCost,
+            TotalCost = usageCost,
+            Department = request.Department,
+            Purpose = request.Purpose,
+            Reference = request.Reference,
+            CreatedBy = userId
+        };
+
+        // Auto journal: Dr ค่าวัสดุสิ้นเปลือง (5xxxxx) / Cr วัสดุสิ้นเปลือง (118xx)
+        if (request.AutoCreateJournal && usageCost > 0)
+        {
+            var suppliesAccount = product.SuppliesAccountId.HasValue
+                ? await _db.ChartOfAccounts.FindAsync(product.SuppliesAccountId.Value)
+                : await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.AccountCode.StartsWith("118") && a.IsActive);
+
+            var expenseAccount = product.SuppliesExpenseAccountId.HasValue
+                ? await _db.ChartOfAccounts.FindAsync(product.SuppliesExpenseAccountId.Value)
+                : await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.AccountCode.StartsWith("5") && a.IsActive
+                    && (a.AccountCode.StartsWith("524") || a.AccountCode.StartsWith("531") || a.AccountCode.StartsWith("520")));
+
+            if (suppliesAccount != null && expenseAccount != null)
+            {
+                var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+                var pattern = $"JV-{yearMonth}-";
+                var lastJe = await _db.JournalEntries
+                    .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
+                    .OrderByDescending(j => j.EntryNumber)
+                    .Select(j => j.EntryNumber)
+                    .FirstOrDefaultAsync();
+                int nextSeq = 1;
+                if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
+                    nextSeq = lastNum + 1;
+
+                var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+                    f.CompanyId == companyId && f.StartDate <= DateTime.UtcNow
+                    && f.EndDate >= DateTime.UtcNow && f.Status == FiscalPeriodStatus.Open);
+
+                var je = new JournalEntry
+                {
+                    CompanyId = companyId,
+                    EntryNumber = $"{pattern}{nextSeq:D4}",
+                    EntryDate = DateTime.UtcNow,
+                    JournalType = JournalType.General,
+                    Description = $"เบิกใช้วัสดุ: {product.Name} จำนวน {request.Quantity} {product.Unit} ({request.Department ?? "ทั่วไป"})",
+                    Reference = request.Reference ?? $"SUP-USE-{DateTime.UtcNow:yyyyMMddHHmmss}",
+                    Status = JournalEntryStatus.Posted,
+                    IsAutoGenerated = true,
+                    FiscalPeriodId = fiscalPeriod?.Id,
+                    TotalDebit = usageCost,
+                    TotalCredit = usageCost,
+                    Lines = new List<JournalEntryLine>
+                    {
+                        new() { AccountId = expenseAccount.Id, DebitAmount = usageCost, Description = $"ค่าวัสดุสิ้นเปลือง - {product.Name}", LineOrder = 1 },
+                        new() { AccountId = suppliesAccount.Id, CreditAmount = usageCost, Description = $"เบิกวัสดุ - {product.Name}", LineOrder = 2 }
+                    }
+                };
+
+                _db.JournalEntries.Add(je);
+                await _db.SaveChangesAsync();
+                usage.JournalEntryId = je.Id;
+            }
+        }
+
+        _db.Set<SuppliesUsageLog>().Add(usage);
+        await _db.SaveChangesAsync();
+
+        return new SuppliesUsageResponse(
+            usage.Id, usage.ProductId, product.Code, product.Name, product.Unit,
+            usage.UsageDate, usage.Quantity, usage.UnitCost, usage.TotalCost,
+            usage.Department, usage.Purpose, usage.Reference, usage.JournalEntryId);
+    }
+
+    public async Task<List<SuppliesUsageResponse>> GetSuppliesUsageHistoryAsync(Guid companyId, Guid productId)
+    {
+        return await _db.Set<SuppliesUsageLog>()
+            .Include(u => u.Product)
+            .Where(u => u.CompanyId == companyId && u.ProductId == productId && !u.IsDeleted)
+            .OrderByDescending(u => u.UsageDate)
+            .Select(u => new SuppliesUsageResponse(
+                u.Id, u.ProductId, u.Product.Code, u.Product.Name, u.Product.Unit,
+                u.UsageDate, u.Quantity, u.UnitCost, u.TotalCost,
+                u.Department, u.Purpose, u.Reference, u.JournalEntryId))
+            .ToListAsync();
+    }
+
+    public async Task<SuppliesUsageSummaryReport> GetSuppliesUsageSummaryAsync(
+        Guid companyId, SuppliesUsageSummaryRequest request)
+    {
+        var fromDate = request.FromDate.Date;
+        var toDate = request.ToDate.Date.AddDays(1);
+
+        var query = _db.Set<SuppliesUsageLog>()
+            .Include(u => u.Product)
+            .Where(u => u.CompanyId == companyId && !u.IsDeleted
+                && u.UsageDate >= fromDate && u.UsageDate < toDate);
+
+        if (!string.IsNullOrEmpty(request.Department))
+            query = query.Where(u => u.Department == request.Department);
+        if (!string.IsNullOrEmpty(request.Category))
+            query = query.Where(u => u.Product.Category == request.Category);
+        if (request.ProductId.HasValue)
+            query = query.Where(u => u.ProductId == request.ProductId.Value);
+
+        var rawData = await query.Select(u => new
+        {
+            u.ProductId, ProductCode = u.Product.Code, ProductName = u.Product.Name,
+            Unit = u.Product.Unit, Category = u.Product.Category,
+            u.Department, u.Quantity, u.TotalCost
+        }).ToListAsync();
+
+        var items = rawData
+            .GroupBy(u => new { u.ProductId, u.ProductCode, u.ProductName, u.Unit, u.Category, u.Department })
+            .Select(g => new SuppliesUsageSummaryItem(
+                g.Key.ProductId, g.Key.ProductCode, g.Key.ProductName,
+                g.Key.Unit, g.Key.Category, g.Key.Department ?? "ไม่ระบุ",
+                g.Sum(x => x.Quantity), g.Sum(x => x.TotalCost)))
+            .OrderByDescending(i => i.TotalCost)
+            .ToList();
+
+        var grandTotal = items.Sum(i => i.TotalCost);
+
+        var byDept = items
+            .GroupBy(i => i.Department ?? "ไม่ระบุ")
+            .Select(g => new SuppliesUsageByDepartment(
+                g.Key, g.Sum(i => i.TotalCost),
+                grandTotal > 0 ? Math.Round(g.Sum(i => i.TotalCost) / grandTotal * 100, 2) : 0))
+            .OrderByDescending(d => d.TotalCost)
+            .ToList();
+
+        var byCat = items
+            .GroupBy(i => i.Category ?? "ไม่ระบุ")
+            .Select(g => new SuppliesUsageByCategory(
+                g.Key, g.Sum(i => i.TotalCost),
+                grandTotal > 0 ? Math.Round(g.Sum(i => i.TotalCost) / grandTotal * 100, 2) : 0))
+            .OrderByDescending(c => c.TotalCost)
+            .ToList();
+
+        return new SuppliesUsageSummaryReport(
+            request.FromDate, request.ToDate, items, grandTotal, byDept, byCat);
+    }
+
+    public async Task<SuppliesBalanceReport> GetSuppliesBalanceAsync(Guid companyId, string? category)
+    {
+        var query = _db.Products
+            .Where(p => p.CompanyId == companyId && p.ProductType == ProductType.Supplies && !p.IsDeleted);
+        if (!string.IsNullOrEmpty(category))
+            query = query.Where(p => p.Category == category);
+
+        var products = await query.OrderBy(p => p.Code).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToList();
+
+        // Weighted avg cost
+        var costData = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && m.MovementType == "IN" && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new { ProductId = g.Key, TotalCost = g.Sum(m => m.Quantity * m.UnitCost), TotalQty = g.Sum(m => m.Quantity) })
+            .ToListAsync();
+        var costLookup = costData.ToDictionary(c => c.ProductId);
+
+        var items = products.Select(p =>
+        {
+            var avgCost = p.CostPrice;
+            if (costLookup.TryGetValue(p.Id, out var cd) && cd.TotalQty > 0)
+                avgCost = cd.TotalCost / cd.TotalQty;
+
+            return new SuppliesBalanceItem(
+                p.Id, p.Code, p.Name, p.Unit, p.Category,
+                p.CurrentStock, avgCost, p.CurrentStock * avgCost,
+                p.MinimumStock, p.CurrentStock <= p.MinimumStock);
+        }).ToList();
+
+        return new SuppliesBalanceReport(
+            DateTime.UtcNow, items,
+            items.Sum(i => i.TotalValue), items.Count,
+            items.Count(i => i.IsLow));
     }
 
     private static InventorySnapshotResponse MapSnapshotResponse(InventorySnapshot s) => new(
