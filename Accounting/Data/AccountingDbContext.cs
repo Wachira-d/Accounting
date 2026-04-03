@@ -450,7 +450,6 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<AuditLog>(e =>
         {
             e.HasIndex(a => a.Timestamp);
-            e.HasIndex(a => new { a.CompanyId, a.Timestamp });
             e.Property(a => a.EntityType).HasMaxLength(100);
         });
 
@@ -501,7 +500,6 @@ public class AccountingDbContext : DbContext
         // ===== BankTransaction =====
         modelBuilder.Entity<BankTransaction>(e =>
         {
-            e.HasIndex(t => new { t.BankAccountId, t.TransactionDate });
             e.Property(t => t.Amount).HasPrecision(18, 2);
             e.Property(t => t.BalanceAfter).HasPrecision(18, 2);
             e.HasOne(t => t.BankAccount).WithMany(a => a.Transactions).HasForeignKey(t => t.BankAccountId).OnDelete(DeleteBehavior.Restrict);
@@ -580,7 +578,6 @@ public class AccountingDbContext : DbContext
         // ===== Notification =====
         modelBuilder.Entity<Notification>(e =>
         {
-            e.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt });
             e.Property(n => n.Title).HasMaxLength(500);
             e.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -1676,13 +1673,13 @@ public class AccountingDbContext : DbContext
             e.HasIndex(l => l.ExternalId).HasDatabaseName("IX_IntegrationSyncLogs_ExternalId");
             e.Property(l => l.RequestPayloadJson).HasColumnType("jsonb");
             e.Property(l => l.ResponseJson).HasColumnType("jsonb");
-            e.HasOne(l => l.Integration).WithMany(i => i.SyncLogs).HasForeignKey(l => l.IntegrationId);
+            e.HasOne(l => l.Integration).WithMany(i => i.SyncLogs).HasForeignKey(l => l.IntegrationId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(l => !l.IsDeleted);
         });
         modelBuilder.Entity<IntegrationAccountMapping>(e =>
         {
             e.HasIndex(m => new { m.IntegrationId, m.ExternalCategory }).HasDatabaseName("IX_IntegrationAccountMappings_Integration_Category");
-            e.HasOne(m => m.Integration).WithMany(i => i.AccountMappings).HasForeignKey(m => m.IntegrationId);
+            e.HasOne(m => m.Integration).WithMany(i => i.AccountMappings).HasForeignKey(m => m.IntegrationId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(m => m.DebitAccount).WithMany().HasForeignKey(m => m.DebitAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(m => m.CreditAccount).WithMany().HasForeignKey(m => m.CreditAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(m => !m.IsDeleted);

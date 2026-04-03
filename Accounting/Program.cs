@@ -622,12 +622,24 @@ app.MapFallbackToFile("index.html");
                       ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
                       CONSTRAINT ""PK_IntegrationAccountMappings"" PRIMARY KEY (""Id""),
                       CONSTRAINT ""FK_IntegrationAccountMappings_ExternalIntegrations"" FOREIGN KEY (""IntegrationId"") REFERENCES ""ExternalIntegrations""(""Id""),
-                      CONSTRAINT ""FK_IntegrationAccountMappings_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                      CONSTRAINT ""FK_IntegrationAccountMappings_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                      CONSTRAINT ""FK_IntegrationAccountMappings_DebitAccount"" FOREIGN KEY (""DebitAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL,
+                      CONSTRAINT ""FK_IntegrationAccountMappings_CreditAccount"" FOREIGN KEY (""CreditAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL
                   );",
                 // Add webhook columns to ExternalIntegrations (safe for existing DBs)
                 @"DO $$ BEGIN
                     ALTER TABLE ""ExternalIntegrations"" ADD COLUMN IF NOT EXISTS ""WebhookUrl"" text NULL;
                     ALTER TABLE ""ExternalIntegrations"" ADD COLUMN IF NOT EXISTS ""WebhookEnabled"" boolean NOT NULL DEFAULT false;
+                  EXCEPTION WHEN others THEN NULL;
+                  END $$;",
+                // Add FK constraints for DebitAccountId/CreditAccountId (safe for existing DBs)
+                @"DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'FK_IntegrationAccountMappings_DebitAccount') THEN
+                      ALTER TABLE ""IntegrationAccountMappings"" ADD CONSTRAINT ""FK_IntegrationAccountMappings_DebitAccount"" FOREIGN KEY (""DebitAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'FK_IntegrationAccountMappings_CreditAccount') THEN
+                      ALTER TABLE ""IntegrationAccountMappings"" ADD CONSTRAINT ""FK_IntegrationAccountMappings_CreditAccount"" FOREIGN KEY (""CreditAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL;
+                    END IF;
                   EXCEPTION WHEN others THEN NULL;
                   END $$;"
             };
