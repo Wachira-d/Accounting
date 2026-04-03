@@ -197,8 +197,21 @@ public class SettingsService : ISettingsService
                 DocumentType.PaymentVoucher => "PV",
                 _ => "DOC"
             };
-            var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == documentType);
-            return $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+            var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+            var pattern = $"{prefix}-{yearMonth}-";
+            var lastDoc = await _db.Documents
+                .Where(d => d.CompanyId == companyId && d.DocumentType == documentType && d.DocumentNumber.StartsWith(pattern))
+                .OrderByDescending(d => d.DocumentNumber)
+                .Select(d => d.DocumentNumber)
+                .FirstOrDefaultAsync();
+            int nextSeq = 1;
+            if (lastDoc != null)
+            {
+                var lastPart = lastDoc[pattern.Length..];
+                if (int.TryParse(lastPart, out var lastNum))
+                    nextSeq = lastNum + 1;
+            }
+            return $"{pattern}{nextSeq:D4}";
         }
 
         // Check if reset is needed

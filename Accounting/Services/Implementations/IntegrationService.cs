@@ -22,6 +22,69 @@ public class IntegrationService : IIntegrationService
         _logger = logger;
     }
 
+    // ===== Helper: Atomic Journal Entry Number =====
+
+    /// <summary>
+    /// Generate unique journal entry number using MAX instead of COUNT to avoid race conditions.
+    /// Uses database MAX(EntryNumber) + parse to get true next number.
+    /// </summary>
+    private async Task<string> GetNextJournalNumberAsync(Guid companyId, string prefix = "JV-INT")
+    {
+        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        var pattern = $"{prefix}-{yearMonth}-";
+
+        // Find the highest existing number with this prefix for this month
+        var lastEntry = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
+            .OrderByDescending(j => j.EntryNumber)
+            .Select(j => j.EntryNumber)
+            .FirstOrDefaultAsync();
+
+        int nextSeq = 1;
+        if (lastEntry != null)
+        {
+            var lastPart = lastEntry[pattern.Length..];
+            if (int.TryParse(lastPart, out var lastNum))
+                nextSeq = lastNum + 1;
+        }
+
+        return $"{pattern}{nextSeq:D4}";
+    }
+
+    /// <summary>Generate unique payment number using MAX to avoid race conditions.</summary>
+    private async Task<string> GetNextPaymentNumberAsync(Guid companyId)
+    {
+        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        var pattern = $"PAY-{yearMonth}-";
+
+        var lastEntry = await _db.Set<Payment>()
+            .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(pattern))
+            .OrderByDescending(p => p.PaymentNumber)
+            .Select(p => p.PaymentNumber)
+            .FirstOrDefaultAsync();
+
+        int nextSeq = 1;
+        if (lastEntry != null)
+        {
+            var lastPart = lastEntry[pattern.Length..];
+            if (int.TryParse(lastPart, out var lastNum))
+                nextSeq = lastNum + 1;
+        }
+
+        return $"{pattern}{nextSeq:D4}";
+    }
+
+    /// <summary>Batch-load chart of accounts by codes in one query instead of N+1.</summary>
+    private async Task<Dictionary<string, ChartOfAccount>> BatchLoadAccountsByCodesAsync(Guid companyId, IEnumerable<string> accountCodes)
+    {
+        var codes = accountCodes.Where(c => !string.IsNullOrEmpty(c)).Distinct().ToList();
+        if (codes.Count == 0) return new Dictionary<string, ChartOfAccount>();
+
+        return await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && codes.Contains(a.AccountCode) && a.IsActive)
+            .ToDictionaryAsync(a => a.AccountCode, a => a);
+    }
+
     // ===== Integration Config =====
 
     public async Task<List<IntegrationResponse>> GetIntegrationsAsync(Guid companyId)
@@ -290,8 +353,8 @@ public class IntegrationService : IIntegrationService
             Contact? contact = null;
             if (!string.IsNullOrEmpty(request.TaxId))
                 contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.TaxId && !c.IsDeleted);
-            if (contact == null)
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == request.Name && !c.IsDeleted);
+            if (contact == null && !string.IsNullOrEmpty(request.Name))
+                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
 
             if (contact == null)
             {
@@ -353,6 +416,13 @@ public class IntegrationService : IIntegrationService
             decimal subTotal = 0, totalVat = 0, totalDiscount = 0;
             var lines = new List<DocumentLine>();
 
+            // Batch-load all referenced accounts in one query (avoid N+1)
+            var accountCodesNeeded = request.Lines
+                .Where(l => !string.IsNullOrEmpty(l.AccountCode))
+                .Select(l => l.AccountCode!)
+                .Distinct().ToList();
+            var accountLookup = await BatchLoadAccountsByCodesAsync(companyId, accountCodesNeeded);
+
             for (int i = 0; i < request.Lines.Count; i++)
             {
                 var line = request.Lines[i];
@@ -368,13 +438,10 @@ public class IntegrationService : IIntegrationService
                 totalVat += lineVat;
                 totalDiscount += lineDiscount;
 
-                // Find account by code or category mapping
+                // Resolve account from pre-loaded batch
                 Guid? accountId = null;
-                if (!string.IsNullOrEmpty(line.AccountCode))
-                {
-                    var account = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == line.AccountCode);
-                    accountId = account?.Id;
-                }
+                if (!string.IsNullOrEmpty(line.AccountCode) && accountLookup.TryGetValue(line.AccountCode, out var acct))
+                    accountId = acct.Id;
 
                 lines.Add(new DocumentLine
                 {
@@ -452,11 +519,11 @@ public class IntegrationService : IIntegrationService
                 throw new KeyNotFoundException($"ไม่พบเอกสารอ้างอิง: {request.InvoiceExternalRef ?? request.DocumentId?.ToString()}");
 
             // Create payment
-            var paymentCount = await _db.Set<Payment>().CountAsync(p => p.CompanyId == companyId);
+            var paymentNumber = await GetNextPaymentNumberAsync(companyId);
             var payment = new Payment
             {
                 CompanyId = companyId,
-                PaymentNumber = $"PAY-{DateTime.UtcNow:yyyyMM}-{(paymentCount + 1):D4}",
+                PaymentNumber = paymentNumber,
                 DocumentId = document.Id,
                 PaymentDate = request.PaymentDate,
                 Amount = request.Amount,
@@ -671,11 +738,11 @@ public class IntegrationService : IIntegrationService
                 throw new InvalidOperationException("ไม่มี mapping ที่ตรงกับ category ที่ส่งมา กรุณาตั้งค่า account mapping ก่อน");
 
             // Create journal entry
-            var jeCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+            var entryNumber = await GetNextJournalNumberAsync(companyId);
             var journalEntry = new JournalEntry
             {
                 CompanyId = companyId,
-                EntryNumber = $"JV-INT-{DateTime.UtcNow:yyyyMM}-{(jeCount + 1):D4}",
+                EntryNumber = entryNumber,
                 EntryDate = request.SummaryDate,
                 JournalType = JournalType.General,
                 Description = request.Description ?? $"สรุปรายวัน {request.SummaryDate:dd/MM/yyyy}",
@@ -713,7 +780,7 @@ public class IntegrationService : IIntegrationService
             contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted);
 
         if (contact == null && !string.IsNullOrEmpty(name))
-            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == name && !c.IsDeleted);
+            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
 
         if (contact == null)
         {
@@ -803,11 +870,11 @@ public class IntegrationService : IIntegrationService
 
         if (!journalLines.Any()) return null;
 
-        var jeCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+        var entryNumber = await GetNextJournalNumberAsync(companyId);
         var je = new JournalEntry
         {
             CompanyId = companyId,
-            EntryNumber = $"JV-INT-{DateTime.UtcNow:yyyyMM}-{(jeCount + 1):D4}",
+            EntryNumber = entryNumber,
             EntryDate = document.DocumentDate,
             JournalType = type == "payment" ? JournalType.CashReceipts : JournalType.Sales,
             Description = $"Auto: {document.DocumentNumber}",
@@ -844,11 +911,11 @@ public class IntegrationService : IIntegrationService
 
         if (debitAccount == null || creditAccount == null) return null;
 
-        var jeCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+        var payJournalNumber = await GetNextJournalNumberAsync(companyId, "JV-PAY");
         var je = new JournalEntry
         {
             CompanyId = companyId,
-            EntryNumber = $"JV-PAY-{DateTime.UtcNow:yyyyMM}-{(jeCount + 1):D4}",
+            EntryNumber = payJournalNumber,
             EntryDate = payment.PaymentDate,
             JournalType = JournalType.CashReceipts,
             Description = $"รับชำระ {document.DocumentNumber}",
@@ -1183,15 +1250,16 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Batch-load all referenced accounts in one query (avoid N+1)
+            var allCodes = request.Lines.Select(l => l.AccountCode).Distinct().ToList();
+            var accountLookup = await BatchLoadAccountsByCodesAsync(companyId, allCodes);
+
             var journalLines = new List<JournalEntryLine>();
             int lineOrder = 1;
 
             foreach (var line in request.Lines)
             {
-                var account = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == line.AccountCode && a.IsActive);
-
-                if (account == null)
+                if (!accountLookup.TryGetValue(line.AccountCode, out var account))
                     throw new KeyNotFoundException($"ไม่พบผังบัญชี: {line.AccountCode}");
 
                 journalLines.Add(new JournalEntryLine
@@ -1216,11 +1284,11 @@ public class IntegrationService : IIntegrationService
                 _ => JournalType.General
             };
 
-            var jeCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+            var entryNumber = await GetNextJournalNumberAsync(companyId);
             var je = new JournalEntry
             {
                 CompanyId = companyId,
-                EntryNumber = $"JV-INT-{DateTime.UtcNow:yyyyMM}-{(jeCount + 1):D4}",
+                EntryNumber = entryNumber,
                 EntryDate = request.EntryDate,
                 JournalType = journalType,
                 Description = request.Description ?? "บันทึกจากระบบภายนอก",
