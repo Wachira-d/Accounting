@@ -305,7 +305,8 @@ public class IntegrationService : IIntegrationService
                     Address = request.Address,
                     BranchCode = request.BranchCode,
                     ContactType = ParseContactType(request.ContactType),
-                    IsCustomer = true,
+                    IsCustomer = request.IsCustomer ?? true,
+                    IsSupplier = request.IsSupplier ?? false,
                     IsActive = true
                 };
                 _db.Set<Contact>().Add(contact);
@@ -1138,7 +1139,7 @@ public class IntegrationService : IIntegrationService
                     Code = request.Code,
                     Name = request.Name,
                     Unit = request.Unit ?? "หน่วย",
-                    Price = request.Price ?? 0,
+                    SellingPrice = request.Price ?? 0,
                     CostPrice = request.CostPrice ?? 0,
                     IsActive = request.IsActive ?? true
                 };
@@ -1148,7 +1149,7 @@ public class IntegrationService : IIntegrationService
             {
                 product.Name = request.Name;
                 if (request.Unit != null) product.Unit = request.Unit;
-                if (request.Price.HasValue) product.Price = request.Price.Value;
+                if (request.Price.HasValue) product.SellingPrice = request.Price.Value;
                 if (request.CostPrice.HasValue) product.CostPrice = request.CostPrice.Value;
                 if (request.IsActive.HasValue) product.IsActive = request.IsActive.Value;
             }
@@ -1370,7 +1371,7 @@ public class IntegrationService : IIntegrationService
             .Take(query.PageSize)
             .Select(c => new OutboundContactResponse(
                 c.Id, c.Name, c.TaxId, c.BranchCode,
-                c.ContactType.ToString(), c.IsCustomer, false,
+                c.ContactType.ToString(), c.IsCustomer, c.IsSupplier,
                 c.Address, c.Phone, c.Email, c.CreatedAt))
             .ToListAsync();
 
