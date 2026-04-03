@@ -945,18 +945,22 @@ public class IntegrationService : IIntegrationService
         var fromDate = from ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
         var toDate = to ?? DateTime.UtcNow;
 
-        // Group invoices by integration source (Reference prefix) or direct
-        var data = await _db.Documents
+        // Load filtered invoices then group in-memory (complex string logic won't translate to SQL)
+        var rawDocs = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.Status != DocumentStatus.Voided
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
+            .Select(d => new { d.Reference, d.TotalAmount })
+            .ToListAsync();
+
+        var data = rawDocs
             .GroupBy(d => d.Reference != null && d.Reference.Length > 0
-                ? (d.Reference.Contains("-") ? d.Reference.Substring(0, d.Reference.IndexOf("-")) : "Direct")
+                ? (d.Reference.Contains("-") ? d.Reference[..d.Reference.IndexOf("-")] : "Direct")
                 : "Direct")
             .Select(g => new { Source = g.Key, Count = g.Count(), Total = g.Sum(d => d.TotalAmount) })
             .OrderByDescending(x => x.Total)
-            .ToListAsync();
+            .ToList();
 
         var grandTotal = data.Sum(d => d.Total);
         return data.Select(d => new RevenueBySourceItem(
@@ -1007,31 +1011,35 @@ public class IntegrationService : IIntegrationService
         var fromDate = from ?? DateTime.UtcNow.Date.AddDays(-30);
         var toDate = to ?? DateTime.UtcNow.Date;
 
-        // Get daily invoice totals
+        // Get daily invoice totals — use Year/Month/Day to avoid .Date translation issues
         var invoiceData = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.Status != DocumentStatus.Voided
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .GroupBy(d => d.DocumentDate.Date)
-            .Select(g => new { Date = g.Key, Count = g.Count(), Total = g.Sum(d => d.TotalAmount) })
+            .GroupBy(d => new { d.DocumentDate.Year, d.DocumentDate.Month, d.DocumentDate.Day })
+            .Select(g => new { g.Key.Year, g.Key.Month, g.Key.Day, Count = g.Count(), Total = g.Sum(d => d.TotalAmount) })
             .ToListAsync();
 
-        // Get daily revenue by account code prefix (generic — works for any industry)
-        var journalData = await _db.JournalEntryLines
+        // Get daily revenue by account code prefix — load then group in-memory (Substring in GroupBy key)
+        var rawJournalData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Revenue)
-            .GroupBy(l => new { Date = l.JournalEntry.EntryDate.Date, CodePrefix = l.Account.AccountCode.Substring(0, 3), l.Account.AccountName })
-            .Select(g => new { g.Key.Date, g.Key.CodePrefix, g.Key.AccountName, Amount = g.Sum(l => l.CreditAmount - l.DebitAmount) })
+            .Select(l => new { EntryDate = l.JournalEntry.EntryDate, l.Account.AccountCode, l.Account.AccountName, l.CreditAmount, l.DebitAmount })
             .ToListAsync();
+
+        var journalData = rawJournalData
+            .GroupBy(l => new { Date = l.EntryDate.Date, CodePrefix = l.AccountCode.Length >= 3 ? l.AccountCode[..3] : l.AccountCode, l.AccountName })
+            .Select(g => new { g.Key.Date, g.Key.CodePrefix, g.Key.AccountName, Amount = g.Sum(l => l.CreditAmount - l.DebitAmount) })
+            .ToList();
 
         var result = new List<DailyRevenueItem>();
         for (var d = fromDate; d <= toDate; d = d.AddDays(1))
         {
-            var inv = invoiceData.FirstOrDefault(x => x.Date == d);
+            var inv = invoiceData.FirstOrDefault(x => x.Year == d.Year && x.Month == d.Month && x.Day == d.Day);
             var dayCategories = journalData
                 .Where(x => x.Date == d)
                 .GroupBy(x => x.CodePrefix)

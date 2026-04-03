@@ -228,10 +228,12 @@ public class OpenBankingService : IOpenBankingService
                 var reference = fields.Length > 3 ? fields[3].Trim().Trim('"') : null;
 
                 // Check for duplicate by reference and date
+                var txDayStart = txDate.Date;
+                var txDayEnd = txDayStart.AddDays(1);
                 var isDuplicate = !string.IsNullOrEmpty(reference) && await _db.BankTransactions
                     .AnyAsync(t => t.BankAccountId == bankAccountId
                                 && t.Reference == reference
-                                && t.TransactionDate.Date == txDate.Date);
+                                && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd);
 
                 if (isDuplicate)
                 {

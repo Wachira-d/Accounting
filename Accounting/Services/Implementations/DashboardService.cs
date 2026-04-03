@@ -220,16 +220,20 @@ public class DashboardService : IDashboardService
     private async Task<List<TopCustomer>> GetTopCustomersAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
     {
         // Server-side GroupBy + OrderBy + Take — only top N rows returned
-        return await _db.Documents
+        var rawData = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.Status != DocumentStatus.Voided
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .GroupBy(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : "ไม่ระบุ" })
+            .Select(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : null, d.TotalAmount })
+            .ToListAsync();
+
+        return rawData
+            .GroupBy(d => new { d.ContactId, ContactName = d.ContactName ?? "ไม่ระบุ" })
             .Select(g => new TopCustomer(g.Key.ContactId, g.Key.ContactName, g.Sum(d => d.TotalAmount), g.Count()))
             .OrderByDescending(c => c.TotalAmount)
             .Take(top)
-            .ToListAsync();
+            .ToList();
     }
 
     private async Task<List<TopExpenseCategory>> GetTopExpenseCategoriesAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
