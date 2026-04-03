@@ -221,6 +221,9 @@
         <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
         <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" checked><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
       </div>
+      <div class="form-row" style="margin-top:12px">
+        <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
+      </div>
     </div>
 
     <!-- ===== e-Tax Tab ===== -->
@@ -598,6 +601,7 @@
           // Tax
           document.getElementById('sVatRate').value = s.defaultVatRate || 7;
           document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
+          document.getElementById('sVatRegistrationDate').value = s.vatRegistrationDate || '';
           // e-Tax
           document.getElementById('sEtaxEnabled').checked = s.etaxEnabled || false;
           document.getElementById('sEtaxTestMode').checked = s.etaxTestMode !== false;
@@ -729,6 +733,7 @@
             // Tax
             defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
             vatRegistered: document.getElementById('sVatRegistered').checked,
+            vatRegistrationDate: document.getElementById('sVatRegistrationDate').value || null,
             // e-Tax
             etaxEnabled: document.getElementById('sEtaxEnabled').checked,
             etaxCertificatePath: document.getElementById('sEtaxCertPath').value || null,

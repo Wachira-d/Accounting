@@ -827,63 +827,238 @@ public class IntegrationService : IIntegrationService
 
     private async Task<Guid?> CreateJournalFromMappingsAsync(Guid companyId, Guid integrationId, Document document, string type)
     {
+        // Load account mappings for this integration
         var mappings = await _db.Set<IntegrationAccountMapping>()
             .Where(m => m.IntegrationId == integrationId && m.CompanyId == companyId && m.IsActive && m.AutoCreateJournal && !m.IsDeleted)
             .ToListAsync();
 
-        if (!mappings.Any()) return null;
-
         var journalLines = new List<JournalEntryLine>();
         int lineOrder = 1;
 
-        // For each document line, try to find a matching mapping
-        foreach (var docLine in document.Lines)
+        // Determine journal type and entry prefix based on document type
+        var isRevenue = type == "invoice"; // ฝั่งรายรับ
+        var isExpense = type == "expense"; // ฝั่งค่าใช้จ่าย
+        var journalType = type == "payment" ? JournalType.CashReceipts
+            : isRevenue ? JournalType.Sales
+            : isExpense ? JournalType.Purchase
+            : JournalType.General;
+        var prefix = journalType switch
         {
-            var mapping = mappings.FirstOrDefault(m =>
-                !string.IsNullOrEmpty(docLine.ProductCode) && m.ExternalCode == docLine.ProductCode)
-                ?? mappings.FirstOrDefault(m => m.ExternalCategory == "DEFAULT");
+            JournalType.Sales => "SV",
+            JournalType.Purchase => "UV",
+            JournalType.CashReceipts => "RV",
+            JournalType.CashPayments => "PV",
+            _ => "JV-INT"
+        };
 
-            if (mapping == null) continue;
-
-            if (mapping.DebitAccountId.HasValue)
+        if (mappings.Any())
+        {
+            // ===== Mode 1: Use configured mappings =====
+            // For each document line, find matching mapping
+            foreach (var docLine in document.Lines)
             {
+                var mapping = mappings.FirstOrDefault(m =>
+                    !string.IsNullOrEmpty(docLine.ProductCode) && m.ExternalCode == docLine.ProductCode)
+                    ?? mappings.FirstOrDefault(m => m.ExternalCategory == "DEFAULT");
+
+                if (mapping == null) continue;
+
+                if (mapping.DebitAccountId.HasValue)
+                {
+                    journalLines.Add(new JournalEntryLine
+                    {
+                        AccountId = mapping.DebitAccountId.Value,
+                        DebitAmount = docLine.Amount,
+                        Description = docLine.Description,
+                        LineOrder = lineOrder++
+                    });
+                }
+
+                if (mapping.CreditAccountId.HasValue)
+                {
+                    journalLines.Add(new JournalEntryLine
+                    {
+                        AccountId = mapping.CreditAccountId.Value,
+                        CreditAmount = docLine.Amount,
+                        Description = docLine.Description,
+                        LineOrder = lineOrder++
+                    });
+                }
+            }
+
+            // If mapping produced lines, add VAT line if missing
+            if (journalLines.Any() && document.VatAmount > 0)
+            {
+                var hasVatLine = journalLines.Any(l =>
+                    l.CreditAmount > 0 || l.DebitAmount > 0); // simplified check
+                // Check if VAT total is balanced — if not, auto-add VAT account
+                var totalDr = journalLines.Sum(l => l.DebitAmount);
+                var totalCr = journalLines.Sum(l => l.CreditAmount);
+                if (totalDr != totalCr)
+                {
+                    var vatAccountCode = isRevenue ? "2151" : "1140"; // ภาษีขาย / ภาษีซื้อ
+                    var vatAccount = await _db.ChartOfAccounts
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(vatAccountCode) && a.IsActive);
+                    if (vatAccount != null)
+                    {
+                        var diff = totalDr - totalCr;
+                        journalLines.Add(new JournalEntryLine
+                        {
+                            AccountId = vatAccount.Id,
+                            DebitAmount = diff < 0 ? Math.Abs(diff) : 0,
+                            CreditAmount = diff > 0 ? diff : 0,
+                            Description = isRevenue ? "ภาษีขาย" : "ภาษีซื้อ",
+                            LineOrder = lineOrder++
+                        });
+                    }
+                }
+            }
+        }
+
+        // ===== Mode 2: Auto-generate standard journal (no mapping needed) =====
+        if (!journalLines.Any())
+        {
+            // Standard Thai accounting journal entry
+            if (isRevenue)
+            {
+                // Revenue Invoice/Tax Invoice:
+                // Dr: ลูกหนี้การค้า (113xx) = TotalAmount (รวม VAT)
+                // Cr: รายได้ (4xxxx) = SubTotal (ก่อน VAT)
+                // Cr: ภาษีขาย (2151x) = VatAmount
+                var arAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive);
+                var revenueAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
+                var vatAccount = document.VatAmount > 0
+                    ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("2151") && a.IsActive)
+                    : null;
+
+                if (arAccount == null || revenueAccount == null)
+                {
+                    _logger.LogWarning("ไม่พบผังบัญชีลูกหนี้/รายได้ สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
+                    return null;
+                }
+
+                // Dr: ลูกหนี้การค้า = ยอดรวม (รวม VAT)
                 journalLines.Add(new JournalEntryLine
                 {
-                    AccountId = mapping.DebitAccountId.Value,
-                    DebitAmount = docLine.Amount,
-                    Description = docLine.Description,
+                    AccountId = arAccount.Id,
+                    DebitAmount = document.TotalAmount,
+                    Description = $"ลูกหนี้ - {document.DocumentNumber}",
+                    LineOrder = lineOrder++
+                });
+
+                // Cr: รายได้ = ยอดก่อน VAT
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = revenueAccount.Id,
+                    CreditAmount = document.SubTotal,
+                    Description = $"รายได้ - {document.DocumentNumber}",
+                    LineOrder = lineOrder++
+                });
+
+                // Cr: ภาษีขาย = VAT
+                if (vatAccount != null && document.VatAmount > 0)
+                {
+                    journalLines.Add(new JournalEntryLine
+                    {
+                        AccountId = vatAccount.Id,
+                        CreditAmount = document.VatAmount,
+                        Description = $"ภาษีขาย - {document.DocumentNumber}",
+                        LineOrder = lineOrder++
+                    });
+                }
+            }
+            else if (isExpense)
+            {
+                // Expense:
+                // Dr: ค่าใช้จ่าย (5xxxx) = SubTotal
+                // Dr: ภาษีซื้อ (1140x) = VatAmount (ถ้ามี)
+                // Cr: เจ้าหนี้การค้า (211xx) = TotalAmount
+                var apAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
+                var expenseAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive);
+                var vatAccount = document.VatAmount > 0
+                    ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("1140") && a.IsActive)
+                    : null;
+
+                if (apAccount == null || expenseAccount == null)
+                {
+                    _logger.LogWarning("ไม่พบผังบัญชีเจ้าหนี้/ค่าใช้จ่าย สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
+                    return null;
+                }
+
+                // Dr: ค่าใช้จ่าย
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = expenseAccount.Id,
+                    DebitAmount = document.SubTotal,
+                    Description = $"ค่าใช้จ่าย - {document.DocumentNumber}",
+                    LineOrder = lineOrder++
+                });
+
+                // Dr: ภาษีซื้อ
+                if (vatAccount != null && document.VatAmount > 0)
+                {
+                    journalLines.Add(new JournalEntryLine
+                    {
+                        AccountId = vatAccount.Id,
+                        DebitAmount = document.VatAmount,
+                        Description = $"ภาษีซื้อ - {document.DocumentNumber}",
+                        LineOrder = lineOrder++
+                    });
+                }
+
+                // Cr: เจ้าหนี้การค้า
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = apAccount.Id,
+                    CreditAmount = document.TotalAmount,
+                    Description = $"เจ้าหนี้ - {document.DocumentNumber}",
                     LineOrder = lineOrder++
                 });
             }
-
-            if (mapping.CreditAccountId.HasValue)
+            else
             {
-                journalLines.Add(new JournalEntryLine
-                {
-                    AccountId = mapping.CreditAccountId.Value,
-                    CreditAmount = docLine.Amount,
-                    Description = docLine.Description,
-                    LineOrder = lineOrder++
-                });
+                return null; // Unknown type — cannot auto-generate
             }
         }
 
         if (!journalLines.Any()) return null;
 
-        var entryNumber = await GetNextJournalNumberAsync(companyId);
+        // Validate Dr == Cr
+        var totalDebit = journalLines.Sum(l => l.DebitAmount);
+        var totalCredit = journalLines.Sum(l => l.CreditAmount);
+        if (totalDebit != totalCredit)
+        {
+            _logger.LogWarning("Journal Dr ({Debit}) != Cr ({Credit}) for {DocNumber} — ไม่สร้าง journal",
+                totalDebit, totalCredit, document.DocumentNumber);
+            return null;
+        }
+
+        // Find fiscal period
+        var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId
+            && f.StartDate <= document.DocumentDate
+            && f.EndDate >= document.DocumentDate
+            && f.Status == FiscalPeriodStatus.Open);
+
+        var entryNumber = await GetNextJournalNumberAsync(companyId, prefix);
         var je = new JournalEntry
         {
             CompanyId = companyId,
             EntryNumber = entryNumber,
             EntryDate = document.DocumentDate,
-            JournalType = type == "payment" ? JournalType.CashReceipts : JournalType.Sales,
+            JournalType = journalType,
             Description = $"Auto: {document.DocumentNumber}",
             Reference = document.DocumentNumber,
             Status = JournalEntryStatus.Posted,
             IsAutoGenerated = true,
             SourceDocumentId = document.Id,
-            TotalDebit = journalLines.Sum(l => l.DebitAmount),
-            TotalCredit = journalLines.Sum(l => l.CreditAmount),
+            FiscalPeriodId = fiscalPeriod?.Id,
+            TotalDebit = totalDebit,
+            TotalCredit = totalCredit,
             Lines = journalLines
         };
 
@@ -911,7 +1086,14 @@ public class IntegrationService : IIntegrationService
 
         if (debitAccount == null || creditAccount == null) return null;
 
-        var payJournalNumber = await GetNextJournalNumberAsync(companyId, "JV-PAY");
+        // Find fiscal period
+        var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId
+            && f.StartDate <= payment.PaymentDate
+            && f.EndDate >= payment.PaymentDate
+            && f.Status == FiscalPeriodStatus.Open);
+
+        var payJournalNumber = await GetNextJournalNumberAsync(companyId, "RV");
         var je = new JournalEntry
         {
             CompanyId = companyId,
@@ -923,6 +1105,7 @@ public class IntegrationService : IIntegrationService
             Status = JournalEntryStatus.Posted,
             IsAutoGenerated = true,
             SourceDocumentId = document.Id,
+            FiscalPeriodId = fiscalPeriod?.Id,
             TotalDebit = payment.Amount,
             TotalCredit = payment.Amount,
             Lines = new List<JournalEntryLine>

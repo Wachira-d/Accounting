@@ -19,6 +19,7 @@ public record UpdateCompanySettingsRequest(
     // Tax
     decimal? DefaultVatRate,
     bool? VatRegistered,
+    string? VatRegistrationDate,
 
     // Email
     string? EmailFromName,
@@ -78,6 +79,7 @@ public record CompanySettingsResponse(
     // Tax
     decimal DefaultVatRate,
     bool VatRegistered,
+    string? VatRegistrationDate,
     // Security
     bool RequireApprovalForDocuments,
     decimal? ApprovalThresholdAmount,

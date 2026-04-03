@@ -38,6 +38,7 @@ public class SettingsService : ISettingsService
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
+        if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
         if (request.EmailFromName != null) settings.EmailFromName = request.EmailFromName;
         if (request.EmailReplyTo != null) settings.EmailReplyTo = request.EmailReplyTo;
         if (request.InvoiceEmailSubject != null) settings.InvoiceEmailSubject = request.InvoiceEmailSubject;
@@ -366,7 +367,7 @@ public class SettingsService : ISettingsService
         // Email
         s.EmailFromName, s.EmailReplyTo, s.InvoiceEmailSubject, s.InvoiceEmailBody,
         // Tax
-        s.DefaultVatRate, s.VatRegistered,
+        s.DefaultVatRate, s.VatRegistered, s.VatRegistrationDate,
         // Security
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.AllowFreelanceAccess, s.MaxFreelanceUsers,
