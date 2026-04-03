@@ -170,3 +170,81 @@ public record InventoryValuationReport(
     List<InventoryValuationItem> Items,
     decimal TotalValue,
     int TotalProducts);
+
+// ===== Stock Balance as-of-date (สินค้าคงเหลือ ณ วันที่) =====
+public record StockBalanceAsOfDateRequest(
+    DateTime AsOfDate,
+    string? Category,
+    bool IncludeZeroStock = false);
+
+public record StockBalanceItem(
+    Guid ProductId, string ProductCode, string ProductName,
+    string Unit, string? Category, string ProductType,
+    decimal QuantityAsOfDate, decimal AverageCost, decimal TotalValue);
+
+public record StockBalanceAsOfDateReport(
+    DateTime AsOfDate,
+    List<StockBalanceItem> Items,
+    decimal TotalValue, int TotalProducts,
+    List<StockBalanceSummaryByCategory> ByCategory);
+
+public record StockBalanceSummaryByCategory(
+    string Category, int ProductCount, decimal TotalQuantity, decimal TotalValue);
+
+// ===== Inventory Period Snapshot (สรุปสินค้าคงเหลือ ณ สิ้นงวด) =====
+public record CreateInventorySnapshotRequest(
+    DateTime SnapshotDate,
+    string? Description,
+    bool AutoCreateJournal = true);
+
+public record InventorySnapshotResponse(
+    Guid Id, DateTime SnapshotDate, string Status,
+    string? Description, decimal TotalValue, int TotalProducts,
+    Guid? JournalEntryId, DateTime CreatedAt);
+
+public record InventorySnapshotDetailResponse(
+    Guid Id, DateTime SnapshotDate, string Status,
+    string? Description, decimal TotalValue, int TotalProducts,
+    Guid? JournalEntryId, DateTime CreatedAt,
+    List<InventorySnapshotLineResponse> Lines);
+
+public record InventorySnapshotLineResponse(
+    Guid ProductId, string ProductCode, string ProductName,
+    string Unit, string? Category,
+    decimal Quantity, decimal UnitCost, decimal TotalValue);
+
+// ===== Stock Aging Report =====
+public record StockAgingItem(
+    Guid ProductId, string ProductCode, string ProductName,
+    string Unit, string? Category,
+    decimal CurrentStock, decimal TotalValue,
+    int DaysInStock,
+    string AgingBucket,          // "0-30", "31-60", "61-90", "91-180", "180+"
+    DateTime? LastMovementDate);
+
+public record StockAgingReport(
+    DateTime ReportDate,
+    List<StockAgingItem> Items,
+    List<StockAgingBucketSummary> BucketSummary,
+    decimal TotalValue);
+
+public record StockAgingBucketSummary(
+    string Bucket, int ProductCount, decimal TotalValue, decimal Percentage);
+
+// ===== Stock Movement Summary =====
+public record StockMovementSummaryRequest(
+    DateTime FromDate, DateTime ToDate,
+    string? Category, Guid? ProductId);
+
+public record StockMovementSummaryItem(
+    Guid ProductId, string ProductCode, string ProductName,
+    string Unit, string? Category,
+    decimal OpeningStock, decimal TotalIn, decimal TotalOut,
+    decimal TotalAdjust, decimal ClosingStock,
+    decimal CostOfGoodsOut);
+
+public record StockMovementSummaryReport(
+    DateTime FromDate, DateTime ToDate,
+    List<StockMovementSummaryItem> Items,
+    decimal TotalOpeningValue, decimal TotalClosingValue,
+    decimal TotalCOGS);

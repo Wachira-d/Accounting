@@ -36,4 +36,18 @@ public interface IProductService
 
     // Inventory Valuation
     Task<InventoryValuationReport> GetInventoryValuationAsync(Guid companyId);
+
+    // Stock Balance as of Date (สินค้าคงเหลือ ณ วันที่)
+    Task<StockBalanceAsOfDateReport> GetStockBalanceAsOfDateAsync(Guid companyId, StockBalanceAsOfDateRequest request);
+
+    // Inventory Period Snapshot (สรุปมูลค่าสินค้า ณ สิ้นงวด)
+    Task<InventorySnapshotResponse> CreateInventorySnapshotAsync(Guid companyId, CreateInventorySnapshotRequest request, string userId);
+    Task<List<InventorySnapshotResponse>> GetInventorySnapshotsAsync(Guid companyId);
+    Task<InventorySnapshotDetailResponse> GetInventorySnapshotDetailAsync(Guid companyId, Guid snapshotId);
+
+    // Stock Aging Report
+    Task<StockAgingReport> GetStockAgingReportAsync(Guid companyId);
+
+    // Stock Movement Summary (สรุปเคลื่อนไหวสินค้า)
+    Task<StockMovementSummaryReport> GetStockMovementSummaryAsync(Guid companyId, StockMovementSummaryRequest request);
 }

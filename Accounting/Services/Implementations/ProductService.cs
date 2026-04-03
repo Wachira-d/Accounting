@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Product;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -450,6 +451,363 @@ public class ProductService : IProductService
             items.Sum(i => i.TotalValue),
             items.Count);
     }
+
+    // ===== STOCK BALANCE AS OF DATE (สินค้าคงเหลือ ณ วันที่) =====
+
+    public async Task<StockBalanceAsOfDateReport> GetStockBalanceAsOfDateAsync(Guid companyId, StockBalanceAsOfDateRequest request)
+    {
+        var asOfDate = request.AsOfDate.Date.AddDays(1); // Include the full day
+
+        // Get all trackable products
+        var productsQuery = _db.Products
+            .Where(p => p.CompanyId == companyId && p.TrackStock && !p.IsDeleted);
+        if (!string.IsNullOrEmpty(request.Category))
+            productsQuery = productsQuery.Where(p => p.Category == request.Category);
+
+        var products = await productsQuery.OrderBy(p => p.Code).ToListAsync();
+
+        // Load all stock movements up to the date
+        var productIds = products.Select(p => p.Id).ToList();
+        var movements = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && m.MovementDate < asOfDate && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new
+            {
+                ProductId = g.Key,
+                TotalIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity),
+                TotalOut = g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity),
+                TotalAdjust = g.Where(m => m.MovementType == "ADJUST").Sum(m => m.Quantity),
+                TotalCostIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity * m.UnitCost),
+                TotalQtyIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity)
+            })
+            .ToListAsync();
+
+        var movementLookup = movements.ToDictionary(m => m.ProductId);
+
+        var items = new List<StockBalanceItem>();
+        foreach (var p in products)
+        {
+            decimal qty = 0;
+            decimal avgCost = p.CostPrice;
+
+            if (movementLookup.TryGetValue(p.Id, out var mv))
+            {
+                qty = mv.TotalIn - mv.TotalOut + mv.TotalAdjust;
+                avgCost = mv.TotalQtyIn > 0 ? mv.TotalCostIn / mv.TotalQtyIn : p.CostPrice;
+            }
+
+            if (!request.IncludeZeroStock && qty <= 0) continue;
+
+            items.Add(new StockBalanceItem(
+                p.Id, p.Code, p.Name, p.Unit, p.Category, p.ProductType.ToString(),
+                qty, avgCost, qty * avgCost));
+        }
+
+        var byCategory = items
+            .GroupBy(i => i.Category ?? "ไม่ระบุหมวด")
+            .Select(g => new StockBalanceSummaryByCategory(
+                g.Key, g.Count(), g.Sum(i => i.QuantityAsOfDate), g.Sum(i => i.TotalValue)))
+            .OrderByDescending(c => c.TotalValue)
+            .ToList();
+
+        return new StockBalanceAsOfDateReport(
+            request.AsOfDate, items, items.Sum(i => i.TotalValue), items.Count, byCategory);
+    }
+
+    // ===== INVENTORY PERIOD SNAPSHOT (สรุปสินค้า ณ สิ้นงวด) =====
+
+    public async Task<InventorySnapshotResponse> CreateInventorySnapshotAsync(
+        Guid companyId, CreateInventorySnapshotRequest request, string userId)
+    {
+        // Get stock balance as of the snapshot date
+        var stockReport = await GetStockBalanceAsOfDateAsync(companyId,
+            new StockBalanceAsOfDateRequest(request.SnapshotDate, null, false));
+
+        var snapshot = new InventorySnapshot
+        {
+            CompanyId = companyId,
+            SnapshotDate = request.SnapshotDate,
+            Description = request.Description ?? $"สรุปสินค้าคงเหลือ ณ {request.SnapshotDate:dd/MM/yyyy}",
+            TotalValue = stockReport.TotalValue,
+            TotalProducts = stockReport.TotalProducts,
+            Status = "Finalized",
+            CreatedBy = userId,
+            Lines = stockReport.Items.Select(item => new InventorySnapshotLine
+            {
+                CompanyId = companyId,
+                ProductId = item.ProductId,
+                Quantity = item.QuantityAsOfDate,
+                UnitCost = item.AverageCost,
+                TotalValue = item.TotalValue
+            }).ToList()
+        };
+
+        // Auto-create journal entry for inventory if requested
+        if (request.AutoCreateJournal && stockReport.TotalValue > 0)
+        {
+            var inventoryAccount = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115") && a.IsActive); // สินค้าคงเหลือ
+            var cogsSummaryAccount = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("514") && a.IsActive); // ต้นทุนขาย
+
+            if (inventoryAccount != null && cogsSummaryAccount != null)
+            {
+                // Find previous snapshot to calculate COGS adjustment
+                var previousSnapshot = await _db.InventorySnapshots
+                    .Where(s => s.CompanyId == companyId && s.Status == "Finalized"
+                        && s.SnapshotDate < request.SnapshotDate)
+                    .OrderByDescending(s => s.SnapshotDate)
+                    .FirstOrDefaultAsync();
+
+                var previousValue = previousSnapshot?.TotalValue ?? 0;
+                var adjustmentAmount = stockReport.TotalValue - previousValue;
+
+                if (adjustmentAmount != 0)
+                {
+                    var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+                        f.CompanyId == companyId && f.StartDate <= request.SnapshotDate
+                        && f.EndDate >= request.SnapshotDate && f.Status == FiscalPeriodStatus.Open);
+
+                    // Find next JV number
+                    var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+                    var pattern = $"JV-{yearMonth}-";
+                    var lastJe = await _db.JournalEntries
+                        .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
+                        .OrderByDescending(j => j.EntryNumber)
+                        .Select(j => j.EntryNumber)
+                        .FirstOrDefaultAsync();
+                    int nextSeq = 1;
+                    if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
+                        nextSeq = lastNum + 1;
+
+                    var journalLines = new List<JournalEntryLine>();
+                    if (adjustmentAmount > 0)
+                    {
+                        // Inventory increased: Dr Inventory, Cr COGS adjustment
+                        journalLines.Add(new JournalEntryLine { AccountId = inventoryAccount.Id, DebitAmount = adjustmentAmount, Description = "ปรับปรุงสินค้าคงเหลือ (เพิ่ม)", LineOrder = 1 });
+                        journalLines.Add(new JournalEntryLine { AccountId = cogsSummaryAccount.Id, CreditAmount = adjustmentAmount, Description = "ปรับปรุงต้นทุนขาย", LineOrder = 2 });
+                    }
+                    else
+                    {
+                        // Inventory decreased: Dr COGS, Cr Inventory
+                        var absAmount = Math.Abs(adjustmentAmount);
+                        journalLines.Add(new JournalEntryLine { AccountId = cogsSummaryAccount.Id, DebitAmount = absAmount, Description = "ปรับปรุงต้นทุนขาย", LineOrder = 1 });
+                        journalLines.Add(new JournalEntryLine { AccountId = inventoryAccount.Id, CreditAmount = absAmount, Description = "ปรับปรุงสินค้าคงเหลือ (ลด)", LineOrder = 2 });
+                    }
+
+                    var je = new JournalEntry
+                    {
+                        CompanyId = companyId,
+                        EntryNumber = $"{pattern}{nextSeq:D4}",
+                        EntryDate = request.SnapshotDate,
+                        JournalType = JournalType.General,
+                        Description = $"ปรับปรุงสินค้าคงเหลือ ณ {request.SnapshotDate:dd/MM/yyyy}",
+                        Reference = $"INV-SNAPSHOT-{request.SnapshotDate:yyyyMMdd}",
+                        Status = JournalEntryStatus.Posted,
+                        IsAutoGenerated = true,
+                        FiscalPeriodId = fiscalPeriod?.Id,
+                        TotalDebit = journalLines.Sum(l => l.DebitAmount),
+                        TotalCredit = journalLines.Sum(l => l.CreditAmount),
+                        Lines = journalLines
+                    };
+
+                    _db.JournalEntries.Add(je);
+                    await _db.SaveChangesAsync();
+                    snapshot.JournalEntryId = je.Id;
+                }
+            }
+        }
+
+        _db.InventorySnapshots.Add(snapshot);
+        await _db.SaveChangesAsync();
+
+        return MapSnapshotResponse(snapshot);
+    }
+
+    public async Task<List<InventorySnapshotResponse>> GetInventorySnapshotsAsync(Guid companyId)
+    {
+        return await _db.InventorySnapshots
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+            .OrderByDescending(s => s.SnapshotDate)
+            .Select(s => new InventorySnapshotResponse(
+                s.Id, s.SnapshotDate, s.Status, s.Description,
+                s.TotalValue, s.TotalProducts, s.JournalEntryId, s.CreatedAt))
+            .ToListAsync();
+    }
+
+    public async Task<InventorySnapshotDetailResponse> GetInventorySnapshotDetailAsync(Guid companyId, Guid snapshotId)
+    {
+        var snapshot = await _db.InventorySnapshots
+            .Include(s => s.Lines).ThenInclude(l => l.Product)
+            .FirstOrDefaultAsync(s => s.Id == snapshotId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบข้อมูล snapshot");
+
+        return new InventorySnapshotDetailResponse(
+            snapshot.Id, snapshot.SnapshotDate, snapshot.Status, snapshot.Description,
+            snapshot.TotalValue, snapshot.TotalProducts, snapshot.JournalEntryId, snapshot.CreatedAt,
+            snapshot.Lines.Select(l => new InventorySnapshotLineResponse(
+                l.ProductId, l.Product.Code, l.Product.Name,
+                l.Product.Unit, l.Product.Category,
+                l.Quantity, l.UnitCost, l.TotalValue)).ToList());
+    }
+
+    // ===== STOCK AGING REPORT =====
+
+    public async Task<StockAgingReport> GetStockAgingReportAsync(Guid companyId)
+    {
+        var today = DateTime.UtcNow.Date;
+        var products = await _db.Products
+            .Where(p => p.CompanyId == companyId && p.TrackStock && !p.IsDeleted && p.CurrentStock > 0)
+            .OrderBy(p => p.Code)
+            .ToListAsync();
+
+        var productIds = products.Select(p => p.Id).ToList();
+
+        // Get last movement date for each product
+        var lastMovements = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new { ProductId = g.Key, LastDate = g.Max(m => m.MovementDate) })
+            .ToListAsync();
+
+        var lastMoveLookup = lastMovements.ToDictionary(m => m.ProductId, m => m.LastDate);
+
+        // Get avg cost
+        var costData = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && m.MovementType == "IN" && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new { ProductId = g.Key, TotalCost = g.Sum(m => m.Quantity * m.UnitCost), TotalQty = g.Sum(m => m.Quantity) })
+            .ToListAsync();
+        var costLookup = costData.ToDictionary(c => c.ProductId);
+
+        var items = new List<StockAgingItem>();
+        foreach (var p in products)
+        {
+            var lastMove = lastMoveLookup.GetValueOrDefault(p.Id, p.CreatedAt);
+            var daysInStock = (int)(today - lastMove).TotalDays;
+            var bucket = daysInStock switch
+            {
+                <= 30 => "0-30",
+                <= 60 => "31-60",
+                <= 90 => "61-90",
+                <= 180 => "91-180",
+                _ => "180+"
+            };
+
+            var avgCost = p.CostPrice;
+            if (costLookup.TryGetValue(p.Id, out var cd) && cd.TotalQty > 0)
+                avgCost = cd.TotalCost / cd.TotalQty;
+
+            items.Add(new StockAgingItem(
+                p.Id, p.Code, p.Name, p.Unit, p.Category,
+                p.CurrentStock, p.CurrentStock * avgCost,
+                daysInStock, bucket, lastMove));
+        }
+
+        var totalValue = items.Sum(i => i.TotalValue);
+        var buckets = items.GroupBy(i => i.AgingBucket)
+            .Select(g => new StockAgingBucketSummary(
+                g.Key, g.Count(), g.Sum(i => i.TotalValue),
+                totalValue > 0 ? Math.Round(g.Sum(i => i.TotalValue) / totalValue * 100, 2) : 0))
+            .OrderBy(b => b.Bucket)
+            .ToList();
+
+        return new StockAgingReport(today, items, buckets, totalValue);
+    }
+
+    // ===== STOCK MOVEMENT SUMMARY (สรุปเคลื่อนไหวสินค้า) =====
+
+    public async Task<StockMovementSummaryReport> GetStockMovementSummaryAsync(
+        Guid companyId, StockMovementSummaryRequest request)
+    {
+        var fromDate = request.FromDate.Date;
+        var toDate = request.ToDate.Date.AddDays(1);
+
+        var productsQuery = _db.Products
+            .Where(p => p.CompanyId == companyId && p.TrackStock && !p.IsDeleted);
+        if (!string.IsNullOrEmpty(request.Category))
+            productsQuery = productsQuery.Where(p => p.Category == request.Category);
+        if (request.ProductId.HasValue)
+            productsQuery = productsQuery.Where(p => p.Id == request.ProductId.Value);
+
+        var products = await productsQuery.OrderBy(p => p.Code).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToList();
+
+        // Opening stock = movements before fromDate
+        var openingData = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && m.MovementDate < fromDate && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new
+            {
+                ProductId = g.Key,
+                Opening = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity)
+                         - g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity)
+                         + g.Where(m => m.MovementType == "ADJUST").Sum(m => m.Quantity)
+            })
+            .ToListAsync();
+        var openingLookup = openingData.ToDictionary(o => o.ProductId, o => o.Opening);
+
+        // Period movements
+        var periodData = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && m.MovementDate >= fromDate && m.MovementDate < toDate && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new
+            {
+                ProductId = g.Key,
+                TotalIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity),
+                TotalOut = g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity),
+                TotalAdjust = g.Where(m => m.MovementType == "ADJUST").Sum(m => m.Quantity),
+                CostOut = g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity * m.UnitCost)
+            })
+            .ToListAsync();
+        var periodLookup = periodData.ToDictionary(p => p.ProductId);
+
+        // Average cost
+        var costData = await _db.StockMovements
+            .Where(m => productIds.Contains(m.ProductId) && m.MovementType == "IN" && m.MovementDate < toDate && !m.IsDeleted)
+            .GroupBy(m => m.ProductId)
+            .Select(g => new { ProductId = g.Key, TotalCost = g.Sum(m => m.Quantity * m.UnitCost), TotalQty = g.Sum(m => m.Quantity) })
+            .ToListAsync();
+        var costLookup = costData.ToDictionary(c => c.ProductId);
+
+        var items = new List<StockMovementSummaryItem>();
+        foreach (var p in products)
+        {
+            var opening = openingLookup.GetValueOrDefault(p.Id, 0);
+            var period = periodLookup.GetValueOrDefault(p.Id);
+            var totalIn = period?.TotalIn ?? 0;
+            var totalOut = period?.TotalOut ?? 0;
+            var totalAdj = period?.TotalAdjust ?? 0;
+            var closing = opening + totalIn - totalOut + totalAdj;
+            var costOut = period?.CostOut ?? 0;
+
+            if (opening == 0 && totalIn == 0 && totalOut == 0 && totalAdj == 0) continue;
+
+            items.Add(new StockMovementSummaryItem(
+                p.Id, p.Code, p.Name, p.Unit, p.Category,
+                opening, totalIn, totalOut, totalAdj, closing, costOut));
+        }
+
+        // Calculate totals using avg cost
+        decimal totalOpeningValue = 0, totalClosingValue = 0, totalCOGS = 0;
+        foreach (var item in items)
+        {
+            var avgCost = costLookup.TryGetValue(item.ProductId, out var cd) && cd.TotalQty > 0
+                ? cd.TotalCost / cd.TotalQty
+                : products.First(p => p.Id == item.ProductId).CostPrice;
+            totalOpeningValue += item.OpeningStock * avgCost;
+            totalClosingValue += item.ClosingStock * avgCost;
+            totalCOGS += item.CostOfGoodsOut;
+        }
+
+        return new StockMovementSummaryReport(
+            request.FromDate, request.ToDate, items,
+            totalOpeningValue, totalClosingValue, totalCOGS);
+    }
+
+    private static InventorySnapshotResponse MapSnapshotResponse(InventorySnapshot s) => new(
+        s.Id, s.SnapshotDate, s.Status, s.Description,
+        s.TotalValue, s.TotalProducts, s.JournalEntryId, s.CreatedAt);
 
     // ===== HELPERS =====
 

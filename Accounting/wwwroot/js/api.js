@@ -138,8 +138,14 @@ const API = {
       createStockCount: (d) => API.post(`${base}/product/stock-counts`, d),
       updateStockCountLines: (id, d) => API.put(`${base}/product/stock-counts/${id}/lines`, d),
       applyStockCount: (id) => API.post(`${base}/product/stock-counts/${id}/apply`),
-      // Inventory Valuation
+      // Inventory Valuation & Reports
       getInventoryValuation: () => API.get(`${base}/product/inventory/valuation`),
+      getStockBalance: (q = '') => API.get(`${base}/product/inventory/balance${q}`),
+      getStockAging: () => API.get(`${base}/product/inventory/aging`),
+      getMovementSummary: (q) => API.get(`${base}/product/inventory/movement-summary${q}`),
+      createInventorySnapshot: (d) => API.post(`${base}/product/inventory/snapshots`, d),
+      getInventorySnapshots: () => API.get(`${base}/product/inventory/snapshots`),
+      getInventorySnapshotDetail: (id) => API.get(`${base}/product/inventory/snapshots/${id}`),
       // Bank
       getBankAccounts: () => API.get(`${base}/bank/accounts`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),

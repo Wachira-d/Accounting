@@ -641,7 +641,32 @@ app.MapFallbackToFile("index.html");
                       ALTER TABLE ""IntegrationAccountMappings"" ADD CONSTRAINT ""FK_IntegrationAccountMappings_CreditAccount"" FOREIGN KEY (""CreditAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL;
                     END IF;
                   EXCEPTION WHEN others THEN NULL;
-                  END $$;"
+                  END $$;",
+                // Inventory Snapshot tables
+                @"CREATE TABLE IF NOT EXISTS ""InventorySnapshots"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""SnapshotDate"" timestamp NOT NULL, ""Status"" varchar(50) NOT NULL DEFAULT 'Draft',
+                      ""Description"" text NULL, ""TotalValue"" decimal(18,2) NOT NULL DEFAULT 0,
+                      ""TotalProducts"" integer NOT NULL DEFAULT 0,
+                      ""JournalEntryId"" uuid NULL,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_InventorySnapshots"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_InventorySnapshots_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                      CONSTRAINT ""FK_InventorySnapshots_JournalEntries"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                  );",
+                @"CREATE TABLE IF NOT EXISTS ""InventorySnapshotLines"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""SnapshotId"" uuid NOT NULL, ""ProductId"" uuid NOT NULL,
+                      ""Quantity"" decimal(18,4) NOT NULL, ""UnitCost"" decimal(18,4) NOT NULL,
+                      ""TotalValue"" decimal(18,2) NOT NULL,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_InventorySnapshotLines"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_InventorySnapshotLines_Snapshots"" FOREIGN KEY (""SnapshotId"") REFERENCES ""InventorySnapshots""(""Id""),
+                      CONSTRAINT ""FK_InventorySnapshotLines_Products"" FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""Id""),
+                      CONSTRAINT ""FK_InventorySnapshotLines_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );"
             };
             foreach (var sql in rawSqlStatements)
             {

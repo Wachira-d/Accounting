@@ -96,6 +96,7 @@ const Layout = {
     { section: 'สินค้า/บริการ' },
     { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html' },
     { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html' },
+    { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊', href: '/pages/inventory-reports.html' },
 
     { section: 'POS ขายหน้าร้าน' },
     { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html' },

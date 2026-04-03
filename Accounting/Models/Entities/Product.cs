@@ -114,3 +114,30 @@ public class StockCountLine : TenantEntity
     public decimal Variance { get; set; }       // CountedQty - SystemQty
     public string? Notes { get; set; }
 }
+
+/// <summary>
+/// สรุปมูลค่าสินค้าคงเหลือ ณ สิ้นงวด (Inventory Period Snapshot)
+/// ใช้สำหรับปิดงบประจำเดือน/ปี
+/// </summary>
+public class InventorySnapshot : TenantEntity
+{
+    public DateTime SnapshotDate { get; set; }
+    public string Status { get; set; } = "Draft";  // Draft, Finalized
+    public string? Description { get; set; }
+    public decimal TotalValue { get; set; }
+    public int TotalProducts { get; set; }
+    public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
+    public ICollection<InventorySnapshotLine> Lines { get; set; } = new List<InventorySnapshotLine>();
+}
+
+public class InventorySnapshotLine : TenantEntity
+{
+    public Guid SnapshotId { get; set; }
+    public InventorySnapshot Snapshot { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+    public decimal TotalValue { get; set; }
+}
