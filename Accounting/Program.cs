@@ -364,8 +364,21 @@ app.MapGet("/health/db", (IConfiguration config) =>
     catch (Exception ex) { return Results.Ok(new { status = "error", message = ex.Message }); }
 });
 
-// SPA fallback - serve app.html for non-API, non-file routes
-app.MapFallbackToFile("index.html");
+// SPA fallback - serve index.html for non-API, non-file routes
+// Use MapFallback so unmatched /api/ paths return JSON 404 instead of HTML
+app.MapFallback(async context =>
+{
+    var path = context.Request.Path.Value ?? "";
+    if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = 404;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new { success = false, message = "API endpoint not found: " + path });
+        return;
+    }
+    context.Response.ContentType = "text/html";
+    await context.Response.SendFileAsync(Path.Combine(app.Environment.WebRootPath, "index.html"));
+});
 
 // ===== PHASE 0: Raw ADO.NET schema fix (bypass EF model building entirely) =====
 // This ensures critical columns exist BEFORE EF tries to build its model.
