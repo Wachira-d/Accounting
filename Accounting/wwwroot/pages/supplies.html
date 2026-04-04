@@ -157,6 +157,8 @@ const Page = {
   async init() {
     if (!Layout.init('supplies')) return;
     API.init();
+    this.api = Layout.api();
+    if (!this.api) return;
     this.setDefaultDates();
     await this.loadBalance();
     await this.loadCategories();
@@ -180,7 +182,7 @@ const Page = {
 
   async loadCategories() {
     try {
-      const res = await API.company.getProductCategories();
+      const res = await this.api.getProductCategories();
       if (res?.success && res.data) {
         const sel = document.getElementById('balanceCategory');
         res.data.forEach(c => { const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; sel.appendChild(o); });
@@ -192,7 +194,7 @@ const Page = {
     try {
       const cat = document.getElementById('balanceCategory').value;
       const q = cat ? `?category=${encodeURIComponent(cat)}` : '';
-      const res = await API.company.getSuppliesBalance(q);
+      const res = await this.api.getSuppliesBalance(q);
       if (!res?.success) return;
       const d = res.data;
 
@@ -227,7 +229,7 @@ const Page = {
       let q = `?fromDate=${from}&toDate=${to}`;
       if (dept) q += `&department=${encodeURIComponent(dept)}`;
 
-      const res = await API.company.getSuppliesUsageSummary(q);
+      const res = await this.api.getSuppliesUsageSummary(q);
       if (!res?.success) return;
       const d = res.data;
 
@@ -266,7 +268,7 @@ const Page = {
     const sel = document.getElementById('useProductId');
     sel.innerHTML = '<option value="">เลือกวัสดุ</option>';
     try {
-      const res = await API.company.getProducts('?pageSize=200&search=');
+      const res = await this.api.getProducts('?pageSize=200&search=');
       if (res?.success && res.data?.items) {
         res.data.items.filter(p => p.productType === 4 || p.productType === 'Supplies')
           .forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = `${p.code} - ${p.name} (คงเหลือ: ${p.currentStock} ${p.unit})`; o.dataset.stock = p.currentStock; o.dataset.unit = p.unit; sel.appendChild(o); });
@@ -294,7 +296,7 @@ const Page = {
     if (!productId || !quantity || quantity <= 0) { Layout.toast('กรุณาเลือกวัสดุและระบุจำนวน', 'error'); return; }
 
     try {
-      const res = await API.company.useSupplies({
+      const res = await this.api.useSupplies({
         productId, quantity,
         department: document.getElementById('useDepartment').value || null,
         purpose: document.getElementById('usePurpose').value || null,
@@ -314,7 +316,7 @@ const Page = {
   async showHistory(productId, productName) {
     document.getElementById('historyTitle').textContent = `ประวัติการเบิกใช้ - ${productName}`;
     try {
-      const res = await API.company.getSuppliesUsageHistory(productId);
+      const res = await this.api.getSuppliesUsageHistory(productId);
       if (res?.success) {
         document.getElementById('historyBody').innerHTML = (res.data || []).length === 0
           ? '<tr><td colspan="6" class="text-center">ไม่พบข้อมูล</td></tr>'
