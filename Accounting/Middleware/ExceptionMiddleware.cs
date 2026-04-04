@@ -1,9 +1,7 @@
 using System.Net;
 using System.Security.Claims;
 using System.Text.Json;
-using Accounting.Data;
 using Accounting.Models.DTOs;
-using Accounting.Models.Entities;
 
 namespace Accounting.Middleware;
 
@@ -35,74 +33,47 @@ public class ExceptionMiddleware
 
     private static async Task SaveErrorLogAsync(HttpContext context, Exception exception)
     {
+        var statusCode = exception switch
+        {
+            UnauthorizedAccessException => 401,
+            KeyNotFoundException => 404,
+            InvalidOperationException => 400,
+            ArgumentException => 400,
+            FormatException => 400,
+            _ => 500
+        };
+
+        // Always use raw ADO.NET — the scoped DbContext may be in a broken state
+        // (e.g. failed transaction from the operation that threw the exception)
         try
         {
-            var db = context.RequestServices.GetService<AccountingDbContext>();
-            if (db == null) return;
+            var config = context.RequestServices.GetService<IConfiguration>();
+            var connStr = config?.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connStr)) return;
 
-            var errorLog = new ErrorLog
-            {
-                RequestPath = context.Request.Path,
-                HttpMethod = context.Request.Method,
-                QueryString = context.Request.QueryString.ToString(),
-                StatusCode = exception switch
-                {
-                    UnauthorizedAccessException => 401,
-                    KeyNotFoundException => 404,
-                    InvalidOperationException => 400,
-                    ArgumentException => 400,
-                    FormatException => 400,
-                    _ => 500
-                },
-                ExceptionType = exception.GetType().FullName ?? exception.GetType().Name,
-                Message = exception.Message,
-                StackTrace = exception.StackTrace,
-                InnerException = exception.InnerException?.Message,
-                UserId = context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value,
-                IpAddress = context.Connection.RemoteIpAddress?.ToString(),
-                UserAgent = context.Request.Headers.UserAgent.ToString(),
-                Timestamp = DateTime.UtcNow
-            };
-
-            db.ErrorLogs.Add(errorLog);
-            await db.SaveChangesAsync();
+            using var conn = new Npgsql.NpgsqlConnection(connStr);
+            await conn.OpenAsync();
+            var sql = @"INSERT INTO ""ErrorLogs"" (""RequestPath"",""HttpMethod"",""QueryString"",""StatusCode"",""ExceptionType"",""Message"",""StackTrace"",""InnerException"",""UserId"",""IpAddress"",""UserAgent"",""Timestamp"")
+                SELECT @p,@m,@q,@s,@et,@msg,@st,@ie,@u,@ip,@ua,now()
+                WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE lower(table_name)='errorlogs')";
+            using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@p", context.Request.Path.ToString());
+            cmd.Parameters.AddWithValue("@m", context.Request.Method);
+            cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString());
+            cmd.Parameters.AddWithValue("@s", statusCode);
+            cmd.Parameters.AddWithValue("@et", exception.GetType().FullName ?? "Unknown");
+            cmd.Parameters.AddWithValue("@msg", exception.Message);
+            cmd.Parameters.AddWithValue("@st", (object?)exception.StackTrace ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@ie", (object?)exception.InnerException?.Message ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@u", (object?)context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@ip", (object?)context.Connection.RemoteIpAddress?.ToString() ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@ua", context.Request.Headers.UserAgent.ToString());
+            await cmd.ExecuteNonQueryAsync();
         }
         catch (Exception logEx)
         {
-            // EF-based logging failed (possibly model building issue) — try raw ADO.NET
             var logger = context.RequestServices.GetService<ILogger<ExceptionMiddleware>>();
-            logger?.LogWarning(logEx, "EF error log failed, trying raw ADO.NET");
-
-            try
-            {
-                var config = context.RequestServices.GetService<IConfiguration>();
-                var connStr = config?.GetConnectionString("DefaultConnection");
-                if (!string.IsNullOrEmpty(connStr))
-                {
-                    using var conn = new Npgsql.NpgsqlConnection(connStr);
-                    await conn.OpenAsync();
-                    var sql = @"INSERT INTO ""ErrorLogs"" (""Id"",""RequestPath"",""HttpMethod"",""QueryString"",""StatusCode"",""ExceptionType"",""Message"",""StackTrace"",""InnerException"",""UserId"",""IpAddress"",""UserAgent"",""Timestamp"",""CreatedAt"",""IsDeleted"")
-                        SELECT gen_random_uuid(),@p,@m,@q,@s,@et,@msg,@st,@ie,@u,@ip,@ua,now(),now(),false
-                        WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE lower(table_name)='errorlogs')";
-                    using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
-                    cmd.Parameters.AddWithValue("@p", context.Request.Path.ToString() ?? "");
-                    cmd.Parameters.AddWithValue("@m", context.Request.Method ?? "");
-                    cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString() ?? "");
-                    cmd.Parameters.AddWithValue("@s", 500);
-                    cmd.Parameters.AddWithValue("@et", exception.GetType().FullName ?? "Unknown");
-                    cmd.Parameters.AddWithValue("@msg", exception.Message ?? "");
-                    cmd.Parameters.AddWithValue("@st", (object?)exception.StackTrace ?? DBNull.Value);
-                    cmd.Parameters.AddWithValue("@ie", (object?)exception.InnerException?.Message ?? DBNull.Value);
-                    cmd.Parameters.AddWithValue("@u", (object?)context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? DBNull.Value);
-                    cmd.Parameters.AddWithValue("@ip", (object?)context.Connection.RemoteIpAddress?.ToString() ?? DBNull.Value);
-                    cmd.Parameters.AddWithValue("@ua", context.Request.Headers.UserAgent.ToString() ?? "");
-                    await cmd.ExecuteNonQueryAsync();
-                }
-            }
-            catch (Exception rawEx)
-            {
-                logger?.LogError(rawEx, "Raw ADO.NET error logging also failed");
-            }
+            logger?.LogError(logEx, "Error logging to ErrorLogs table failed");
         }
     }
 
