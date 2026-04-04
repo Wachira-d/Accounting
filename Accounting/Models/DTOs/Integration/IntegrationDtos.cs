@@ -78,9 +78,9 @@ public record InboundInvoiceRequest(
     List<InboundInvoiceLineRequest> Lines,
     string? PaymentMethod,
     decimal? VatRate,
-    bool IncludeVat = true,
     string? Currency,          // default "THB"
-    string? Notes);
+    string? Notes,
+    bool IncludeVat = true);
 
 public record InboundInvoiceLineRequest(
     string? ItemCode, string ItemName, decimal Quantity, decimal UnitPrice,
@@ -121,8 +121,8 @@ public record InboundExpenseRequest(
     DateTime DocumentDate, DateTime? DueDate,
     List<InboundInvoiceLineRequest> Lines,
     decimal? VatRate,
-    bool IncludeVat = true,
-    string? Notes);
+    string? Notes,
+    bool IncludeVat = true);
 
 /// <summary>สินค้า/บริการจากระบบภายนอก</summary>
 public record InboundProductRequest(
