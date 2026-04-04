@@ -605,6 +605,12 @@ const API = {
       getDocSignatures: (documentId) => API.get(`${base}/approvals/document/${documentId}/signatures`),
       // External Approval
       externalApproveQuotation: (documentId, d) => API.post(`${base}/external/quotations/${documentId}/approve`, d),
+      // Team / Members
+      getMembers: () => API.get(`/api/company/${companyId}/users`),
+      addMember: (email, role) => API.post(`/api/company/${companyId}/users`, { email, role }),
+      updateMemberRole: (userId, role) => API.put(`/api/company/${companyId}/users/${userId}/role`, { role }),
+      removeMember: (userId) => API.del(`/api/company/${companyId}/users/${userId}`),
+      getUsageDetail: () => API.get(`/api/subscription/${companyId}/usage/detail`),
     };
   },
 

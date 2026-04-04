@@ -136,12 +136,43 @@ public class CompanyService : ICompanyService
         return await GetByIdAsync(companyId, userId);
     }
 
+    public async Task<List<CompanyMemberResponse>> GetMembersAsync(Guid companyId, Guid userId)
+    {
+        // Verify the requesting user belongs to this company
+        var isMember = await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        if (!isMember) throw new UnauthorizedAccessException("คุณไม่ได้เป็นสมาชิกของบริษัทนี้");
+
+        return await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == companyId)
+            .Include(cu => cu.User)
+            .Select(cu => new CompanyMemberResponse(
+                cu.UserId,
+                cu.User.FullName,
+                cu.User.Email,
+                cu.User.Phone,
+                cu.Role,
+                cu.JoinedAt,
+                cu.User.LastLoginAt,
+                cu.User.Status))
+            .OrderBy(m => m.Role).ThenBy(m => m.FullName)
+            .ToListAsync();
+    }
+
     public async Task AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request)
     {
         await EnsureOwnerAccessAsync(companyId, ownerId);
 
+        // Hard limit: check subscription MaxUsers
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub != null)
+        {
+            var currentCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
+            if (currentCount >= sub.MaxUsers)
+                throw new InvalidOperationException($"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{sub.MaxUsers}) กรุณาอัปเกรดแพ็กเกจ");
+        }
+
         var targetUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email)
-            ?? throw new KeyNotFoundException($"ไม่พบผู้ใช้อีเมล {request.Email}");
+            ?? throw new KeyNotFoundException($"ไม่พบผู้ใช้อีเมล {request.Email} ในระบบ (ผู้ใช้ต้องสมัครสมาชิกก่อน)");
 
         if (await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == targetUser.Id))
             throw new InvalidOperationException("ผู้ใช้นี้เป็นสมาชิกอยู่แล้ว");
@@ -167,6 +198,20 @@ public class CompanyService : ICompanyService
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
 
         _db.CompanyUsers.Remove(cu);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+
+        if (ownerId == targetUserId)
+            throw new InvalidOperationException("ไม่สามารถเปลี่ยน Role ของตัวเองได้");
+
+        var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
+
+        cu.Role = newRole;
         await _db.SaveChangesAsync();
     }
 

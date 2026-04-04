@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการทีม - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .quota-bar { display:flex; align-items:center; gap:12px; padding:16px 20px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:20px; flex-wrap:wrap; }
+    .quota-bar .quota-info { flex:1; min-width:200px; }
+    .quota-bar .quota-label { font-size:13px; color:#64748b; margin-bottom:4px; }
+    .quota-bar .quota-value { font-size:20px; font-weight:700; color:#1e293b; }
+    .quota-bar .quota-value span { font-size:14px; font-weight:400; color:#94a3b8; }
+    .quota-progress { flex:1; min-width:200px; }
+    .quota-progress-bar { background:#e2e8f0; border-radius:6px; height:8px; overflow:hidden; }
+    .quota-progress-fill { height:100%; border-radius:6px; transition:width .4s ease; background:var(--primary); }
+    .quota-progress-fill.warn { background:#f59e0b; }
+    .quota-progress-fill.full { background:#ef4444; }
+
+    .member-card { display:flex; align-items:center; gap:16px; padding:16px 20px; border-bottom:1px solid #f1f5f9; }
+    .member-card:last-child { border-bottom:none; }
+    .member-avatar { width:44px; height:44px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:16px; flex-shrink:0; }
+    .member-info { flex:1; min-width:0; }
+    .member-name { font-weight:600; font-size:15px; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .member-email { font-size:13px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .member-meta { font-size:12px; color:#94a3b8; margin-top:2px; }
+    .member-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; flex-wrap:wrap; }
+
+    .role-badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+    .role-badge.owner { background:#EDE9FE; color:#6D28D9; }
+    .role-badge.accountant { background:#DBEAFE; color:#1D4ED8; }
+    .role-badge.staff { background:#D1FAE5; color:#059669; }
+    .role-badge.auditor { background:#FEF3C7; color:#D97706; }
+    .role-badge.viewer { background:#F1F5F9; color:#64748B; }
+    .role-badge.external { background:#FFE4E6; color:#E11D48; }
+
+    .add-form { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+    .add-form .form-group { margin-bottom:0; }
+
+    @media (max-width:768px) {
+      .member-card { flex-wrap:wrap; gap:12px; padding:14px 16px; }
+      .member-actions { width:100%; justify-content:flex-end; }
+      .add-form { flex-direction:column; }
+      .add-form .form-group, .add-form .btn { width:100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">จัดการทีม</h2><p class="page-subtitle">เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง</p></div>
+    </div>
+
+    <!-- Quota -->
+    <div class="quota-bar" id="quotaBar">
+      <div class="quota-info">
+        <div class="quota-label">สมาชิกในองค์กร</div>
+        <div class="quota-value"><span id="qCurrent">-</span> <span>/ <span id="qMax">-</span> คน</span></div>
+      </div>
+      <div class="quota-progress">
+        <div class="quota-progress-bar"><div class="quota-progress-fill" id="qFill" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Add Member Form -->
+    <div class="card" id="addMemberSection" style="display:none">
+      <h3 class="card-title" style="margin-bottom:12px">เพิ่มสมาชิกใหม่</h3>
+      <p style="font-size:13px;color:#64748b;margin-bottom:16px">ผู้ใช้ต้องสมัครสมาชิก Next Acc ก่อน จึงจะเพิ่มเข้าบริษัทได้</p>
+      <div class="add-form">
+        <div class="form-group" style="flex:2;min-width:200px">
+          <label class="form-label">อีเมลผู้ใช้</label>
+          <input type="email" id="addEmail" class="form-input" placeholder="user@example.com">
+        </div>
+        <div class="form-group" style="min-width:160px">
+          <label class="form-label">บทบาท</label>
+          <select id="addRole" class="form-select">
+            <option value="2">นักบัญชี</option>
+            <option value="3">พนักงาน</option>
+            <option value="4">ผู้ตรวจสอบ</option>
+            <option value="5">ดูอย่างเดียว</option>
+            <option value="6">นักบัญชีภายนอก</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="Page.addMember()" style="height:40px;white-space:nowrap">เพิ่มสมาชิก</button>
+      </div>
+    </div>
+
+    <!-- Members List -->
+    <div class="card" style="padding:0;margin-top:16px">
+      <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <h3 class="card-title" style="margin:0">รายชื่อสมาชิก</h3>
+        <input type="text" id="searchMember" class="form-input" placeholder="ค้นหาชื่อ/อีเมล..." style="width:220px;max-width:100%" oninput="Page.filterMembers()">
+      </div>
+      <div id="memberList"><p style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</p></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const ROLES = {
+      1: { label: 'เจ้าของ', cls: 'owner', icon: '👑' },
+      2: { label: 'นักบัญชี', cls: 'accountant', icon: '📊' },
+      3: { label: 'พนักงาน', cls: 'staff', icon: '👤' },
+      4: { label: 'ผู้ตรวจสอบ', cls: 'auditor', icon: '🔍' },
+      5: { label: 'ดูอย่างเดียว', cls: 'viewer', icon: '👁️' },
+      6: { label: 'นักบัญชีภายนอก', cls: 'external', icon: '🤝' },
+      99: { label: 'System Admin', cls: 'owner', icon: '⚡' }
+    };
+
+    const Page = {
+      members: [],
+      maxUsers: 0,
+      currentUserId: null,
+      currentUserRole: null,
+
+      async init() {
+        if (!Layout.init('team')) return;
+        Layout.setTitle('จัดการทีม');
+        this.currentUserId = Layout.user?.id;
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          // Load members and usage in parallel
+          const [membersRes, usageRes] = await Promise.all([
+            api.getMembers(),
+            api.getUsageDetail().catch(() => null)
+          ]);
+          this.members = membersRes.data || [];
+          this.maxUsers = usageRes?.data?.maxUsers || 999;
+
+          // Determine current user's role
+          const me = this.members.find(m => m.userId === this.currentUserId);
+          this.currentUserRole = me?.role;
+
+          // Show add form only for Owner
+          const isOwner = this.currentUserRole === 1 || this.currentUserRole === 99;
+          document.getElementById('addMemberSection').style.display = isOwner ? 'block' : 'none';
+
+          this.renderQuota();
+          this.renderMembers();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderQuota() {
+        const count = this.members.length;
+        const max = this.maxUsers;
+        document.getElementById('qCurrent').textContent = count;
+        document.getElementById('qMax').textContent = max >= 999 ? '∞' : max;
+        const pct = max >= 999 ? Math.min((count / 50) * 100, 100) : (count / max) * 100;
+        const fill = document.getElementById('qFill');
+        fill.style.width = Math.min(pct, 100) + '%';
+        fill.className = 'quota-progress-fill' + (pct >= 100 ? ' full' : pct >= 80 ? ' warn' : '');
+      },
+
+      renderMembers() {
+        const q = (document.getElementById('searchMember').value || '').toLowerCase();
+        const filtered = q ? this.members.filter(m =>
+          m.fullName.toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
+        ) : this.members;
+
+        const isOwner = this.currentUserRole === 1 || this.currentUserRole === 99;
+
+        if (!filtered.length) {
+          document.getElementById('memberList').innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">ไม่พบสมาชิก</p>';
+          return;
+        }
+
+        document.getElementById('memberList').innerHTML = filtered.map(m => {
+          const r = ROLES[m.role] || ROLES[3];
+          const initials = (m.fullName || '?').substring(0, 2);
+          const isMe = m.userId === this.currentUserId;
+          const joinDate = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' }) : '-';
+          const lastLogin = m.lastLoginAt ? Page.timeAgo(m.lastLoginAt) : 'ยังไม่เคยเข้าใช้';
+
+          let actions = '';
+          if (isOwner && !isMe && m.role !== 1) {
+            actions = `
+              <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
+                ${[2,3,4,5,6].map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
+              </select>
+              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName}')">ลบ</button>
+            `;
+          }
+
+          return `<div class="member-card">
+            <div class="member-avatar">${initials}</div>
+            <div class="member-info">
+              <div class="member-name">${m.fullName}${isMe?' <span style="color:#94a3b8;font-weight:400;font-size:12px">(คุณ)</span>':''}</div>
+              <div class="member-email">${m.email}${m.phone?' · '+m.phone:''}</div>
+              <div class="member-meta">เข้าร่วม ${joinDate} · เข้าใช้ล่าสุด ${lastLogin}</div>
+            </div>
+            <div class="member-actions">
+              <span class="role-badge ${r.cls}">${r.icon} ${r.label}</span>
+              ${actions}
+            </div>
+          </div>`;
+        }).join('');
+      },
+
+      filterMembers() { this.renderMembers(); },
+
+      async addMember() {
+        const api = Layout.api(); if (!api) return;
+        const email = document.getElementById('addEmail').value.trim();
+        const role = parseInt(document.getElementById('addRole').value);
+        if (!email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
+        try {
+          await api.addMember(email, role);
+          Layout.toast('เพิ่มสมาชิกสำเร็จ');
+          document.getElementById('addEmail').value = '';
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async changeRole(userId, newRole) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updateMemberRole(userId, parseInt(newRole));
+          Layout.toast('เปลี่ยนบทบาทสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async removeMember(userId, name) {
+        if (!confirm(`ต้องการลบ "${name}" ออกจากบริษัทหรือไม่?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.removeMember(userId);
+          Layout.toast('ลบสมาชิกสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      timeAgo(dateStr) {
+        const diff = Date.now() - new Date(dateStr).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'เมื่อสักครู่';
+        if (mins < 60) return mins + ' นาทีที่แล้ว';
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return hrs + ' ชั่วโมงที่แล้ว';
+        const days = Math.floor(hrs / 24);
+        if (days < 30) return days + ' วันที่แล้ว';
+        return new Date(dateStr).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' });
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

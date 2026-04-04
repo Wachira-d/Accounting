@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Company;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -51,12 +52,28 @@ public class CompanyController : ControllerBase
         return Ok(new ApiResponse<CompanyResponse>(true, result));
     }
 
+    [HttpGet("{companyId:guid}/users")]
+    public async Task<ActionResult<ApiResponse<List<CompanyMemberResponse>>>> GetMembers(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.GetMembersAsync(companyId, userId);
+        return Ok(new ApiResponse<List<CompanyMemberResponse>>(true, result));
+    }
+
     [HttpPost("{companyId:guid}/users")]
     public async Task<ActionResult<ApiResponse<string>>> AddUser(Guid companyId, [FromBody] AddCompanyUserRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _companyService.AddUserAsync(companyId, userId, request);
         return StatusCode(201, new ApiResponse<string>(true, null, "เพิ่มผู้ใช้สำเร็จ"));
+    }
+
+    [HttpPut("{companyId:guid}/users/{targetUserId:guid}/role")]
+    public async Task<ActionResult<ApiResponse<string>>> UpdateUserRole(Guid companyId, Guid targetUserId, [FromBody] UpdateUserRoleRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.UpdateUserRoleAsync(companyId, userId, targetUserId, request.Role);
+        return Ok(new ApiResponse<string>(true, null, "เปลี่ยน Role สำเร็จ"));
     }
 
     [HttpDelete("{companyId:guid}/users/{targetUserId:guid}")]

@@ -149,6 +149,7 @@ const Layout = {
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html' },
 
     { section: 'ตั้งค่า' },
+    { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html' },
     { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html' },
