@@ -601,7 +601,6 @@ public class AdminController : ControllerBase
         }
         catch { return new(); }
     }
-}
 
     // ===== Integration Overview (Admin) =====
 
