@@ -40,6 +40,13 @@ const API = {
         console.warn('Rate limited:', url);
         return { success: false, data: null, message: 'กรุณารอสักครู่' };
       }
+      // Check content-type to avoid parsing HTML as JSON
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        const errMsg = `Server returned non-JSON (HTTP ${res.status}) for ${method} ${url}`;
+        API._logError(method, url, res.status, errMsg);
+        throw new Error(errMsg + '. กรุณา restart server');
+      }
       const json = await res.json();
       if (!res.ok) {
         let msg = json.message || json.title || `Error ${res.status}`;
@@ -61,6 +68,11 @@ const API = {
   put(url, data) { return this.request('PUT', url, data); },
   del(url) { return this.request('DELETE', url); },
   upload(url, formData) { return this.request('POST', url, formData, true); },
+  _logError(method, url, status, msg) {
+    try { fetch('/api/error-log/client', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestPath: url, httpMethod: method, statusCode: status, message: msg, source: 'Frontend' })
+    }).catch(() => {}); } catch {}
+  },
 
   // Auth
   login(email, password) { return this.post('/api/auth/login', { email, password }); },
