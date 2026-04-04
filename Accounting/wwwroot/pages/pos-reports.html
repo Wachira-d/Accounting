@@ -156,13 +156,13 @@
           const pb = d.paymentBreakdown || [];
           if (pb.length) {
             document.getElementById('paymentBreakdown').innerHTML = `
-              <table class="table" style="font-size:13px;">
+              <div class="table-container"><table class="table" style="font-size:13px;">
                 <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead>
                 <tbody>${pb.map(p => {
                   const pct = d.totalSales > 0 ? (p.total / d.totalSales * 100).toFixed(1) : 0;
                   return `<tr><td>${Page.payLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.total)}</td><td class="text-right">${pct}%</td></tr>`;
                 }).join('')}</tbody>
-              </table>`;
+              </table></div>`;
           } else {
             document.getElementById('paymentBreakdown').innerHTML = '<p class="text-center text-gray-400" style="padding:20px;">ไม่มีข้อมูล</p>';
           }
@@ -250,7 +250,7 @@
               <div><span class="text-gray-500">พนักงาน:</span> ${o.primaryStaffName || '-'}</div>
             </div>
             <h4 style="margin-bottom:8px;">รายการสินค้า</h4>
-            <table class="table" style="font-size:13px;margin-bottom:16px;">
+            <div class="table-container"><table class="table" style="font-size:13px;margin-bottom:16px;">
               <thead><tr><th>รายการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา</th><th class="text-right">รวม</th></tr></thead>
               <tbody>${(o.items || []).map(i => `<tr>
                 <td>${i.itemName}${(i.modifiers||[]).length ? '<br><small class="text-gray-400">+ ' + i.modifiers.map(m=>m.modifierName).join(', ') + '</small>' : ''}</td>
@@ -258,14 +258,14 @@
                 <td class="text-right">${Layout.money(i.unitPrice)}</td>
                 <td class="text-right">${Layout.money(i.lineTotal)}</td>
               </tr>`).join('')}</tbody>
-            </table>
+            </table></div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
               <div>
                 <h4 style="margin-bottom:8px;">การชำระเงิน</h4>
-                ${(o.payments || []).length ? `<table class="table" style="font-size:13px;">
+                ${(o.payments || []).length ? `<div class="table-container"><table class="table" style="font-size:13px;">
                   <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ทอน</th></tr></thead>
                   <tbody>${(o.payments || []).map(p => `<tr><td>${Page.payLabel(p.paymentMethod)}</td><td class="text-right">${Layout.money(p.amount)}</td><td class="text-right">${Layout.money(p.changeAmount)}</td></tr>`).join('')}</tbody>
-                </table>` : '<p class="text-gray-400">ยังไม่ชำระ</p>'}
+                </table></div>` : '<p class="text-gray-400">ยังไม่ชำระ</p>'}
               </div>
               <div style="text-align:right;">
                 <div style="font-size:13px;color:var(--gray-500);">รวม: ${Layout.money(o.subTotal)}</div>

@@ -267,12 +267,12 @@
           const items = res.data?.items || res.data || [];
           const statusMap = { Pending:'รอดำเนินการ', InProgress:'กำลังทำ', Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก' };
           document.getElementById('tasksTab').innerHTML = items.length ?
-            `<table class="table"><thead><tr><th>ชื่องาน</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th>สถานะ</th></tr></thead><tbody>${items.map(t => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>ชื่องาน</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th>สถานะ</th></tr></thead><tbody>${items.map(t => `<tr>
               <td class="font-medium">${t.name}</td>
               <td>${Layout.date(t.startDate)}</td>
               <td>${Layout.date(t.endDate)}</td>
               <td>${Layout.statusBadge(t.status)}</td>
-            </tr>`).join('')}</tbody></table>`
+            </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีงาน</div>';
         } catch (e) { document.getElementById('tasksTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
       },
@@ -283,12 +283,12 @@
           const items = res.data?.items || res.data || [];
           const catMap = { Labor:'ค่าแรง', Material:'วัสดุ', Equipment:'อุปกรณ์', Subcontract:'ผู้รับเหมาช่วง', Travel:'ค่าเดินทาง', Other:'อื่นๆ' };
           document.getElementById('costsTab').innerHTML = items.length ?
-            `<table class="table"><thead><tr><th>วันที่</th><th>รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>วันที่</th><th>รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
               <td>${Layout.date(c.costDate || c.date)}</td>
               <td>${c.description}</td>
               <td><span class="badge badge-info">${catMap[c.category] || c.category}</span></td>
               <td class="text-right font-semibold">${Layout.money(c.amount)}</td>
-            </tr>`).join('')}</tbody></table>`
+            </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน</div>';
         } catch (e) { document.getElementById('costsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
       },

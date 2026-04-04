@@ -51,7 +51,7 @@
             <button class="btn btn-primary btn-sm" onclick="Page.showModal('prepaidModal')">เพิ่ม</button>
           </div>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>รายละเอียด</th><th>เริ่ม</th><th>สิ้นสุด</th><th>งวด</th>
           <th class="text-right">ยอดรวม</th><th class="text-right">ตัดแล้ว</th><th class="text-right">คงเหลือ</th><th>สถานะ</th>
         </tr></thead><tbody id="prepaidBody"></tbody></table></div>
@@ -64,7 +64,7 @@
         <div class="card-header"><h3>เงินมัดจำ (118xx / 216xx)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.showModal('depositModal')">เพิ่ม</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>รายละเอียด</th><th>ประเภท</th><th>ทิศทาง</th><th>วันที่</th>
           <th class="text-right">จำนวน</th><th class="text-right">คืนแล้ว</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="depositBody"></tbody></table></div>
@@ -77,7 +77,7 @@
         <div class="card-header"><h3>ค่าใช้จ่ายค้างจ่าย (215xx)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.showModal('accruedModal')">เพิ่ม</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>รายละเอียด</th><th>ประเภท</th><th>วันที่</th>
           <th class="text-right">ยอด</th><th class="text-right">จ่ายแล้ว</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="accruedBody"></tbody></table></div>
@@ -90,7 +90,7 @@
         <div class="card-header"><h3>ค่าเผื่อหนี้สงสัยจะสูญ (181xx / 57130)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.createBadDebt()">คำนวณใหม่</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>วันที่</th><th>วิธี</th><th class="text-right">ลูกหนี้รวม</th>
           <th class="text-right">ค่าเผื่อ</th><th class="text-right">ปรับปรุง</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="baddebtBody"></tbody></table></div>
@@ -103,7 +103,7 @@
         <div class="card-header"><h3>ค่าเผื่อสินค้าล้าสมัย (182xx)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.createObsolescence()">คำนวณใหม่</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>วันที่</th><th class="text-right">มูลค่าสินค้า</th>
           <th class="text-right">ค่าเผื่อ</th><th class="text-right">ปรับปรุง</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="obsolescenceBody"></tbody></table></div>
@@ -116,7 +116,7 @@
         <div class="card-header"><h3>ภาษีเงินได้นิติบุคคล (58000 / 21920)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.showModal('citModal')">คำนวณภาษี</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>ปีภาษี</th><th>งวด</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th>
           <th class="text-right">กำไรสุทธิภาษี</th><th class="text-right">ภาษี</th><th class="text-right">จ่ายสุทธิ</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="citBody"></tbody></table></div>
@@ -129,7 +129,7 @@
         <div class="card-header"><h3>จัดสรรกำไร / เงินปันผล (32xxx)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.showModal('dividendModal')">จัดสรรกำไร</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>ปี</th><th class="text-right">กำไรสุทธิ</th><th class="text-right">สำรองฯ</th>
           <th class="text-right">เงินปันผล</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="dividendBody"></tbody></table></div>
@@ -142,7 +142,7 @@
         <div class="card-header"><h3>เพิ่มทุน / ลดทุน (310xx)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.showModal('capitalModal')">เพิ่มรายการ</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวนหุ้น</th>
           <th class="text-right">มูลค่าหุ้น</th><th class="text-right">เงินรับ/จ่าย</th><th class="text-right">ส่วนเกิน</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="capitalBody"></tbody></table></div>
@@ -155,7 +155,7 @@
         <div class="card-header"><h3>เงินลงทุนชั่วคราว (112xx)</h3>
           <button class="btn btn-primary btn-sm" onclick="Page.showModal('investmentModal')">เพิ่มเงินลงทุน</button>
         </div>
-        <div class="table-responsive"><table class="table"><thead><tr>
+        <div class="table-container"><table class="table"><thead><tr>
           <th>เลขที่</th><th>ประเภท</th><th>รายละเอียด</th><th>วันที่ซื้อ</th><th>ครบกำหนด</th>
           <th class="text-right">ต้นทุน</th><th class="text-right">ดอกเบี้ย%</th><th>สถานะ</th><th></th>
         </tr></thead><tbody id="investmentBody"></tbody></table></div>

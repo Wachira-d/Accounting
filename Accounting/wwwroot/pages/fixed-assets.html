@@ -336,12 +336,12 @@
         document.getElementById('btnDepSched').className = 'btn btn-sm btn-ghost';
         const deps = this._deps || [];
         document.getElementById('depreciationContent').innerHTML = deps.length ?
-          `<table class="table"><thead><tr><th>งวด</th><th class="text-right">จำนวน</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าสุทธิ</th></tr></thead><tbody>${deps.map(d => `<tr>
+          `<div class="table-container"><table class="table"><thead><tr><th>งวด</th><th class="text-right">จำนวน</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าสุทธิ</th></tr></thead><tbody>${deps.map(d => `<tr>
             <td>${d.month}/${d.year}</td>
             <td class="text-right">${Layout.money(d.amount)}</td>
             <td class="text-right">${Layout.money(d.accumulatedAmount)}</td>
             <td class="text-right font-semibold">${Layout.money(d.netBookValue)}</td>
-          </tr>`).join('')}</tbody></table>`
+          </tr>`).join('')}</tbody></table></div>`
           : '<div class="text-center text-gray-400" style="padding:16px">ยังไม่มีรายการค่าเสื่อม</div>';
       },
       async showDepSchedule() {
@@ -352,13 +352,13 @@
           const res = await api.getDepreciationSchedule(this._currentAsset.id);
           const sched = res.data?.schedule || res.data || [];
           document.getElementById('depreciationContent').innerHTML = sched.length ?
-            `<table class="table"><thead><tr><th>งวด</th><th class="text-right">มูลค่าเปิด</th><th class="text-right">ค่าเสื่อม</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าปิด</th></tr></thead><tbody>${sched.map(s => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>งวด</th><th class="text-right">มูลค่าเปิด</th><th class="text-right">ค่าเสื่อม</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าปิด</th></tr></thead><tbody>${sched.map(s => `<tr>
               <td>${s.month}/${s.year}</td>
               <td class="text-right">${Layout.money(s.openingNBV)}</td>
               <td class="text-right">${Layout.money(s.depreciationAmount)}</td>
               <td class="text-right">${Layout.money(s.accumulatedDepreciation)}</td>
               <td class="text-right font-semibold">${Layout.money(s.closingNBV)}</td>
-            </tr>`).join('')}</tbody></table>`
+            </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:16px">ไม่สามารถสร้างตารางค่าเสื่อมได้</div>';
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -455,7 +455,7 @@
               <div class="kpi-card"><div class="kpi-label">จำนวน</div><div class="kpi-value">${r.totalActive} ใช้งาน / ${r.totalDisposed} จำหน่าย / ${r.totalFullyDepreciated} หมดค่าเสื่อม</div></div>
             </div>`;
           const items = r.items || [];
-          document.getElementById('reportTable').innerHTML = items.length ? `<table class="table"><thead><tr>
+          document.getElementById('reportTable').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr>
             <th>รหัส</th><th>ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th>วิธี</th>
             <th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">NBV</th><th>สถานะ</th>
           </tr></thead><tbody>${items.map(i => `<tr>
@@ -465,7 +465,7 @@
             <td class="text-right">${Layout.money(i.accumulatedDepreciation)}</td>
             <td class="text-right font-semibold">${Layout.money(i.netBookValue)}</td>
             <td>${Layout.statusBadge(i.status)}</td>
-          </tr>`).join('')}</tbody></table>` : '<p class="text-center text-gray-400">ไม่มีข้อมูล</p>';
+          </tr>`).join('')}</tbody></table></div>` : '<p class="text-center text-gray-400">ไม่มีข้อมูล</p>';
           Layout.openModal('reportModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

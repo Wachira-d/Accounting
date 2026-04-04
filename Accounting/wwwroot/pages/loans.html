@@ -224,7 +224,7 @@
           const res = await api.getLoanSchedule(id);
           const items = res.data?.items || res.data || [];
           document.getElementById('scheduleTab').innerHTML = items.length ?
-            `<table class="table"><thead><tr><th>งวดที่</th><th>วันครบกำหนด</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th class="text-right">รวม</th><th class="text-right">คงเหลือ</th><th>สถานะ</th></tr></thead><tbody>${items.map(s => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>งวดที่</th><th>วันครบกำหนด</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th class="text-right">รวม</th><th class="text-right">คงเหลือ</th><th>สถานะ</th></tr></thead><tbody>${items.map(s => `<tr>
               <td>${s.installmentNumber || s.periodNumber}</td>
               <td>${Layout.date(s.dueDate)}</td>
               <td class="text-right">${Layout.money(s.principalAmount)}</td>
@@ -232,7 +232,7 @@
               <td class="text-right font-semibold">${Layout.money(s.totalAmount || (s.principalAmount + s.interestAmount))}</td>
               <td class="text-right">${Layout.money(s.remainingBalance)}</td>
               <td>${s.isPaid ? '<span class="badge badge-success">ชำระแล้ว</span>' : '<span class="badge badge-warning">รอชำระ</span>'}</td>
-            </tr>`).join('')}</tbody></table>`
+            </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีตารางผ่อนชำระ — กด "สร้างตารางผ่อน" เพื่อสร้าง</div>';
         } catch (e) { document.getElementById('scheduleTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีตารางผ่อนชำระ</div>'; }
       },
@@ -242,13 +242,13 @@
           const res = await api.getLoanPayments(id);
           const items = res.data?.items || res.data || [];
           document.getElementById('paymentsTab').innerHTML = items.length ?
-            `<table class="table"><thead><tr><th>วันที่</th><th class="text-right">จำนวน</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th>หมายเหตุ</th></tr></thead><tbody>${items.map(p => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>วันที่</th><th class="text-right">จำนวน</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th>หมายเหตุ</th></tr></thead><tbody>${items.map(p => `<tr>
               <td>${Layout.date(p.paymentDate)}</td>
               <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
               <td class="text-right">${Layout.money(p.principalPortion)}</td>
               <td class="text-right">${Layout.money(p.interestPortion)}</td>
               <td class="text-gray-500">${p.notes || '-'}</td>
-            </tr>`).join('')}</tbody></table>`
+            </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีประวัติการชำระ</div>';
         } catch (e) { document.getElementById('paymentsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
       },

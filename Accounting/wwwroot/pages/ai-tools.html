@@ -253,13 +253,13 @@ const Page = {
           <div><h3 class="font-medium">${f.name || 'พยากรณ์กระแสเงินสด'}</h3><span class="text-sm text-gray-500">สร้างเมื่อ: ${Layout.date(f.createdAt)}</span></div>
           <span class="badge ${f.status === 'Completed' ? 'badge-success' : 'badge-warning'}">${f.status === 'Completed' ? 'เสร็จสิ้น' : 'กำลังประมวลผล'}</span>
         </div>
-        ${f.periods || f.predictions ? `<table class="table"><thead><tr><th>งวด</th><th class="text-right">รายรับคาดการณ์</th><th class="text-right">รายจ่ายคาดการณ์</th><th class="text-right">เงินสดสุทธิ</th></tr></thead>
+        ${f.periods || f.predictions ? `<div class="table-container"><table class="table"><thead><tr><th>งวด</th><th class="text-right">รายรับคาดการณ์</th><th class="text-right">รายจ่ายคาดการณ์</th><th class="text-right">เงินสดสุทธิ</th></tr></thead>
         <tbody>${(f.periods || f.predictions || []).map(p => `<tr>
           <td>${p.period || p.month || '-'}</td>
           <td class="text-right text-success">${Layout.money(p.predictedInflow || p.income)}</td>
           <td class="text-right text-danger">${Layout.money(p.predictedOutflow || p.expense)}</td>
           <td class="text-right font-medium">${Layout.money((p.predictedInflow||p.income||0)-(p.predictedOutflow||p.expense||0))}</td>
-        </tr>`).join('')}</tbody></table>` : ''}
+        </tr>`).join('')}</tbody></table></div>` : ''}
       </div>`).join('');
     } catch (err) { document.getElementById('forecastContent').innerHTML = `<div class="card" style="padding:24px"><p class="text-danger text-center">${err.message}</p></div>`; }
   },

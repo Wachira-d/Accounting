@@ -578,10 +578,10 @@
             </div>
             ${d.paymentBreakdown && d.paymentBreakdown.length ? `
               <h4 style="margin:16px 0 8px;">แยกตามช่องทางชำระ</h4>
-              <table class="table" style="font-size:13px;">
+              <div class="table-container"><table class="table" style="font-size:13px;">
                 <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th></tr></thead>
                 <tbody>${d.paymentBreakdown.map(p => `<tr><td>${Page.payMethodLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.total)}</td></tr>`).join('')}</tbody>
-              </table>
+              </table></div>
             ` : ''}
           `;
         } catch (e) {

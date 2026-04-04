@@ -209,14 +209,14 @@ const Page = {
     try {
       const res = await api.getWebhookDeliveries(id);
       const items = res.data?.items || res.data || [];
-      document.getElementById('deliveryContent').innerHTML = items.length ? `<table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>HTTP Status</th><th>Response Time</th><th>จัดการ</th></tr></thead>
+      document.getElementById('deliveryContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>HTTP Status</th><th>Response Time</th><th>จัดการ</th></tr></thead>
       <tbody>${items.map(d => `<tr>
         <td class="text-sm">${new Date(d.timestamp || d.createdAt).toLocaleString('th-TH')}</td>
         <td class="text-sm">${d.eventType || '-'}</td>
         <td><span class="badge ${d.statusCode >= 200 && d.statusCode < 300 ? 'badge-success' : 'badge-danger'}">${d.statusCode || '-'}</span></td>
         <td class="text-sm">${d.responseTime || d.duration || '-'}ms</td>
         <td>${d.statusCode >= 400 || !d.statusCode ? `<button class="btn btn-sm btn-secondary" onclick="Page.retryDelivery('${d.id}')">ส่งใหม่</button>` : ''}</td>
-      </tr>`).join('')}</tbody></table>` : '<p class="text-gray-400 text-center">ไม่มีประวัติการส่ง</p>';
+      </tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีประวัติการส่ง</p>';
       Layout.openModal('deliveryModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
