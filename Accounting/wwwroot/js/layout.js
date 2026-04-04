@@ -116,6 +116,7 @@ const Layout = {
     { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html' },
     { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
+    { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html' },
 
     { section: 'ภาษี' },
     { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️', href: '/pages/tax.html' },

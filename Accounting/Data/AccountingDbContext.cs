@@ -51,6 +51,19 @@ public class AccountingDbContext : DbContext
     public DbSet<InventorySnapshotLine> InventorySnapshotLines => Set<InventorySnapshotLine>();
     public DbSet<SuppliesUsageLog> SuppliesUsageLogs => Set<SuppliesUsageLog>();
 
+    // Financial Management
+    public DbSet<PrepaidExpense> PrepaidExpenses => Set<PrepaidExpense>();
+    public DbSet<PrepaidAmortizationSchedule> PrepaidAmortizationSchedules => Set<PrepaidAmortizationSchedule>();
+    public DbSet<DepositTransaction> DepositTransactions => Set<DepositTransaction>();
+    public DbSet<DepositRefund> DepositRefunds => Set<DepositRefund>();
+    public DbSet<BadDebtAllowance> BadDebtAllowances => Set<BadDebtAllowance>();
+    public DbSet<AccruedExpense> AccruedExpenses => Set<AccruedExpense>();
+    public DbSet<InventoryObsolescenceAllowance> InventoryObsolescenceAllowances => Set<InventoryObsolescenceAllowance>();
+    public DbSet<CorporateIncomeTax> CorporateIncomeTaxes => Set<CorporateIncomeTax>();
+    public DbSet<ProfitAppropriation> ProfitAppropriations => Set<ProfitAppropriation>();
+    public DbSet<CapitalTransaction> CapitalTransactions => Set<CapitalTransaction>();
+    public DbSet<ShortTermInvestment> ShortTermInvestments => Set<ShortTermInvestment>();
+
     // Bank
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
     public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
