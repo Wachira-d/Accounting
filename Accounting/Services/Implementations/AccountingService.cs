@@ -102,50 +102,42 @@ public class AccountingService : IAccountingService
 
     public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType)
     {
-        // Use IgnoreQueryFilters to include soft-deleted records — the unique index
-        // in the database covers ALL rows (including IsDeleted=true)
+        // Use raw SQL for deletes to guarantee hard-delete (bypass any EF soft-delete behavior)
+        // The unique index IX_ChartOfAccounts_CompanyId_AccountCode has no IsDeleted filter,
+        // so we must truly remove rows from the table.
 
-        // Remove existing system accounts before re-seeding (hard-delete to free up codes)
-        var existingSystemAccounts = await _db.ChartOfAccounts
+        // Check if any system accounts are in use (have journal entry lines)
+        var usedSystemAccountCount = await _db.JournalEntryLines
             .IgnoreQueryFilters()
-            .Where(a => a.CompanyId == companyId && a.IsSystemAccount)
-            .ToListAsync();
-
-        if (existingSystemAccounts.Count > 0)
-        {
-            // Check if any system accounts are in use (have journal entry lines)
-            var usedAccountIds = await _db.JournalEntryLines
+            .CountAsync(l => _db.ChartOfAccounts
                 .IgnoreQueryFilters()
-                .Where(l => existingSystemAccounts.Select(a => a.Id).Contains(l.AccountId))
-                .Select(l => l.AccountId)
-                .Distinct()
-                .ToListAsync();
+                .Where(a => a.CompanyId == companyId && a.IsSystemAccount)
+                .Select(a => a.Id)
+                .Contains(l.AccountId));
 
-            if (usedAccountIds.Count > 0)
-                throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
+        if (usedSystemAccountCount > 0)
+            throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
 
-            // Hard-delete so the unique index frees up the codes
-            _db.ChartOfAccounts.RemoveRange(existingSystemAccounts);
-            await _db.SaveChangesAsync();
-        }
-
-        // Also hard-delete any soft-deleted non-system accounts with codes that
-        // match the new template — they're already "deleted" so safe to purge
         var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
-        var templateCodes = templates.Select(t => t.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var templateCodes = templates.Select(t => t.Code).ToList();
 
-        var softDeletedConflicts = await _db.ChartOfAccounts
-            .IgnoreQueryFilters()
-            .Where(a => a.CompanyId == companyId && a.IsDeleted && templateCodes.Contains(a.AccountCode))
-            .ToListAsync();
+        // Hard-delete system accounts using raw SQL
+        await _db.Database.ExecuteSqlRawAsync(
+            @"DELETE FROM ""ChartOfAccounts"" WHERE ""CompanyId"" = @p0 AND ""IsSystemAccount"" = true",
+            companyId);
 
-        if (softDeletedConflicts.Count > 0)
+        // Hard-delete any soft-deleted accounts whose codes conflict with template
+        foreach (var code in templateCodes)
         {
-            _db.ChartOfAccounts.RemoveRange(softDeletedConflicts);
-            await _db.SaveChangesAsync();
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""ChartOfAccounts"" WHERE ""CompanyId"" = @p0 AND ""AccountCode"" = @p1 AND ""IsDeleted"" = true",
+                companyId, code);
         }
 
-        // Get ALL existing account codes (including soft-deleted) to avoid duplicates
+        // Clear the change tracker to avoid stale entities
+        _db.ChangeTracker.Clear();
+
+        // Get ALL remaining account codes to skip duplicates
         var existingCodes = await _db.ChartOfAccounts
             .IgnoreQueryFilters()
             .Where(a => a.CompanyId == companyId)
@@ -153,20 +145,19 @@ public class AccountingService : IAccountingService
             .ToListAsync();
         var existingCodeSet = new HashSet<string>(existingCodes, StringComparer.OrdinalIgnoreCase);
 
+        // Pre-load existing accounts for parent lookup
+        var codeToId = new Dictionary<string, Guid>();
+        var existingAccounts = await _db.ChartOfAccounts
+            .IgnoreQueryFilters()
+            .Where(a => a.CompanyId == companyId)
+            .Select(a => new { a.AccountCode, a.Id })
+            .ToListAsync();
+        foreach (var ea in existingAccounts)
+            codeToId[ea.AccountCode] = ea.Id;
+
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var codeToId = new Dictionary<string, Guid>();
-
-            // Pre-load existing accounts for parent lookup
-            var existingAccounts = await _db.ChartOfAccounts
-                .IgnoreQueryFilters()
-                .Where(a => a.CompanyId == companyId)
-                .Select(a => new { a.AccountCode, a.Id })
-                .ToListAsync();
-            foreach (var ea in existingAccounts)
-                codeToId[ea.AccountCode] = ea.Id;
-
             foreach (var tpl in templates)
             {
                 if (existingCodeSet.Contains(tpl.Code))
