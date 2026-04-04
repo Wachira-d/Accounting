@@ -7,6 +7,8 @@ const Page = {
   async init() {
     if (!Layout.init('financial-mgmt')) return;
     API.init();
+    this.api = Layout.api();
+    if (!this.api) return;
     await this.loadAccounts();
     await this.loadPrepaid();
   },
@@ -38,7 +40,7 @@ const Page = {
 
   async loadAccounts() {
     try {
-      const res = await API.company.getAccounts();
+      const res = await this.api.getAccounts();
       if (res?.success) this.accounts = res.data || [];
     } catch {}
   },
@@ -53,7 +55,7 @@ const Page = {
   // ===== 1. PREPAID =====
   async loadPrepaid() {
     try {
-      const res = await API.company.getPrepaids();
+      const res = await this.api.getPrepaids();
       if (!res?.success) return;
       document.getElementById('prepaidBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -66,7 +68,7 @@ const Page = {
   },
   async submitPrepaid() {
     try {
-      const res = await API.company.createPrepaid({
+      const res = await this.api.createPrepaid({
         description: document.getElementById('ppDesc').value,
         startDate: document.getElementById('ppStart').value,
         endDate: document.getElementById('ppEnd').value,
@@ -82,7 +84,7 @@ const Page = {
   async processAmortization() {
     const date = new Date().toISOString().slice(0, 10);
     try {
-      const res = await API.company.processAmortization(date);
+      const res = await this.api.processAmortization(date);
       if (res?.success) { Layout.toast(res.message || 'ตัดจ่ายสำเร็จ', 'success'); this.loadPrepaid(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -90,7 +92,7 @@ const Page = {
   // ===== 2. DEPOSITS =====
   async loadDeposits() {
     try {
-      const res = await API.company.getDeposits();
+      const res = await this.api.getDeposits();
       if (!res?.success) return;
       document.getElementById('depositBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="10" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -105,7 +107,7 @@ const Page = {
   },
   async submitDeposit() {
     try {
-      const res = await API.company.createDeposit({
+      const res = await this.api.createDeposit({
         description: document.getElementById('depDesc').value,
         direction: document.getElementById('depDir').value,
         depositType: document.getElementById('depType').value,
@@ -122,7 +124,7 @@ const Page = {
   showRefund(id, max) { this._refundId = id; document.getElementById('refundAmt').value = max; this.showModal('refundModal'); },
   async submitRefund() {
     try {
-      const res = await API.company.refundDeposit(this._refundId, {
+      const res = await this.api.refundDeposit(this._refundId, {
         amount: parseFloat(document.getElementById('refundAmt').value),
         notes: document.getElementById('refundNotes').value || null
       });
@@ -133,7 +135,7 @@ const Page = {
   // ===== 3. ACCRUED =====
   async loadAccrued() {
     try {
-      const res = await API.company.getAccrueds();
+      const res = await this.api.getAccrueds();
       if (!res?.success) return;
       document.getElementById('accruedBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -147,7 +149,7 @@ const Page = {
   },
   async submitAccrued() {
     try {
-      const res = await API.company.createAccrued({
+      const res = await this.api.createAccrued({
         description: document.getElementById('acrDesc').value,
         expenseType: document.getElementById('acrType').value,
         amount: parseFloat(document.getElementById('acrAmount').value),
@@ -167,7 +169,7 @@ const Page = {
   async submitPayAccrued() {
     try {
       const cashAccId = document.getElementById('payAcrCashAcc').value || null;
-      const res = await API.company.payAccrued(this._payAcrId, {
+      const res = await this.api.payAccrued(this._payAcrId, {
         amount: parseFloat(document.getElementById('payAcrAmt').value),
         cashAccountId: cashAccId
       });
@@ -178,7 +180,7 @@ const Page = {
   // ===== 4. BAD DEBT =====
   async loadBadDebt() {
     try {
-      const res = await API.company.getBadDebts();
+      const res = await this.api.getBadDebts();
       if (!res?.success) return;
       document.getElementById('baddebtBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="8" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -192,13 +194,13 @@ const Page = {
   },
   async createBadDebt() {
     try {
-      const res = await API.company.createBadDebt({ method: 'Aging' });
+      const res = await this.api.createBadDebt({ method: 'Aging' });
       if (res?.success) { Layout.toast('คำนวณสำเร็จ', 'success'); this.loadBadDebt(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
   async postBadDebt(id) {
     try {
-      const res = await API.company.postBadDebt(id);
+      const res = await this.api.postBadDebt(id);
       if (res?.success) { Layout.toast('บันทึกบัญชีสำเร็จ', 'success'); this.loadBadDebt(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -206,7 +208,7 @@ const Page = {
   // ===== 5. OBSOLESCENCE =====
   async loadObsolescence() {
     try {
-      const res = await API.company.getObsolescences();
+      const res = await this.api.getObsolescences();
       if (!res?.success) return;
       document.getElementById('obsolescenceBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="7" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -220,13 +222,13 @@ const Page = {
   },
   async createObsolescence() {
     try {
-      const res = await API.company.createObsolescence({ method: 'Aging' });
+      const res = await this.api.createObsolescence({ method: 'Aging' });
       if (res?.success) { Layout.toast('คำนวณสำเร็จ', 'success'); this.loadObsolescence(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
   async postObsolescence(id) {
     try {
-      const res = await API.company.postObsolescence(id);
+      const res = await this.api.postObsolescence(id);
       if (res?.success) { Layout.toast('บันทึกบัญชีสำเร็จ', 'success'); this.loadObsolescence(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -234,7 +236,7 @@ const Page = {
   // ===== 6. CIT =====
   async loadCIT() {
     try {
-      const res = await API.company.getCITs();
+      const res = await this.api.getCITs();
       if (!res?.success) return;
       document.getElementById('citBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -249,7 +251,7 @@ const Page = {
   },
   async submitCIT() {
     try {
-      const res = await API.company.calculateCIT({
+      const res = await this.api.calculateCIT({
         taxYear: document.getElementById('citYear').value,
         taxPeriod: document.getElementById('citPeriod').value,
         addBackItems: parseFloat(document.getElementById('citAddBack').value) || 0,
@@ -262,7 +264,7 @@ const Page = {
   },
   async postCIT(id) {
     try {
-      const res = await API.company.postCIT(id);
+      const res = await this.api.postCIT(id);
       if (res?.success) { Layout.toast('บันทึกภาษีสำเร็จ', 'success'); this.loadCIT(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -270,7 +272,7 @@ const Page = {
   // ===== 7. DIVIDEND =====
   async loadDividend() {
     try {
-      const res = await API.company.getAppropriations();
+      const res = await this.api.getAppropriations();
       if (!res?.success) return;
       document.getElementById('dividendBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="8" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -285,7 +287,7 @@ const Page = {
   },
   async submitDividend() {
     try {
-      const res = await API.company.createAppropriation({
+      const res = await this.api.createAppropriation({
         fiscalYear: document.getElementById('divYear').value,
         legalReserve: parseFloat(document.getElementById('divReserve').value) || 0,
         dividendAmount: parseFloat(document.getElementById('divAmount').value) || 0,
@@ -296,7 +298,7 @@ const Page = {
   },
   async approveDividend(id) {
     try {
-      const res = await API.company.approveAppropriation(id);
+      const res = await this.api.approveAppropriation(id);
       if (res?.success) { Layout.toast('อนุมัติสำเร็จ', 'success'); this.loadDividend(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -304,7 +306,7 @@ const Page = {
   // ===== 8. CAPITAL =====
   async loadCapital() {
     try {
-      const res = await API.company.getCapitals();
+      const res = await this.api.getCapitals();
       if (!res?.success) return;
       document.getElementById('capitalBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -320,7 +322,7 @@ const Page = {
   },
   async submitCapital() {
     try {
-      const res = await API.company.createCapital({
+      const res = await this.api.createCapital({
         transactionType: document.getElementById('capType').value,
         transactionDate: document.getElementById('capDate').value || null,
         shareQuantity: parseFloat(document.getElementById('capShares').value),
@@ -333,7 +335,7 @@ const Page = {
   },
   async completeCapital(id) {
     try {
-      const res = await API.company.completeCapital(id);
+      const res = await this.api.completeCapital(id);
       if (res?.success) { Layout.toast('ดำเนินการสำเร็จ', 'success'); this.loadCapital(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -341,7 +343,7 @@ const Page = {
   // ===== 9. INVESTMENT =====
   async loadInvestment() {
     try {
-      const res = await API.company.getInvestments();
+      const res = await this.api.getInvestments();
       if (!res?.success) return;
       document.getElementById('investmentBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -356,7 +358,7 @@ const Page = {
   },
   async submitInvestment() {
     try {
-      const res = await API.company.createInvestment({
+      const res = await this.api.createInvestment({
         investmentType: document.getElementById('invType').value,
         description: document.getElementById('invDesc').value,
         purchaseDate: document.getElementById('invDate').value,
@@ -377,7 +379,7 @@ const Page = {
   showSell(id, cost) { this._sellId = id; document.getElementById('sellAmt').value = cost; this.showModal('sellModal'); },
   async submitSell() {
     try {
-      const res = await API.company.sellInvestment(this._sellId, { saleProceeds: parseFloat(document.getElementById('sellAmt').value) });
+      const res = await this.api.sellInvestment(this._sellId, { saleProceeds: parseFloat(document.getElementById('sellAmt').value) });
       if (res?.success) { Layout.toast('ขายสำเร็จ', 'success'); this.hideModal('sellModal'); this.loadInvestment(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   }
