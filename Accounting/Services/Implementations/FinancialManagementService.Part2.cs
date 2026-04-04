@@ -41,7 +41,7 @@ public partial class FinancialManagementService
         var deductions = request.DeductionItems ?? 0;
         var taxableProfit = accountingProfit + addBack - deductions;
 
-        // Thai CIT rate: 20% (SME rates apply if revenue < 30M)
+        // Thai SME CIT progressive rates: first 300K exempt, 300K-3M at 15%, above 3M at 20%
         decimal taxRate = 20;
         decimal taxAmount;
         if (taxableProfit <= 0)
@@ -261,7 +261,7 @@ public partial class FinancialManagementService
 
         var entity = new CapitalTransaction
         {
-            CompanyId = companyId, ReferenceNo = refNo, TransactionDate = DateTime.UtcNow,
+            CompanyId = companyId, ReferenceNo = refNo, TransactionDate = request.TransactionDate ?? DateTime.UtcNow,
             TransactionType = request.TransactionType,
             ShareQuantity = request.ShareQuantity, ParValue = request.ParValue,
             PaidAmount = request.PaidAmount, SharePremium = premium,
@@ -414,7 +414,7 @@ public partial class FinancialManagementService
 
         if (entity.Status != "Active") throw new InvalidOperationException("สถานะไม่ถูกต้อง");
 
-        entity.SaleDate = DateTime.UtcNow;
+        entity.SaleDate = request.SaleDate ?? DateTime.UtcNow;
         entity.SaleProceeds = request.SaleProceeds;
         entity.GainLoss = request.SaleProceeds - entity.PurchaseCost;
         entity.Status = "Sold";

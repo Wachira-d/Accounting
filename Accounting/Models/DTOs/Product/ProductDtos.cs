@@ -18,6 +18,7 @@ public record CreateProductRequest(
     bool IsVatIncluded = false,
     Guid? SalesAccountId = null,
     Guid? PurchaseAccountId = null,
+    Guid? InventoryAccountId = null,
     Guid? SuppliesAccountId = null,
     Guid? SuppliesExpenseAccountId = null,
     bool TrackStock = false,
@@ -27,13 +28,22 @@ public record UpdateProductRequest(
     string? Name,
     string? NameEn,
     string? Description,
+    string? SKU,
+    string? Barcode,
     string? Category,
+    string? Unit,
     decimal? SellingPrice,
     decimal? CostPrice,
     decimal? VatRate,
     bool? IsVatIncluded,
     bool? IsActive,
-    decimal? MinimumStock);
+    bool? TrackStock,
+    decimal? MinimumStock,
+    Guid? SalesAccountId,
+    Guid? PurchaseAccountId,
+    Guid? InventoryAccountId,
+    Guid? SuppliesAccountId,
+    Guid? SuppliesExpenseAccountId);
 
 public record ProductResponse(
     Guid Id,
@@ -43,6 +53,7 @@ public record ProductResponse(
     string? Description,
     ProductType ProductType,
     string? SKU,
+    string? Barcode,
     string? Category,
     string Unit,
     decimal SellingPrice,
@@ -53,6 +64,12 @@ public record ProductResponse(
     decimal MinimumStock,
     bool TrackStock,
     bool IsActive,
+    Guid? SalesAccountId,
+    string? SalesAccountName,
+    Guid? PurchaseAccountId,
+    string? PurchaseAccountName,
+    Guid? InventoryAccountId,
+    string? InventoryAccountName,
     List<UnitConversionResponse>? UnitConversions = null);
 
 public record StockAdjustmentRequest(
@@ -72,7 +89,8 @@ public record StockMovementResponse(
     decimal Quantity,
     decimal UnitCost,
     decimal BalanceAfter,
-    string? Reference);
+    string? Reference,
+    string? Notes);
 
 // ===== Unit Conversion =====
 public record CreateUnitConversionRequest(

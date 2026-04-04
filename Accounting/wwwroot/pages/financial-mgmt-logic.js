@@ -322,6 +322,7 @@ const Page = {
     try {
       const res = await API.company.createCapital({
         transactionType: document.getElementById('capType').value,
+        transactionDate: document.getElementById('capDate').value || null,
         shareQuantity: parseFloat(document.getElementById('capShares').value),
         parValue: parseFloat(document.getElementById('capPar').value),
         paidAmount: parseFloat(document.getElementById('capPaid').value),
@@ -394,6 +395,7 @@ Page.showModal = function(id) {
     document.getElementById('depDate').value = new Date().toISOString().slice(0, 10);
   }
   if (id === 'accruedModal') { Page.fillAccountSelect('acrExpAcc', '54'); Page.fillAccountSelect('acrAccAcc', '215'); }
+  if (id === 'capitalModal') { document.getElementById('capDate').value = new Date().toISOString().slice(0, 10); }
   if (id === 'investmentModal') { Page.fillAccountSelect('invAcc', '112'); document.getElementById('invDate').value = new Date().toISOString().slice(0, 10); }
 };
 

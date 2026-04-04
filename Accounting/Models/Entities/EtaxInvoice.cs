@@ -1,4 +1,4 @@
-using Accounting.Models.DTOs.DocumentTemplate;
+using Accounting.Models.Enums;
 
 namespace Accounting.Models.Entities;
 

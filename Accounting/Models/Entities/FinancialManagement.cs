@@ -66,6 +66,7 @@ public class DepositTransaction : TenantEntity
     public Guid DepositAccountId { get; set; }       // 118xx/125xx (จ่าย) or 216xx (รับ)
     public ChartOfAccount DepositAccount { get; set; } = null!;
     public Guid? CashAccountId { get; set; }         // 111xx
+    public ChartOfAccount? CashAccount { get; set; }
 
     public Guid? JournalEntryId { get; set; }
     public JournalEntry? JournalEntry { get; set; }

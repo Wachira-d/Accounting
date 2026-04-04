@@ -316,13 +316,3 @@ public record EtaxInvoiceResponse(
     DateTime? SignedAt,
     string? CertificateSerialNumber,
     DateTime CreatedAt);
-
-public enum EtaxStatus
-{
-    Generated = 0,
-    Signed = 1,
-    Submitted = 2,
-    Accepted = 3,
-    Rejected = 4,
-    Error = 5
-}

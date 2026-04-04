@@ -591,3 +591,14 @@ public enum CommissionType
     Fixed = 1,             // จำนวนเงินคงที่
     Percentage = 2         // เปอร์เซ็นต์จากราคาบริการ
 }
+
+// ==================== E-Tax Invoice ====================
+public enum EtaxStatus
+{
+    Generated = 0,
+    Signed = 1,
+    Submitted = 2,
+    Accepted = 3,
+    Rejected = 4,
+    Error = 5
+}

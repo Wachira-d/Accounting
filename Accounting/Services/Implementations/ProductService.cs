@@ -42,6 +42,7 @@ public class ProductService : IProductService
             IsVatIncluded = request.IsVatIncluded,
             SalesAccountId = request.SalesAccountId,
             PurchaseAccountId = request.PurchaseAccountId,
+            InventoryAccountId = request.InventoryAccountId,
             SuppliesAccountId = request.SuppliesAccountId,
             SuppliesExpenseAccountId = request.SuppliesExpenseAccountId,
             TrackStock = request.TrackStock || request.ProductType == ProductType.Supplies,
@@ -92,13 +93,22 @@ public class ProductService : IProductService
         if (request.Name != null) product.Name = request.Name;
         if (request.NameEn != null) product.NameEn = request.NameEn;
         if (request.Description != null) product.Description = request.Description;
+        if (request.SKU != null) product.SKU = request.SKU;
+        if (request.Barcode != null) product.Barcode = request.Barcode;
         if (request.Category != null) product.Category = request.Category;
+        if (request.Unit != null) product.Unit = request.Unit;
         if (request.SellingPrice.HasValue) product.SellingPrice = request.SellingPrice.Value;
         if (request.CostPrice.HasValue) product.CostPrice = request.CostPrice.Value;
         if (request.VatRate.HasValue) product.VatRate = request.VatRate.Value;
         if (request.IsVatIncluded.HasValue) product.IsVatIncluded = request.IsVatIncluded.Value;
         if (request.IsActive.HasValue) product.IsActive = request.IsActive.Value;
+        if (request.TrackStock.HasValue) product.TrackStock = request.TrackStock.Value;
         if (request.MinimumStock.HasValue) product.MinimumStock = request.MinimumStock.Value;
+        if (request.SalesAccountId.HasValue) product.SalesAccountId = request.SalesAccountId;
+        if (request.PurchaseAccountId.HasValue) product.PurchaseAccountId = request.PurchaseAccountId;
+        if (request.InventoryAccountId.HasValue) product.InventoryAccountId = request.InventoryAccountId;
+        if (request.SuppliesAccountId.HasValue) product.SuppliesAccountId = request.SuppliesAccountId;
+        if (request.SuppliesExpenseAccountId.HasValue) product.SuppliesExpenseAccountId = request.SuppliesExpenseAccountId;
 
         await _db.SaveChangesAsync();
         return MapToResponse(product);
@@ -143,7 +153,7 @@ public class ProductService : IProductService
 
         return new StockMovementResponse(movement.Id, movement.ProductId, product.Name,
             movement.MovementDate, movement.MovementType, movement.Quantity,
-            movement.UnitCost, movement.BalanceAfter, movement.Reference);
+            movement.UnitCost, movement.BalanceAfter, movement.Reference, movement.Notes);
     }
 
     public async Task<List<StockMovementResponse>> GetStockMovementsAsync(Guid companyId, Guid productId)
@@ -156,7 +166,7 @@ public class ProductService : IProductService
 
         return movements.Select(m => new StockMovementResponse(
             m.Id, m.ProductId, m.Product.Name, m.MovementDate,
-            m.MovementType, m.Quantity, m.UnitCost, m.BalanceAfter, m.Reference)).ToList();
+            m.MovementType, m.Quantity, m.UnitCost, m.BalanceAfter, m.Reference, m.Notes)).ToList();
     }
 
     public async Task<List<ProductResponse>> GetLowStockProductsAsync(Guid companyId)
@@ -1043,9 +1053,12 @@ public class ProductService : IProductService
 
     private static ProductResponse MapToResponse(Product p) => new(
         p.Id, p.Code, p.Name, p.NameEn, p.Description, p.ProductType,
-        p.SKU, p.Category, p.Unit, p.SellingPrice, p.CostPrice,
+        p.SKU, p.Barcode, p.Category, p.Unit, p.SellingPrice, p.CostPrice,
         p.VatRate, p.IsVatIncluded, p.CurrentStock, p.MinimumStock,
         p.TrackStock, p.IsActive,
+        p.SalesAccountId, p.SalesAccount?.AccountName,
+        p.PurchaseAccountId, p.PurchaseAccount?.AccountName,
+        p.InventoryAccountId, p.InventoryAccount?.AccountName,
         p.UnitConversions?.Select(MapConversion).ToList());
 
     private static UnitConversionResponse MapConversion(UnitConversion u) =>

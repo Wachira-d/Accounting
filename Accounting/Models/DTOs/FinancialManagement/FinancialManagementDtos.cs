@@ -118,7 +118,8 @@ public record ProfitAppropriationResponse(
 
 // ===== 8. Capital Transaction =====
 public record CreateCapitalTransactionRequest(
-    string TransactionType, decimal ShareQuantity, decimal ParValue,
+    string TransactionType, DateTime? TransactionDate,
+    decimal ShareQuantity, decimal ParValue,
     decimal PaidAmount, string? BoardResolutionRef,
     string? DbrRegistrationRef, string? Notes);
 
@@ -137,7 +138,7 @@ public record CreateInvestmentRequest(
     Guid InvestmentAccountId,
     string? InstitutionName, string? AccountNumber);
 
-public record SellInvestmentRequest(decimal SaleProceeds);
+public record SellInvestmentRequest(decimal SaleProceeds, DateTime? SaleDate = null);
 
 public record InvestmentResponse(
     Guid Id, string ReferenceNo, string InvestmentType, string Description,
