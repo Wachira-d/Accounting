@@ -27,6 +27,7 @@ public class ExceptionMiddleware
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception: {Message}", ex.Message);
+            context.Items["__ErrorLogged"] = true;
             await SaveErrorLogAsync(context, ex);
             await HandleExceptionAsync(context, ex);
         }

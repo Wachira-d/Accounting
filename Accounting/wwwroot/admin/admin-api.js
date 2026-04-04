@@ -25,11 +25,16 @@ const AdminAPI = {
     // Check content-type to avoid parsing HTML as JSON
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      throw new Error(`Server returned non-JSON response (${res.status}). กรุณา restart server แล้วลองใหม่`);
+      const errMsg = `Server returned non-JSON response (HTTP ${res.status}) for ${method} ${path}. กรุณา rebuild + restart server`;
+      this.logError(method, path, res.status, errMsg);
+      throw new Error(errMsg);
     }
 
     const data = await res.json();
-    if (!data.success) throw new Error(data.message || 'เกิดข้อผิดพลาด');
+    if (!data.success) {
+      this.logError(method, path, res.status, data.message || 'Unknown error');
+      throw new Error(data.message || 'เกิดข้อผิดพลาด');
+    }
     return data;
   },
 
@@ -91,4 +96,15 @@ const AdminAPI = {
 
   // Integrations
   integrations() { return this.get('/integrations'); },
+
+  // Error logging — fire-and-forget, never throws
+  logError(method, path, statusCode, message) {
+    try {
+      fetch('/api/error-log/client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestPath: `${this.base}${path}`, httpMethod: method, statusCode, message, source: 'AdminPanel' })
+      }).catch(() => {});
+    } catch {}
+  },
 };

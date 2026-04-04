@@ -319,10 +319,42 @@ app.UseMiddleware<SubscriptionCheckMiddleware>();
 // 9. Audit logging (innermost - logs after response)
 app.UseMiddleware<AuditMiddleware>();
 
+// 10. API error logging (logs 4xx/5xx that aren't exceptions to ErrorLog)
+app.UseMiddleware<ApiErrorLoggingMiddleware>();
+
 app.MapControllers();
 
 // SignalR hubs
 app.MapHub<NotificationHub>("/hubs/notifications");
+
+// Client-side error reporting endpoint (anonymous — frontend can report errors even without auth)
+app.MapPost("/api/error-log/client", async (HttpContext ctx, IConfiguration config) =>
+{
+    try
+    {
+        var body = await ctx.Request.ReadFromJsonAsync<Dictionary<string, object>>();
+        if (body == null) return Results.BadRequest();
+
+        var connStr = config.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connStr)) return Results.Ok(new { logged = false });
+
+        using var conn = new Npgsql.NpgsqlConnection(connStr);
+        await conn.OpenAsync();
+        var sql = @"INSERT INTO ""ErrorLogs"" (""RequestPath"",""HttpMethod"",""StatusCode"",""ExceptionType"",""Message"",""IpAddress"",""UserAgent"",""Timestamp"")
+            SELECT @p,@m,@s,'CLIENT_ERROR',@msg,@ip,@ua,now()
+            WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE lower(table_name)='errorlogs')";
+        using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@p", body.GetValueOrDefault("requestPath")?.ToString() ?? "");
+        cmd.Parameters.AddWithValue("@m", body.GetValueOrDefault("httpMethod")?.ToString() ?? "");
+        cmd.Parameters.AddWithValue("@s", int.TryParse(body.GetValueOrDefault("statusCode")?.ToString(), out var sc) ? sc : 0);
+        cmd.Parameters.AddWithValue("@msg", $"[{body.GetValueOrDefault("source")}] {body.GetValueOrDefault("message")}");
+        cmd.Parameters.AddWithValue("@ip", (object?)ctx.Connection.RemoteIpAddress?.ToString() ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@ua", ctx.Request.Headers.UserAgent.ToString());
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { logged = true });
+    }
+    catch { return Results.Ok(new { logged = false }); }
+});
 
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
