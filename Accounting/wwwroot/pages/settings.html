@@ -513,6 +513,8 @@
         const biz = document.getElementById('cBizType').value;
         const ind = document.getElementById('cIndustryType').value;
         try {
+          // Save company first so businessType/industryType are persisted
+          await this.saveCompany();
           await api.seedAccounts(biz, ind);
           this._origBizType = biz;
           this._origIndustryType = ind;
