@@ -1511,6 +1511,20 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<UserDevice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<SyncQueue>().HasQueryFilter(e => !e.IsDeleted);
 
+        // Financial Management
+        modelBuilder.Entity<PrepaidExpense>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<PrepaidAmortizationSchedule>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DepositTransaction>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DepositRefund>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BadDebtAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<AccruedExpense>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<InventoryObsolescenceAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CorporateIncomeTax>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ProfitAppropriation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CapitalTransaction>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ShortTermInvestment>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<SuppliesUsageLog>().HasQueryFilter(e => !e.IsDeleted);
+
         // ===== POS Terminal =====
         modelBuilder.Entity<PosTerminal>(e =>
         {

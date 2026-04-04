@@ -180,7 +180,7 @@ const Page = {
 
   async loadCategories() {
     try {
-      const res = await API.company.getCategories();
+      const res = await API.company.getProductCategories();
       if (res?.success && res.data) {
         const sel = document.getElementById('balanceCategory');
         res.data.forEach(c => { const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; sel.appendChild(o); });

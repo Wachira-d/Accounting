@@ -200,7 +200,7 @@ public class ProductController : ControllerBase
     public async Task<ActionResult<ApiResponse<InventorySnapshotResponse>>> CreateSnapshot(
         Guid companyId, [FromBody] CreateInventorySnapshotRequest request)
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _productService.CreateInventorySnapshotAsync(companyId, request, userId);
         return Ok(new ApiResponse<InventorySnapshotResponse>(true, result, "สร้าง snapshot สำเร็จ"));
     }

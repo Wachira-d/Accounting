@@ -158,10 +158,19 @@ const Page = {
       else Layout.toast(res?.message || 'error', 'error');
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
-  showPayAccrued(id, max) { this._payAcrId = id; document.getElementById('payAcrAmt').value = max; this.showModal('payAccruedModal'); },
+  showPayAccrued(id, max) {
+    this._payAcrId = id;
+    document.getElementById('payAcrAmt').value = max;
+    this.fillAccountSelect('payAcrCashAcc', '111');
+    this.showModal('payAccruedModal');
+  },
   async submitPayAccrued() {
     try {
-      const res = await API.company.payAccrued(this._payAcrId, { amount: parseFloat(document.getElementById('payAcrAmt').value) });
+      const cashAccId = document.getElementById('payAcrCashAcc').value || null;
+      const res = await API.company.payAccrued(this._payAcrId, {
+        amount: parseFloat(document.getElementById('payAcrAmt').value),
+        cashAccountId: cashAccId
+      });
       if (res?.success) { Layout.toast('จ่ายสำเร็จ', 'success'); this.hideModal('payAccruedModal'); this.loadAccrued(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
@@ -359,6 +368,11 @@ const Page = {
       if (res?.success) { Layout.toast('บันทึกสำเร็จ', 'success'); this.hideModal('investmentModal'); this.loadInvestment(); }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
+  updateDepositAccounts() {
+    const dir = document.getElementById('depDir').value;
+    this.fillAccountSelect('depAcc', dir === 'Paid' ? '11' : '216');
+  },
+
   showSell(id, cost) { this._sellId = id; document.getElementById('sellAmt').value = cost; this.showModal('sellModal'); },
   async submitSell() {
     try {
