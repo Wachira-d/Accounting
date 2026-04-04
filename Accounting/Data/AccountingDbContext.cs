@@ -256,6 +256,11 @@ public class AccountingDbContext : DbContext
     public DbSet<IntegrationSyncLog> IntegrationSyncLogs => Set<IntegrationSyncLog>();
     public DbSet<IntegrationAccountMapping> IntegrationAccountMappings => Set<IntegrationAccountMapping>();
 
+    // Signature & Approval
+    public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
+    public DbSet<DocumentApproval> DocumentApprovals => Set<DocumentApproval>();
+    public DbSet<DocumentSignature> DocumentSignatures => Set<DocumentSignature>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1524,6 +1529,11 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<CapitalTransaction>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ShortTermInvestment>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<SuppliesUsageLog>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Signature & Approval
+        modelBuilder.Entity<UserSignature>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DocumentApproval>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DocumentSignature>().HasQueryFilter(e => !e.IsDeleted);
 
         // ===== POS Terminal =====
         modelBuilder.Entity<PosTerminal>(e =>

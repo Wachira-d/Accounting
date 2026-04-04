@@ -167,6 +167,9 @@ builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // External Integration (TakeTime, PMS, etc.)
 builder.Services.AddScoped<IIntegrationService, IntegrationService>();
 
+// Signature & Approval
+builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
@@ -875,6 +878,62 @@ app.MapFallbackToFile("index.html");
                     CONSTRAINT ""FK_ShortTermInvestments_InvAcc"" FOREIGN KEY (""InvestmentAccountId"") REFERENCES ""ChartOfAccounts""(""Id""),
                     CONSTRAINT ""FK_ShortTermInvestments_PurchaseJE"" FOREIGN KEY (""PurchaseJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL,
                     CONSTRAINT ""FK_ShortTermInvestments_SaleJE"" FOREIGN KEY (""SaleJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""UserSignatures"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""UserId"" uuid NOT NULL,
+                    ""SignatureData"" text NOT NULL,
+                    ""SignatureFormat"" varchar(10) NOT NULL DEFAULT 'PNG',
+                    ""Label"" varchar(100) NULL,
+                    ""IsDefault"" boolean NOT NULL DEFAULT false,
+                    ""IsActive"" boolean NOT NULL DEFAULT true,
+                    ""CreatedAt"" timestamp NOT NULL DEFAULT now(), ""UpdatedAt"" timestamp NULL,
+                    ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_UserSignatures"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_UserSignatures_Users"" FOREIGN KEY (""UserId"") REFERENCES ""Users""(""Id"") ON DELETE RESTRICT
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""DocumentApprovals"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""DocumentId"" uuid NOT NULL,
+                    ""ApprovalType"" varchar(50) NOT NULL,
+                    ""ApproverRole"" varchar(50) NOT NULL,
+                    ""StepOrder"" integer NOT NULL DEFAULT 1,
+                    ""Status"" integer NOT NULL DEFAULT 0,
+                    ""ApproverUserId"" uuid NULL,
+                    ""ApproverName"" varchar(200) NULL,
+                    ""ApproverEmail"" varchar(256) NULL,
+                    ""ApproverTitle"" varchar(200) NULL,
+                    ""SignatureId"" uuid NULL,
+                    ""SignatureData"" text NULL,
+                    ""SignatureFormat"" varchar(10) NULL,
+                    ""ApprovedAt"" timestamp NULL, ""RejectedAt"" timestamp NULL,
+                    ""Comments"" text NULL, ""IpAddress"" varchar(50) NULL,
+                    ""PostApprovalAction"" varchar(50) NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_DocumentApprovals"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_DocumentApprovals_Documents"" FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT,
+                    CONSTRAINT ""FK_DocumentApprovals_Users"" FOREIGN KEY (""ApproverUserId"") REFERENCES ""Users""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_DocumentApprovals_Signatures"" FOREIGN KEY (""SignatureId"") REFERENCES ""UserSignatures""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_DocumentApprovals_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""DocumentSignatures"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""DocumentId"" uuid NOT NULL,
+                    ""DocumentApprovalId"" uuid NOT NULL,
+                    ""SignerRole"" varchar(100) NOT NULL,
+                    ""SignerName"" varchar(200) NOT NULL,
+                    ""SignerTitle"" varchar(200) NULL,
+                    ""SignatureData"" text NOT NULL,
+                    ""SignatureFormat"" varchar(10) NOT NULL DEFAULT 'PNG',
+                    ""SignedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""IpAddress"" varchar(50) NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_DocumentSignatures"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_DocumentSignatures_Documents"" FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT,
+                    CONSTRAINT ""FK_DocumentSignatures_Approvals"" FOREIGN KEY (""DocumentApprovalId"") REFERENCES ""DocumentApprovals""(""Id"") ON DELETE RESTRICT,
+                    CONSTRAINT ""FK_DocumentSignatures_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
                 );"
             };
             foreach (var sql in rawSqlStatements)

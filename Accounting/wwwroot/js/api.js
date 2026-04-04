@@ -583,8 +583,25 @@ const API = {
       getIntegrationRevenueBySource: (q = '') => API.get(`${base}/integrations/reports/revenue-by-source${q}`),
       getIntegrationDepositSummary: (q = '') => API.get(`${base}/integrations/reports/deposit-summary${q}`),
       getIntegrationDailyRevenue: (q = '') => API.get(`${base}/integrations/reports/daily-revenue${q}`),
+
+      // Document Approvals (Signature-based)
+      setupDocApproval: (d) => API.post(`${base}/approvals/setup`, d),
+      getDocApprovals: (documentId) => API.get(`${base}/approvals/document/${documentId}`),
+      getPendingDocApprovals: () => API.get(`${base}/approvals/pending`),
+      approveDoc: (approvalId, d) => API.post(`${base}/approvals/${approvalId}/approve`, d),
+      rejectDoc: (approvalId, d) => API.post(`${base}/approvals/${approvalId}/reject`, d),
+      getDocSignatures: (documentId) => API.get(`${base}/approvals/document/${documentId}/signatures`),
+      // External Approval
+      externalApproveQuotation: (documentId, d) => API.post(`${base}/external/quotations/${documentId}/approve`, d),
     };
   },
+
+  // User Signatures (global, not company-scoped)
+  getSignatures: () => API.get('/api/signatures'),
+  getDefaultSignature: () => API.get('/api/signatures/default'),
+  uploadSignature: (d) => API.post('/api/signatures', d),
+  setDefaultSignature: (id) => API.post(`/api/signatures/${id}/set-default`),
+  deleteSignature: (id) => API.del(`/api/signatures/${id}`),
 
   // Company management
   getCompanies: () => API.get('/api/company'),

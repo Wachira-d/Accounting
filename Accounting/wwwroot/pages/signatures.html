@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ลายเซ็นและอนุมัติ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ลายเซ็นและอนุมัติเอกสาร</h2><p class="page-subtitle">จัดการลายเซ็นส่วนตัวและอนุมัติเอกสารพร้อมลายเซ็น</p></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setTab('signatures',this)">ลายเซ็นของฉัน</div>
+      <div class="tab" onclick="Page.setTab('pending',this)">รออนุมัติ</div>
+      <div class="tab" onclick="Page.setTab('history',this)">ประวัติการอนุมัติ</div>
+    </div>
+
+    <!-- My Signatures Tab -->
+    <div id="tabSignatures">
+      <div class="toolbar" style="margin-bottom:16px">
+        <button class="btn btn-primary" onclick="Page.showUploadModal()">+ อัพโหลดลายเซ็น</button>
+      </div>
+      <div class="grid grid-3" id="signatureCards">
+        <div class="text-center text-gray-400" style="padding:40px;grid-column:1/-1">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- Pending Approvals Tab -->
+    <div id="tabPending" style="display:none">
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เอกสาร</th><th>ประเภท</th><th>บทบาท</th><th>ลำดับ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="pendingBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="tabHistory" style="display:none">
+      <div class="toolbar" style="margin-bottom:16px">
+        <input type="text" class="search-input" placeholder="ค้นหาเลขเอกสาร..." id="historySearch" oninput="Page.filterHistory()">
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เอกสาร</th><th>ประเภท</th><th>บทบาท</th><th>สถานะ</th><th>ลายเซ็น</th><th>วันที่</th><th>หมายเหตุ</th></tr></thead>
+          <tbody id="historyBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload Signature Modal -->
+  <div class="modal-overlay" id="uploadModal" style="display:none">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header"><h3>อัพโหลดลายเซ็น</h3><button class="modal-close" onclick="Page.closeModal('uploadModal')">&times;</button></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>ชื่อลายเซ็น</label>
+          <input type="text" id="sigLabel" class="form-control" placeholder="เช่น ลายเซ็นหลัก">
+        </div>
+        <div class="form-group">
+          <label>วาดลายเซ็น</label>
+          <canvas id="sigCanvas" width="460" height="200" style="border:2px dashed var(--border);border-radius:8px;cursor:crosshair;background:#fff;display:block;width:100%"></canvas>
+          <div style="margin-top:8px;display:flex;gap:8px">
+            <button class="btn btn-sm btn-secondary" onclick="Page.clearCanvas()">ล้าง</button>
+            <span class="text-gray-400" style="font-size:12px;line-height:32px">หรือ</span>
+            <label class="btn btn-sm btn-secondary" style="cursor:pointer">เลือกไฟล์ <input type="file" accept="image/png,image/jpeg,image/svg+xml" id="sigFile" onchange="Page.loadFile(event)" hidden></label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="sigDefault" checked> ตั้งเป็นลายเซ็นหลัก</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Page.closeModal('uploadModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submitSignature()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approve Modal -->
+  <div class="modal-overlay" id="approveModal" style="display:none">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header"><h3>อนุมัติเอกสาร</h3><button class="modal-close" onclick="Page.closeModal('approveModal')">&times;</button></div>
+      <div class="modal-body">
+        <p id="approveInfo" style="margin-bottom:16px"></p>
+        <div class="form-group">
+          <label>เลือกลายเซ็น</label>
+          <select id="approveSignatureId" class="form-control">
+            <option value="">ใช้ลายเซ็นหลัก</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>หมายเหตุ (ไม่บังคับ)</label>
+          <textarea id="approveComments" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Page.closeModal('approveModal')">ยกเลิก</button>
+        <button class="btn btn-success" onclick="Page.submitApprove()">อนุมัติ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reject Modal -->
+  <div class="modal-overlay" id="rejectModal" style="display:none">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header"><h3>ปฏิเสธเอกสาร</h3><button class="modal-close" onclick="Page.closeModal('rejectModal')">&times;</button></div>
+      <div class="modal-body">
+        <p id="rejectInfo" style="margin-bottom:16px"></p>
+        <div class="form-group">
+          <label>เหตุผล <span class="text-danger">*</span></label>
+          <textarea id="rejectComments" class="form-control" rows="3" required></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Page.closeModal('rejectModal')">ยกเลิก</button>
+        <button class="btn btn-danger" onclick="Page.submitReject()">ปฏิเสธ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/pages/signatures-logic.js"></script>
+  <script>Layout.currentPage='signatures'; Layout.render(); Page.init();</script>
+</body>
+</html>
