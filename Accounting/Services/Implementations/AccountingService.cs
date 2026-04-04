@@ -125,14 +125,33 @@ public class AccountingService : IAccountingService
 
         var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
 
+        // Get existing account codes (user-created accounts that weren't deleted)
+        var existingCodes = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId)
+            .Select(a => a.AccountCode)
+            .ToListAsync();
+        var existingCodeSet = new HashSet<string>(existingCodes, StringComparer.OrdinalIgnoreCase);
+
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
             // Track created accounts by code for parent lookup
             var codeToId = new Dictionary<string, Guid>();
 
+            // Pre-load existing accounts for parent lookup
+            var existingAccounts = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId)
+                .Select(a => new { a.AccountCode, a.Id })
+                .ToListAsync();
+            foreach (var ea in existingAccounts)
+                codeToId[ea.AccountCode] = ea.Id;
+
             foreach (var tpl in templates)
             {
+                // Skip if account code already exists (user-created account)
+                if (existingCodeSet.Contains(tpl.Code))
+                    continue;
+
                 var account = new ChartOfAccount
                 {
                     CompanyId = companyId,
