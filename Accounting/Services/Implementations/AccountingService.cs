@@ -102,15 +102,20 @@ public class AccountingService : IAccountingService
 
     public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType)
     {
-        // Remove existing system accounts before re-seeding
+        // Use IgnoreQueryFilters to include soft-deleted records — the unique index
+        // in the database covers ALL rows (including IsDeleted=true)
+
+        // Remove existing system accounts before re-seeding (hard-delete to free up codes)
         var existingSystemAccounts = await _db.ChartOfAccounts
+            .IgnoreQueryFilters()
             .Where(a => a.CompanyId == companyId && a.IsSystemAccount)
             .ToListAsync();
 
-        // Check if any system accounts are in use (have journal entry lines)
         if (existingSystemAccounts.Count > 0)
         {
+            // Check if any system accounts are in use (have journal entry lines)
             var usedAccountIds = await _db.JournalEntryLines
+                .IgnoreQueryFilters()
                 .Where(l => existingSystemAccounts.Select(a => a.Id).Contains(l.AccountId))
                 .Select(l => l.AccountId)
                 .Distinct()
@@ -119,14 +124,30 @@ public class AccountingService : IAccountingService
             if (usedAccountIds.Count > 0)
                 throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
 
+            // Hard-delete so the unique index frees up the codes
             _db.ChartOfAccounts.RemoveRange(existingSystemAccounts);
             await _db.SaveChangesAsync();
         }
 
+        // Also hard-delete any soft-deleted non-system accounts with codes that
+        // match the new template — they're already "deleted" so safe to purge
         var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
+        var templateCodes = templates.Select(t => t.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Get existing account codes (user-created accounts that weren't deleted)
+        var softDeletedConflicts = await _db.ChartOfAccounts
+            .IgnoreQueryFilters()
+            .Where(a => a.CompanyId == companyId && a.IsDeleted && templateCodes.Contains(a.AccountCode))
+            .ToListAsync();
+
+        if (softDeletedConflicts.Count > 0)
+        {
+            _db.ChartOfAccounts.RemoveRange(softDeletedConflicts);
+            await _db.SaveChangesAsync();
+        }
+
+        // Get ALL existing account codes (including soft-deleted) to avoid duplicates
         var existingCodes = await _db.ChartOfAccounts
+            .IgnoreQueryFilters()
             .Where(a => a.CompanyId == companyId)
             .Select(a => a.AccountCode)
             .ToListAsync();
@@ -135,11 +156,11 @@ public class AccountingService : IAccountingService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            // Track created accounts by code for parent lookup
             var codeToId = new Dictionary<string, Guid>();
 
             // Pre-load existing accounts for parent lookup
             var existingAccounts = await _db.ChartOfAccounts
+                .IgnoreQueryFilters()
                 .Where(a => a.CompanyId == companyId)
                 .Select(a => new { a.AccountCode, a.Id })
                 .ToListAsync();
@@ -148,7 +169,6 @@ public class AccountingService : IAccountingService
 
             foreach (var tpl in templates)
             {
-                // Skip if account code already exists (user-created account)
                 if (existingCodeSet.Contains(tpl.Code))
                     continue;
 
