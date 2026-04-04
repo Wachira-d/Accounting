@@ -140,6 +140,7 @@
         // Recent users
         if (d.recentUsers && d.recentUsers.length > 0) {
           document.getElementById('recentUsers').innerHTML = `
+            <div class="admin-table-wrap">
             <table class="admin-table">
               <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>สถานะ</th><th>สมัครเมื่อ</th><th>เข้าใช้ล่าสุด</th></tr></thead>
               <tbody>
@@ -154,6 +155,7 @@
                 `).join('')}
               </tbody>
             </table>
+            </div>
           `;
         } else {
           document.getElementById('recentUsers').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px">ยังไม่มีผู้ใช้</div>';

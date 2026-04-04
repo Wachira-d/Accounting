@@ -64,6 +64,7 @@
         }
 
         document.getElementById('customerList').innerHTML = `
+          <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr>
               <th>บริษัท</th><th>เจ้าของ</th><th>แพ็กเกจ</th><th>สถานะ Subscription</th><th>ผู้ใช้</th><th>สมัครเมื่อ</th><th>หมดอายุ</th><th></th>
@@ -88,6 +89,7 @@
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
 
         // Pagination
@@ -168,6 +170,7 @@
 
               <div style="margin-top:16px">
                 <div class="admin-card-title" style="margin-bottom:8px">ผู้ใช้งาน (${d.users.length})</div>
+                <div class="admin-table-wrap">
                 <table class="admin-table">
                   <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th></tr></thead>
                   <tbody>
@@ -179,6 +182,7 @@
                     </tr>`).join('')}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               <div style="margin-top:16px">
@@ -192,6 +196,7 @@
               ${d.recentPayments.length > 0 ? `
                 <div style="margin-top:16px">
                   <div class="admin-card-title" style="margin-bottom:8px">การชำระเงินล่าสุด</div>
+                  <div class="admin-table-wrap">
                   <table class="admin-table">
                     <thead><tr><th>เลขที่</th><th>จำนวน</th><th>สถานะ</th><th>วันที่</th></tr></thead>
                     <tbody>
@@ -201,6 +206,7 @@
                       </tr>`).join('')}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ` : ''}
 

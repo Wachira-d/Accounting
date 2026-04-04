@@ -177,7 +177,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 
 /* ===== Toast ===== */
 .toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
-.toast { padding: 14px 20px; border-radius: var(--radius); color: #fff; font-size: 14px; font-weight: 500; box-shadow: var(--shadow-lg); animation: slideIn .3s ease; min-width: 300px; display: flex; align-items: center; gap: 10px; }
+.toast { padding: 14px 20px; border-radius: var(--radius); color: #fff; font-size: 14px; font-weight: 500; box-shadow: var(--shadow-lg); animation: slideIn .3s ease; min-width: 200px; max-width: calc(100vw - 40px); display: flex; align-items: center; gap: 10px; }
 .toast-success { background: var(--success); }
 .toast-error { background: var(--danger); }
 .toast-info { background: var(--info); }
@@ -374,9 +374,6 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 }
 
 @media (max-width: 768px) {
-  /* Prevent horizontal overflow */
-  html, body { overflow-x: hidden; }
-
   .hero { padding: 120px 0 60px; }
   .hero h1 { font-size: 28px; }
   .hero p { font-size: 15px; }
@@ -417,7 +414,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .footer-grid { grid-template-columns: 1fr; gap: 24px; }
 
   /* App layout */
-  .sidebar { transform: translateX(-100%); }
+  .sidebar { transform: translateX(-100%); z-index: 1001; }
   .sidebar.open { transform: translateX(0); }
   .main-content { margin-left: 0; }
   .mobile-toggle { display: block; }
@@ -426,8 +423,23 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .form-row { grid-template-columns: 1fr; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar { flex-wrap: wrap; gap: 8px; }
+  .toolbar input, .toolbar select { min-width: 0; flex: 1 1 auto; }
   .search-input { width: 100%; }
+
+  /* Tables: ensure scrollable on mobile */
+  .table-container { -webkit-overflow-scrolling: touch; }
+
+  /* Modal: full width on mobile */
+  .modal { width: 95%; max-width: none; max-height: 90vh; }
+  .modal-header { padding: 16px; }
+  .modal-body { padding: 16px; }
+  .modal-footer { padding: 12px 16px; flex-wrap: wrap; }
+  .modal-footer .btn { flex: 1; min-width: 0; }
+
+  /* Touch-friendly buttons and inputs */
+  .btn { min-height: 40px; }
+  .form-input, .form-select { min-height: 40px; font-size: 16px; /* prevents zoom on iOS */ }
 
   /* CTA section */
   .cta-section h2 { font-size: 24px; }
@@ -435,10 +447,13 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 
   /* Detail list */
   .detail-list { grid-template-columns: 1fr; }
+
+  /* KPI cards */
+  .kpi-value { font-size: 22px; }
 }
 
 @media (max-width: 480px) {
-  .container { padding: 0 16px; }
+  .container { padding: 0 12px; }
   .hero h1 { font-size: 24px; }
   .hero-stats { flex-direction: column; gap: 12px; }
   #modulesGrid { grid-template-columns: repeat(2, 1fr) !important; }
@@ -446,7 +461,23 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .section-header { margin-bottom: 32px; }
   .section-header h2 { font-size: 20px; }
   .btn-xl { padding: 14px 24px; font-size: 16px; }
+
+  /* Cards */
+  .card { padding: 16px; }
+  .card-header { flex-wrap: wrap; gap: 8px; }
+
+  /* Toast: full width */
+  .toast-container { top: 10px; right: 10px; left: 10px; }
+  .toast { min-width: auto; width: 100%; }
+
+  /* Tabs scroll */
+  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
+  .tabs .tab { white-space: nowrap; flex-shrink: 0; }
 }
+
+/* Sidebar overlay for mobile */
+.sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 1000; }
+.sidebar-overlay.open { display: block; }
 
 /* ===== Animations ===== */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }

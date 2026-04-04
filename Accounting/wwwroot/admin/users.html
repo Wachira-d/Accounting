@@ -42,6 +42,7 @@
         }
 
         document.getElementById('userList').innerHTML = `
+          <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr>
               <th>ชื่อ</th><th>อีเมล</th><th>โทรศัพท์</th><th>บริษัท</th><th>สถานะ</th><th>Admin</th><th>เข้าใช้ล่าสุด</th><th>สมัครเมื่อ</th><th></th>
@@ -78,6 +79,7 @@
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
 
         let pagHtml = '';
