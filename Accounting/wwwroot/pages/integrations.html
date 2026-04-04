@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เชื่อมต่อระบบ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .int-card{border:1px solid var(--gray-200);border-radius:12px;padding:20px;margin-bottom:12px;cursor:pointer;transition:all .2s}
+    .int-card:hover{border-color:var(--primary);box-shadow:0 2px 8px rgba(79,70,229,.1)}
+    .int-card.selected{border-color:var(--primary);background:var(--primary-light,#eef2ff)}
+    .health-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
+    .health-green{background:#22c55e}.health-yellow{background:#eab308}.health-red{background:#ef4444}.health-gray{background:#9ca3af}
+    .detail-panel{border:1px solid var(--gray-200);border-radius:12px;padding:24px;background:#fff}
+    .detail-section{margin-bottom:24px}
+    .detail-section h4{font-size:14px;font-weight:700;margin:0 0 12px;padding-bottom:8px;border-bottom:1px solid var(--gray-100)}
+    .info-grid{display:grid;grid-template-columns:140px 1fr;gap:8px 16px;font-size:13px}
+    .info-label{color:var(--gray-500);font-weight:500}
+    .info-value{font-weight:500}
+    .toggle-switch{position:relative;width:44px;height:24px;display:inline-block}
+    .toggle-switch input{opacity:0;width:0;height:0}
+    .toggle-slider{position:absolute;inset:0;background:var(--gray-300);border-radius:24px;cursor:pointer;transition:.2s}
+    .toggle-slider:before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+    .toggle-switch input:checked+.toggle-slider{background:var(--primary)}
+    .toggle-switch input:checked+.toggle-slider:before{transform:translateX(20px)}
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('integrations')">Integrations</button>
+      <button class="tab" onclick="Page.switchTab('mappings')">Account Mapping</button>
+      <button class="tab" onclick="Page.switchTab('logs')">Sync Logs</button>
+    </div>
+
+    <!-- ===== Integrations Tab ===== -->
+    <div id="tab-integrations">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">External Integrations</h2>
+          <p class="page-subtitle">เชื่อมต่อระบบภายนอก (POS, PMS, ERP, E-Commerce) เพื่อ sync ข้อมูลอัตโนมัติ</p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <a href="/pages/api-developer.html" class="btn btn-outline">API Docs</a>
+          <button class="btn btn-primary" onclick="Page.openCreateModal()">+ เพิ่มระบบ</button>
+        </div>
+      </div>
+
+      <!-- Dashboard Stats -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
+        <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700" id="statTotal">-</div><div class="text-sm text-gray-500">ทั้งหมด</div></div>
+        <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--green)" id="statActive">-</div><div class="text-sm text-gray-500">Active</div></div>
+        <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--primary)" id="statSyncToday">-</div><div class="text-sm text-gray-500">Sync วันนี้</div></div>
+        <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--red)" id="statErrors">-</div><div class="text-sm text-gray-500">Errors วันนี้</div></div>
+      </div>
+
+      <!-- Main Layout: List + Detail Panel -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="mainGrid">
+        <!-- Left: Integration List -->
+        <div>
+          <div id="intList" style="display:grid;gap:8px">
+            <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</div>
+          </div>
+        </div>
+
+        <!-- Right: Detail Panel -->
+        <div id="detailPanel" class="detail-panel" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <h3 style="margin:0;font-size:18px" id="detailName">-</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm btn-outline" onclick="Page.openEditModal()">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteSelected()">ลบ</button>
+            </div>
+          </div>
+
+          <!-- Connection Health -->
+          <div class="detail-section">
+            <h4>สถานะการเชื่อมต่อ</h4>
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+              <span id="detailHealthDot" class="health-dot health-gray"></span>
+              <span id="detailHealthText" style="font-weight:600;font-size:14px">-</span>
+              <div style="flex:1"></div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="detailActiveToggle" onchange="Page.toggleActiveSelected(this.checked)">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="text-sm" id="detailActiveLabel">-</span>
+            </div>
+            <div class="info-grid">
+              <span class="info-label">Sync ล่าสุด</span><span class="info-value" id="detailLastSync">-</span>
+              <span class="info-label">Total Syncs</span><span class="info-value" id="detailTotalSync">-</span>
+              <span class="info-label">Errors</span><span class="info-value" id="detailErrors">-</span>
+              <span class="info-label">Rate Limit</span><span class="info-value" id="detailRate">-</span>
+            </div>
+          </div>
+
+          <!-- Connection Info -->
+          <div class="detail-section">
+            <h4>ข้อมูลการเชื่อมต่อ</h4>
+            <div class="info-grid">
+              <span class="info-label">ประเภท</span><span class="info-value" id="detailType">-</span>
+              <span class="info-label">เวอร์ชัน</span><span class="info-value" id="detailVersion">-</span>
+              <span class="info-label">Base URL</span><span class="info-value" id="detailUrl" style="word-break:break-all">-</span>
+              <span class="info-label">API Key</span>
+              <span class="info-value"><code id="detailKeyPrefix" style="font-size:12px;background:var(--gray-100);padding:2px 6px;border-radius:4px">-</code>
+                <button class="btn btn-sm btn-outline" style="margin-left:8px" onclick="Page.regenerateKey()">สร้างใหม่</button>
+              </span>
+              <span class="info-label">Webhook URL</span><span class="info-value" id="detailWebhook" style="word-break:break-all">-</span>
+              <span class="info-label">สร้างเมื่อ</span><span class="info-value" id="detailCreated">-</span>
+            </div>
+          </div>
+
+          <!-- Quick Actions -->
+          <div class="detail-section">
+            <h4>Quick Actions</h4>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm btn-outline" onclick="Page.switchTab('mappings');setTimeout(()=>{document.getElementById('mappingIntSelect').value=Page.selectedId;Page.loadMappings()},100)">ดู Account Mapping</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.viewIntLogs()">ดู Sync Logs</button>
+              <a href="/pages/api-developer.html" class="btn btn-sm btn-outline">API Docs</a>
+            </div>
+          </div>
+
+          <!-- Recent Sync Activity -->
+          <div class="detail-section">
+            <h4>Sync Activity ล่าสุด</h4>
+            <div id="detailRecentLogs" style="font-size:13px">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Account Mapping Tab ===== -->
+    <div id="tab-mappings" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">Account Mapping</h2><p class="page-subtitle">ตั้งค่า mapping ระหว่าง category จากระบบภายนอก กับผังบัญชีในระบบ</p></div>
+      </div>
+      <div class="card" style="padding:16px;margin-bottom:16px">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <label class="text-sm font-medium">เลือกระบบ:</label>
+          <select id="mappingIntSelect" class="form-input" style="width:auto;min-width:200px" onchange="Page.loadMappings()"><option value="">-- เลือก Integration --</option></select>
+          <button class="btn btn-primary" onclick="Page.openCreateMappingModal()" id="btnAddMapping" style="display:none">+ เพิ่ม Mapping</button>
+          <button class="btn btn-outline" onclick="Page.openTemplateModal()" id="btnTemplate" style="display:none">ใช้ Template</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table class="table"><thead><tr><th>External Category</th><th>Code</th><th>คำอธิบาย</th><th>Dr. Account</th><th>Cr. Account</th><th>Auto Journal</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="mappingBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">เลือก Integration ด้านบนก่อน</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- ===== Sync Logs Tab ===== -->
+    <div id="tab-logs" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">Sync Logs</h2><p class="page-subtitle">ประวัติการ sync ข้อมูลจากระบบภายนอก</p></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="logIntFilter" class="form-input" style="width:auto;min-width:180px" onchange="Page.loadLogs()"><option value="">ทุกระบบ</option></select>
+          <select id="logPageSize" class="form-input" style="width:auto" onchange="Page.loadLogs()"><option value="50">50</option><option value="100">100</option><option value="200">200</option></select>
+        </div>
+      </div>
+      <div class="table-container">
+        <table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>Reference</th><th>สถานะ</th><th>Error</th><th>ms</th></tr></thead>
+        <tbody id="logsBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- ===== MODALS ===== -->
+
+    <!-- Create/Edit Integration Modal -->
+    <div class="modal-overlay" id="intModal">
+      <div class="modal" style="max-width:580px">
+        <div class="modal-header"><h3 id="intModalTitle">เพิ่มระบบภายนอก</h3><button class="modal-close" onclick="Page.closeModal('intModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อระบบ <span style="color:red">*</span></label><input type="text" id="fName" class="form-input" placeholder="เช่น ระบบ POS ร้าน, TakeTime, Shopee"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภท <span style="color:red">*</span></label>
+              <select id="fType" class="form-input">
+                <option value="POS">POS (หน้าร้าน)</option><option value="PMS">PMS (โรงแรม)</option>
+                <option value="ERP">ERP</option><option value="CRM">CRM</option>
+                <option value="ECommerce">E-Commerce</option><option value="Delivery">Delivery Platform</option>
+                <option value="Payment">Payment Gateway</option><option value="Custom">อื่น ๆ</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">เวอร์ชัน</label><input type="text" id="fVersion" class="form-input" placeholder="v1.0"></div>
+          </div>
+          <div class="form-group"><label class="form-label">Base URL</label><input type="text" id="fUrl" class="form-input" placeholder="https://api.example.com"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Rate Limit (req/min)</label><input type="number" id="fRate" class="form-input" value="60"></div>
+            <div class="form-group"><label class="form-label">Webhook URL</label><input type="text" id="fWebhook" class="form-input" placeholder="https://your-system/webhook"></div>
+          </div>
+          <div class="form-group"><label><input type="checkbox" id="fWebhookEnabled"> เปิดใช้งาน Webhook</label></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="Page.closeModal('intModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="btnSaveInt" onclick="Page.saveIntegration()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- API Key Result Modal -->
+    <div class="modal-overlay" id="keyModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3>API Key ของคุณ</h3><button class="modal-close" onclick="Page.closeModal('keyModal')">&times;</button></div>
+        <div class="modal-body">
+          <div style="background:#fef3c7;padding:12px;border-radius:8px;margin-bottom:16px"><p class="text-sm" style="color:#d97706;font-weight:600;margin:0">กรุณาคัดลอก API Key เก็บไว้ จะแสดงครั้งเดียวเท่านั้น</p></div>
+          <div class="form-group"><label class="form-label">API Key</label><div style="display:flex;gap:8px"><input type="text" id="resultApiKey" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultApiKey')">Copy</button></div></div>
+          <div class="form-group"><label class="form-label">Secret Key (HMAC Webhook Verification)</label><div style="display:flex;gap:8px"><input type="text" id="resultSecret" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultSecret')">Copy</button></div></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-primary" onclick="Page.closeModal('keyModal')">เข้าใจแล้ว ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- Mapping Modal -->
+    <div class="modal-overlay" id="mappingModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 id="mappingModalTitle">เพิ่ม Account Mapping</h3><button class="modal-close" onclick="Page.closeModal('mappingModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">External Category <span style="color:red">*</span></label><input type="text" id="mCategory" class="form-input" placeholder="เช่น ROOM_REVENUE, PRODUCT_SALES"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">External Code</label><input type="text" id="mCode" class="form-input" placeholder="รหัสจากระบบภายนอก"></div>
+            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" id="mDesc" class="form-input" placeholder="คำอธิบาย"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Dr. Account</label><select id="mDebit" class="form-input"><option value="">-- เลือก --</option></select></div>
+            <div class="form-group"><label class="form-label">Cr. Account</label><select id="mCredit" class="form-input"><option value="">-- เลือก --</option></select></div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบายบันทึกบัญชี</label><input type="text" id="mJournalDesc" class="form-input" placeholder="Template รายละเอียดบัญชี"></div>
+          <div class="form-group"><label><input type="checkbox" id="mAutoJournal" checked> สร้างบันทึกบัญชีอัตโนมัติ</label></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-outline" onclick="Page.closeModal('mappingModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveMapping()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Template Modal -->
+    <div class="modal-overlay" id="templateModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3>เลือก Template ตามประเภทธุรกิจ</h3><button class="modal-close" onclick="Page.closeModal('templateModal')">&times;</button></div>
+        <div class="modal-body"><div id="templateList" style="display:grid;gap:12px">กำลังโหลด...</div></div>
+      </div>
+    </div>
+  </div>
+
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+const Page = {
+  api: null, integrations: [], fullIntegrations: [], accounts: [], selectedId: null, editMappingId: null, editMode: false, recentSyncs: [],
+
+  async init() {
+    Layout.init('integrations');
+    const company = JSON.parse(localStorage.getItem('currentCompany') || 'null');
+    if (!company) return;
+    this.api = API.c(company.id);
+    await this.loadDashboard();
+    await this.loadAccounts();
+  },
+
+  switchTab(tab) {
+    ['integrations','mappings','logs'].forEach(t => {
+      const el = document.getElementById('tab-'+t);
+      if (el) el.style.display = t === tab ? '' : 'none';
+    });
+    document.querySelectorAll('.tabs .tab').forEach((btn,i) => btn.classList.toggle('active', ['integrations','mappings','logs'][i] === tab));
+    if (tab === 'logs') this.loadLogs();
+  },
+
+  async loadDashboard() {
+    try {
+      const res = await this.api.getIntegrationDashboard();
+      const d = res.data;
+      document.getElementById('statTotal').textContent = d.totalIntegrations;
+      document.getElementById('statActive').textContent = d.activeIntegrations;
+      document.getElementById('statSyncToday').textContent = d.todaySyncCount;
+      document.getElementById('statErrors').textContent = d.todayErrorCount;
+      this.integrations = d.integrations || [];
+      this.recentSyncs = d.recentSyncs || [];
+      this.renderIntegrationList();
+      this.populateIntSelect();
+      this.populateLogFilter();
+      // Load full integration data
+      const fullRes = await this.api.getIntegrations();
+      this.fullIntegrations = fullRes.data || [];
+      if (this.selectedId) this.showDetail(this.selectedId);
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  renderIntegrationList() {
+    const list = document.getElementById('intList');
+    if (!this.integrations.length) {
+      list.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">ยังไม่มี Integration — กดปุ่ม "+ เพิ่มระบบ" เพื่อเริ่มต้น</div>';
+      document.getElementById('detailPanel').style.display = 'none';
+      return;
+    }
+    list.innerHTML = this.integrations.map(i => {
+      const health = this.getHealth(i);
+      return `<div class="int-card ${this.selectedId===i.id?'selected':''}" onclick="Page.showDetail('${i.id}')">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="health-dot health-${health.color}" title="${health.text}"></span>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:14px">${i.systemName}</div>
+            <div class="text-sm text-gray-500">${i.systemType}${i.lastSyncAt ? ' &middot; Sync: '+new Date(i.lastSyncAt).toLocaleString('th-TH') : ''}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="text-sm" style="font-weight:600">${i.totalSyncCount.toLocaleString()}</div>
+            <div class="text-sm" style="color:${i.errorCount>0?'var(--red)':'var(--gray-400)'}">${i.errorCount} errors</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  getHealth(i) {
+    if (!i.isActive) return { color: 'gray', text: 'Inactive' };
+    if (i.errorCount > 10) return { color: 'red', text: 'Error สูง' };
+    if (i.errorCount > 3) return { color: 'yellow', text: 'มี Error' };
+    return { color: 'green', text: 'ปกติ' };
+  },
+
+  showDetail(id) {
+    this.selectedId = id;
+    const i = this.integrations.find(x => x.id === id);
+    const full = this.fullIntegrations.find(x => x.id === id);
+    if (!i) return;
+    document.querySelectorAll('.int-card').forEach(c => c.classList.remove('selected'));
+    event?.target?.closest?.('.int-card')?.classList?.add?.('selected');
+    const panel = document.getElementById('detailPanel');
+    panel.style.display = '';
+
+    const health = this.getHealth(i);
+    document.getElementById('detailName').textContent = i.systemName;
+    document.getElementById('detailHealthDot').className = 'health-dot health-' + health.color;
+    document.getElementById('detailHealthText').textContent = health.text;
+    document.getElementById('detailActiveToggle').checked = i.isActive;
+    document.getElementById('detailActiveLabel').textContent = i.isActive ? 'Active' : 'Inactive';
+    document.getElementById('detailLastSync').textContent = i.lastSyncAt ? new Date(i.lastSyncAt).toLocaleString('th-TH') : 'ยังไม่เคย sync';
+    document.getElementById('detailTotalSync').textContent = i.totalSyncCount.toLocaleString();
+    document.getElementById('detailErrors').innerHTML = `<span style="color:${i.errorCount>0?'var(--red)':'inherit'}">${i.errorCount}</span>`;
+    document.getElementById('detailRate').textContent = (full?.rateLimitPerMinute || 60) + ' req/min';
+    document.getElementById('detailType').textContent = full?.systemType || i.systemType || '-';
+    document.getElementById('detailVersion').textContent = full?.systemVersion || '-';
+    document.getElementById('detailUrl').textContent = full?.baseUrl || '-';
+    document.getElementById('detailKeyPrefix').textContent = (full?.apiKeyPrefix || '???') + '...';
+    document.getElementById('detailWebhook').textContent = full?.webhookUrl || '(ไม่ได้ตั้งค่า)';
+    document.getElementById('detailCreated').textContent = full ? new Date(full.createdAt).toLocaleString('th-TH') : '-';
+
+    // Recent logs for this integration
+    const logs = this.recentSyncs.filter(l => l.systemName === i.systemName).slice(0, 8);
+    document.getElementById('detailRecentLogs').innerHTML = logs.length
+      ? logs.map(l => {
+          const cls = l.status === 'Success' ? 'badge-success' : l.status === 'Failed' ? 'badge-danger' : 'badge-warning';
+          return `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--gray-100)">
+            <span class="badge ${cls}" style="font-size:11px">${l.status}</span>
+            <code style="font-size:11px">${l.eventType}</code>
+            <span class="text-sm text-gray-500" style="flex:1;text-align:right">${new Date(l.createdAt).toLocaleString('th-TH')}</span>
+          </div>`;
+        }).join('')
+      : '<span class="text-sm text-gray-400">ยังไม่มีรายการ</span>';
+
+    this.renderIntegrationList(); // re-render to highlight selected
+  },
+
+  populateIntSelect() {
+    const sel = document.getElementById('mappingIntSelect');
+    sel.innerHTML = '<option value="">-- เลือก Integration --</option>' + this.integrations.map(i => `<option value="${i.id}">${i.systemName} (${i.systemType})</option>`).join('');
+  },
+
+  populateLogFilter() {
+    const sel = document.getElementById('logIntFilter');
+    sel.innerHTML = '<option value="">ทุกระบบ</option>' + this.integrations.map(i => `<option value="${i.id}">${i.systemName}</option>`).join('');
+  },
+
+  async loadAccounts() {
+    try { const res = await this.api.getAccounts(); this.accounts = (res.data || []).filter(a => a.isActive); this.populateAccountDropdowns(); } catch(e) {}
+  },
+
+  populateAccountDropdowns() {
+    ['mDebit','mCredit'].forEach(id => {
+      document.getElementById(id).innerHTML = '<option value="">-- เลือก --</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+    });
+  },
+
+  // ===== CRUD =====
+  openCreateModal() {
+    this.editMode = false;
+    document.getElementById('intModalTitle').textContent = 'เพิ่มระบบภายนอก';
+    ['fName','fVersion','fUrl','fWebhook'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fType').value = 'POS';
+    document.getElementById('fRate').value = '60';
+    document.getElementById('fWebhookEnabled').checked = false;
+    document.getElementById('intModal').classList.add('active');
+  },
+
+  openEditModal() {
+    if (!this.selectedId) return;
+    this.editMode = true;
+    const i = this.fullIntegrations.find(x => x.id === this.selectedId);
+    if (!i) return;
+    document.getElementById('intModalTitle').textContent = 'แก้ไข Integration';
+    document.getElementById('fName').value = i.systemName || '';
+    document.getElementById('fType').value = i.systemType || 'POS';
+    document.getElementById('fVersion').value = i.systemVersion || '';
+    document.getElementById('fUrl').value = i.baseUrl || '';
+    document.getElementById('fRate').value = i.rateLimitPerMinute || 60;
+    document.getElementById('fWebhook').value = i.webhookUrl || '';
+    document.getElementById('fWebhookEnabled').checked = i.webhookEnabled || false;
+    document.getElementById('intModal').classList.add('active');
+  },
+
+  closeModal(id) { document.getElementById(id).classList.remove('active'); },
+
+  async saveIntegration() {
+    const data = {
+      systemName: document.getElementById('fName').value,
+      systemType: document.getElementById('fType').value,
+      systemVersion: document.getElementById('fVersion').value || null,
+      baseUrl: document.getElementById('fUrl').value || null,
+      rateLimitPerMinute: parseInt(document.getElementById('fRate').value) || 60,
+      webhookUrl: document.getElementById('fWebhook').value || null,
+      webhookEnabled: document.getElementById('fWebhookEnabled').checked
+    };
+    try {
+      if (this.editMode && this.selectedId) {
+        await this.api.updateIntegration(this.selectedId, data);
+        Layout.toast('อัปเดตสำเร็จ');
+      } else {
+        const res = await this.api.createIntegration(data);
+        document.getElementById('resultApiKey').value = res.data.apiKey;
+        document.getElementById('resultSecret').value = res.data.secretKey || '';
+        document.getElementById('keyModal').classList.add('active');
+        Layout.toast('สร้าง Integration สำเร็จ');
+      }
+      this.closeModal('intModal');
+      this.loadDashboard();
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async toggleActiveSelected(active) {
+    if (!this.selectedId) return;
+    try {
+      await this.api.updateIntegration(this.selectedId, { isActive: active });
+      Layout.toast(active ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว');
+      this.loadDashboard();
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async regenerateKey() {
+    if (!this.selectedId || !confirm('สร้าง API Key ใหม่? Key เดิมจะใช้ไม่ได้อีก')) return;
+    try {
+      await this.api.regenerateIntegrationKey(this.selectedId);
+      Layout.toast('สร้าง API Key ใหม่สำเร็จ');
+      this.loadDashboard();
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async deleteSelected() {
+    if (!this.selectedId || !confirm('ลบ Integration นี้? การ sync ทั้งหมดจะหยุดทำงาน')) return;
+    try {
+      await this.api.deleteIntegration(this.selectedId);
+      this.selectedId = null;
+      Layout.toast('ลบสำเร็จ');
+      this.loadDashboard();
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  copyKey(elId) { navigator.clipboard.writeText(document.getElementById(elId).value); Layout.toast('คัดลอกแล้ว'); },
+
+  viewIntLogs() { this.switchTab('logs'); document.getElementById('logIntFilter').value = this.selectedId; this.loadLogs(); },
+
+  // ===== Mappings =====
+  async loadMappings() {
+    const intId = document.getElementById('mappingIntSelect').value;
+    const tbody = document.getElementById('mappingBody');
+    document.getElementById('btnAddMapping').style.display = intId ? '' : 'none';
+    document.getElementById('btnTemplate').style.display = intId ? '' : 'none';
+    if (!intId) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">เลือก Integration ด้านบนก่อน</td></tr>'; return; }
+    try {
+      const res = await this.api.getIntegrationMappings(intId);
+      const mappings = res.data || [];
+      if (!mappings.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มี mapping — กดปุ่ม "+ เพิ่ม Mapping" หรือ "ใช้ Template"</td></tr>'; return; }
+      tbody.innerHTML = mappings.map(m => `<tr>
+        <td><strong>${m.externalCategory}</strong></td><td class="text-sm">${m.externalCode||'-'}</td><td class="text-sm">${m.externalDescription||'-'}</td>
+        <td class="text-sm">${m.debitAccountCode?m.debitAccountCode+' '+m.debitAccountName:'-'}</td>
+        <td class="text-sm">${m.creditAccountCode?m.creditAccountCode+' '+m.creditAccountName:'-'}</td>
+        <td>${m.autoCreateJournal?'<span class="badge badge-success">Auto</span>':'-'}</td>
+        <td>${m.isActive?'<span class="badge badge-success">Active</span>':'<span class="badge badge-gray">Inactive</span>'}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="Page.editMapping('${m.id}','${m.integrationId}')">แก้ไข</button>
+        <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteMapping('${m.id}','${m.integrationId}')">ลบ</button></td>
+      </tr>`).join('');
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  openCreateMappingModal() {
+    this.editMappingId = null;
+    document.getElementById('mappingModalTitle').textContent = 'เพิ่ม Account Mapping';
+    ['mCategory','mCode','mDesc','mJournalDesc'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('mDebit').value = ''; document.getElementById('mCredit').value = '';
+    document.getElementById('mAutoJournal').checked = true;
+    document.getElementById('mappingModal').classList.add('active');
+  },
+
+  async editMapping(mappingId, intId) {
+    try {
+      const res = await this.api.getIntegrationMappings(intId);
+      const m = (res.data || []).find(x => x.id === mappingId);
+      if (!m) return;
+      this.editMappingId = mappingId;
+      document.getElementById('mappingModalTitle').textContent = 'แก้ไข Account Mapping';
+      document.getElementById('mCategory').value = m.externalCategory;
+      document.getElementById('mCode').value = m.externalCode || '';
+      document.getElementById('mDesc').value = m.externalDescription || '';
+      document.getElementById('mDebit').value = m.debitAccountId || '';
+      document.getElementById('mCredit').value = m.creditAccountId || '';
+      document.getElementById('mJournalDesc').value = m.journalDescription || '';
+      document.getElementById('mAutoJournal').checked = m.autoCreateJournal;
+      document.getElementById('mappingModal').classList.add('active');
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async saveMapping() {
+    const intId = document.getElementById('mappingIntSelect').value;
+    if (!intId) return;
+    const data = {
+      externalCategory: document.getElementById('mCategory').value,
+      externalCode: document.getElementById('mCode').value || null,
+      externalDescription: document.getElementById('mDesc').value || null,
+      debitAccountId: document.getElementById('mDebit').value || null,
+      creditAccountId: document.getElementById('mCredit').value || null,
+      journalDescription: document.getElementById('mJournalDesc').value || null,
+      autoCreateJournal: document.getElementById('mAutoJournal').checked
+    };
+    try {
+      if (this.editMappingId) await this.api.updateIntegrationMapping(intId, this.editMappingId, data);
+      else await this.api.createIntegrationMapping(intId, data);
+      this.closeModal('mappingModal');
+      Layout.toast('บันทึกสำเร็จ');
+      this.loadMappings();
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async deleteMapping(mid, intId) {
+    if (!confirm('ลบ mapping นี้?')) return;
+    try { await this.api.deleteIntegrationMapping(intId, mid); Layout.toast('ลบสำเร็จ'); this.loadMappings(); } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  // ===== Template =====
+  async openTemplateModal() {
+    document.getElementById('templateModal').classList.add('active');
+    try {
+      const res = await this.api.getIntegrationMappingTemplates();
+      document.getElementById('templateList').innerHTML = (res.data || []).map(t => `
+        <div class="card" style="padding:16px;cursor:pointer;border:2px solid transparent;transition:border-color .2s"
+             onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='transparent'"
+             onclick="Page.applyTemplate('${t.industryType}')">
+          <h4 style="margin:0 0 4px;font-size:14px">${t.industryName}</h4>
+          <p class="text-sm text-gray-500" style="margin:0">${t.mappings.length} mappings: ${t.mappings.map(m=>m.externalCategory).join(', ')}</p>
+        </div>`).join('');
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async applyTemplate(industryType) {
+    const intId = document.getElementById('mappingIntSelect').value;
+    if (!intId) return;
+    try {
+      const res = await this.api.getIntegrationMappingTemplates();
+      const template = (res.data || []).find(t => t.industryType === industryType);
+      if (!template) return;
+      for (const m of template.mappings) {
+        const dr = this.accounts.find(a => a.accountCode.startsWith(m.suggestedDebitCode));
+        const cr = this.accounts.find(a => a.accountCode.startsWith(m.suggestedCreditCode));
+        await this.api.createIntegrationMapping(intId, {
+          externalCategory: m.externalCategory, externalDescription: m.description,
+          debitAccountId: dr?.id || null, creditAccountId: cr?.id || null,
+          journalDescription: m.description, autoCreateJournal: true
+        });
+      }
+      this.closeModal('templateModal');
+      Layout.toast(`นำเข้า template "${template.industryName}" (${template.mappings.length} รายการ)`);
+      this.loadMappings();
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  },
+
+  // ===== Logs =====
+  async loadLogs() {
+    try {
+      const intId = document.getElementById('logIntFilter')?.value || '';
+      const size = document.getElementById('logPageSize')?.value || '50';
+      let q = `?pageSize=${size}`;
+      if (intId) q += `&integrationId=${intId}`;
+      const res = await this.api.getIntegrationSyncLogs(q);
+      const logs = res.data || [];
+      const tbody = document.getElementById('logsBody');
+      if (!logs.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการ</td></tr>'; return; }
+      tbody.innerHTML = logs.map(l => {
+        const cls = l.status==='Success'?'badge-success':l.status==='Failed'?'badge-danger':'badge-warning';
+        return `<tr>
+          <td class="text-sm">${new Date(l.createdAt).toLocaleString('th-TH')}</td>
+          <td><code style="font-size:12px">${l.eventType}</code></td>
+          <td class="text-sm">${l.externalRef||l.externalId||'-'}</td>
+          <td><span class="badge ${cls}">${l.status}</span></td>
+          <td class="text-sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--red)">${l.errorMessage||'-'}</td>
+          <td class="text-sm">${l.processingTimeMs}ms</td>
+        </tr>`;
+      }).join('');
+    } catch(e) { Layout.toast(e.message, 'error'); }
+  }
+};
+
+API.init();
+Page.init();
+</script>
+</body>
+</html>

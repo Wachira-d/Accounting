@@ -96,6 +96,8 @@ const Layout = {
     { section: 'สินค้า/บริการ' },
     { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html' },
     { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html' },
+    { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊', href: '/pages/inventory-reports.html' },
+    { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html' },
 
     { section: 'POS ขายหน้าร้าน' },
     { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html' },
@@ -114,6 +116,7 @@ const Layout = {
     { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html' },
     { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
+    { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html' },
 
     { section: 'ภาษี' },
     { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️', href: '/pages/tax.html' },
@@ -148,6 +151,9 @@ const Layout = {
     { section: 'ตั้งค่า' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html' },
+    { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html' },
+    { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html' },
+    { id: 'api-developer', label: 'API Developer', icon: '📘', href: '/pages/api-developer.html' },
     { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html' },
     { id: 'subscription', label: 'แพ็กเกจ', icon: '💎', href: '/pages/subscription.html' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html' },

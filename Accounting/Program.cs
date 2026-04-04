@@ -103,6 +103,7 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 // Additional modules
 builder.Services.AddScoped<IRecurringTransactionService, RecurringTransactionService>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
+builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();
 builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
 builder.Services.AddScoped<ICurrencyService, CurrencyService>();
@@ -162,6 +163,12 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
+
+// External Integration (TakeTime, PMS, etc.)
+builder.Services.AddScoped<IIntegrationService, IntegrationService>();
+
+// Signature & Approval
+builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
@@ -573,7 +580,361 @@ app.MapFallbackToFile("index.html");
                       ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
                       ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
                       CONSTRAINT ""PK_ContactInquiries"" PRIMARY KEY (""Id"")
-                  );"
+                  );",
+                // External Integration tables
+                @"CREATE TABLE IF NOT EXISTS ""ExternalIntegrations"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""SystemName"" varchar(200) NOT NULL, ""SystemType"" varchar(50) NOT NULL DEFAULT 'PMS',
+                      ""SystemVersion"" text NULL, ""BaseUrl"" text NULL,
+                      ""ApiKey"" text NOT NULL DEFAULT '', ""ApiKeyHash"" text NOT NULL DEFAULT '',
+                      ""ApiKeyPrefix"" varchar(20) NOT NULL DEFAULT '', ""SecretKey"" text NULL,
+                      ""IsActive"" boolean NOT NULL DEFAULT true,
+                      ""LastSyncAt"" timestamp NULL, ""TotalSyncCount"" integer NOT NULL DEFAULT 0,
+                      ""ErrorCount"" integer NOT NULL DEFAULT 0, ""ConsecutiveErrors"" integer NOT NULL DEFAULT 0,
+                      ""MappingConfigJson"" jsonb NULL, ""SettingsJson"" jsonb NULL,
+                      ""RateLimitPerMinute"" integer NOT NULL DEFAULT 60,
+                      ""WebhookUrl"" text NULL, ""WebhookEnabled"" boolean NOT NULL DEFAULT false,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_ExternalIntegrations"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_ExternalIntegrations_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );",
+                @"CREATE TABLE IF NOT EXISTS ""IntegrationSyncLogs"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""IntegrationId"" uuid NOT NULL,
+                      ""EventType"" varchar(100) NOT NULL, ""ExternalId"" text NULL, ""ExternalRef"" text NULL,
+                      ""Status"" varchar(50) NOT NULL DEFAULT 'Pending',
+                      ""RequestPayloadJson"" jsonb NULL, ""ResponseJson"" jsonb NULL, ""ErrorMessage"" text NULL,
+                      ""CreatedDocumentId"" uuid NULL, ""CreatedContactId"" uuid NULL,
+                      ""CreatedJournalEntryId"" uuid NULL, ""CreatedPaymentId"" uuid NULL,
+                      ""ProcessingTimeMs"" integer NOT NULL DEFAULT 0,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_IntegrationSyncLogs"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_IntegrationSyncLogs_ExternalIntegrations"" FOREIGN KEY (""IntegrationId"") REFERENCES ""ExternalIntegrations""(""Id""),
+                      CONSTRAINT ""FK_IntegrationSyncLogs_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );",
+                @"CREATE TABLE IF NOT EXISTS ""IntegrationAccountMappings"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""IntegrationId"" uuid NOT NULL,
+                      ""ExternalCategory"" varchar(200) NOT NULL, ""ExternalCode"" varchar(100) NULL,
+                      ""ExternalDescription"" text NULL,
+                      ""DebitAccountId"" uuid NULL, ""CreditAccountId"" uuid NULL,
+                      ""JournalDescription"" text NULL,
+                      ""IsActive"" boolean NOT NULL DEFAULT true, ""AutoCreateJournal"" boolean NOT NULL DEFAULT true,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_IntegrationAccountMappings"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_IntegrationAccountMappings_ExternalIntegrations"" FOREIGN KEY (""IntegrationId"") REFERENCES ""ExternalIntegrations""(""Id""),
+                      CONSTRAINT ""FK_IntegrationAccountMappings_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                      CONSTRAINT ""FK_IntegrationAccountMappings_DebitAccount"" FOREIGN KEY (""DebitAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL,
+                      CONSTRAINT ""FK_IntegrationAccountMappings_CreditAccount"" FOREIGN KEY (""CreditAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL
+                  );",
+                // Add webhook columns to ExternalIntegrations (safe for existing DBs)
+                @"DO $$ BEGIN
+                    ALTER TABLE ""ExternalIntegrations"" ADD COLUMN IF NOT EXISTS ""WebhookUrl"" text NULL;
+                    ALTER TABLE ""ExternalIntegrations"" ADD COLUMN IF NOT EXISTS ""WebhookEnabled"" boolean NOT NULL DEFAULT false;
+                  EXCEPTION WHEN others THEN NULL;
+                  END $$;",
+                // Add FK constraints for DebitAccountId/CreditAccountId (safe for existing DBs)
+                @"DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'FK_IntegrationAccountMappings_DebitAccount') THEN
+                      ALTER TABLE ""IntegrationAccountMappings"" ADD CONSTRAINT ""FK_IntegrationAccountMappings_DebitAccount"" FOREIGN KEY (""DebitAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'FK_IntegrationAccountMappings_CreditAccount') THEN
+                      ALTER TABLE ""IntegrationAccountMappings"" ADD CONSTRAINT ""FK_IntegrationAccountMappings_CreditAccount"" FOREIGN KEY (""CreditAccountId"") REFERENCES ""ChartOfAccounts""(""Id"") ON DELETE SET NULL;
+                    END IF;
+                  EXCEPTION WHEN others THEN NULL;
+                  END $$;",
+                // Inventory Snapshot tables
+                @"CREATE TABLE IF NOT EXISTS ""InventorySnapshots"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""SnapshotDate"" timestamp NOT NULL, ""Status"" varchar(50) NOT NULL DEFAULT 'Draft',
+                      ""Description"" text NULL, ""TotalValue"" decimal(18,2) NOT NULL DEFAULT 0,
+                      ""TotalProducts"" integer NOT NULL DEFAULT 0,
+                      ""JournalEntryId"" uuid NULL,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_InventorySnapshots"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_InventorySnapshots_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                      CONSTRAINT ""FK_InventorySnapshots_JournalEntries"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                  );",
+                @"CREATE TABLE IF NOT EXISTS ""InventorySnapshotLines"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""SnapshotId"" uuid NOT NULL, ""ProductId"" uuid NOT NULL,
+                      ""Quantity"" decimal(18,4) NOT NULL, ""UnitCost"" decimal(18,4) NOT NULL,
+                      ""TotalValue"" decimal(18,2) NOT NULL,
+                      ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_InventorySnapshotLines"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_InventorySnapshotLines_Snapshots"" FOREIGN KEY (""SnapshotId"") REFERENCES ""InventorySnapshots""(""Id""),
+                      CONSTRAINT ""FK_InventorySnapshotLines_Products"" FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""Id""),
+                      CONSTRAINT ""FK_InventorySnapshotLines_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                  );",
+                // Supplies columns on Products
+                @"DO $$ BEGIN
+                    ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""SuppliesAccountId"" uuid NULL;
+                    ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""SuppliesExpenseAccountId"" uuid NULL;
+                  END $$;",
+                // Supplies Usage Log (วัสดุสิ้นเปลือง - บันทึกการเบิกใช้)
+                @"CREATE TABLE IF NOT EXISTS ""SuppliesUsageLogs"" (
+                      ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                      ""ProductId"" uuid NOT NULL,
+                      ""UsageDate"" timestamp NOT NULL DEFAULT now(),
+                      ""Quantity"" decimal(18,4) NOT NULL,
+                      ""UnitCost"" decimal(18,4) NOT NULL,
+                      ""TotalCost"" decimal(18,2) NOT NULL,
+                      ""Department"" varchar(200) NULL,
+                      ""Purpose"" text NULL,
+                      ""Reference"" varchar(100) NULL,
+                      ""JournalEntryId"" uuid NULL,
+                      ""CompanyId"" uuid NOT NULL,
+                      ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                      ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL,
+                      ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                      CONSTRAINT ""PK_SuppliesUsageLogs"" PRIMARY KEY (""Id""),
+                      CONSTRAINT ""FK_SuppliesUsageLogs_Products"" FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""Id""),
+                      CONSTRAINT ""FK_SuppliesUsageLogs_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                      CONSTRAINT ""FK_SuppliesUsageLogs_JournalEntries"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                  );",
+                // === Financial Management Tables ===
+                @"CREATE TABLE IF NOT EXISTS ""PrepaidExpenses"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""Description"" text NOT NULL, ""StartDate"" timestamp NOT NULL, ""EndDate"" timestamp NOT NULL,
+                    ""TotalPeriods"" integer NOT NULL, ""TotalAmount"" decimal(18,2) NOT NULL,
+                    ""AmortizedAmount"" decimal(18,2) NOT NULL DEFAULT 0, ""RemainingAmount"" decimal(18,2) NOT NULL,
+                    ""AmortizationMethod"" varchar(50) NOT NULL DEFAULT 'StraightLine',
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Active',
+                    ""PrepaidAccountId"" uuid NOT NULL, ""ExpenseAccountId"" uuid NOT NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_PrepaidExpenses"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_PrepaidExpenses_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_PrepaidExpenses_PrepaidAccount"" FOREIGN KEY (""PrepaidAccountId"") REFERENCES ""ChartOfAccounts""(""Id""),
+                    CONSTRAINT ""FK_PrepaidExpenses_ExpenseAccount"" FOREIGN KEY (""ExpenseAccountId"") REFERENCES ""ChartOfAccounts""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""PrepaidAmortizationSchedules"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""PrepaidExpenseId"" uuid NOT NULL,
+                    ""PeriodNumber"" integer NOT NULL, ""ScheduledDate"" timestamp NOT NULL,
+                    ""Amount"" decimal(18,2) NOT NULL, ""IsProcessed"" boolean NOT NULL DEFAULT false,
+                    ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_PrepaidAmortizationSchedules"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_PrepaidAmortSchedules_Prepaid"" FOREIGN KEY (""PrepaidExpenseId"") REFERENCES ""PrepaidExpenses""(""Id""),
+                    CONSTRAINT ""FK_PrepaidAmortSchedules_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_PrepaidAmortSchedules_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""DepositTransactions"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""Description"" text NOT NULL, ""Direction"" varchar(20) NOT NULL, ""DepositType"" varchar(50) NOT NULL,
+                    ""Amount"" decimal(18,2) NOT NULL, ""RefundedAmount"" decimal(18,2) NOT NULL DEFAULT 0,
+                    ""RemainingAmount"" decimal(18,2) NOT NULL, ""Status"" varchar(50) NOT NULL DEFAULT 'Active',
+                    ""TransactionDate"" timestamp NOT NULL, ""ExpectedReturnDate"" timestamp NULL,
+                    ""ContactId"" uuid NULL, ""ContactName"" varchar(200) NULL,
+                    ""DepositAccountId"" uuid NOT NULL, ""CashAccountId"" uuid NULL, ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_DepositTransactions"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_DepositTransactions_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_DepositTransactions_DepositAcc"" FOREIGN KEY (""DepositAccountId"") REFERENCES ""ChartOfAccounts""(""Id""),
+                    CONSTRAINT ""FK_DepositTransactions_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""DepositRefunds"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""DepositTransactionId"" uuid NOT NULL,
+                    ""RefundDate"" timestamp NOT NULL, ""Amount"" decimal(18,2) NOT NULL, ""Notes"" text NULL,
+                    ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_DepositRefunds"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_DepositRefunds_Deposit"" FOREIGN KEY (""DepositTransactionId"") REFERENCES ""DepositTransactions""(""Id""),
+                    CONSTRAINT ""FK_DepositRefunds_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_DepositRefunds_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""BadDebtAllowances"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""AllowanceDate"" timestamp NOT NULL, ""Method"" varchar(50) NOT NULL,
+                    ""TotalReceivable"" decimal(18,2) NOT NULL, ""AllowanceAmount"" decimal(18,2) NOT NULL,
+                    ""PreviousAllowance"" decimal(18,2) NOT NULL DEFAULT 0, ""AdjustmentAmount"" decimal(18,2) NOT NULL,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Draft', ""Notes"" text NULL, ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_BadDebtAllowances"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_BadDebtAllowances_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_BadDebtAllowances_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""BadDebtAllowanceLines"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""BadDebtAllowanceId"" uuid NOT NULL,
+                    ""ContactId"" uuid NULL, ""ContactName"" varchar(200) NULL,
+                    ""AgingBucket"" varchar(20) NOT NULL, ""OutstandingAmount"" decimal(18,2) NOT NULL,
+                    ""AllowancePercentage"" decimal(5,2) NOT NULL, ""AllowanceAmount"" decimal(18,2) NOT NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_BadDebtAllowanceLines"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_BadDebtAllowanceLines_Parent"" FOREIGN KEY (""BadDebtAllowanceId"") REFERENCES ""BadDebtAllowances""(""Id""),
+                    CONSTRAINT ""FK_BadDebtAllowanceLines_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""InventoryObsolescenceAllowances"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""AllowanceDate"" timestamp NOT NULL, ""Method"" varchar(50) NOT NULL,
+                    ""TotalInventoryValue"" decimal(18,2) NOT NULL, ""AllowanceAmount"" decimal(18,2) NOT NULL,
+                    ""PreviousAllowance"" decimal(18,2) NOT NULL DEFAULT 0, ""AdjustmentAmount"" decimal(18,2) NOT NULL,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Draft', ""Notes"" text NULL, ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_InventoryObsolescenceAllowances"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_InvObsolescence_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_InvObsolescence_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""InventoryObsolescenceLines"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""AllowanceId"" uuid NOT NULL,
+                    ""ProductId"" uuid NOT NULL, ""AgingBucket"" varchar(20) NOT NULL,
+                    ""CurrentStock"" decimal(18,4) NOT NULL, ""StockValue"" decimal(18,2) NOT NULL,
+                    ""AllowancePercentage"" decimal(5,2) NOT NULL, ""AllowanceAmount"" decimal(18,2) NOT NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_InventoryObsolescenceLines"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_InvObsolescenceLines_Parent"" FOREIGN KEY (""AllowanceId"") REFERENCES ""InventoryObsolescenceAllowances""(""Id""),
+                    CONSTRAINT ""FK_InvObsolescenceLines_Products"" FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""Id""),
+                    CONSTRAINT ""FK_InvObsolescenceLines_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""AccruedExpenses"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""Description"" text NOT NULL, ""ExpenseType"" varchar(50) NOT NULL,
+                    ""AccrualDate"" timestamp NOT NULL, ""Amount"" decimal(18,2) NOT NULL,
+                    ""PaidAmount"" decimal(18,2) NOT NULL DEFAULT 0, ""RemainingAmount"" decimal(18,2) NOT NULL,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Accrued',
+                    ""IsRecurring"" boolean NOT NULL DEFAULT false, ""RecurringFrequency"" varchar(50) NULL,
+                    ""ExpenseAccountId"" uuid NOT NULL, ""AccruedAccountId"" uuid NOT NULL,
+                    ""AccrualJournalId"" uuid NULL, ""PaymentJournalId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_AccruedExpenses"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_AccruedExpenses_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_AccruedExpenses_ExpenseAcc"" FOREIGN KEY (""ExpenseAccountId"") REFERENCES ""ChartOfAccounts""(""Id""),
+                    CONSTRAINT ""FK_AccruedExpenses_AccruedAcc"" FOREIGN KEY (""AccruedAccountId"") REFERENCES ""ChartOfAccounts""(""Id""),
+                    CONSTRAINT ""FK_AccruedExpenses_AccrualJE"" FOREIGN KEY (""AccrualJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_AccruedExpenses_PaymentJE"" FOREIGN KEY (""PaymentJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""CorporateIncomeTaxes"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""TaxYear"" varchar(10) NOT NULL,
+                    ""TaxPeriod"" varchar(20) NOT NULL,
+                    ""TotalRevenue"" decimal(18,2) NOT NULL, ""TotalExpenses"" decimal(18,2) NOT NULL,
+                    ""AccountingProfit"" decimal(18,2) NOT NULL,
+                    ""AddBackItems"" decimal(18,2) NOT NULL DEFAULT 0, ""DeductionItems"" decimal(18,2) NOT NULL DEFAULT 0,
+                    ""TaxableProfit"" decimal(18,2) NOT NULL, ""TaxRate"" decimal(5,2) NOT NULL DEFAULT 20,
+                    ""TaxAmount"" decimal(18,2) NOT NULL, ""WithholdingTaxCredit"" decimal(18,2) NOT NULL DEFAULT 0,
+                    ""PrepaidTaxCredit"" decimal(18,2) NOT NULL DEFAULT 0, ""NetTaxPayable"" decimal(18,2) NOT NULL,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Draft', ""Notes"" text NULL, ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_CorporateIncomeTaxes"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_CIT_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_CIT_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""ProfitAppropriations"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""ApprovalDate"" timestamp NOT NULL, ""FiscalYear"" varchar(10) NOT NULL,
+                    ""NetProfit"" decimal(18,2) NOT NULL, ""LegalReserve"" decimal(18,2) NOT NULL,
+                    ""DividendAmount"" decimal(18,2) NOT NULL, ""RetainedAmount"" decimal(18,2) NOT NULL,
+                    ""DividendPerShare"" decimal(18,4) NOT NULL DEFAULT 0,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Draft', ""Notes"" text NULL,
+                    ""ReserveJournalId"" uuid NULL, ""DividendJournalId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_ProfitAppropriations"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_ProfitAppropriations_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_ProfitAppropriations_ReserveJE"" FOREIGN KEY (""ReserveJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_ProfitAppropriations_DividendJE"" FOREIGN KEY (""DividendJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""CapitalTransactions"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""TransactionDate"" timestamp NOT NULL, ""TransactionType"" varchar(20) NOT NULL,
+                    ""ShareQuantity"" decimal(18,4) NOT NULL, ""ParValue"" decimal(18,4) NOT NULL,
+                    ""PaidAmount"" decimal(18,2) NOT NULL, ""SharePremium"" decimal(18,2) NOT NULL DEFAULT 0,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Draft', ""BoardResolutionRef"" varchar(100) NULL,
+                    ""DbrRegistrationRef"" varchar(100) NULL, ""Notes"" text NULL, ""JournalEntryId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_CapitalTransactions"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_CapitalTransactions_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_CapitalTransactions_JE"" FOREIGN KEY (""JournalEntryId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""ShortTermInvestments"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(), ""ReferenceNo"" varchar(50) NOT NULL,
+                    ""InvestmentType"" varchar(50) NOT NULL, ""Description"" text NOT NULL,
+                    ""PurchaseDate"" timestamp NOT NULL, ""MaturityDate"" timestamp NULL, ""SaleDate"" timestamp NULL,
+                    ""PurchaseCost"" decimal(18,2) NOT NULL, ""CurrentValue"" decimal(18,2) NOT NULL,
+                    ""SaleProceeds"" decimal(18,2) NULL, ""GainLoss"" decimal(18,2) NULL,
+                    ""InterestRate"" decimal(5,2) NOT NULL DEFAULT 0,
+                    ""Status"" varchar(50) NOT NULL DEFAULT 'Active',
+                    ""InstitutionName"" varchar(200) NULL, ""AccountNumber"" varchar(50) NULL,
+                    ""InvestmentAccountId"" uuid NOT NULL,
+                    ""PurchaseJournalId"" uuid NULL, ""SaleJournalId"" uuid NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_ShortTermInvestments"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_ShortTermInvestments_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id""),
+                    CONSTRAINT ""FK_ShortTermInvestments_InvAcc"" FOREIGN KEY (""InvestmentAccountId"") REFERENCES ""ChartOfAccounts""(""Id""),
+                    CONSTRAINT ""FK_ShortTermInvestments_PurchaseJE"" FOREIGN KEY (""PurchaseJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_ShortTermInvestments_SaleJE"" FOREIGN KEY (""SaleJournalId"") REFERENCES ""JournalEntries""(""Id"") ON DELETE SET NULL
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""UserSignatures"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""UserId"" uuid NOT NULL,
+                    ""SignatureData"" text NOT NULL,
+                    ""SignatureFormat"" varchar(10) NOT NULL DEFAULT 'PNG',
+                    ""Label"" varchar(100) NULL,
+                    ""IsDefault"" boolean NOT NULL DEFAULT false,
+                    ""IsActive"" boolean NOT NULL DEFAULT true,
+                    ""CreatedAt"" timestamp NOT NULL DEFAULT now(), ""UpdatedAt"" timestamp NULL,
+                    ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_UserSignatures"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_UserSignatures_Users"" FOREIGN KEY (""UserId"") REFERENCES ""Users""(""Id"") ON DELETE RESTRICT
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""DocumentApprovals"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""DocumentId"" uuid NOT NULL,
+                    ""ApprovalType"" varchar(50) NOT NULL,
+                    ""ApproverRole"" varchar(50) NOT NULL,
+                    ""StepOrder"" integer NOT NULL DEFAULT 1,
+                    ""Status"" integer NOT NULL DEFAULT 0,
+                    ""ApproverUserId"" uuid NULL,
+                    ""ApproverName"" varchar(200) NULL,
+                    ""ApproverEmail"" varchar(256) NULL,
+                    ""ApproverTitle"" varchar(200) NULL,
+                    ""SignatureId"" uuid NULL,
+                    ""SignatureData"" text NULL,
+                    ""SignatureFormat"" varchar(10) NULL,
+                    ""ApprovedAt"" timestamp NULL, ""RejectedAt"" timestamp NULL,
+                    ""Comments"" text NULL, ""IpAddress"" varchar(50) NULL,
+                    ""PostApprovalAction"" varchar(50) NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_DocumentApprovals"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_DocumentApprovals_Documents"" FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT,
+                    CONSTRAINT ""FK_DocumentApprovals_Users"" FOREIGN KEY (""ApproverUserId"") REFERENCES ""Users""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_DocumentApprovals_Signatures"" FOREIGN KEY (""SignatureId"") REFERENCES ""UserSignatures""(""Id"") ON DELETE SET NULL,
+                    CONSTRAINT ""FK_DocumentApprovals_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );",
+                @"CREATE TABLE IF NOT EXISTS ""DocumentSignatures"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""DocumentId"" uuid NOT NULL,
+                    ""DocumentApprovalId"" uuid NOT NULL,
+                    ""SignerRole"" varchar(100) NOT NULL,
+                    ""SignerName"" varchar(200) NOT NULL,
+                    ""SignerTitle"" varchar(200) NULL,
+                    ""SignatureData"" text NOT NULL,
+                    ""SignatureFormat"" varchar(10) NOT NULL DEFAULT 'PNG',
+                    ""SignedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""IpAddress"" varchar(50) NULL,
+                    ""CompanyId"" uuid NOT NULL, ""CreatedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""UpdatedAt"" timestamp NULL, ""CreatedBy"" text NULL, ""UpdatedBy"" text NULL, ""IsDeleted"" boolean NOT NULL DEFAULT false,
+                    CONSTRAINT ""PK_DocumentSignatures"" PRIMARY KEY (""Id""),
+                    CONSTRAINT ""FK_DocumentSignatures_Documents"" FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT,
+                    CONSTRAINT ""FK_DocumentSignatures_Approvals"" FOREIGN KEY (""DocumentApprovalId"") REFERENCES ""DocumentApprovals""(""Id"") ON DELETE RESTRICT,
+                    CONSTRAINT ""FK_DocumentSignatures_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
+                );"
             };
             foreach (var sql in rawSqlStatements)
             {
@@ -584,6 +945,36 @@ app.MapFallbackToFile("index.html");
                 }
                 catch { /* table/column already exists or FK target missing — safe to skip */ }
             }
+
+            // Fix timestamp column types: convert any 'timestamptz' to 'timestamp without time zone'
+            // This prevents "Cannot apply binary operation on timestamp with/without time zone" errors
+            // when columns were created before Npgsql.EnableLegacyTimestampBehavior was set.
+            try
+            {
+                var fixTimestampSql = @"
+                    DO $$
+                    DECLARE r RECORD;
+                    BEGIN
+                        FOR r IN
+                            SELECT table_name, column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND data_type = 'timestamp with time zone'
+                        LOOP
+                            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE timestamp without time zone USING %I AT TIME ZONE ''UTC''',
+                                r.table_name, r.column_name, r.column_name);
+                        END LOOP;
+                    END $$;";
+                using var fixCmd = new Npgsql.NpgsqlCommand(fixTimestampSql, rawConn);
+                fixCmd.CommandTimeout = 120;
+                fixCmd.ExecuteNonQuery();
+            }
+            catch (Exception tsEx)
+            {
+                var tsLogger = app.Services.GetRequiredService<ILogger<Program>>();
+                tsLogger.LogWarning(tsEx, "Timestamp column type fix had issues (non-critical)");
+            }
+
             rawConn.Close();
         }
         catch (Exception rawEx)

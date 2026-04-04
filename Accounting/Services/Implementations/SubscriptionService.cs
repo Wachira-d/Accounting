@@ -1036,8 +1036,10 @@ public class SubscriptionService : ISubscriptionService
         }
 
         // แจ้งเตือนวันหมดอายุ
+        var todayStart = now.Date;
+        var todayEnd = todayStart.AddDays(1);
         var expiringToday = await _db.Subscriptions
-            .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate.Date == now.Date)
+            .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate >= todayStart && s.EndDate < todayEnd)
             .ToListAsync();
 
         foreach (var sub in expiringToday)

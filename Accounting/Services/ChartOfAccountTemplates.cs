@@ -389,6 +389,59 @@ public static class ChartOfAccountTemplates
         new("52140", "ค่าเครื่องมือ/อุปกรณ์บริการ", "Service Tools and Equipment", AccountType.Expense, 4),
     };
 
+    /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจโรงแรม/ที่พัก (Hotel / Resort)</summary>
+    public static List<AccountTemplate> GetIndustryHotel() => new()
+    {
+        // --- สินทรัพย์เพิ่มเติม ---
+        new("11830", "เงินมัดจำรับล่วงหน้า (สุทธิ)", "Deposit Receivable (Net)", AccountType.Asset, 4),
+
+        // --- หนี้สินเพิ่มเติม ---
+        new("21510", "เงินมัดจำรับล่วงหน้าค่าห้องพัก", "Room Deposit Received in Advance", AccountType.Liability, 4),
+        new("21520", "รายได้รับล่วงหน้า", "Unearned Revenue", AccountType.Liability, 4),
+        new("21530", "เงินประกันความเสียหาย", "Damage Guarantee Deposit", AccountType.Liability, 4),
+
+        // --- รายได้ (Revenue) ---
+        new("411", "รายได้จากห้องพัก", "Room Revenue", AccountType.Revenue, 3),
+        new("41110", "รายได้ค่าห้องพัก", "Room Charge Revenue", AccountType.Revenue, 4),
+        new("41120", "รายได้ค่าห้องพัก - จองล่วงหน้า", "Advance Booking Revenue", AccountType.Revenue, 4),
+        new("41130", "รายได้ค่าห้องพัก - Walk-in", "Walk-in Room Revenue", AccountType.Revenue, 4),
+        new("41140", "รายได้ค่าห้องพัก - OTA/Agent", "OTA/Agent Room Revenue", AccountType.Revenue, 4),
+        new("412", "รายได้จากอาหารและเครื่องดื่ม", "Food & Beverage Revenue", AccountType.Revenue, 3),
+        new("41210", "รายได้ค่าอาหาร", "Food Revenue", AccountType.Revenue, 4),
+        new("41220", "รายได้ค่าเครื่องดื่ม", "Beverage Revenue", AccountType.Revenue, 4),
+        new("41230", "รายได้ค่ามินิบาร์", "Minibar Revenue", AccountType.Revenue, 4),
+        new("41240", "รายได้ค่า Room Service", "Room Service Revenue", AccountType.Revenue, 4),
+        new("413", "รายได้จากบริการเสริม", "Ancillary Service Revenue", AccountType.Revenue, 3),
+        new("41310", "รายได้ค่าซักรีด", "Laundry Revenue", AccountType.Revenue, 4),
+        new("41320", "รายได้ค่าสปา/นวด", "Spa/Massage Revenue", AccountType.Revenue, 4),
+        new("41330", "รายได้ค่าสระว่ายน้ำ/ฟิตเนส", "Pool/Fitness Revenue", AccountType.Revenue, 4),
+        new("41340", "รายได้ค่าจัดประชุม/สัมมนา", "Meeting/Event Room Revenue", AccountType.Revenue, 4),
+        new("41350", "รายได้ค่าจอดรถ", "Parking Revenue", AccountType.Revenue, 4),
+        new("41360", "รายได้ค่ารถรับส่ง", "Shuttle/Transfer Revenue", AccountType.Revenue, 4),
+        new("41370", "รายได้ค่าทัวร์/กิจกรรม", "Tour/Activity Revenue", AccountType.Revenue, 4),
+        new("414", "รายได้อื่นของโรงแรม", "Other Hotel Revenue", AccountType.Revenue, 3),
+        new("41410", "รายได้ค่าเสียหาย", "Damage Charge Revenue", AccountType.Revenue, 4),
+        new("41420", "รายได้ค่าปรับ Late Checkout", "Late Checkout Penalty Revenue", AccountType.Revenue, 4),
+        new("41430", "รายได้ค่า Commission Agent", "Agent Commission Revenue", AccountType.Revenue, 4),
+
+        // --- ต้นทุน (Cost of Revenue) ---
+        new("511", "ต้นทุนห้องพัก", "Room Cost", AccountType.Expense, 3),
+        new("51110", "ต้นทุนค่าแม่บ้าน/ทำความสะอาด", "Housekeeping Cost", AccountType.Expense, 4),
+        new("51120", "ต้นทุน Amenities/ของใช้ในห้อง", "Room Amenities Cost", AccountType.Expense, 4),
+        new("51130", "ต้นทุนซ่อมบำรุงห้องพัก", "Room Maintenance Cost", AccountType.Expense, 4),
+        new("51140", "ต้นทุนผ้าปูที่นอน/ผ้าเช็ดตัว", "Linen/Towel Cost", AccountType.Expense, 4),
+        new("512", "ต้นทุนอาหารและเครื่องดื่ม", "F&B Cost", AccountType.Expense, 3),
+        new("51210", "ต้นทุนวัตถุดิบอาหาร", "Food Ingredient Cost", AccountType.Expense, 4),
+        new("51220", "ต้นทุนเครื่องดื่ม", "Beverage Cost", AccountType.Expense, 4),
+        new("51230", "ต้นทุนมินิบาร์", "Minibar Cost", AccountType.Expense, 4),
+
+        // --- ค่าใช้จ่ายดำเนินงานโรงแรม ---
+        new("52150", "ค่าคอมมิชชั่น OTA/Agent", "OTA/Agent Commission", AccountType.Expense, 4),
+        new("52160", "ค่าระบบ PMS/Booking Engine", "PMS/Booking System Cost", AccountType.Expense, 4),
+        new("52170", "ค่าสาธารณูปโภคส่วนห้องพัก", "Room Utilities Cost", AccountType.Expense, 4),
+        new("52180", "ค่าประกันภัยโรงแรม", "Hotel Insurance", AccountType.Expense, 4),
+    };
+
     /// <summary>บัญชีเพิ่มเติมสำหรับธุรกิจอสังหาริมทรัพย์</summary>
     public static List<AccountTemplate> GetIndustryRealEstate() => new()
     {
@@ -474,7 +527,8 @@ public static class ChartOfAccountTemplates
                 IndustryType.Manufacturing or IndustryType.Construction or IndustryType.Agriculture => GetIndustryManufacturing(),
                 IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
                     or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation
-                    or IndustryType.Freelance or IndustryType.Hotel => GetIndustryService(),
+                    or IndustryType.Freelance => GetIndustryService(),
+                IndustryType.Hotel => GetIndustryHotel(),
                 IndustryType.RealEstate    => GetIndustryRealEstate(),
                 IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
                 _ => new List<AccountTemplate>()

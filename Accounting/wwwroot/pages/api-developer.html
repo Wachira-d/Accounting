@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Developer Portal - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .api-layout{display:flex;gap:0;min-height:calc(100vh - 80px)}
+    .api-sidebar{width:260px;position:sticky;top:0;max-height:calc(100vh - 80px);overflow-y:auto;padding:16px;border-right:1px solid var(--gray-200);flex-shrink:0}
+    .api-sidebar .nav-section{font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--gray-400);margin:16px 0 6px;font-weight:700}
+    .api-sidebar .nav-link{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;font-size:13px;color:var(--gray-600);cursor:pointer;transition:all .15s;text-decoration:none}
+    .api-sidebar .nav-link:hover{background:var(--gray-100);color:var(--gray-900)}
+    .api-sidebar .nav-link.active{background:var(--primary-light,#eef2ff);color:var(--primary);font-weight:600}
+    .api-sidebar .method-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;font-family:'Inter',monospace;min-width:36px;text-align:center}
+    .method-post{background:#dcfce7;color:#16a34a}.method-get{background:#dbeafe;color:#2563eb}.method-put{background:#fef3c7;color:#d97706}.method-delete{background:#fee2e2;color:#dc2626}
+    .api-main{flex:1;padding:24px 32px;overflow-y:auto;max-width:900px}
+    .endpoint-card{border:1px solid var(--gray-200);border-radius:12px;margin-bottom:20px;overflow:hidden;transition:box-shadow .2s}
+    .endpoint-card:hover{box-shadow:0 2px 12px rgba(0,0,0,.06)}
+    .endpoint-header{display:flex;align-items:center;gap:12px;padding:16px 20px;cursor:pointer;background:var(--gray-50)}
+    .endpoint-header:hover{background:var(--gray-100)}
+    .endpoint-title{font-weight:600;font-size:14px;flex:1}
+    .endpoint-path{font-family:'Inter',monospace;font-size:13px;color:var(--gray-600)}
+    .endpoint-body{display:none;padding:20px;border-top:1px solid var(--gray-200)}
+    .endpoint-body.open{display:block}
+    .code-block{background:#1e293b;color:#e2e8f0;border-radius:8px;padding:16px;font-family:'Inter',monospace;font-size:12px;overflow-x:auto;position:relative;margin:8px 0}
+    .code-block pre{margin:0;white-space:pre}
+    .code-tabs{display:flex;gap:0;border-bottom:1px solid var(--gray-200);margin-bottom:0}
+    .code-tab{padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;color:var(--gray-500)}
+    .code-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+    .field-table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+    .field-table th{text-align:left;padding:8px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);font-weight:600;font-size:12px}
+    .field-table td{padding:8px;border-bottom:1px solid var(--gray-100);vertical-align:top}
+    .field-name{font-family:'Inter',monospace;font-weight:600;color:var(--primary)}
+    .field-required{color:#dc2626;font-weight:700;font-size:11px}
+    .field-optional{color:var(--gray-400);font-size:11px}
+    .field-type{font-family:'Inter',monospace;font-size:11px;background:var(--gray-100);padding:2px 6px;border-radius:4px;color:var(--gray-600)}
+    .search-box{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;margin-bottom:12px}
+    .section-title{font-size:20px;font-weight:700;margin:32px 0 8px;padding-top:16px;border-top:1px solid var(--gray-200)}
+    .section-title:first-child{border-top:none;margin-top:0}
+    .copy-btn{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.15);border:none;color:#94a3b8;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px}
+    .copy-btn:hover{background:rgba(255,255,255,.25);color:#fff}
+    .status-table{width:100%;border-collapse:collapse;margin:8px 0}
+    .status-table td,.status-table th{padding:10px 12px;border-bottom:1px solid var(--gray-100);font-size:13px}
+    .status-table th{background:var(--gray-50);font-weight:600;text-align:left}
+    .badge-sm{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+    @media(max-width:900px){.api-sidebar{display:none}.api-main{padding:16px}}
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header" style="margin-bottom:4px">
+      <div>
+        <h2 class="page-title" style="font-size:22px">API Developer Portal</h2>
+        <p class="page-subtitle">Integration API Documentation &mdash; Next Acc Universal Platform</p>
+      </div>
+      <a href="/pages/integrations.html" class="btn btn-primary">จัดการ Integration</a>
+    </div>
+
+    <div class="api-layout">
+      <!-- Sidebar Navigation -->
+      <nav class="api-sidebar">
+        <input type="text" class="search-box" placeholder="ค้นหา endpoint..." oninput="filterEndpoints(this.value)">
+
+        <div class="nav-section">เริ่มต้นใช้งาน</div>
+        <a class="nav-link active" href="#auth" onclick="scrollToSection('auth')">Authentication</a>
+        <a class="nav-link" href="#quickstart" onclick="scrollToSection('quickstart')">Quick Start</a>
+        <a class="nav-link" href="#errors" onclick="scrollToSection('errors')">Error Codes</a>
+        <a class="nav-link" href="#ratelimit" onclick="scrollToSection('ratelimit')">Rate Limiting</a>
+
+        <div class="nav-section">Inbound (POST)</div>
+        <a class="nav-link ep-link" href="#ep-customers" onclick="scrollToSection('ep-customers')"><span class="method-badge method-post">POST</span> customers</a>
+        <a class="nav-link ep-link" href="#ep-invoices" onclick="scrollToSection('ep-invoices')"><span class="method-badge method-post">POST</span> invoices</a>
+        <a class="nav-link ep-link" href="#ep-payments" onclick="scrollToSection('ep-payments')"><span class="method-badge method-post">POST</span> payments</a>
+        <a class="nav-link ep-link" href="#ep-expenses" onclick="scrollToSection('ep-expenses')"><span class="method-badge method-post">POST</span> expenses</a>
+        <a class="nav-link ep-link" href="#ep-credit-notes" onclick="scrollToSection('ep-credit-notes')"><span class="method-badge method-post">POST</span> credit-notes</a>
+        <a class="nav-link ep-link" href="#ep-debit-notes" onclick="scrollToSection('ep-debit-notes')"><span class="method-badge method-post">POST</span> debit-notes</a>
+        <a class="nav-link ep-link" href="#ep-products" onclick="scrollToSection('ep-products')"><span class="method-badge method-post">POST</span> products</a>
+        <a class="nav-link ep-link" href="#ep-journals" onclick="scrollToSection('ep-journals')"><span class="method-badge method-post">POST</span> journals</a>
+        <a class="nav-link ep-link" href="#ep-daily-summary" onclick="scrollToSection('ep-daily-summary')"><span class="method-badge method-post">POST</span> daily-summary</a>
+        <a class="nav-link ep-link" href="#ep-batch" onclick="scrollToSection('ep-batch')"><span class="method-badge method-post">POST</span> batch</a>
+
+        <div class="nav-section">Outbound (GET)</div>
+        <a class="nav-link ep-link" href="#ep-get-documents" onclick="scrollToSection('ep-get-documents')"><span class="method-badge method-get">GET</span> documents</a>
+        <a class="nav-link ep-link" href="#ep-get-contacts" onclick="scrollToSection('ep-get-contacts')"><span class="method-badge method-get">GET</span> contacts</a>
+        <a class="nav-link ep-link" href="#ep-get-payments" onclick="scrollToSection('ep-get-payments')"><span class="method-badge method-get">GET</span> payments-list</a>
+        <a class="nav-link ep-link" href="#ep-get-balances" onclick="scrollToSection('ep-get-balances')"><span class="method-badge method-get">GET</span> account-balances</a>
+
+        <div class="nav-section">ขั้นสูง</div>
+        <a class="nav-link" href="#webhooks" onclick="scrollToSection('webhooks')">Webhooks</a>
+        <a class="nav-link" href="#code-examples" onclick="scrollToSection('code-examples')">Code Examples</a>
+        <a class="nav-link" href="#pagination" onclick="scrollToSection('pagination')">Pagination</a>
+      </nav>
+
+      <!-- Main Content -->
+      <main class="api-main" id="apiMain">
+
+<!-- ==================== AUTHENTICATION ==================== -->
+<h2 class="section-title" id="auth">Authentication</h2>
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <p style="margin:0 0 12px;font-size:14px">ทุก request ต้องส่ง API Key ผ่าน header <code>X-Integration-Key</code> หรือ <code>Authorization: Bearer {key}</code></p>
+  <p style="margin:0 0 12px;font-size:13px;color:var(--gray-600)">API Key จะระบุตัวตนว่าเป็น Integration ของบริษัทไหน โดยไม่ต้องส่ง companyId เอง</p>
+  <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>curl -X POST https://your-domain/api/integration/customers \
+  -H "X-Integration-Key: int_xxxxxxxxxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "บริษัท ตัวอย่าง จำกัด"}'</pre></div>
+
+  <h4 style="margin:16px 0 8px;font-size:14px">วิธีรับ API Key</h4>
+  <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.8">
+    <li>เข้าเมนู <strong>เชื่อมต่อระบบ</strong> (Settings > Integration)</li>
+    <li>กด <strong>"+ เพิ่มระบบ"</strong> กรอกชื่อและประเภท</li>
+    <li>ระบบจะแสดง <strong>API Key</strong> และ <strong>Secret Key</strong> (แสดงครั้งเดียว)</li>
+    <li>เก็บ API Key ไว้ส่งใน header ทุก request</li>
+  </ol>
+
+  <h4 style="margin:16px 0 8px;font-size:14px">Security</h4>
+  <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.8;color:var(--gray-600)">
+    <li>API Key ถูก hash ด้วย <strong>BCrypt</strong> ก่อนเก็บในฐานข้อมูล</li>
+    <li>Secret Key ใช้สำหรับ <strong>HMAC-SHA256</strong> signature verification (Webhook)</li>
+    <li>สามารถ regenerate API Key ใหม่ได้ (key เดิมจะใช้ไม่ได้ทันที)</li>
+    <li>มี Rate Limiting ป้องกัน abuse (ค่าเริ่มต้น 60 req/min)</li>
+  </ul>
+</div>
+
+<!-- ==================== QUICK START ==================== -->
+<h2 class="section-title" id="quickstart">Quick Start</h2>
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <h4 style="margin:0 0 12px;font-size:15px">ขั้นตอนเชื่อมต่อ 3 ขั้นตอน</h4>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+    <div style="padding:16px;background:var(--gray-50);border-radius:8px;border-left:4px solid var(--primary)">
+      <div style="font-weight:700;font-size:14px;margin-bottom:4px">1. สร้าง Integration</div>
+      <p style="margin:0;font-size:12px;color:var(--gray-600)">เข้า Settings > เชื่อมต่อระบบ > สร้าง integration ใหม่ รับ API Key</p>
+    </div>
+    <div style="padding:16px;background:var(--gray-50);border-radius:8px;border-left:4px solid var(--green,#16a34a)">
+      <div style="font-weight:700;font-size:14px;margin-bottom:4px">2. ตั้งค่า Account Mapping</div>
+      <p style="margin:0;font-size:12px;color:var(--gray-600)">เลือก template ตามธุรกิจ หรือตั้งค่า mapping เอง (External Category → ผังบัญชี)</p>
+    </div>
+    <div style="padding:16px;background:var(--gray-50);border-radius:8px;border-left:4px solid #8b5cf6">
+      <div style="font-weight:700;font-size:14px;margin-bottom:4px">3. เรียก API</div>
+      <p style="margin:0;font-size:12px;color:var(--gray-600)">ส่ง request ผ่าน API พร้อม API Key ในทุก request ระบบจะบันทึกและสร้างบัญชีอัตโนมัติ</p>
+    </div>
+  </div>
+
+  <h4 style="margin:20px 0 8px;font-size:14px">Base URL</h4>
+  <div class="code-block"><pre>https://your-domain/api/integration/</pre></div>
+  <p style="margin:8px 0 0;font-size:12px;color:var(--gray-500)">ไม่ต้องระบุ companyId ใน URL — ระบบจะระบุจาก API Key อัตโนมัติ</p>
+</div>
+
+<!-- ==================== ERROR CODES ==================== -->
+<h2 class="section-title" id="errors">Error Codes</h2>
+<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+  <table class="status-table">
+    <thead><tr><th style="width:100px">HTTP Code</th><th style="width:180px">สถานะ</th><th>คำอธิบาย</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge-sm" style="background:#dcfce7;color:#16a34a">200</span></td><td>OK</td><td>สำเร็จ</td></tr>
+      <tr><td><span class="badge-sm" style="background:#dcfce7;color:#16a34a">201</span></td><td>Created</td><td>สร้างข้อมูลสำเร็จ</td></tr>
+      <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">400</span></td><td>Bad Request</td><td>ข้อมูลไม่ถูกต้อง — ตรวจสอบ request body (เช่น field ที่ขาด, format ไม่ถูก)</td></tr>
+      <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">401</span></td><td>Unauthorized</td><td>API Key ไม่ถูกต้อง หรือไม่ได้ส่ง header <code>X-Integration-Key</code></td></tr>
+      <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">404</span></td><td>Not Found</td><td>ไม่พบข้อมูลที่อ้างอิง (เช่น invoice ที่ระบุ, ผังบัญชีที่ระบุ)</td></tr>
+      <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">422</span></td><td>Unprocessable</td><td>ข้อมูลผ่าน validation แต่ประมวลผลไม่ได้ (เช่น ยอดเดบิต≠เครดิต)</td></tr>
+      <tr><td><span class="badge-sm" style="background:#fef3c7;color:#d97706">429</span></td><td>Too Many Requests</td><td>เกิน rate limit — ลดความถี่ในการเรียก</td></tr>
+      <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">500</span></td><td>Server Error</td><td>ข้อผิดพลาดภายในระบบ — ติดต่อ admin</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="card" style="padding:16px;margin-bottom:16px">
+  <h4 style="margin:0 0 8px;font-size:14px">Response Format (ทุก endpoint)</h4>
+  <div class="code-block"><pre>{
+  "success": true,
+  "message": "Invoice created",
+  "documentId": "550e8400-e29b-41d4-a716-446655440000",
+  "contactId": "550e8400-e29b-41d4-a716-446655440001",
+  "journalEntryId": "550e8400-e29b-41d4-a716-446655440002",
+  "paymentId": null,
+  "documentNumber": "IV-202604-0001"
+}</pre></div>
+  <div class="code-block"><pre>// Error response
+{
+  "success": false,
+  "message": "ไม่พบเอกสารอ้างอิง: INV-9999",
+  "documentId": null, "contactId": null,
+  "journalEntryId": null, "paymentId": null, "documentNumber": null
+}</pre></div>
+</div>
+
+<!-- ==================== RATE LIMITING ==================== -->
+<h2 class="section-title" id="ratelimit">Rate Limiting</h2>
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <p style="margin:0 0 8px;font-size:14px">ค่าเริ่มต้น: <strong>60 requests/minute</strong> ต่อ Integration (ปรับได้ในหน้าตั้งค่า)</p>
+  <p style="margin:0;font-size:13px;color:var(--gray-600)">เมื่อเกิน limit จะได้ HTTP 429 — ใช้ <strong>exponential backoff</strong> (รอ 1s, 2s, 4s, ...)</p>
+  <p style="margin:8px 0 0;font-size:13px;color:var(--gray-600)">สำหรับ batch import ใช้ <code>POST /api/integration/batch</code> แทนการเรียกทีละรายการ</p>
+</div>
+
+<!-- ==================== INBOUND ENDPOINTS ==================== -->
+<h2 class="section-title" style="font-size:18px;color:var(--primary)">Inbound Endpoints (POST)</h2>
+<p style="font-size:13px;color:var(--gray-600);margin-bottom:20px">ส่งข้อมูลจากระบบภายนอกเข้าสู่ Next Acc — ข้อมูลจะถูกบันทึกและสร้างบัญชีอัตโนมัติตาม Account Mapping</p>
+
+
+<!-- EP: Customers -->
+<div class="endpoint-card" id="ep-customers" data-search="customers ลูกค้า contact sync">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/customers</span>
+    <span class="endpoint-title">Sync ลูกค้า/ผู้จำหน่าย</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้างหรืออัปเดตข้อมูลลูกค้า/ผู้จำหน่าย (ค้นหาโดย TaxId หรือ Name ก่อน — ถ้ามีแล้วจะอัปเดต)</p>
+    <h5 style="margin:12px 0 4px;font-size:13px">Request Body</h5>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">name</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ชื่อลูกค้า/ผู้จำหน่าย</td></tr>
+      <tr><td class="field-name">externalId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ID จากระบบต้นทาง</td></tr>
+      <tr><td class="field-name">taxId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>เลขประจำตัวผู้เสียภาษี (ใช้ค้นหา duplicate)</td></tr>
+      <tr><td class="field-name">phone</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>โทรศัพท์</td></tr>
+      <tr><td class="field-name">email</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>อีเมล</td></tr>
+      <tr><td class="field-name">address</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ที่อยู่</td></tr>
+      <tr><td class="field-name">contactType</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>"Individual" | "JuristicPerson" | "GovernmentAgency"</td></tr>
+      <tr><td class="field-name">branchCode</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รหัสสาขา (00000 = สำนักงานใหญ่)</td></tr>
+      <tr><td class="field-name">isCustomer</td><td><span class="field-type">boolean</span></td><td class="field-optional">Default: true</td><td>เป็นลูกค้าหรือไม่</td></tr>
+      <tr><td class="field-name">isSupplier</td><td><span class="field-type">boolean</span></td><td class="field-optional">Default: false</td><td>เป็นผู้จำหน่ายหรือไม่</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "name": "บริษัท ตัวอย่าง จำกัด",
+  "taxId": "0123456789012",
+  "branchCode": "00000",
+  "contactType": "JuristicPerson",
+  "phone": "02-123-4567",
+  "email": "contact@example.com",
+  "address": "123 ถ.สุขุมวิท กรุงเทพฯ 10110"
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Invoices -->
+<div class="endpoint-card" id="ep-invoices" data-search="invoices ใบแจ้งหนี้ ใบกำกับภาษี invoice tax">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/invoices</span>
+    <span class="endpoint-title">สร้างใบแจ้งหนี้/ใบกำกับภาษี</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้างเอกสารใบแจ้งหนี้/ใบกำกับภาษี พร้อม auto-create journal entry ตาม account mapping</p>
+    <h5 style="margin:12px 0 4px;font-size:13px">Request Body</h5>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">customerName</td><td><span class="field-type">string</span></td><td class="field-optional">*</td><td>ชื่อลูกค้า (สร้างอัตโนมัติถ้าไม่มี)</td></tr>
+      <tr><td class="field-name">customerTaxId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>TaxId ลูกค้า (ใช้ค้นหา)</td></tr>
+      <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่เอกสาร (yyyy-MM-dd)</td></tr>
+      <tr><td class="field-name">dueDate</td><td><span class="field-type">date</span></td><td class="field-optional">Optional</td><td>วันครบกำหนด (default: +30 วัน)</td></tr>
+      <tr><td class="field-name">externalRef</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>เลขอ้างอิงจากระบบต้นทาง</td></tr>
+      <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการสินค้า/บริการ (ดูด้านล่าง)</td></tr>
+      <tr><td class="field-name">includeVat</td><td><span class="field-type">boolean</span></td><td class="field-optional">Default: true</td><td>ราคารวม VAT หรือไม่</td></tr>
+      <tr><td class="field-name">vatRate</td><td><span class="field-type">decimal</span></td><td class="field-optional">Default: 7</td><td>อัตราภาษีมูลค่าเพิ่ม (%)</td></tr>
+      <tr><td class="field-name">notes</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>หมายเหตุ</td></tr>
+    </tbody></table>
+    <h5 style="margin:12px 0 4px;font-size:13px">Line Item Fields</h5>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">itemName</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ชื่อสินค้า/บริการ</td></tr>
+      <tr><td class="field-name">quantity</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>จำนวน</td></tr>
+      <tr><td class="field-name">unitPrice</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>ราคาต่อหน่วย</td></tr>
+      <tr><td class="field-name">itemCode</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รหัสสินค้า</td></tr>
+      <tr><td class="field-name">unit</td><td><span class="field-type">string</span></td><td class="field-optional">Default: "หน่วย"</td><td>หน่วยนับ</td></tr>
+      <tr><td class="field-name">discountAmount</td><td><span class="field-type">decimal</span></td><td class="field-optional">Default: 0</td><td>ส่วนลด</td></tr>
+      <tr><td class="field-name">accountCode</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รหัสบัญชีที่ต้องการลง (override mapping)</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "externalRef": "INV-2024-001",
+  "customerName": "บริษัท ตัวอย่าง จำกัด",
+  "customerTaxId": "0123456789012",
+  "documentDate": "2024-04-02",
+  "dueDate": "2024-05-02",
+  "lines": [
+    { "itemCode": "SVC01", "itemName": "ค่าบริการรายเดือน", "quantity": 1, "unitPrice": 15000 },
+    { "itemCode": "PROD01", "itemName": "สินค้า A", "quantity": 5, "unitPrice": 500, "unit": "ชิ้น" }
+  ],
+  "includeVat": true,
+  "notes": "อ้างอิง: PO-2024-001"
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Payments -->
+<div class="endpoint-card" id="ep-payments" data-search="payments ชำระเงิน payment receive">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/payments</span>
+    <span class="endpoint-title">บันทึกการชำระเงิน</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">บันทึกการชำระเงินต่อเอกสารที่มีอยู่ พร้อม auto-create journal (Dr. เงินสด/ธนาคาร, Cr. ลูกหนี้)</p>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">invoiceExternalRef</td><td><span class="field-type">string</span></td><td class="field-required">*</td><td>เลขอ้างอิงใบแจ้งหนี้ (หรือใช้ documentId)</td></tr>
+      <tr><td class="field-name">documentId</td><td><span class="field-type">uuid</span></td><td class="field-optional">*</td><td>ID ของเอกสารใน Next Acc (ทางเลือกแทน invoiceExternalRef)</td></tr>
+      <tr><td class="field-name">paymentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่ชำระ</td></tr>
+      <tr><td class="field-name">amount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>จำนวนเงิน</td></tr>
+      <tr><td class="field-name">paymentMethod</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>"Cash" | "BankTransfer" | "CreditCard" | "PromptPay" | "Cheque" | "EWallet"</td></tr>
+      <tr><td class="field-name">referenceNo</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>เลขอ้างอิงการชำระ (เช่น เลข slip)</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "invoiceExternalRef": "INV-2024-001",
+  "paymentDate": "2024-04-05",
+  "amount": 17500.00,
+  "paymentMethod": "BankTransfer",
+  "referenceNo": "TRF-20240405-001",
+  "bankAccountName": "กสิกรไทย"
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Expenses -->
+<div class="endpoint-card" id="ep-expenses" data-search="expenses ค่าใช้จ่าย expense supplier">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/expenses</span>
+    <span class="endpoint-title">บันทึกค่าใช้จ่าย</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">บันทึกค่าใช้จ่ายจากผู้จำหน่าย (สร้าง Contact อัตโนมัติถ้าไม่มี)</p>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">supplierName</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ชื่อผู้จำหน่าย</td></tr>
+      <tr><td class="field-name">supplierTaxId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>TaxId ผู้จำหน่าย</td></tr>
+      <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่เอกสาร</td></tr>
+      <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการค่าใช้จ่าย (same format as invoice lines)</td></tr>
+      <tr><td class="field-name">includeVat</td><td><span class="field-type">boolean</span></td><td class="field-optional">Default: true</td><td>ราคารวม VAT</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "supplierName": "บริษัท ส่งของ จำกัด",
+  "supplierTaxId": "0987654321098",
+  "documentDate": "2024-04-02",
+  "lines": [
+    { "itemName": "ค่าขนส่ง", "quantity": 1, "unitPrice": 3500 }
+  ],
+  "includeVat": true
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Credit Notes -->
+<div class="endpoint-card" id="ep-credit-notes" data-search="credit-notes ใบลดหนี้ credit note">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/credit-notes</span>
+    <span class="endpoint-title">สร้างใบลดหนี้</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">customerName</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ชื่อลูกค้า</td></tr>
+      <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่</td></tr>
+      <tr><td class="field-name">reason</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>เหตุผลที่ออกใบลดหนี้</td></tr>
+      <tr><td class="field-name">originalInvoiceRef</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>อ้างอิงใบแจ้งหนี้เดิม</td></tr>
+      <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการ (same format)</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "customerName": "บริษัท ตัวอย่าง จำกัด",
+  "documentDate": "2024-04-05",
+  "reason": "สินค้าชำรุด",
+  "originalInvoiceRef": "INV-2024-001",
+  "lines": [{ "itemName": "สินค้า A (คืน)", "quantity": 2, "unitPrice": 500 }]
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Debit Notes -->
+<div class="endpoint-card" id="ep-debit-notes" data-search="debit-notes ใบเพิ่มหนี้ debit note">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/debit-notes</span>
+    <span class="endpoint-title">สร้างใบเพิ่มหนี้</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">เหมือนกับ credit-notes แต่เป็นการเพิ่มหนี้ (BalanceDue จะเพิ่มขึ้น)</p>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "customerName": "บริษัท ตัวอย่าง จำกัด",
+  "documentDate": "2024-04-05",
+  "reason": "ค่าบริการเพิ่มเติม",
+  "lines": [{ "itemName": "ค่าบริการเพิ่มเติม", "quantity": 1, "unitPrice": 2000 }]
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Products -->
+<div class="endpoint-card" id="ep-products" data-search="products สินค้า product sync">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/products</span>
+    <span class="endpoint-title">Sync สินค้า/บริการ</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้างหรืออัปเดตสินค้า/บริการ (ค้นหาโดย Code — ถ้ามีแล้วจะอัปเดต)</p>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">code</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>รหัสสินค้า (unique)</td></tr>
+      <tr><td class="field-name">name</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ชื่อสินค้า/บริการ</td></tr>
+      <tr><td class="field-name">price</td><td><span class="field-type">decimal</span></td><td class="field-optional">Optional</td><td>ราคาขาย</td></tr>
+      <tr><td class="field-name">costPrice</td><td><span class="field-type">decimal</span></td><td class="field-optional">Optional</td><td>ราคาทุน</td></tr>
+      <tr><td class="field-name">unit</td><td><span class="field-type">string</span></td><td class="field-optional">Default: "หน่วย"</td><td>หน่วยนับ</td></tr>
+      <tr><td class="field-name">isActive</td><td><span class="field-type">boolean</span></td><td class="field-optional">Default: true</td><td>เปิดใช้งาน</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "code": "PROD-001",
+  "name": "สินค้าตัวอย่าง A",
+  "price": 1500.00,
+  "costPrice": 800.00,
+  "unit": "ชิ้น"
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: Journals -->
+<div class="endpoint-card" id="ep-journals" data-search="journals บันทึกบัญชี journal entry">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/journals</span>
+    <span class="endpoint-title">บันทึกบัญชีโดยตรง</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้าง journal entry ตรง (ยอดเดบิตต้องเท่ากับเครดิต)</p>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">entryDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่บันทึก</td></tr>
+      <tr><td class="field-name">journalType</td><td><span class="field-type">string</span></td><td class="field-optional">Default: "General"</td><td>"General" | "Sales" | "Purchase" | "CashReceipts" | "CashPayments"</td></tr>
+      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>คำอธิบาย</td></tr>
+      <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการ (accountCode + debitAmount/creditAmount)</td></tr>
+    </tbody></table>
+    <h5 style="margin:8px 0 4px;font-size:13px">Journal Line Fields</h5>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">accountCode</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>รหัสผังบัญชี (ต้องมีอยู่ในระบบ)</td></tr>
+      <tr><td class="field-name">debitAmount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>ยอดเดบิต</td></tr>
+      <tr><td class="field-name">creditAmount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>ยอดเครดิต</td></tr>
+      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รายละเอียดบรรทัด</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "entryDate": "2024-04-02",
+  "journalType": "General",
+  "description": "บันทึกค่าเช่า",
+  "lines": [
+    { "accountCode": "521", "debitAmount": 50000, "creditAmount": 0, "description": "ค่าเช่าสำนักงาน" },
+    { "accountCode": "137", "debitAmount": 3500, "creditAmount": 0, "description": "ภาษีซื้อ 7%" },
+    { "accountCode": "112", "debitAmount": 0, "creditAmount": 53500, "description": "จ่ายผ่านธนาคาร" }
+  ]
+}</pre></div>
+    <p style="margin:8px 0 0;font-size:12px;color:#d97706">หมายเหตุ: Sum(debitAmount) ต้อง = Sum(creditAmount) มิฉะนั้นจะได้ error 422</p>
+  </div>
+</div>
+
+<!-- EP: Daily Summary -->
+<div class="endpoint-card" id="ep-daily-summary" data-search="daily-summary สรุปรายวัน daily summary auto journal">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/daily-summary</span>
+    <span class="endpoint-title">สรุปรายวัน (Auto Journal)</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">ส่งสรุปรายรับ/รายจ่ายประจำวัน → ระบบจะสร้าง Journal Entry อัตโนมัติตาม Account Mapping</p>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">summaryDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่สรุป</td></tr>
+      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>คำอธิบาย</td></tr>
+      <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการแต่ละ category</td></tr>
+      <tr><td class="field-name">lines[].category</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ต้องตรงกับ Account Mapping ที่ตั้งค่าไว้</td></tr>
+      <tr><td class="field-name">lines[].amount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>จำนวนเงิน</td></tr>
+      <tr><td class="field-name">lines[].description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รายละเอียด</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
+  "summaryDate": "2024-04-02",
+  "description": "สรุปรายรับประจำวัน",
+  "lines": [
+    { "category": "PRODUCT_SALES", "description": "ยอดขายสินค้า", "amount": 45000 },
+    { "category": "SERVICE_REVENUE", "description": "รายได้ค่าบริการ", "amount": 12500 },
+    { "category": "DEPOSIT_RECEIVED", "description": "มัดจำรับ", "amount": 8000 }
+  ]
+}</pre></div>
+    <div style="background:#fef3c7;padding:12px;border-radius:8px;margin-top:8px">
+      <p style="margin:0;font-size:12px;color:#92400e"><strong>สำคัญ:</strong> category ต้องตรงกับที่ตั้งค่าใน Account Mapping (Settings > เชื่อมต่อระบบ > Account Mapping)
+      <br>ถ้าไม่มี mapping ที่ตรง จะใช้ mapping "DEFAULT" (ถ้ามี) มิฉะนั้นจะ skip รายการนั้น</p>
+    </div>
+  </div>
+</div>
+
+<!-- EP: Batch -->
+<div class="endpoint-card" id="ep-batch" data-search="batch import หลายรายการ batch">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-post">POST</span>
+    <span class="endpoint-path">/api/integration/batch</span>
+    <span class="endpoint-title">Batch Import (หลายรายการ)</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">ส่งข้อมูลหลายประเภทในครั้งเดียว — ลดจำนวน API calls (ไม่เกิน rate limit)</p>
+    <table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">customers</td><td><span class="field-type">array?</span></td><td>รายการลูกค้า (format เดียวกับ POST /customers)</td></tr>
+      <tr><td class="field-name">invoices</td><td><span class="field-type">array?</span></td><td>รายการใบแจ้งหนี้</td></tr>
+      <tr><td class="field-name">payments</td><td><span class="field-type">array?</span></td><td>รายการชำระเงิน</td></tr>
+      <tr><td class="field-name">expenses</td><td><span class="field-type">array?</span></td><td>รายการค่าใช้จ่าย</td></tr>
+      <tr><td class="field-name">products</td><td><span class="field-type">array?</span></td><td>รายการสินค้า</td></tr>
+      <tr><td class="field-name">journals</td><td><span class="field-type">array?</span></td><td>รายการบันทึกบัญชี</td></tr>
+    </tbody></table>
+    <h5 style="margin:12px 0 4px;font-size:13px">Response</h5>
+    <div class="code-block"><pre>{
+  "totalProcessed": 5,
+  "successCount": 4,
+  "errorCount": 1,
+  "results": [
+    { "type": "Customer", "externalRef": "ลูกค้า A", "success": true, "message": "Customer synced", "createdId": "...", "createdNumber": null },
+    { "type": "Invoice", "externalRef": "INV-001", "success": true, "message": "Invoice created", "createdId": "...", "createdNumber": "IV-202604-0001" },
+    { "type": "Invoice", "externalRef": "INV-002", "success": false, "message": "ไม่พบลูกค้า", "createdId": null, "createdNumber": null }
+  ]
+}</pre></div>
+  </div>
+</div>
+
+<!-- ==================== OUTBOUND ENDPOINTS ==================== -->
+<h2 class="section-title" style="font-size:18px;color:#2563eb">Outbound Endpoints (GET)</h2>
+<p style="font-size:13px;color:var(--gray-600);margin-bottom:20px">ดึงข้อมูลจาก Next Acc ไปใช้ในระบบภายนอก — รองรับ pagination</p>
+
+<!-- EP: GET Documents -->
+<div class="endpoint-card" id="ep-get-documents" data-search="get documents เอกสาร outbound">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-get">GET</span>
+    <span class="endpoint-path">/api/integration/documents</span>
+    <span class="endpoint-title">ดึงข้อมูลเอกสาร</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <h5 style="margin:0 0 4px;font-size:13px">Query Parameters</h5>
+    <table class="field-table"><thead><tr><th>Param</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">fromDate</td><td><span class="field-type">date</span></td><td>กรองตั้งแต่วันที่</td></tr>
+      <tr><td class="field-name">toDate</td><td><span class="field-type">date</span></td><td>กรองถึงวันที่</td></tr>
+      <tr><td class="field-name">status</td><td><span class="field-type">string</span></td><td>"Draft" | "Approved" | "Paid" | "PartiallyPaid" | "Voided"</td></tr>
+      <tr><td class="field-name">type</td><td><span class="field-type">string</span></td><td>"Invoice" | "TaxInvoice" | "Receipt" | "CreditNote" | "DebitNote" | "Expense"</td></tr>
+      <tr><td class="field-name">page</td><td><span class="field-type">int</span></td><td>หน้าที่ (default: 1)</td></tr>
+      <tr><td class="field-name">pageSize</td><td><span class="field-type">int</span></td><td>จำนวนต่อหน้า (default: 50, max: 100)</td></tr>
+    </tbody></table>
+    <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>GET /api/integration/documents?fromDate=2024-04-01&toDate=2024-04-30&status=Approved&page=1&pageSize=20</pre></div>
+    <h5 style="margin:12px 0 4px;font-size:13px">Response</h5>
+    <div class="code-block"><pre>{
+  "items": [
+    {
+      "id": "550e8400-...",
+      "documentNumber": "IV-202604-0001",
+      "documentType": "TaxInvoice",
+      "status": "Approved",
+      "documentDate": "2024-04-02",
+      "dueDate": "2024-05-02",
+      "contactName": "บริษัท ตัวอย่าง จำกัด",
+      "contactTaxId": "0123456789012",
+      "subTotal": 17500.00,
+      "vatAmount": 1225.00,
+      "totalAmount": 17500.00,
+      "paidAmount": 0,
+      "balanceDue": 17500.00,
+      "lines": [
+        { "productCode": "SVC01", "description": "ค่าบริการ", "quantity": 1, "unitPrice": 15000, ... }
+      ]
+    }
+  ],
+  "totalCount": 145,
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 8
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: GET Contacts -->
+<div class="endpoint-card" id="ep-get-contacts" data-search="get contacts ลูกค้า ผู้จำหน่าย outbound">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-get">GET</span>
+    <span class="endpoint-path">/api/integration/contacts</span>
+    <span class="endpoint-title">ดึงข้อมูลลูกค้า/ผู้จำหน่าย</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <table class="field-table"><thead><tr><th>Param</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">type</td><td><span class="field-type">string</span></td><td>"customer" | "supplier" (กรองตามประเภท)</td></tr>
+      <tr><td class="field-name">page / pageSize</td><td><span class="field-type">int</span></td><td>pagination</td></tr>
+    </tbody></table>
+    <div class="code-block"><pre>// Response item
+{
+  "id": "...", "name": "บริษัท A", "taxId": "012345",
+  "branchCode": "00000", "contactType": "JuristicPerson",
+  "isCustomer": true, "isSupplier": false,
+  "address": "...", "phone": "...", "email": "...",
+  "createdAt": "2024-04-01T10:00:00"
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: GET Payments -->
+<div class="endpoint-card" id="ep-get-payments" data-search="get payments-list ชำระเงิน outbound">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-get">GET</span>
+    <span class="endpoint-path">/api/integration/payments-list</span>
+    <span class="endpoint-title">ดึงข้อมูลการชำระเงิน</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <table class="field-table"><thead><tr><th>Param</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+      <tr><td class="field-name">fromDate / toDate</td><td><span class="field-type">date</span></td><td>กรองวันที่ชำระ</td></tr>
+      <tr><td class="field-name">page / pageSize</td><td><span class="field-type">int</span></td><td>pagination</td></tr>
+    </tbody></table>
+    <div class="code-block"><pre>// Response item
+{
+  "id": "...", "paymentNumber": "PAY-202604-0001",
+  "documentId": "...", "documentNumber": "IV-202604-0001",
+  "paymentDate": "2024-04-05", "amount": 17500.00,
+  "paymentMethod": "BankTransfer", "reference": "TRF-001"
+}</pre></div>
+  </div>
+</div>
+
+<!-- EP: GET Account Balances -->
+<div class="endpoint-card" id="ep-get-balances" data-search="get account-balances ยอดคงเหลือ บัญชี outbound">
+  <div class="endpoint-header" onclick="toggleEndpoint(this)">
+    <span class="method-badge method-get">GET</span>
+    <span class="endpoint-path">/api/integration/account-balances</span>
+    <span class="endpoint-title">ดึงยอดคงเหลือบัญชี</span>
+    <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
+  </div>
+  <div class="endpoint-body">
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">ดึงยอดคงเหลือทุกบัญชีที่เปิดใช้งาน (ไม่มี pagination — return ทั้งหมด)</p>
+    <div class="code-block"><pre>[
+  { "accountCode": "111", "accountName": "เงินสด", "accountType": "Asset", "debitBalance": 500000, "creditBalance": 350000, "netBalance": 150000 },
+  { "accountCode": "112", "accountName": "เงินฝากธนาคาร", "accountType": "Asset", "debitBalance": 2000000, "creditBalance": 800000, "netBalance": 1200000 },
+  { "accountCode": "411", "accountName": "รายได้จากการขาย", "accountType": "Revenue", "debitBalance": 0, "creditBalance": 750000, "netBalance": -750000 }
+]</pre></div>
+  </div>
+</div>
+
+<!-- ==================== WEBHOOKS ==================== -->
+<h2 class="section-title" id="webhooks">Webhooks</h2>
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <p style="font-size:14px;margin:0 0 12px">เมื่อเปิดใช้ Webhook ระบบจะส่ง HTTP POST ไปยัง URL ที่กำหนดเมื่อมีเหตุการณ์เกิดขึ้น</p>
+  <h4 style="margin:12px 0 8px;font-size:14px">Signature Verification (HMAC-SHA256)</h4>
+  <p style="font-size:13px;color:var(--gray-600);margin:0 0 8px">ทุก webhook request จะมี header <code>X-Webhook-Signature</code> สำหรับยืนยันความถูกต้อง</p>
+  <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>// Node.js: Verify webhook signature
+const crypto = require('crypto');
+const secretKey = 'your-secret-key'; // จาก Integration settings
+const payload = JSON.stringify(req.body);
+const signature = crypto
+  .createHmac('sha256', secretKey)
+  .update(payload)
+  .digest('hex');
+const isValid = signature === req.headers['x-webhook-signature'];</pre></div>
+  <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre># Python: Verify webhook signature
+import hmac, hashlib
+secret_key = b'your-secret-key'
+payload = request.data
+expected = hmac.new(secret_key, payload, hashlib.sha256).hexdigest()
+is_valid = hmac.compare_digest(expected, request.headers['X-Webhook-Signature'])</pre></div>
+</div>
+
+<!-- ==================== CODE EXAMPLES ==================== -->
+<h2 class="section-title" id="code-examples">Code Examples</h2>
+
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <h4 style="margin:0 0 12px;font-size:15px">cURL</h4>
+  <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre># สร้างใบแจ้งหนี้
+curl -X POST https://your-domain/api/integration/invoices \
+  -H "X-Integration-Key: int_xxxxxxxxxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customerName": "บริษัท ตัวอย่าง จำกัด",
+    "documentDate": "2024-04-02",
+    "lines": [{"itemName": "ค่าบริการ", "quantity": 1, "unitPrice": 10000}]
+  }'
+
+# ดึงเอกสาร
+curl -X GET "https://your-domain/api/integration/documents?page=1&pageSize=10" \
+  -H "X-Integration-Key: int_xxxxxxxxxxxxxxxx"</pre></div>
+</div>
+
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <h4 style="margin:0 0 12px;font-size:15px">JavaScript (fetch)</h4>
+  <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>const API_KEY = 'int_xxxxxxxxxxxxxxxx';
+const BASE = 'https://your-domain/api/integration';
+
+// สร้างใบแจ้งหนี้
+const res = await fetch(`${BASE}/invoices`, {
+  method: 'POST',
+  headers: {
+    'X-Integration-Key': API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    customerName: 'บริษัท ตัวอย่าง จำกัด',
+    documentDate: '2024-04-02',
+    lines: [{ itemName: 'ค่าบริการ', quantity: 1, unitPrice: 10000 }]
+  })
+});
+const data = await res.json();
+console.log(data.documentNumber); // "IV-202604-0001"
+
+// ดึงเอกสาร
+const docs = await fetch(`${BASE}/documents?page=1`, {
+  headers: { 'X-Integration-Key': API_KEY }
+}).then(r => r.json());
+console.log(`Total: ${docs.totalCount} documents`);</pre></div>
+</div>
+
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <h4 style="margin:0 0 12px;font-size:15px">Python (requests)</h4>
+  <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>import requests
+
+API_KEY = 'int_xxxxxxxxxxxxxxxx'
+BASE = 'https://your-domain/api/integration'
+HEADERS = {'X-Integration-Key': API_KEY, 'Content-Type': 'application/json'}
+
+# สร้างใบแจ้งหนี้
+res = requests.post(f'{BASE}/invoices', json={
+    'customerName': 'บริษัท ตัวอย่าง จำกัด',
+    'documentDate': '2024-04-02',
+    'lines': [{'itemName': 'ค่าบริการ', 'quantity': 1, 'unitPrice': 10000}]
+}, headers=HEADERS)
+print(res.json()['documentNumber'])
+
+# Batch import
+res = requests.post(f'{BASE}/batch', json={
+    'customers': [{'name': 'ลูกค้า A', 'taxId': '0123456789012'}],
+    'invoices': [{
+        'customerName': 'ลูกค้า A',
+        'documentDate': '2024-04-02',
+        'lines': [{'itemName': 'สินค้า', 'quantity': 1, 'unitPrice': 1000}]
+    }]
+}, headers=HEADERS)
+batch = res.json()
+print(f'Success: {batch["successCount"]}/{batch["totalProcessed"]}')</pre></div>
+</div>
+
+<!-- ==================== PAGINATION ==================== -->
+<h2 class="section-title" id="pagination">Pagination</h2>
+<div class="card" style="padding:20px;margin-bottom:16px">
+  <p style="font-size:14px;margin:0 0 12px">Outbound endpoints (GET) รองรับ pagination ผ่าน query parameters</p>
+  <table class="field-table"><thead><tr><th>Param</th><th>Default</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <tr><td class="field-name">page</td><td>1</td><td>หน้าที่ต้องการ (เริ่มจาก 1)</td></tr>
+    <tr><td class="field-name">pageSize</td><td>50</td><td>จำนวนรายการต่อหน้า (max 100)</td></tr>
+  </tbody></table>
+  <div class="code-block"><pre>// Response format
+{
+  "items": [...],          // รายการในหน้านี้
+  "totalCount": 500,       // จำนวนทั้งหมด
+  "page": 1,               // หน้าปัจจุบัน
+  "pageSize": 50,           // จำนวนต่อหน้า
+  "totalPages": 10          // จำนวนหน้าทั้งหมด
+}
+
+// วนดึงทุกหน้า:
+let page = 1;
+do {
+  const res = await fetch(`${BASE}/documents?page=${page}&pageSize=50`, ...);
+  const data = await res.json();
+  // process data.items...
+  page++;
+} while (page <= data.totalPages);</pre></div>
+</div>
+
+      </main>
+    </div>
+  </div>
+
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+API.init();
+Layout.init('api-developer');
+
+function toggleEndpoint(header) {
+  const body = header.nextElementSibling;
+  body.classList.toggle('open');
+  const arrow = header.querySelector('span:last-child');
+  arrow.textContent = body.classList.contains('open') ? '\u25B4' : '\u25BE';
+}
+
+function scrollToSection(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Also open the endpoint card if it's one
+    const body = el.querySelector('.endpoint-body');
+    if (body && !body.classList.contains('open')) {
+      body.classList.add('open');
+    }
+  }
+  // Update active nav
+  document.querySelectorAll('.api-sidebar .nav-link').forEach(l => l.classList.remove('active'));
+  const link = document.querySelector(`.api-sidebar a[href="#${id}"]`);
+  if (link) link.classList.add('active');
+}
+
+function filterEndpoints(query) {
+  query = query.toLowerCase();
+  document.querySelectorAll('.endpoint-card').forEach(card => {
+    const searchData = (card.dataset.search || '') + ' ' + card.textContent;
+    card.style.display = !query || searchData.toLowerCase().includes(query) ? '' : 'none';
+  });
+  document.querySelectorAll('.api-sidebar .ep-link').forEach(link => {
+    const text = link.textContent.toLowerCase();
+    link.style.display = !query || text.includes(query) ? '' : 'none';
+  });
+}
+
+function copyCode(btn) {
+  const pre = btn.parentElement.querySelector('pre');
+  navigator.clipboard.writeText(pre.textContent);
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+</script>
+</body>
+</html>

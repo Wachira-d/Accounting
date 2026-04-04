@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บริหารการเงิน - Accounting</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:16px}
+    .tab{padding:8px 14px;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:13px;background:#f9f9f9}
+    .tab.active{background:#2563eb;color:#fff;border-color:#2563eb}
+    .tab-content{display:none}.tab-content.active{display:block}
+    .summary-cards{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+    .summary-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:140px}
+    .summary-value{font-size:1.3em;font-weight:700;color:#1e293b}
+    .summary-label{font-size:12px;color:#64748b;margin-top:2px}
+    .badge{padding:2px 8px;border-radius:10px;font-size:12px}
+    .badge-success{background:#dcfce7;color:#166534}.badge-warning{background:#fef9c3;color:#854d0e}
+    .badge-danger{background:#fee2e2;color:#991b1b}.badge-info{background:#dbeafe;color:#1e40af}
+    .form-row{display:flex;gap:12px}.form-row .form-group{flex:1}
+    .modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000}
+    .modal-content{background:#fff;border-radius:12px;width:90%;max-width:600px;max-height:85vh;overflow-y:auto}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #eee}
+    .modal-body{padding:20px}.modal-footer{padding:12px 20px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:8px}
+    .btn-close{background:none;border:none;font-size:20px;cursor:pointer}
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="layout"></div>
+  <main class="main-content">
+    <div class="page-header"><h1>บริหารการเงิน</h1></div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="prepaid" onclick="Page.switchTab('prepaid')">จ่ายล่วงหน้า</button>
+      <button class="tab" data-tab="deposits" onclick="Page.switchTab('deposits')">เงินมัดจำ</button>
+      <button class="tab" data-tab="accrued" onclick="Page.switchTab('accrued')">ค้างจ่าย</button>
+      <button class="tab" data-tab="baddebt" onclick="Page.switchTab('baddebt')">หนี้สงสัยจะสูญ</button>
+      <button class="tab" data-tab="obsolescence" onclick="Page.switchTab('obsolescence')">สินค้าล้าสมัย</button>
+      <button class="tab" data-tab="cit" onclick="Page.switchTab('cit')">ภาษีนิติบุคคล</button>
+      <button class="tab" data-tab="dividend" onclick="Page.switchTab('dividend')">จัดสรรกำไร</button>
+      <button class="tab" data-tab="capital" onclick="Page.switchTab('capital')">ทุน</button>
+      <button class="tab" data-tab="investment" onclick="Page.switchTab('investment')">เงินลงทุน</button>
+    </div>
+
+    <!-- 1. Prepaid -->
+    <div id="tab-prepaid" class="tab-content active">
+      <div class="card">
+        <div class="card-header"><h3>ค่าใช้จ่ายจ่ายล่วงหน้า (117xx)</h3>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-sm" onclick="Page.processAmortization()">ตัดจ่ายอัตโนมัติ</button>
+            <button class="btn btn-primary btn-sm" onclick="Page.showModal('prepaidModal')">เพิ่ม</button>
+          </div>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>รายละเอียด</th><th>เริ่ม</th><th>สิ้นสุด</th><th>งวด</th>
+          <th class="text-right">ยอดรวม</th><th class="text-right">ตัดแล้ว</th><th class="text-right">คงเหลือ</th><th>สถานะ</th>
+        </tr></thead><tbody id="prepaidBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 2. Deposits -->
+    <div id="tab-deposits" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>เงินมัดจำ (118xx / 216xx)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.showModal('depositModal')">เพิ่ม</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>รายละเอียด</th><th>ประเภท</th><th>ทิศทาง</th><th>วันที่</th>
+          <th class="text-right">จำนวน</th><th class="text-right">คืนแล้ว</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="depositBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 3. Accrued -->
+    <div id="tab-accrued" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>ค่าใช้จ่ายค้างจ่าย (215xx)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.showModal('accruedModal')">เพิ่ม</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>รายละเอียด</th><th>ประเภท</th><th>วันที่</th>
+          <th class="text-right">ยอด</th><th class="text-right">จ่ายแล้ว</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="accruedBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 4. Bad Debt -->
+    <div id="tab-baddebt" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>ค่าเผื่อหนี้สงสัยจะสูญ (181xx / 57130)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.createBadDebt()">คำนวณใหม่</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>วันที่</th><th>วิธี</th><th class="text-right">ลูกหนี้รวม</th>
+          <th class="text-right">ค่าเผื่อ</th><th class="text-right">ปรับปรุง</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="baddebtBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 5. Obsolescence -->
+    <div id="tab-obsolescence" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>ค่าเผื่อสินค้าล้าสมัย (182xx)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.createObsolescence()">คำนวณใหม่</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>วันที่</th><th class="text-right">มูลค่าสินค้า</th>
+          <th class="text-right">ค่าเผื่อ</th><th class="text-right">ปรับปรุง</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="obsolescenceBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 6. CIT -->
+    <div id="tab-cit" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>ภาษีเงินได้นิติบุคคล (58000 / 21920)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.showModal('citModal')">คำนวณภาษี</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>ปีภาษี</th><th>งวด</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th>
+          <th class="text-right">กำไรสุทธิภาษี</th><th class="text-right">ภาษี</th><th class="text-right">จ่ายสุทธิ</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="citBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 7. Dividend -->
+    <div id="tab-dividend" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>จัดสรรกำไร / เงินปันผล (32xxx)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.showModal('dividendModal')">จัดสรรกำไร</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>ปี</th><th class="text-right">กำไรสุทธิ</th><th class="text-right">สำรองฯ</th>
+          <th class="text-right">เงินปันผล</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="dividendBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 8. Capital -->
+    <div id="tab-capital" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>เพิ่มทุน / ลดทุน (310xx)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.showModal('capitalModal')">เพิ่มรายการ</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวนหุ้น</th>
+          <th class="text-right">มูลค่าหุ้น</th><th class="text-right">เงินรับ/จ่าย</th><th class="text-right">ส่วนเกิน</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="capitalBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- 9. Investment -->
+    <div id="tab-investment" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>เงินลงทุนชั่วคราว (112xx)</h3>
+          <button class="btn btn-primary btn-sm" onclick="Page.showModal('investmentModal')">เพิ่มเงินลงทุน</button>
+        </div>
+        <div class="table-responsive"><table class="table"><thead><tr>
+          <th>เลขที่</th><th>ประเภท</th><th>รายละเอียด</th><th>วันที่ซื้อ</th><th>ครบกำหนด</th>
+          <th class="text-right">ต้นทุน</th><th class="text-right">ดอกเบี้ย%</th><th>สถานะ</th><th></th>
+        </tr></thead><tbody id="investmentBody"></tbody></table></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- MODALS -->
+<!-- Prepaid Modal -->
+<div id="prepaidModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>เพิ่มค่าใช้จ่ายจ่ายล่วงหน้า</h3><button class="btn-close" onclick="Page.hideModal('prepaidModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>รายละเอียด *</label><input id="ppDesc" class="form-control" placeholder="เช่น ค่าเช่าสำนักงาน 1 ปี"></div>
+    <div class="form-row">
+      <div class="form-group"><label>วันเริ่ม</label><input type="date" id="ppStart" class="form-control"></div>
+      <div class="form-group"><label>วันสิ้นสุด</label><input type="date" id="ppEnd" class="form-control"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>จำนวนเงิน *</label><input type="number" id="ppAmount" class="form-control" step="0.01"></div>
+      <div class="form-group"><label>จำนวนงวด *</label><input type="number" id="ppPeriods" class="form-control" value="12"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>บัญชีจ่ายล่วงหน้า (117xx)</label><select id="ppPrepaidAcc" class="form-control"></select></div>
+      <div class="form-group"><label>บัญชีค่าใช้จ่าย (54xxx)</label><select id="ppExpenseAcc" class="form-control"></select></div>
+    </div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('prepaidModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitPrepaid()">บันทึก</button></div>
+</div></div>
+
+<!-- Deposit Modal -->
+<div id="depositModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>บันทึกเงินมัดจำ</h3><button class="btn-close" onclick="Page.hideModal('depositModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>รายละเอียด *</label><input id="depDesc" class="form-control"></div>
+    <div class="form-row">
+      <div class="form-group"><label>ทิศทาง *</label><select id="depDir" class="form-control" onchange="Page.updateDepositAccounts()"><option value="Paid">จ่ายมัดจำ</option><option value="Received">รับมัดจำ</option></select></div>
+      <div class="form-group"><label>ประเภท</label><select id="depType" class="form-control"><option value="Rental">ค่าเช่า</option><option value="Guarantee">ค่าค้ำประกัน</option><option value="Advance">จ่ายล่วงหน้า</option><option value="Other">อื่นๆ</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>จำนวนเงิน *</label><input type="number" id="depAmount" class="form-control" step="0.01"></div>
+      <div class="form-group"><label>วันที่</label><input type="date" id="depDate" class="form-control"></div>
+    </div>
+    <div class="form-group"><label>ชื่อผู้ติดต่อ</label><input id="depContact" class="form-control"></div>
+    <div class="form-row">
+      <div class="form-group"><label>บัญชีมัดจำ</label><select id="depAcc" class="form-control"></select></div>
+      <div class="form-group"><label>บัญชีเงินสด</label><select id="depCashAcc" class="form-control"></select></div>
+    </div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('depositModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitDeposit()">บันทึก</button></div>
+</div></div>
+
+<!-- Accrued Modal -->
+<div id="accruedModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>บันทึกค่าใช้จ่ายค้างจ่าย</h3><button class="btn-close" onclick="Page.hideModal('accruedModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>รายละเอียด *</label><input id="acrDesc" class="form-control" placeholder="เช่น ค่าไฟฟ้าเดือน มี.ค."></div>
+    <div class="form-row">
+      <div class="form-group"><label>ประเภท</label><select id="acrType" class="form-control"><option value="Utilities">สาธารณูปโภค</option><option value="Salary">เงินเดือน</option><option value="Interest">ดอกเบี้ย</option><option value="Other">อื่นๆ</option></select></div>
+      <div class="form-group"><label>จำนวนเงิน *</label><input type="number" id="acrAmount" class="form-control" step="0.01"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>บัญชีค่าใช้จ่าย</label><select id="acrExpAcc" class="form-control"></select></div>
+      <div class="form-group"><label>บัญชีค้างจ่าย (215xx)</label><select id="acrAccAcc" class="form-control"></select></div>
+    </div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('accruedModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitAccrued()">บันทึก</button></div>
+</div></div>
+
+<!-- CIT Modal -->
+<div id="citModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>คำนวณภาษีเงินได้นิติบุคคล</h3><button class="btn-close" onclick="Page.hideModal('citModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-row">
+      <div class="form-group"><label>ปีภาษี (พ.ศ.) *</label><input id="citYear" class="form-control" value="2567"></div>
+      <div class="form-group"><label>งวด *</label><select id="citPeriod" class="form-control"><option value="Annual">ประจำปี (ภ.ง.ด.50)</option><option value="HalfYear">ครึ่งปี (ภ.ง.ด.51)</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>รายจ่ายบวกกลับ</label><input type="number" id="citAddBack" class="form-control" value="0" step="0.01"></div>
+      <div class="form-group"><label>รายจ่ายหักเพิ่ม</label><input type="number" id="citDeduct" class="form-control" value="0" step="0.01"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>ภาษีหัก ณ ที่จ่าย</label><input type="number" id="citWht" class="form-control" value="0" step="0.01"></div>
+      <div class="form-group"><label>ภาษีจ่ายล่วงหน้า (ภ.ง.ด.51)</label><input type="number" id="citPrepaid" class="form-control" value="0" step="0.01"></div>
+    </div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('citModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitCIT()">คำนวณ</button></div>
+</div></div>
+
+<!-- Dividend Modal -->
+<div id="dividendModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>จัดสรรกำไร / จ่ายเงินปันผล</h3><button class="btn-close" onclick="Page.hideModal('dividendModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>ปีบัญชี *</label><input id="divYear" class="form-control" value="2567"></div>
+    <div class="form-row">
+      <div class="form-group"><label>สำรองตามกฎหมาย (5%)</label><input type="number" id="divReserve" class="form-control" value="0" step="0.01"></div>
+      <div class="form-group"><label>เงินปันผล</label><input type="number" id="divAmount" class="form-control" value="0" step="0.01"></div>
+    </div>
+    <div class="form-group"><label>เงินปันผลต่อหุ้น</label><input type="number" id="divPerShare" class="form-control" value="0" step="0.01"></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('dividendModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitDividend()">บันทึก</button></div>
+</div></div>
+
+<!-- Capital Modal -->
+<div id="capitalModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>เพิ่มทุน / ลดทุน</h3><button class="btn-close" onclick="Page.hideModal('capitalModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-row">
+      <div class="form-group"><label>ประเภท *</label><select id="capType" class="form-control"><option value="Increase">เพิ่มทุน</option><option value="Decrease">ลดทุน</option></select></div>
+      <div class="form-group"><label>วันที่</label><input type="date" id="capDate" class="form-control"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>จำนวนหุ้น *</label><input type="number" id="capShares" class="form-control" step="1"></div>
+      <div class="form-group"><label>มูลค่าหุ้นที่ตราไว้ *</label><input type="number" id="capPar" class="form-control" value="100" step="0.01"></div>
+    </div>
+    <div class="form-group"><label>เงินที่รับ/จ่ายคืนจริง *</label><input type="number" id="capPaid" class="form-control" step="0.01"></div>
+    <div class="form-group"><label>เลขที่มติที่ประชุม</label><input id="capBoard" class="form-control"></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('capitalModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitCapital()">บันทึก</button></div>
+</div></div>
+
+<!-- Investment Modal -->
+<div id="investmentModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>เพิ่มเงินลงทุนชั่วคราว</h3><button class="btn-close" onclick="Page.hideModal('investmentModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-row">
+      <div class="form-group"><label>ประเภท *</label><select id="invType" class="form-control"><option value="FixedDeposit">เงินฝากประจำ</option><option value="Bond">พันธบัตร</option><option value="MutualFund">กองทุนรวม</option><option value="Stock">หุ้น</option><option value="Other">อื่นๆ</option></select></div>
+      <div class="form-group"><label>สถาบัน</label><input id="invInst" class="form-control"></div>
+    </div>
+    <div class="form-group"><label>รายละเอียด *</label><input id="invDesc" class="form-control"></div>
+    <div class="form-row">
+      <div class="form-group"><label>วันที่ซื้อ *</label><input type="date" id="invDate" class="form-control"></div>
+      <div class="form-group"><label>วันครบกำหนด</label><input type="date" id="invMaturity" class="form-control"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>จำนวนเงิน *</label><input type="number" id="invCost" class="form-control" step="0.01"></div>
+      <div class="form-group"><label>อัตราดอกเบี้ย %</label><input type="number" id="invRate" class="form-control" value="0" step="0.01"></div>
+    </div>
+    <div class="form-group"><label>บัญชีเงินลงทุน (112xx)</label><select id="invAcc" class="form-control"></select></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('investmentModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitInvestment()">บันทึก</button></div>
+</div></div>
+
+<!-- Refund Modal -->
+<div id="refundModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>คืนเงินมัดจำ</h3><button class="btn-close" onclick="Page.hideModal('refundModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>จำนวนเงินที่คืน *</label><input type="number" id="refundAmt" class="form-control" step="0.01"></div>
+    <div class="form-group"><label>หมายเหตุ</label><input id="refundNotes" class="form-control"></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('refundModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitRefund()">คืนเงิน</button></div>
+</div></div>
+
+<!-- Pay Accrued Modal -->
+<div id="payAccruedModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>จ่ายค่าใช้จ่ายค้างจ่าย</h3><button class="btn-close" onclick="Page.hideModal('payAccruedModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>จำนวนเงินที่จ่าย *</label><input type="number" id="payAcrAmt" class="form-control" step="0.01"></div>
+    <div class="form-group"><label>บัญชีเงินสด/ธนาคาร (111xx)</label><select id="payAcrCashAcc" class="form-control"></select></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('payAccruedModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitPayAccrued()">จ่ายเงิน</button></div>
+</div></div>
+
+<!-- Sell Investment Modal -->
+<div id="sellModal" class="modal" style="display:none"><div class="modal-content">
+  <div class="modal-header"><h3>ขายเงินลงทุน</h3><button class="btn-close" onclick="Page.hideModal('sellModal')">&times;</button></div>
+  <div class="modal-body">
+    <div class="form-group"><label>ยอดขาย (เงินที่ได้รับ) *</label><input type="number" id="sellAmt" class="form-control" step="0.01"></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="Page.hideModal('sellModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitSell()">ขาย</button></div>
+</div></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/pages/financial-mgmt-logic.js"></script>
+</body>
+</html>

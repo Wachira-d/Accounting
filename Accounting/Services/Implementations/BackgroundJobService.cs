@@ -79,11 +79,12 @@ public class BackgroundJobService : BackgroundService
         {
             // Log overdue invoice count for monitoring
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var today = DateTime.UtcNow.Date;
             var overdueCount = db.Documents
                 .Count(d => d.DocumentType == DocumentType.Invoice
                     && d.Status == DocumentStatus.Approved
                     && d.DueDate.HasValue
-                    && d.DueDate.Value.Date < DateTime.Today
+                    && d.DueDate < today
                     && d.BalanceDue > 0);
 
             if (overdueCount > 0)
@@ -122,12 +123,14 @@ public class BackgroundJobService : BackgroundService
             if (emailService == null) return;
 
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var today = DateTime.UtcNow.Date;
+            var reminderCutoff = today.AddDays(3);
             var dueSoon = db.Documents
                 .Where(d => d.DocumentType == DocumentType.Invoice
                     && d.Status == DocumentStatus.Approved
                     && d.DueDate.HasValue
-                    && d.DueDate.Value.Date <= DateTime.Today.AddDays(3)
-                    && d.DueDate.Value.Date >= DateTime.Today
+                    && d.DueDate <= reminderCutoff
+                    && d.DueDate >= today
                     && d.BalanceDue > 0)
                 .Join(db.Contacts, d => d.ContactId, c => c.Id, (d, c) => new { d, c })
                 .Take(50)

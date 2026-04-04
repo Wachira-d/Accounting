@@ -182,4 +182,99 @@ public class ProductController : ControllerBase
         var result = await _productService.GetInventoryValuationAsync(companyId);
         return Ok(new ApiResponse<InventoryValuationReport>(true, result));
     }
+
+    // ===== Stock Balance as of Date =====
+
+    [HttpGet("inventory/balance")]
+    public async Task<ActionResult<ApiResponse<StockBalanceAsOfDateReport>>> GetStockBalance(
+        Guid companyId, [FromQuery] DateTime? asOfDate, [FromQuery] string? category, [FromQuery] bool includeZero = false)
+    {
+        var request = new StockBalanceAsOfDateRequest(asOfDate ?? DateTime.UtcNow, category, includeZero);
+        var result = await _productService.GetStockBalanceAsOfDateAsync(companyId, request);
+        return Ok(new ApiResponse<StockBalanceAsOfDateReport>(true, result));
+    }
+
+    // ===== Inventory Snapshots (ปิดงวดสินค้าคงเหลือ) =====
+
+    [HttpPost("inventory/snapshots")]
+    public async Task<ActionResult<ApiResponse<InventorySnapshotResponse>>> CreateSnapshot(
+        Guid companyId, [FromBody] CreateInventorySnapshotRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _productService.CreateInventorySnapshotAsync(companyId, request, userId);
+        return Ok(new ApiResponse<InventorySnapshotResponse>(true, result, "สร้าง snapshot สำเร็จ"));
+    }
+
+    [HttpGet("inventory/snapshots")]
+    public async Task<ActionResult<ApiResponse<List<InventorySnapshotResponse>>>> GetSnapshots(Guid companyId)
+    {
+        var result = await _productService.GetInventorySnapshotsAsync(companyId);
+        return Ok(new ApiResponse<List<InventorySnapshotResponse>>(true, result));
+    }
+
+    [HttpGet("inventory/snapshots/{snapshotId:guid}")]
+    public async Task<ActionResult<ApiResponse<InventorySnapshotDetailResponse>>> GetSnapshotDetail(
+        Guid companyId, Guid snapshotId)
+    {
+        var result = await _productService.GetInventorySnapshotDetailAsync(companyId, snapshotId);
+        return Ok(new ApiResponse<InventorySnapshotDetailResponse>(true, result));
+    }
+
+    // ===== Stock Aging Report =====
+
+    [HttpGet("inventory/aging")]
+    public async Task<ActionResult<ApiResponse<StockAgingReport>>> GetStockAging(Guid companyId)
+    {
+        var result = await _productService.GetStockAgingReportAsync(companyId);
+        return Ok(new ApiResponse<StockAgingReport>(true, result));
+    }
+
+    // ===== Stock Movement Summary =====
+
+    [HttpGet("inventory/movement-summary")]
+    public async Task<ActionResult<ApiResponse<StockMovementSummaryReport>>> GetMovementSummary(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] string? category, [FromQuery] Guid? productId)
+    {
+        var request = new StockMovementSummaryRequest(fromDate, toDate, category, productId);
+        var result = await _productService.GetStockMovementSummaryAsync(companyId, request);
+        return Ok(new ApiResponse<StockMovementSummaryReport>(true, result));
+    }
+
+    // ===== Supplies (วัสดุสิ้นเปลือง) =====
+
+    [HttpPost("supplies/use")]
+    public async Task<ActionResult<ApiResponse<SuppliesUsageResponse>>> UseSupplies(
+        Guid companyId, [FromBody] SuppliesUsageRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _productService.UseSuppliesAsync(companyId, request, userId);
+        return Ok(new ApiResponse<SuppliesUsageResponse>(true, result, "เบิกใช้วัสดุสำเร็จ"));
+    }
+
+    [HttpGet("{productId:guid}/supplies/usage")]
+    public async Task<ActionResult<ApiResponse<List<SuppliesUsageResponse>>>> GetSuppliesUsageHistory(
+        Guid companyId, Guid productId)
+    {
+        var result = await _productService.GetSuppliesUsageHistoryAsync(companyId, productId);
+        return Ok(new ApiResponse<List<SuppliesUsageResponse>>(true, result));
+    }
+
+    [HttpGet("supplies/usage-summary")]
+    public async Task<ActionResult<ApiResponse<SuppliesUsageSummaryReport>>> GetSuppliesUsageSummary(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] string? department, [FromQuery] string? category, [FromQuery] Guid? productId)
+    {
+        var request = new SuppliesUsageSummaryRequest(fromDate, toDate, department, category, productId);
+        var result = await _productService.GetSuppliesUsageSummaryAsync(companyId, request);
+        return Ok(new ApiResponse<SuppliesUsageSummaryReport>(true, result));
+    }
+
+    [HttpGet("supplies/balance")]
+    public async Task<ActionResult<ApiResponse<SuppliesBalanceReport>>> GetSuppliesBalance(
+        Guid companyId, [FromQuery] string? category)
+    {
+        var result = await _productService.GetSuppliesBalanceAsync(companyId, category);
+        return Ok(new ApiResponse<SuppliesBalanceReport>(true, result));
+    }
 }

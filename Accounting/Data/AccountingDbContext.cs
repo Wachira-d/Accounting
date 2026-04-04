@@ -47,6 +47,22 @@ public class AccountingDbContext : DbContext
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
     public DbSet<StockCount> StockCounts => Set<StockCount>();
     public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
+    public DbSet<InventorySnapshot> InventorySnapshots => Set<InventorySnapshot>();
+    public DbSet<InventorySnapshotLine> InventorySnapshotLines => Set<InventorySnapshotLine>();
+    public DbSet<SuppliesUsageLog> SuppliesUsageLogs => Set<SuppliesUsageLog>();
+
+    // Financial Management
+    public DbSet<PrepaidExpense> PrepaidExpenses => Set<PrepaidExpense>();
+    public DbSet<PrepaidAmortizationSchedule> PrepaidAmortizationSchedules => Set<PrepaidAmortizationSchedule>();
+    public DbSet<DepositTransaction> DepositTransactions => Set<DepositTransaction>();
+    public DbSet<DepositRefund> DepositRefunds => Set<DepositRefund>();
+    public DbSet<BadDebtAllowance> BadDebtAllowances => Set<BadDebtAllowance>();
+    public DbSet<AccruedExpense> AccruedExpenses => Set<AccruedExpense>();
+    public DbSet<InventoryObsolescenceAllowance> InventoryObsolescenceAllowances => Set<InventoryObsolescenceAllowance>();
+    public DbSet<CorporateIncomeTax> CorporateIncomeTaxes => Set<CorporateIncomeTax>();
+    public DbSet<ProfitAppropriation> ProfitAppropriations => Set<ProfitAppropriation>();
+    public DbSet<CapitalTransaction> CapitalTransactions => Set<CapitalTransaction>();
+    public DbSet<ShortTermInvestment> ShortTermInvestments => Set<ShortTermInvestment>();
 
     // Bank
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
@@ -234,6 +250,16 @@ public class AccountingDbContext : DbContext
 
     // Site Settings (global, singleton)
     public DbSet<SiteSettings> SiteSettings => Set<SiteSettings>();
+
+    // External Integration
+    public DbSet<ExternalIntegration> ExternalIntegrations => Set<ExternalIntegration>();
+    public DbSet<IntegrationSyncLog> IntegrationSyncLogs => Set<IntegrationSyncLog>();
+    public DbSet<IntegrationAccountMapping> IntegrationAccountMappings => Set<IntegrationAccountMapping>();
+
+    // Signature & Approval
+    public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
+    public DbSet<DocumentApproval> DocumentApprovals => Set<DocumentApproval>();
+    public DbSet<DocumentSignature> DocumentSignatures => Set<DocumentSignature>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -445,7 +471,6 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<AuditLog>(e =>
         {
             e.HasIndex(a => a.Timestamp);
-            e.HasIndex(a => new { a.CompanyId, a.Timestamp });
             e.Property(a => a.EntityType).HasMaxLength(100);
         });
 
@@ -496,7 +521,6 @@ public class AccountingDbContext : DbContext
         // ===== BankTransaction =====
         modelBuilder.Entity<BankTransaction>(e =>
         {
-            e.HasIndex(t => new { t.BankAccountId, t.TransactionDate });
             e.Property(t => t.Amount).HasPrecision(18, 2);
             e.Property(t => t.BalanceAfter).HasPrecision(18, 2);
             e.HasOne(t => t.BankAccount).WithMany(a => a.Transactions).HasForeignKey(t => t.BankAccountId).OnDelete(DeleteBehavior.Restrict);
@@ -575,7 +599,6 @@ public class AccountingDbContext : DbContext
         // ===== Notification =====
         modelBuilder.Entity<Notification>(e =>
         {
-            e.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt });
             e.Property(n => n.Title).HasMaxLength(500);
             e.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -1493,6 +1516,25 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<UserDevice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<SyncQueue>().HasQueryFilter(e => !e.IsDeleted);
 
+        // Financial Management
+        modelBuilder.Entity<PrepaidExpense>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<PrepaidAmortizationSchedule>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DepositTransaction>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DepositRefund>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BadDebtAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<AccruedExpense>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<InventoryObsolescenceAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CorporateIncomeTax>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ProfitAppropriation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CapitalTransaction>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ShortTermInvestment>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<SuppliesUsageLog>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Signature & Approval
+        modelBuilder.Entity<UserSignature>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DocumentApproval>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<DocumentSignature>().HasQueryFilter(e => !e.IsDeleted);
+
         // ===== POS Terminal =====
         modelBuilder.Entity<PosTerminal>(e =>
         {
@@ -1654,6 +1696,33 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteSettings>(e =>
         {
             e.Property(s => s.ServicesJson).HasColumnType("jsonb");
+        });
+
+        // External Integration
+        modelBuilder.Entity<ExternalIntegration>(e =>
+        {
+            e.HasIndex(i => new { i.CompanyId, i.IsActive }).HasDatabaseName("IX_ExternalIntegrations_CompanyId_IsActive");
+            e.HasIndex(i => i.ApiKeyPrefix).HasDatabaseName("IX_ExternalIntegrations_ApiKeyPrefix");
+            e.Property(i => i.MappingConfigJson).HasColumnType("jsonb");
+            e.Property(i => i.SettingsJson).HasColumnType("jsonb");
+            e.HasQueryFilter(i => !i.IsDeleted);
+        });
+        modelBuilder.Entity<IntegrationSyncLog>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.IntegrationId, l.CreatedAt }).HasDatabaseName("IX_IntegrationSyncLogs_Company_Integration_Date");
+            e.HasIndex(l => l.ExternalId).HasDatabaseName("IX_IntegrationSyncLogs_ExternalId");
+            e.Property(l => l.RequestPayloadJson).HasColumnType("jsonb");
+            e.Property(l => l.ResponseJson).HasColumnType("jsonb");
+            e.HasOne(l => l.Integration).WithMany(i => i.SyncLogs).HasForeignKey(l => l.IntegrationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+        modelBuilder.Entity<IntegrationAccountMapping>(e =>
+        {
+            e.HasIndex(m => new { m.IntegrationId, m.ExternalCategory }).HasDatabaseName("IX_IntegrationAccountMappings_Integration_Category");
+            e.HasOne(m => m.Integration).WithMany(i => i.AccountMappings).HasForeignKey(m => m.IntegrationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(m => m.DebitAccount).WithMany().HasForeignKey(m => m.DebitAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(m => m.CreditAccount).WithMany().HasForeignKey(m => m.CreditAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(m => !m.IsDeleted);
         });
 
         // --- Covering indexes for hot query paths ---

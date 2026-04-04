@@ -38,6 +38,7 @@ public class SettingsService : ISettingsService
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
+        if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
         if (request.EmailFromName != null) settings.EmailFromName = request.EmailFromName;
         if (request.EmailReplyTo != null) settings.EmailReplyTo = request.EmailReplyTo;
         if (request.InvoiceEmailSubject != null) settings.InvoiceEmailSubject = request.InvoiceEmailSubject;
@@ -197,8 +198,21 @@ public class SettingsService : ISettingsService
                 DocumentType.PaymentVoucher => "PV",
                 _ => "DOC"
             };
-            var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == documentType);
-            return $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+            var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+            var pattern = $"{prefix}-{yearMonth}-";
+            var lastDoc = await _db.Documents
+                .Where(d => d.CompanyId == companyId && d.DocumentType == documentType && d.DocumentNumber.StartsWith(pattern))
+                .OrderByDescending(d => d.DocumentNumber)
+                .Select(d => d.DocumentNumber)
+                .FirstOrDefaultAsync();
+            int nextSeq = 1;
+            if (lastDoc != null)
+            {
+                var lastPart = lastDoc[pattern.Length..];
+                if (int.TryParse(lastPart, out var lastNum))
+                    nextSeq = lastNum + 1;
+            }
+            return $"{pattern}{nextSeq:D4}";
         }
 
         // Check if reset is needed
@@ -353,7 +367,7 @@ public class SettingsService : ISettingsService
         // Email
         s.EmailFromName, s.EmailReplyTo, s.InvoiceEmailSubject, s.InvoiceEmailBody,
         // Tax
-        s.DefaultVatRate, s.VatRegistered,
+        s.DefaultVatRate, s.VatRegistered, s.VatRegistrationDate,
         // Security
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.AllowFreelanceAccess, s.MaxFreelanceUsers,

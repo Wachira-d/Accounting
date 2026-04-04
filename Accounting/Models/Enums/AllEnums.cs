@@ -240,7 +240,8 @@ public enum ProductType
 {
     Product = 1,      // สินค้า
     Service = 2,      // บริการ
-    NonStock = 3      // ไม่ติดตามสต็อก
+    NonStock = 3,     // ไม่ติดตามสต็อก
+    Supplies = 4      // วัสดุสิ้นเปลือง (ผ้าปู, ปลอกหมอน, สบู่, กระดาษ ฯลฯ)
 }
 
 // ==================== Bank ====================
@@ -589,4 +590,15 @@ public enum CommissionType
 {
     Fixed = 1,             // จำนวนเงินคงที่
     Percentage = 2         // เปอร์เซ็นต์จากราคาบริการ
+}
+
+// ==================== E-Tax Invoice ====================
+public enum EtaxStatus
+{
+    Generated = 0,
+    Signed = 1,
+    Submitted = 2,
+    Accepted = 3,
+    Rejected = 4,
+    Error = 5
 }
