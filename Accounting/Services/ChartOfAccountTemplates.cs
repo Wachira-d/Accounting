@@ -425,15 +425,15 @@ public static class ChartOfAccountTemplates
         new("41430", "รายได้ค่า Commission Agent", "Agent Commission Revenue", AccountType.Revenue, 4),
 
         // --- ต้นทุน (Cost of Revenue) ---
-        new("511", "ต้นทุนห้องพัก", "Room Cost", AccountType.Expense, 3),
-        new("51110", "ต้นทุนค่าแม่บ้าน/ทำความสะอาด", "Housekeeping Cost", AccountType.Expense, 4),
-        new("51120", "ต้นทุน Amenities/ของใช้ในห้อง", "Room Amenities Cost", AccountType.Expense, 4),
-        new("51130", "ต้นทุนซ่อมบำรุงห้องพัก", "Room Maintenance Cost", AccountType.Expense, 4),
-        new("51140", "ต้นทุนผ้าปูที่นอน/ผ้าเช็ดตัว", "Linen/Towel Cost", AccountType.Expense, 4),
-        new("512", "ต้นทุนอาหารและเครื่องดื่ม", "F&B Cost", AccountType.Expense, 3),
-        new("51210", "ต้นทุนวัตถุดิบอาหาร", "Food Ingredient Cost", AccountType.Expense, 4),
-        new("51220", "ต้นทุนเครื่องดื่ม", "Beverage Cost", AccountType.Expense, 4),
-        new("51230", "ต้นทุนมินิบาร์", "Minibar Cost", AccountType.Expense, 4),
+        new("515", "ต้นทุนห้องพัก", "Room Cost", AccountType.Expense, 3),
+        new("51510", "ต้นทุนค่าแม่บ้าน/ทำความสะอาด", "Housekeeping Cost", AccountType.Expense, 4),
+        new("51520", "ต้นทุน Amenities/ของใช้ในห้อง", "Room Amenities Cost", AccountType.Expense, 4),
+        new("51530", "ต้นทุนซ่อมบำรุงห้องพัก", "Room Maintenance Cost", AccountType.Expense, 4),
+        new("51540", "ต้นทุนผ้าปูที่นอน/ผ้าเช็ดตัว", "Linen/Towel Cost", AccountType.Expense, 4),
+        new("516", "ต้นทุนอาหารและเครื่องดื่ม", "F&B Cost", AccountType.Expense, 3),
+        new("51610", "ต้นทุนวัตถุดิบอาหาร", "Food Ingredient Cost", AccountType.Expense, 4),
+        new("51620", "ต้นทุนเครื่องดื่ม", "Beverage Cost", AccountType.Expense, 4),
+        new("51630", "ต้นทุนมินิบาร์", "Minibar Cost", AccountType.Expense, 4),
 
         // --- ค่าใช้จ่ายดำเนินงานโรงแรม ---
         new("52150", "ค่าคอมมิชชั่น OTA/Agent", "OTA/Agent Commission", AccountType.Expense, 4),

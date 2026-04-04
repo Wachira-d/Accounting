@@ -162,6 +162,7 @@ public class AccountingService : IAccountingService
             {
                 if (existingCodeSet.Contains(tpl.Code))
                     continue;
+                existingCodeSet.Add(tpl.Code); // Track to prevent duplicate template codes
 
                 var account = new ChartOfAccount
                 {
