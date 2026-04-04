@@ -8,7 +8,9 @@ const AdminAPI = {
       method,
       headers: { 'Content-Type': 'application/json' }
     };
-    if (this.token) opts.headers['Authorization'] = `Bearer ${this.token}`;
+    // Re-read token from localStorage in case it was refreshed after page load
+    const token = localStorage.getItem('admin_token');
+    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
     if (body) opts.body = JSON.stringify(body);
 
     const res = await fetch(`${this.base}${path}`, opts);
@@ -19,6 +21,13 @@ const AdminAPI = {
       throw new Error('Unauthorized');
     }
     if (res.status === 403) throw new Error('ไม่มีสิทธิ์เข้าถึง (ต้องเป็น System Admin)');
+
+    // Check content-type to avoid parsing HTML as JSON
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(`Server returned non-JSON response (${res.status}). กรุณา restart server แล้วลองใหม่`);
+    }
+
     const data = await res.json();
     if (!data.success) throw new Error(data.message || 'เกิดข้อผิดพลาด');
     return data;

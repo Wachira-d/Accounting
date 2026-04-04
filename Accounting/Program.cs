@@ -365,19 +365,21 @@ app.MapGet("/health/db", (IConfiguration config) =>
 });
 
 // SPA fallback - serve index.html for non-API, non-file routes
-// Use MapFallback so unmatched /api/ paths return JSON 404 instead of HTML
-app.MapFallback(async context =>
+// For /api/ paths: return JSON 404 so frontend gets proper error instead of HTML
+app.MapFallback(context =>
 {
     var path = context.Request.Path.Value ?? "";
     if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
     {
         context.Response.StatusCode = 404;
         context.Response.ContentType = "application/json";
-        await context.Response.WriteAsJsonAsync(new { success = false, message = "API endpoint not found: " + path });
-        return;
+        return context.Response.WriteAsJsonAsync(new { success = false, message = "API endpoint not found: " + path });
     }
-    context.Response.ContentType = "text/html";
-    await context.Response.SendFileAsync(Path.Combine(app.Environment.WebRootPath, "index.html"));
+    // Non-API routes: serve index.html for SPA client-side routing
+    return Results.File(
+        Path.Combine(app.Environment.WebRootPath, "index.html"),
+        "text/html"
+    ).ExecuteAsync(context);
 });
 
 // ===== PHASE 0: Raw ADO.NET schema fix (bypass EF model building entirely) =====
