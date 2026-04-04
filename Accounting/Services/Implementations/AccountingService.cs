@@ -121,16 +121,16 @@ public class AccountingService : IAccountingService
         var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
         var templateCodes = templates.Select(t => t.Code).ToList();
 
-        // Hard-delete system accounts using raw SQL
+        // Hard-delete system accounts using raw SQL (use {0} placeholders for EF Core)
         await _db.Database.ExecuteSqlRawAsync(
-            @"DELETE FROM ""ChartOfAccounts"" WHERE ""CompanyId"" = @p0 AND ""IsSystemAccount"" = true",
+            @"DELETE FROM ""ChartOfAccounts"" WHERE ""CompanyId"" = {0} AND ""IsSystemAccount"" = true",
             companyId);
 
         // Hard-delete any soft-deleted accounts whose codes conflict with template
         foreach (var code in templateCodes)
         {
             await _db.Database.ExecuteSqlRawAsync(
-                @"DELETE FROM ""ChartOfAccounts"" WHERE ""CompanyId"" = @p0 AND ""AccountCode"" = @p1 AND ""IsDeleted"" = true",
+                @"DELETE FROM ""ChartOfAccounts"" WHERE ""CompanyId"" = {0} AND ""AccountCode"" = {1} AND ""IsDeleted"" = true",
                 companyId, code);
         }
 
