@@ -37,10 +37,10 @@
 
     <div class="filter-bar">
       <label>ช่วงวันที่:</label>
-      <input type="date" class="form-input" id="fromDate" style="width:160px">
+      <input type="date" class="form-input" id="fromDate" style="flex:1;min-width:120px">
       <span class="text-gray-400">ถึง</span>
-      <input type="date" class="form-input" id="toDate" style="width:160px">
-      <select class="form-select" id="accountFilter" style="width:250px">
+      <input type="date" class="form-input" id="toDate" style="flex:1;min-width:120px">
+      <select class="form-select" id="accountFilter" style="flex:1;min-width:120px">
         <option value="">ทุกบัญชี</option>
       </select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงข้อมูล</button>
@@ -140,15 +140,15 @@
               </div>
             </div>
             <div class="gl-account-body">
-              <table class="table">
+              <div class="table-container"><table class="table">
                 <thead><tr>
-                  <th style="width:100px">วันที่</th>
-                  <th style="width:100px">เลขที่</th>
-                  <th style="width:50px">ประเภท</th>
+                  <th>วันที่</th>
+                  <th>เลขที่</th>
+                  <th>ประเภท</th>
                   <th>คำอธิบาย</th>
-                  <th class="text-right" style="width:120px">เดบิต</th>
-                  <th class="text-right" style="width:120px">เครดิต</th>
-                  <th class="text-right" style="width:120px">ยอดคงเหลือ</th>
+                  <th class="text-right">เดบิต</th>
+                  <th class="text-right">เครดิต</th>
+                  <th class="text-right">ยอดคงเหลือ</th>
                 </tr></thead>
                 <tbody>
                   <tr style="background:#f0fdf4">
@@ -173,7 +173,7 @@
                     <td class="text-right">${Layout.money(a.closingBalance)}</td>
                   </tr>
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </div>
         `).join('');

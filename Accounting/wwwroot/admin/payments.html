@@ -80,6 +80,7 @@
         }
 
         document.getElementById('pendingList').innerHTML = `
+          <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr><th>เลขที่</th><th>บริษัท</th><th>แพ็กเกจที่ขอ</th><th>จำนวน</th><th>วิธีชำระ</th><th>สถานะ</th><th>วันที่</th><th></th></tr></thead>
             <tbody>
@@ -99,6 +100,7 @@
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
       } catch (err) {
         document.getElementById('pendingList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
@@ -121,6 +123,7 @@
         }
 
         document.getElementById('allList').innerHTML = `
+          <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr><th>เลขที่</th><th>บริษัท</th><th>แพ็กเกจ</th><th>จำนวน</th><th>สถานะ</th><th>วันที่ส่ง</th><th>วันที่ตรวจ</th><th>ต่ออายุถึง</th><th></th></tr></thead>
             <tbody>
@@ -143,6 +146,7 @@
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
 
         let pagHtml = '';

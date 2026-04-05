@@ -306,7 +306,7 @@
           return;
         }
         const catMap = { Document:'เอกสาร', JournalEntry:'รายการบัญชี', Contact:'ผู้ติดต่อ', Product:'สินค้า', ExpenseClaim:'เบิกค่าใช้จ่าย', FixedAsset:'สินทรัพย์', Logo:'โลโก้' };
-        el.innerHTML = `<div style="overflow-x:auto"><table class="table" style="font-size:13px">
+        el.innerHTML = `<div class="table-container"><table class="table" style="font-size:13px">
           <thead><tr><th>ชื่อไฟล์</th><th>ประเภท</th><th class="text-right">ขนาด</th><th>อัปโหลดโดย</th><th>วันที่</th></tr></thead>
           <tbody>${files.map(f => `<tr>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f.fileName}">${f.fileName}</td>

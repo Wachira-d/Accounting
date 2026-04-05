@@ -408,7 +408,7 @@ const Page = {
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ยอดจ่ายสุทธิ</div><div class="font-medium text-primary">${Layout.money(r.totalNetPay||r.totalAmount)}</div></div>
         </div>
-        <table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>สลิป</th></tr></thead>
+        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>สลิป</th></tr></thead>
         <tbody>${details.length ? details.map(d => `<tr>
           <td>${d.employeeName || (d.firstName+' '+d.lastName) || '-'}</td>
           <td class="text-right">${Layout.money(d.baseSalary||d.salary)}</td>
@@ -417,7 +417,7 @@ const Page = {
           <td class="text-right">${Layout.money(d.socialSecurity||d.sso||0)}</td>
           <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary)}</td>
           <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${d.employeeId||d.id}')">ดูสลิป</button></td>
-        </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table>`;
+        </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>`;
       document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')">ปิด</button>`;
       Layout.openModal('runDetailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -521,8 +521,8 @@ const Page = {
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalIncome)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTax)}</div></div>
           </div>
-          ${d.employees ? `<table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
-          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.income)}</td><td class="text-right">${Layout.money(e.tax)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
+          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.income)}</td><td class="text-right">${Layout.money(e.tax)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       } else {
         res = await api.getSso(year, month);
         const d = res.data || {};
@@ -533,8 +533,8 @@ const Page = {
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.employeeContribution)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.employerContribution)}</div></div>
           </div>
-          ${d.employees ? `<table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
-          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.wage)}</td><td class="text-right">${Layout.money(e.contribution)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
+          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.wage)}</td><td class="text-right">${Layout.money(e.contribution)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       }
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
   },

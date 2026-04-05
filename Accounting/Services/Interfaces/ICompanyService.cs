@@ -10,6 +10,8 @@ public interface ICompanyService
     Task<CompanyResponse> GetByIdAsync(Guid companyId, Guid userId);
     Task<List<CompanyResponse>> GetUserCompaniesAsync(Guid userId);
     Task<CompanyResponse> UpdateAsync(Guid companyId, Guid userId, UpdateCompanyRequest request);
+    Task<List<CompanyMemberResponse>> GetMembersAsync(Guid companyId, Guid userId);
     Task AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
+    Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);
 }

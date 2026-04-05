@@ -98,3 +98,15 @@ public record TrialSummary(
 public record AddCompanyUserRequest(
     string Email,
     UserRole Role);
+
+public record UpdateUserRoleRequest(UserRole Role);
+
+public record CompanyMemberResponse(
+    Guid UserId,
+    string FullName,
+    string Email,
+    string? Phone,
+    UserRole Role,
+    DateTime JoinedAt,
+    DateTime? LastLoginAt,
+    UserStatus Status);

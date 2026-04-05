@@ -307,7 +307,7 @@
           <!-- Outstanding documents -->
           <div style="margin-bottom:20px">
             <h4 style="margin-bottom:8px">เอกสารค้างชำระ (${d.outstandingDocuments?.length || 0})</h4>
-            ${d.outstandingDocuments?.length ? `<div style="max-height:250px;overflow-y:auto"><table class="table"><thead><tr>
+            ${d.outstandingDocuments?.length ? `<div style="max-height:250px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr>
               <th>เลขที่</th><th>วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดรวม</th><th class="text-right">ชำระแล้ว</th><th class="text-right">คงค้าง</th><th class="text-right">วันเกิน</th><th>สถานะ</th>
             </tr></thead><tbody>${d.outstandingDocuments.map(doc => `<tr>
               <td class="font-medium">${doc.documentNumber}</td>
@@ -318,13 +318,13 @@
               <td class="text-right font-semibold">${Layout.money(doc.balanceDue)}</td>
               <td class="text-right ${doc.agingDays>0?'text-danger':''}">${doc.agingDays > 0 ? doc.agingDays+' วัน' : '-'}</td>
               <td>${Layout.statusBadge(doc.status)}</td>
-            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ไม่มีเอกสารค้างชำระ</div>'}
+            </tr>`).join('')}</tbody></table></div></div>` : '<div class="text-center text-gray-400">ไม่มีเอกสารค้างชำระ</div>'}
           </div>
 
           <!-- Recent payments -->
           <div style="margin-bottom:20px">
             <h4 style="margin-bottom:8px">การชำระเงินล่าสุด</h4>
-            ${d.recentPayments?.length ? `<div style="max-height:200px;overflow-y:auto"><table class="table"><thead><tr>
+            ${d.recentPayments?.length ? `<div style="max-height:200px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr>
               <th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>อ้างอิง</th><th>วิธี</th>
             </tr></thead><tbody>${d.recentPayments.map(p => `<tr>
               <td class="font-medium">${p.paymentNumber}</td>
@@ -332,20 +332,20 @@
               <td class="text-right">${Layout.money(p.amount)}</td>
               <td>${p.documentNumber || '-'}</td>
               <td>${p.paymentMethod || '-'}</td>
-            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ไม่มีรายการชำระ</div>'}
+            </tr>`).join('')}</tbody></table></div></div>` : '<div class="text-center text-gray-400">ไม่มีรายการชำระ</div>'}
           </div>
 
           <!-- Monthly trend -->
           <div>
             <h4 style="margin-bottom:8px">ยอดรายเดือน (12 เดือน)</h4>
-            ${d.monthlyHistory?.length ? `<table class="table"><thead><tr>
+            ${d.monthlyHistory?.length ? `<div class="table-container"><table class="table"><thead><tr>
               <th>เดือน</th><th class="text-right">ออกเอกสาร</th><th class="text-right">ชำระแล้ว</th><th class="text-right">ยอมคงค้าง</th>
             </tr></thead><tbody>${d.monthlyHistory.map(m => `<tr>
               <td>${m.month}/${m.year}</td>
               <td class="text-right">${Layout.money(m.invoiced)}</td>
               <td class="text-right">${Layout.money(m.paid)}</td>
               <td class="text-right font-semibold">${Layout.money(m.balance)}</td>
-            </tr>`).join('')}</tbody></table>` : '<div class="text-center text-gray-400">ไม่มีข้อมูล</div>'}
+            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ไม่มีข้อมูล</div>'}
           </div>`;
       } catch (e) { Layout.toast(e.message, 'error'); }
     }

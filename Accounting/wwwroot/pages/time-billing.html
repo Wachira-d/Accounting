@@ -212,8 +212,8 @@ const Page = {
       }
       if (utilRes.status === 'fulfilled') {
         const items = utilRes.value.data?.items || utilRes.value.data || [];
-        document.getElementById('utilizationContent').innerHTML = items.length ? `<table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ชม.ทั้งหมด</th><th class="text-right">Billable</th><th class="text-right">Utilization</th></tr></thead>
-        <tbody>${items.map(u => `<tr><td>${u.employeeName||u.name||'-'}</td><td class="text-right">${u.totalHours||0}</td><td class="text-right">${u.billableHours||0}</td><td class="text-right font-medium">${u.utilizationRate||0}%</td></tr>`).join('')}</tbody></table>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
+        document.getElementById('utilizationContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ชม.ทั้งหมด</th><th class="text-right">Billable</th><th class="text-right">Utilization</th></tr></thead>
+        <tbody>${items.map(u => `<tr><td>${u.employeeName||u.name||'-'}</td><td class="text-right">${u.totalHours||0}</td><td class="text-right">${u.billableHours||0}</td><td class="text-right font-medium">${u.utilizationRate||0}%</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
       }
     } catch (err) { /* ignore */ }
   },

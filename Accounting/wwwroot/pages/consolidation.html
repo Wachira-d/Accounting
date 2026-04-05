@@ -104,8 +104,8 @@ const Page = {
             <div><h3 class="font-medium">${g.name}</h3><span class="text-sm text-gray-500">สกุลเงิน: ${g.reportingCurrency || 'THB'} | สมาชิก: ${members.length} บริษัท</span></div>
             <button class="btn btn-sm btn-primary" onclick="Page.openAddMember('${g.id}')">+ เพิ่มบริษัทลูก</button>
           </div>
-          ${members.length ? `<table class="table"><thead><tr><th>บริษัท</th><th class="text-right">สัดส่วน (%)</th><th>จัดการ</th></tr></thead>
-          <tbody>${members.map(m => `<tr><td>${m.companyName || '-'}</td><td class="text-right">${m.ownershipPercentage || 100}%</td><td><button class="btn btn-sm btn-danger" onclick="Page.removeMember('${g.id}','${m.id}')">ลบ</button></td></tr>`).join('')}</tbody></table>` : '<p class="text-sm text-gray-400">ยังไม่มีบริษัทลูก</p>'}
+          ${members.length ? `<div class="table-container"><table class="table"><thead><tr><th>บริษัท</th><th class="text-right">สัดส่วน (%)</th><th>จัดการ</th></tr></thead>
+          <tbody>${members.map(m => `<tr><td>${m.companyName || '-'}</td><td class="text-right">${m.ownershipPercentage || 100}%</td><td><button class="btn btn-sm btn-danger" onclick="Page.removeMember('${g.id}','${m.id}')">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="text-sm text-gray-400">ยังไม่มีบริษัทลูก</p>'}
         </div>`;
       }).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -162,8 +162,8 @@ const Page = {
       const d = res.data || {};
       const items = d.items || d.lines || [];
       content.innerHTML = `<h3 style="margin-bottom:16px">${type === 'bs' ? 'งบดุลรวม' : 'งบกำไรขาดทุนรวม'}</h3>
-      <table class="table"><thead><tr><th>รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
-      <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${i.name||i.accountName||'-'}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table>`;
+      <div class="table-container"><table class="table"><thead><tr><th>รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
+      <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${i.name||i.accountName||'-'}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table></div>`;
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
   },
 
@@ -175,8 +175,8 @@ const Page = {
     try {
       const res = await api.getEliminations(gid);
       const items = res.data?.items || res.data || [];
-      content.innerHTML = items.length ? `<table class="table"><thead><tr><th>รายการ</th><th>บัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
-      <tbody>${items.map(e => `<tr><td>${e.description||'-'}</td><td>${e.accountName||'-'}</td><td class="text-right">${Layout.money(e.debit)}</td><td class="text-right">${Layout.money(e.credit)}</td></tr>`).join('')}</tbody></table>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
+      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>รายการ</th><th>บัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
+      <tbody>${items.map(e => `<tr><td>${e.description||'-'}</td><td>${e.accountName||'-'}</td><td class="text-right">${Layout.money(e.debit)}</td><td class="text-right">${Layout.money(e.credit)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
   },
 };

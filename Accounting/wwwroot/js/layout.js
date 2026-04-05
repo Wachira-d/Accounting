@@ -149,6 +149,7 @@ const Layout = {
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html' },
 
     { section: 'ตั้งค่า' },
+    { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html' },
     { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html' },
     { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html' },
@@ -191,7 +192,7 @@ const Layout = {
     header.className = 'app-header';
     header.innerHTML = `
       <div class="header-left">
-        <button class="mobile-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+        <button class="mobile-toggle" onclick="Layout.toggleSidebar()">☰</button>
         <h1 class="header-title" id="headerTitle"></h1>
       </div>
       <div class="header-right">
@@ -219,9 +220,16 @@ const Layout = {
     mainContent.appendChild(header);
     mainContent.appendChild(pageContent);
 
+    // Sidebar overlay for mobile
+    const overlay = document.createElement('div');
+    overlay.className = 'sidebar-overlay';
+    overlay.id = 'sidebarOverlay';
+    overlay.onclick = () => Layout.toggleSidebar();
+
     const appLayout = document.createElement('div');
     appLayout.className = 'app-layout';
     appLayout.appendChild(sidebar);
+    appLayout.appendChild(overlay);
     appLayout.appendChild(mainContent);
 
     document.body.innerHTML = '';
@@ -668,6 +676,13 @@ const Layout = {
       const dot = document.getElementById('notifDot');
       if (dot) dot.classList.toggle('hidden', count === 0);
     } catch (e) { /* ignore */ }
+  },
+
+  toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    const ov = document.getElementById('sidebarOverlay');
+    if (sb) sb.classList.toggle('open');
+    if (ov) ov.classList.toggle('open');
   },
 
   async toggleNotifications() {

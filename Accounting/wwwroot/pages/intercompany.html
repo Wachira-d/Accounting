@@ -126,8 +126,8 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const content = document.getElementById('balanceContent');
       if (!items.length) { content.innerHTML = '<p class="text-gray-400 text-center">ไม่มียอดคงค้าง</p>'; return; }
-      content.innerHTML = `<table class="table"><thead><tr><th>บริษัทคู่ค้า</th><th class="text-right">ลูกหนี้</th><th class="text-right">เจ้าหนี้</th><th class="text-right">ยอดสุทธิ</th></tr></thead>
-      <tbody>${items.map(b => `<tr><td class="font-medium">${b.companyName || '-'}</td><td class="text-right">${Layout.money(b.receivable)}</td><td class="text-right">${Layout.money(b.payable)}</td><td class="text-right ${(b.receivable-b.payable)>=0?'text-success':'text-danger'} font-medium">${Layout.money((b.receivable||0)-(b.payable||0))}</td></tr>`).join('')}</tbody></table>`;
+      content.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>บริษัทคู่ค้า</th><th class="text-right">ลูกหนี้</th><th class="text-right">เจ้าหนี้</th><th class="text-right">ยอดสุทธิ</th></tr></thead>
+      <tbody>${items.map(b => `<tr><td class="font-medium">${b.companyName || '-'}</td><td class="text-right">${Layout.money(b.receivable)}</td><td class="text-right">${Layout.money(b.payable)}</td><td class="text-right ${(b.receivable-b.payable)>=0?'text-success':'text-danger'} font-medium">${Layout.money((b.receivable||0)-(b.payable||0))}</td></tr>`).join('')}</tbody></table></div>`;
     } catch (err) { document.getElementById('balanceContent').innerHTML = `<p class="text-danger">${err.message}</p>`; }
   },
 };

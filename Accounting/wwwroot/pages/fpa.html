@@ -223,15 +223,15 @@
           const assumptions = s.assumptions || [];
           html += `<h4 style="margin-bottom:8px">สมมติฐาน (${assumptions.length})</h4>`;
           if (assumptions.length) {
-            html += '<table class="table"><thead><tr><th>หมวด</th><th>คำอธิบาย</th><th>ประเภท</th><th class="text-right">ค่า</th><th></th></tr></thead><tbody>';
+            html += '<div class="table-container"><table class="table"><thead><tr><th>หมวด</th><th>คำอธิบาย</th><th>ประเภท</th><th class="text-right">ค่า</th><th></th></tr></thead><tbody>';
             html += assumptions.map(a => `<tr><td>${a.category||'-'}</td><td>${a.description||'-'}</td><td>${a.adjustmentType}</td><td class="text-right">${a.adjustmentValue}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeAssumption('${a.id}')">ลบ</button></td></tr>`).join('');
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
           } else html += '<p class="text-gray-400 text-sm">ยังไม่มีสมมติฐาน</p>';
           const results = s.results || [];
           if (results.length) {
-            html += '<h4 style="margin:16px 0 8px">ผลลัพธ์</h4><table class="table"><thead><tr><th>เดือน</th><th class="text-right">Baseline</th><th class="text-right">Scenario</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th></tr></thead><tbody>';
+            html += '<h4 style="margin:16px 0 8px">ผลลัพธ์</h4><div class="table-container"><table class="table"><thead><tr><th>เดือน</th><th class="text-right">Baseline</th><th class="text-right">Scenario</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th></tr></thead><tbody>';
             html += results.map(r => `<tr><td>${r.month}</td><td class="text-right">${Layout.money(r.baselineAmount)}</td><td class="text-right">${Layout.money(r.scenarioAmount)}</td><td class="text-right ${r.variance>=0?'text-success':'text-danger'}">${Layout.money(r.variance)}</td><td class="text-right">${(r.variancePercent||0).toFixed(1)}%</td></tr>`).join('');
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
           }
           document.getElementById('detailContent').innerHTML = html;
           Layout.openModal('detailModal');
@@ -321,9 +321,9 @@
           const items = res.data?.items || res.data || [];
           let html = '<h4>ประวัติ KPI</h4>';
           if (items.length) {
-            html += '<table class="table"><thead><tr><th>ปี</th><th>เดือน</th><th class="text-right">ค่า</th><th>สถานะ</th></tr></thead><tbody>';
+            html += '<div class="table-container"><table class="table"><thead><tr><th>ปี</th><th>เดือน</th><th class="text-right">ค่า</th><th>สถานะ</th></tr></thead><tbody>';
             html += items.map(h => `<tr><td>${h.year}</td><td>${h.month}</td><td class="text-right">${h.value?.toFixed(2)||'-'}</td><td>${Layout.statusBadge(h.status||'Pending')}</td></tr>`).join('');
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
           } else html = '<p class="text-gray-400">ยังไม่มีประวัติ</p>';
           document.getElementById('detailTitle').textContent = 'ประวัติ KPI';
           document.getElementById('detailContent').innerHTML = html;

@@ -328,12 +328,12 @@ const Page = {
       result.innerHTML = `
         <div style="margin-bottom:12px"><span class="badge badge-success">วิเคราะห์สำเร็จ</span></div>
         <div class="text-sm" style="margin-bottom:12px"><strong>คอลัมน์ที่จับคู่ได้:</strong></div>
-        <table class="table"><thead><tr><th>คอลัมน์ไฟล์</th><th>ฟิลด์ระบบ</th><th>ความมั่นใจ</th></tr></thead>
+        <div class="table-container"><table class="table"><thead><tr><th>คอลัมน์ไฟล์</th><th>ฟิลด์ระบบ</th><th>ความมั่นใจ</th></tr></thead>
         <tbody>${mappings.map(m => `<tr>
           <td>${m.sourceColumn || m.source}</td>
           <td>${m.targetField || m.target}</td>
           <td><span class="badge ${(m.confidence||0)>0.7?'badge-success':'badge-warning'}">${Math.round((m.confidence||0)*100)}%</span></td>
-        </tr>`).join('')}</tbody></table>
+        </tr>`).join('')}</tbody></table></div>
         <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button></div>`;
     } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
   },

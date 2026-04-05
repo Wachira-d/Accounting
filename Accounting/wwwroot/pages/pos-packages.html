@@ -192,7 +192,7 @@
           list.innerHTML = '<p style="color:var(--gray-400); text-align:center; padding:12px">ยังไม่มีขั้นตอน</p>';
           return;
         }
-        list.innerHTML = `<table class="table" style="margin-bottom:0">
+        list.innerHTML = `<div class="table-container"><table class="table" style="margin-bottom:0">
           <thead><tr><th>ลำดับ</th><th>ชื่อ</th><th class="text-right">ระยะเวลา</th><th>ค่าคอม</th><th>ต้องมีพนักงาน</th><th>จัดการ</th></tr></thead>
           <tbody>${components.map(c => `<tr>
             <td>${c.stepOrder}</td>
@@ -205,7 +205,7 @@
               <button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeComponent('${c.id}')">ลบ</button>
             </td>
           </tr>`).join('')}</tbody>
-        </table>`;
+        </table></div>`;
       },
       async save() {
         const api = Layout.api(); if (!api) return;

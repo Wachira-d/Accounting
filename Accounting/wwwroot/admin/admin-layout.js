@@ -64,7 +64,7 @@ const AdminLayout = {
     const header = document.createElement('header');
     header.className = 'admin-header';
     header.innerHTML = `
-      <button class="admin-menu-btn" onclick="document.querySelector('.admin-sidebar').classList.toggle('open')">☰</button>
+      <button class="admin-menu-btn" onclick="AdminLayout.toggleSidebar()">☰</button>
       <h1 class="admin-page-title">${document.title.split(' - ')[0]}</h1>
       <div style="flex:1"></div>
       <a href="/" target="_blank" class="admin-link-site">เปิดเว็บไซต์หลัก ↗</a>
@@ -75,7 +75,13 @@ const AdminLayout = {
     main.className = 'admin-main';
     main.innerHTML = pageContent.innerHTML;
 
+    // Overlay for mobile sidebar
+    const overlay = document.createElement('div');
+    overlay.className = 'admin-sidebar-overlay';
+    overlay.onclick = () => this.toggleSidebar();
+
     wrapper.appendChild(sidebar);
+    wrapper.appendChild(overlay);
     const rightSide = document.createElement('div');
     rightSide.className = 'admin-right';
     rightSide.appendChild(header);
@@ -84,6 +90,13 @@ const AdminLayout = {
 
     pageContent.innerHTML = '';
     pageContent.appendChild(wrapper);
+  },
+
+  toggleSidebar() {
+    const sb = document.querySelector('.admin-sidebar');
+    const ov = document.querySelector('.admin-sidebar-overlay');
+    if (sb) sb.classList.toggle('open');
+    if (ov) ov.classList.toggle('open');
   },
 
   logout() {
