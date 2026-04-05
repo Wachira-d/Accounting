@@ -449,7 +449,7 @@ public class AccountingService : IAccountingService
             }
 
             accounts.Add(new GeneralLedgerAccount(
-                g.Key.AccountId, g.Key.AccountCode, g.Key.AccountName, g.Key.AccountType,
+                g.Key.AccountId, g.Key.AccountCode, g.Key.AccountName, g.Key.AccountType, (int)g.Key.AccountType,
                 opening, g.Sum(l => l.DebitAmount), g.Sum(l => l.CreditAmount),
                 runningBalance, transactions));
         }
@@ -475,6 +475,7 @@ public class AccountingService : IAccountingService
                 g.Key.AccountCode,
                 g.Key.AccountName,
                 g.Key.AccountType,
+                (int)g.Key.AccountType,
                 g.Sum(l => l.DebitAmount),
                 g.Sum(l => l.CreditAmount)))
             .OrderBy(i => i.AccountCode)
@@ -705,7 +706,7 @@ public class AccountingService : IAccountingService
 
     private static AccountResponse MapAccountToResponse(ChartOfAccount a) => new(
         a.Id, a.AccountCode, a.AccountName, a.AccountNameEn,
-        a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description);
+        a.AccountType, (int)a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description);
 
     private static JournalEntryResponse MapJournalEntryToResponse(JournalEntry j) => new(
         j.Id, j.EntryNumber, j.EntryDate, j.JournalType, j.Description, j.Reference,
