@@ -50,6 +50,7 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">จัดการทีม</h2><p class="page-subtitle">เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง</p></div>
+      <button class="btn btn-primary" id="btnInvite" style="display:none" onclick="document.getElementById('addMemberSection').scrollIntoView({behavior:'smooth'}); document.getElementById('addEmail').focus();">+ เชิญสมาชิก</button>
     </div>
 
     <!-- Quota -->
@@ -75,11 +76,11 @@
         <div class="form-group" style="min-width:160px">
           <label class="form-label">บทบาท</label>
           <select id="addRole" class="form-select">
-            <option value="2">นักบัญชี</option>
-            <option value="3">พนักงาน</option>
-            <option value="4">ผู้ตรวจสอบ</option>
-            <option value="5">ดูอย่างเดียว</option>
-            <option value="6">นักบัญชีภายนอก</option>
+            <option value="Accountant">นักบัญชี</option>
+            <option value="Staff">พนักงาน</option>
+            <option value="Auditor">ผู้ตรวจสอบ</option>
+            <option value="Viewer">ดูอย่างเดียว</option>
+            <option value="ExternalAccountant">นักบัญชีภายนอก</option>
           </select>
         </div>
         <button class="btn btn-primary" onclick="Page.addMember()" style="height:40px;white-space:nowrap">เพิ่มสมาชิก</button>
@@ -99,15 +100,17 @@
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    // Roles keyed by string (API returns enum as string via JsonStringEnumConverter)
     const ROLES = {
-      1: { label: 'เจ้าของ', cls: 'owner', icon: '👑' },
-      2: { label: 'นักบัญชี', cls: 'accountant', icon: '📊' },
-      3: { label: 'พนักงาน', cls: 'staff', icon: '👤' },
-      4: { label: 'ผู้ตรวจสอบ', cls: 'auditor', icon: '🔍' },
-      5: { label: 'ดูอย่างเดียว', cls: 'viewer', icon: '👁️' },
-      6: { label: 'นักบัญชีภายนอก', cls: 'external', icon: '🤝' },
-      99: { label: 'System Admin', cls: 'owner', icon: '⚡' }
+      'Owner': { label: 'เจ้าของ', cls: 'owner', icon: '👑', value: 1 },
+      'Accountant': { label: 'นักบัญชี', cls: 'accountant', icon: '📊', value: 2 },
+      'Staff': { label: 'พนักงาน', cls: 'staff', icon: '👤', value: 3 },
+      'Auditor': { label: 'ผู้ตรวจสอบ', cls: 'auditor', icon: '🔍', value: 4 },
+      'Viewer': { label: 'ดูอย่างเดียว', cls: 'viewer', icon: '👁️', value: 5 },
+      'ExternalAccountant': { label: 'นักบัญชีภายนอก', cls: 'external', icon: '🤝', value: 6 },
+      'SystemAdmin': { label: 'System Admin', cls: 'owner', icon: '⚡', value: 99 }
     };
+    const ROLE_DEFAULT = { label: 'ไม่ทราบ', cls: 'viewer', icon: '❓', value: 0 };
 
     const Page = {
       members: [],
@@ -137,9 +140,10 @@
           const me = this.members.find(m => m.userId === this.currentUserId);
           this.currentUserRole = me?.role;
 
-          // Show add form only for Owner
-          const isOwner = this.currentUserRole === 1 || this.currentUserRole === 99;
+          // Show add form and invite button only for Owner or SystemAdmin
+          const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin';
           document.getElementById('addMemberSection').style.display = isOwner ? 'block' : 'none';
+          document.getElementById('btnInvite').style.display = isOwner ? '' : 'none';
 
           this.renderQuota();
           this.renderMembers();
@@ -163,25 +167,27 @@
           m.fullName.toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
         ) : this.members;
 
-        const isOwner = this.currentUserRole === 1 || this.currentUserRole === 99;
+        const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin';
 
         if (!filtered.length) {
           document.getElementById('memberList').innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">ไม่พบสมาชิก</p>';
           return;
         }
 
+        const editableRoles = ['Accountant','Staff','Auditor','Viewer','ExternalAccountant'];
+
         document.getElementById('memberList').innerHTML = filtered.map(m => {
-          const r = ROLES[m.role] || ROLES[3];
+          const r = ROLES[m.role] || ROLE_DEFAULT;
           const initials = (m.fullName || '?').substring(0, 2);
           const isMe = m.userId === this.currentUserId;
           const joinDate = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' }) : '-';
           const lastLogin = m.lastLoginAt ? Page.timeAgo(m.lastLoginAt) : 'ยังไม่เคยเข้าใช้';
 
           let actions = '';
-          if (isOwner && !isMe && m.role !== 1) {
+          if (isOwner && !isMe && m.role !== 'Owner') {
             actions = `
               <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
-                ${[2,3,4,5,6].map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
+                ${editableRoles.map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
               </select>
               <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName}')">ลบ</button>
             `;
@@ -207,7 +213,7 @@
       async addMember() {
         const api = Layout.api(); if (!api) return;
         const email = document.getElementById('addEmail').value.trim();
-        const role = parseInt(document.getElementById('addRole').value);
+        const role = document.getElementById('addRole').value;
         if (!email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
         try {
           await api.addMember(email, role);
@@ -220,7 +226,7 @@
       async changeRole(userId, newRole) {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.updateMemberRole(userId, parseInt(newRole));
+          await api.updateMemberRole(userId, newRole);
           Layout.toast('เปลี่ยนบทบาทสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
