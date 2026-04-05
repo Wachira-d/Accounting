@@ -23,6 +23,7 @@ public record AccountResponse(
     string AccountName,
     string? AccountNameEn,
     AccountType AccountType,
+    int AccountTypeValue,
     Guid? ParentAccountId,
     int Level,
     bool IsActive,
@@ -88,6 +89,7 @@ public record TrialBalanceItem(
     string AccountCode,
     string AccountName,
     AccountType AccountType,
+    int AccountTypeValue,
     decimal DebitBalance,
     decimal CreditBalance);
 
@@ -131,6 +133,7 @@ public record GeneralLedgerAccount(
     string AccountCode,
     string AccountName,
     AccountType AccountType,
+    int AccountTypeValue,
     decimal OpeningBalance,
     decimal TotalDebit,
     decimal TotalCredit,
