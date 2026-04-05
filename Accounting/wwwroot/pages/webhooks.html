@@ -9,13 +9,96 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">Webhooks & API</h2><p class="page-subtitle">เชื่อมต่อระบบภายนอกกับ Next Acc</p></div>
+    </div>
+
     <div class="tabs" style="margin-bottom:20px">
-      <button class="tab active" onclick="Page.switchTab('webhooks')">Webhooks</button>
+      <button class="tab active" onclick="Page.switchTab('connection')">ข้อมูลเชื่อมต่อ</button>
+      <button class="tab" onclick="Page.switchTab('webhooks')">Webhooks</button>
       <button class="tab" onclick="Page.switchTab('apikeys')">API Keys</button>
     </div>
 
+    <!-- Connection Info Tab -->
+    <div id="tab-connection">
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="card-title" style="margin-bottom:16px">ข้อมูลสำหรับเชื่อมต่อ API</h3>
+        <p style="font-size:13px;color:#64748b;margin-bottom:20px">ใช้ข้อมูลด้านล่างนี้ในการตั้งค่าระบบภายนอกที่ต้องการเชื่อมต่อกับ Next Acc</p>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <!-- Company ID -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Company ID</div>
+                <code id="infoCompanyId" style="font-size:14px;color:#1e293b;word-break:break-all">-</code>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.copyText('infoCompanyId')">คัดลอก</button>
+            </div>
+          </div>
+
+          <!-- Base URL -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Base URL</div>
+                <code id="infoBaseUrl" style="font-size:14px;color:#1e293b;word-break:break-all">-</code>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.copyText('infoBaseUrl')">คัดลอก</button>
+            </div>
+          </div>
+
+          <!-- API Base Path -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">API Base Path (Company-scoped)</div>
+                <code id="infoApiBase" style="font-size:14px;color:#1e293b;word-break:break-all">-</code>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.copyText('infoApiBase')">คัดลอก</button>
+            </div>
+          </div>
+
+          <!-- Auth Header -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Authentication Header</div>
+              <code style="font-size:14px;color:#1e293b">Authorization: Bearer {API_KEY}</code>
+            </div>
+          </div>
+
+          <!-- Content-Type -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Content-Type</div>
+              <code style="font-size:14px;color:#1e293b">application/json</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Common Endpoints -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="card-title" style="margin-bottom:16px">Endpoints หลัก</h3>
+        <div class="table-container">
+          <table class="table">
+            <thead><tr><th>Method</th><th>Endpoint</th><th>คำอธิบาย</th></tr></thead>
+            <tbody id="endpointList"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Quick Test -->
+      <div class="card">
+        <h3 class="card-title" style="margin-bottom:12px">ทดสอบการเชื่อมต่อ</h3>
+        <p style="font-size:13px;color:#64748b;margin-bottom:16px">ใช้คำสั่ง cURL ด้านล่างเพื่อทดสอบ API (แทนที่ YOUR_API_KEY ด้วย API Key ของคุณ)</p>
+        <div style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:8px;font-family:monospace;font-size:13px;overflow-x:auto;white-space:pre;line-height:1.6" id="curlExample">-</div>
+        <button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="Page.copyText('curlExample')">คัดลอก cURL</button>
+      </div>
+    </div>
+
     <!-- Webhooks Tab -->
-    <div id="tab-webhooks">
+    <div id="tab-webhooks" style="display:none">
       <div class="page-header">
         <div><h2 class="page-title">Webhooks</h2><p class="page-subtitle">รับการแจ้งเตือนแบบ Real-time เมื่อเกิดเหตุการณ์ในระบบ</p></div>
         <button class="btn btn-primary" onclick="Page.openCreateWebhook()">+ สร้าง Webhook</button>
@@ -33,9 +116,6 @@
       <div class="page-header">
         <div><h2 class="page-title">API Keys</h2><p class="page-subtitle">จัดการ API Keys สำหรับเชื่อมต่อระบบภายนอก (REST API)</p></div>
         <button class="btn btn-primary" onclick="Page.openCreateApiKey()">+ สร้าง API Key</button>
-      </div>
-      <div class="card" style="padding:16px;margin-bottom:20px;background:var(--gray-50)">
-        <p class="text-sm text-gray-600">API Documentation: <a href="/swagger" target="_blank" class="text-primary">/swagger</a> | Base URL: <code style="background:var(--gray-200);padding:2px 6px;border-radius:4px">/api/companies/{companyId}/</code></p>
       </div>
       <div class="table-container">
         <table class="table">
@@ -119,15 +199,76 @@ const Page = {
 
   init() {
     if (!Layout.init('webhooks')) return;
-    Layout.setTitle('Webhooks & API Keys');
-    this.loadWebhooks();
+    Layout.setTitle('Webhooks & API');
+    this.renderConnectionInfo();
     this.loadEventTypes();
   },
 
   switchTab(tab) {
-    ['webhooks','apikeys'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
-    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['webhooks','apikeys'][i] === tab));
+    ['connection','webhooks','apikeys'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['connection','webhooks','apikeys'][i] === tab));
+    if (tab === 'webhooks') this.loadWebhooks();
     if (tab === 'apikeys') this.loadApiKeys();
+  },
+
+  renderConnectionInfo() {
+    const companyId = Layout.getCompanyId();
+    const origin = window.location.origin;
+    const apiBase = `${origin}/api/companies/${companyId}`;
+
+    document.getElementById('infoCompanyId').textContent = companyId || '(ยังไม่ได้เลือกบริษัท)';
+    document.getElementById('infoBaseUrl').textContent = origin;
+    document.getElementById('infoApiBase').textContent = `${origin}/api/companies/${companyId}/`;
+
+    // Endpoints table
+    const endpoints = [
+      ['GET', '/dashboard', 'ข้อมูลแดชบอร์ด (สรุปรายรับ-จ่าย)'],
+      ['GET', '/accounting/accounts', 'ดึงผังบัญชีทั้งหมด'],
+      ['GET', '/accounting/journals?page=1&pageSize=20', 'ดึงสมุดรายวัน'],
+      ['POST', '/accounting/journals', 'สร้างรายการบัญชี (Journal Entry)'],
+      ['GET', '/documents?side=revenue', 'ดึงเอกสารฝั่งรายรับ (ใบแจ้งหนี้, ใบเสร็จ)'],
+      ['GET', '/documents?side=expense', 'ดึงเอกสารฝั่งรายจ่าย'],
+      ['POST', '/documents', 'สร้างเอกสารใหม่'],
+      ['GET', '/contacts', 'ดึงรายชื่อลูกค้า/ผู้จำหน่าย'],
+      ['POST', '/contacts', 'สร้างผู้ติดต่อใหม่'],
+      ['GET', '/product', 'ดึงรายการสินค้า/บริการ'],
+      ['POST', '/product', 'สร้างสินค้า/บริการ'],
+      ['GET', '/payments', 'ดึงรายการชำระเงิน'],
+      ['POST', '/payments', 'สร้างรายการชำระเงิน'],
+      ['GET', '/reports/balance-sheet', 'งบแสดงฐานะการเงิน'],
+      ['GET', '/reports/income-statement', 'งบกำไรขาดทุน'],
+      ['GET', '/reports/trial-balance', 'งบทดลอง'],
+      ['GET', '/webhooks', 'ดึงรายการ Webhooks'],
+      ['GET', '/settings', 'ดึงการตั้งค่าบริษัท'],
+    ];
+
+    document.getElementById('endpointList').innerHTML = endpoints.map(([method, path, desc]) => {
+      const color = method === 'GET' ? '#059669' : method === 'POST' ? '#2563EB' : method === 'PUT' ? '#D97706' : '#DC2626';
+      return `<tr>
+        <td><span style="font-family:monospace;font-weight:700;color:${color};font-size:13px">${method}</span></td>
+        <td style="font-family:monospace;font-size:12px;word-break:break-all">${apiBase}${path}</td>
+        <td class="text-sm">${desc}</td>
+      </tr>`;
+    }).join('');
+
+    // cURL example
+    document.getElementById('curlExample').textContent =
+`curl -X GET "${apiBase}/dashboard" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json"`;
+  },
+
+  copyText(id) {
+    const el = document.getElementById(id);
+    const text = el.textContent || el.innerText;
+    navigator.clipboard.writeText(text).then(() => Layout.toast('คัดลอกแล้ว')).catch(() => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      document.execCommand('copy');
+      Layout.toast('คัดลอกแล้ว');
+    });
   },
 
   // ===== Webhooks =====
