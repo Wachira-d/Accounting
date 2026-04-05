@@ -278,10 +278,14 @@
 
     <!-- ===== Approval Tab ===== -->
     <div id="tabApproval" class="card hidden">
-      <h3 class="card-title" style="margin-bottom:16px">การอนุมัติ</h3>
+      <h3 class="card-title" style="margin-bottom:16px">การอนุมัติและการเข้าถึง</h3>
       <div class="form-group form-checkbox"><input type="checkbox" id="sRequireApproval"><label for="sRequireApproval">ต้องอนุมัติเอกสารก่อนส่ง</label></div>
       <div class="form-group"><label class="form-label">จำนวนเงินขั้นต่ำที่ต้องอนุมัติ</label><input type="number" class="form-input" id="sApprovalThreshold" step="0.01"></div>
       <div class="form-group form-checkbox"><input type="checkbox" id="sAllowFreelance"><label for="sAllowFreelance">อนุญาตนักบัญชีอิสระเข้าถึง</label></div>
+
+      <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">API Access</h4>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sEnableApiAccess"><label for="sEnableApiAccess">เปิดใช้งาน API Access (สร้าง API Key เชื่อมต่อระบบภายนอก)</label></div>
+      <div class="form-group"><label class="form-label">จำนวน API Key สูงสุด</label><input type="number" class="form-input" id="sMaxApiKeys" value="5" min="1" max="20" style="max-width:120px"></div>
     </div>
 
     <!-- ===== Numbering Tab ===== -->
@@ -610,6 +614,9 @@
           document.getElementById('sRequireApproval').checked = s.requireApprovalForDocuments || false;
           document.getElementById('sApprovalThreshold').value = s.approvalThresholdAmount || '';
           document.getElementById('sAllowFreelance').checked = s.allowFreelanceAccess || false;
+          // API Access
+          document.getElementById('sEnableApiAccess').checked = s.enableApiAccess || false;
+          document.getElementById('sMaxApiKeys').value = s.maxApiKeys || 5;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async uploadLogo() {
@@ -698,6 +705,9 @@
             requireApprovalForDocuments: document.getElementById('sRequireApproval').checked,
             approvalThresholdAmount: parseFloat(document.getElementById('sApprovalThreshold').value) || null,
             allowFreelanceAccess: document.getElementById('sAllowFreelance').checked,
+            // API Access
+            enableApiAccess: document.getElementById('sEnableApiAccess').checked,
+            maxApiKeys: parseInt(document.getElementById('sMaxApiKeys').value) || 5,
           });
           Layout.toast('บันทึกการตั้งค่าสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
