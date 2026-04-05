@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Accounting.Data;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -83,7 +84,18 @@ public class ApiKeyMiddleware
         apiKey.LastUsedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
 
-        // Set context
+        // Create ClaimsPrincipal so [Authorize] attribute passes
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, apiKey.CreatedByUserId.ToString()),
+            new("CompanyId", apiKey.CompanyId.ToString()),
+            new("ApiKeyId", apiKey.Id.ToString()),
+            new("AuthMethod", "ApiKey")
+        };
+        var identity = new ClaimsIdentity(claims, "ApiKey");
+        context.User = new ClaimsPrincipal(identity);
+
+        // Set context items
         context.Items["CompanyId"] = apiKey.CompanyId;
         context.Items["ApiKeyId"] = apiKey.Id;
         context.Items["ApiKeyFeatures"] = apiKey.AllowedFeatures;
