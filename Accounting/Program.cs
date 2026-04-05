@@ -290,9 +290,26 @@ if (app.Environment.IsProduction())
 }
 app.UseCors();
 
-// Static files (frontend)
+// Static files (frontend) — no-cache for HTML/JS/CSS to prevent stale content
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var path = ctx.File.Name.ToLower();
+        if (path.EndsWith(".html") || path.EndsWith(".js") || path.EndsWith(".css"))
+        {
+            ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+            ctx.Context.Response.Headers["Pragma"] = "no-cache";
+            ctx.Context.Response.Headers["Expires"] = "0";
+        }
+        else
+        {
+            // Cache images/fonts for 7 days
+            ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=604800";
+        }
+    }
+});
 
 // Serve uploaded files (logos, attachments)
 var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "uploads");
