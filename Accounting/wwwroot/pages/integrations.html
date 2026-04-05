@@ -203,8 +203,8 @@
         <div class="modal-header"><h3>API Key ของคุณ</h3><button class="modal-close" onclick="Page.closeModal('keyModal')">&times;</button></div>
         <div class="modal-body">
           <div style="background:#fef3c7;padding:12px;border-radius:8px;margin-bottom:16px"><p class="text-sm" style="color:#d97706;font-weight:600;margin:0">กรุณาคัดลอก API Key เก็บไว้ จะแสดงครั้งเดียวเท่านั้น</p></div>
-          <div class="form-group"><label class="form-label">API Key</label><div style="display:flex;gap:8px"><input type="text" id="resultApiKey" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultApiKey')">Copy</button></div></div>
-          <div class="form-group"><label class="form-label">Secret Key (HMAC Webhook Verification)</label><div style="display:flex;gap:8px"><input type="text" id="resultSecret" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultSecret')">Copy</button></div></div>
+          <div class="form-group"><label class="form-label">API Key</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="resultApiKey" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultApiKey')">Copy</button></div></div>
+          <div class="form-group"><label class="form-label">Secret Key (HMAC Webhook Verification)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="resultSecret" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultSecret')">Copy</button></div></div>
         </div>
         <div class="modal-footer"><button class="btn btn-primary" onclick="Page.closeModal('keyModal')">เข้าใจแล้ว ปิด</button></div>
       </div>

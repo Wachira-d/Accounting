@@ -40,7 +40,7 @@
       <div id="balByCategory" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap"></div>
     </div>
 
-    <div class="table-wrap">
+    <div class="table-container">
       <table class="data-table">
         <thead>
           <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หน่วย</th><th>หมวด</th><th style="text-align:right">จำนวนคงเหลือ</th><th style="text-align:right">ต้นทุนเฉลี่ย</th><th style="text-align:right">มูลค่ารวม</th></tr>
@@ -72,7 +72,7 @@
       </div>
     </div>
 
-    <div class="table-wrap">
+    <div class="table-container">
       <table class="data-table">
         <thead>
           <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หน่วย</th><th style="text-align:right">ยอดต้นงวด</th><th style="text-align:right">รับเข้า</th><th style="text-align:right">จ่ายออก</th><th style="text-align:right">ปรับปรุง</th><th style="text-align:right">ยอดปลายงวด</th></tr>
@@ -93,7 +93,7 @@
 
     <div id="agingBuckets" style="display:none;padding:16px;display:flex;gap:12px;flex-wrap:wrap;margin:16px 0"></div>
 
-    <div class="table-wrap">
+    <div class="table-container">
       <table class="data-table">
         <thead>
           <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หมวด</th><th style="text-align:right">จำนวน</th><th style="text-align:right">มูลค่า</th><th style="text-align:right">วันที่อยู่ในสต็อก</th><th>ช่วงอายุ</th><th>เคลื่อนไหวล่าสุด</th></tr>
@@ -115,7 +115,7 @@
       <button class="btn btn-primary" onclick="showCreateSnapshot()">สร้าง Snapshot ใหม่</button>
     </div>
 
-    <div class="table-wrap" style="margin-top:16px">
+    <div class="table-container" style="margin-top:16px">
       <table class="data-table">
         <thead>
           <tr><th>วันที่</th><th>รายละเอียด</th><th>สถานะ</th><th style="text-align:right">จำนวนรายการ</th><th style="text-align:right">มูลค่ารวม</th><th>บันทึกบัญชี</th><th>วันที่สร้าง</th><th></th></tr>
@@ -148,7 +148,7 @@
   <div id="snapshotDetailModal" class="modal hidden">
     <div class="modal-content" style="max-width:800px">
       <h3 class="modal-title" id="snapDetailTitle">รายละเอียด Snapshot</h3>
-      <div class="table-wrap">
+      <div class="table-container">
         <table class="data-table">
           <thead>
             <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หน่วย</th><th>หมวด</th><th style="text-align:right">จำนวน</th><th style="text-align:right">ต้นทุน/หน่วย</th><th style="text-align:right">มูลค่า</th></tr>

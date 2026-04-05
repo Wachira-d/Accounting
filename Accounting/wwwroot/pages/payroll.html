@@ -402,7 +402,7 @@ const Page = {
       document.getElementById('runDetailTitle').textContent = r.name || 'รายละเอียดรอบเงินเดือน';
       const details = r.details || r.employees || [];
       document.getElementById('runDetailContent').innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:16px;margin-bottom:20px">
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">งวด</div><div class="font-medium">${r.month}/${r.year}</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">วันจ่าย</div><div class="font-medium">${Layout.date(r.payDate||r.paymentDate)}</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
@@ -516,7 +516,7 @@ const Page = {
         const d = res.data || {};
         content.innerHTML = `
           <h3 style="margin-bottom:16px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.employeeCount || 0}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalIncome)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTax)}</div></div>
@@ -528,7 +528,7 @@ const Page = {
         const d = res.data || {};
         content.innerHTML = `
           <h3 style="margin-bottom:16px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.employeeCount || 0}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.employeeContribution)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.employerContribution)}</div></div>

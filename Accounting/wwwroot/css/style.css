@@ -319,7 +319,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .sidebar-footer { padding: 16px 20px; border-top: 1px solid var(--gray-800); }
 
 /* Main Content */
-.main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; background: var(--gray-50); }
+.main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; background: var(--gray-50); min-width: 0; overflow-x: hidden; }
 
 /* Header */
 .app-header { height: var(--header-height); background: #fff; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; position: sticky; top: 0; z-index: 40; }
@@ -338,7 +338,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .mobile-toggle { display: none; background: none; font-size: 24px; color: var(--gray-600); }
 
 /* Page Content */
-.page-content { padding: 24px; }
+.page-content { padding: 24px; max-width: 100%; overflow-x: hidden; }
 .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .page-title { font-size: 24px; font-weight: 700; color: var(--gray-800); }
 .page-subtitle { font-size: 14px; color: var(--gray-500); margin-top: 4px; }
@@ -424,11 +424,23 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
   .toolbar { flex-wrap: wrap; gap: 8px; }
-  .toolbar input, .toolbar select { min-width: 0; flex: 1 1 auto; }
+  .toolbar input, .toolbar select { min-width: 0; flex: 1 1 auto; max-width: 100%; }
+  .toolbar input[type="date"] { flex: 1 1 140px; width: auto; max-width: 180px; }
   .search-input { width: 100%; }
+
+  /* Prevent inline grids from overflowing */
+  .card [style*="display:grid"] { max-width: 100%; }
+  .form-row [style*="display:flex"] { flex-wrap: wrap; }
 
   /* Tables: ensure scrollable on mobile */
   .table-container { -webkit-overflow-scrolling: touch; }
+
+  /* Tabs: horizontal scroll on tablet/mobile */
+  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
+  .tabs .tab { white-space: nowrap; flex-shrink: 0; padding: 10px 14px; font-size: 13px; }
+
+  /* Page content */
+  .page-content { padding: 16px; }
 
   /* Modal: full width on mobile */
   .modal { width: 95%; max-width: none; max-height: 90vh; }
@@ -440,6 +452,15 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   /* Touch-friendly buttons and inputs */
   .btn { min-height: 40px; }
   .form-input, .form-select { min-height: 40px; font-size: 16px; /* prevents zoom on iOS */ }
+
+  /* Prevent all children from overflowing */
+  .card { overflow-x: auto; max-width: 100%; }
+
+  /* Header */
+  .app-header { padding: 0 12px; gap: 8px; }
+  .header-title { font-size: 15px; }
+  .header-right { gap: 8px; }
+  .header-user span { display: none; }
 
   /* CTA section */
   .cta-section h2 { font-size: 24px; }
@@ -470,9 +491,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .toast-container { top: 10px; right: 10px; left: 10px; }
   .toast { min-width: auto; width: 100%; }
 
-  /* Tabs scroll */
-  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
-  .tabs .tab { white-space: nowrap; flex-shrink: 0; }
+  .page-content { padding: 12px; }
 }
 
 /* Sidebar overlay for mobile */
