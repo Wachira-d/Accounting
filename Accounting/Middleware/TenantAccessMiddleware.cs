@@ -41,6 +41,13 @@ public class TenantAccessMiddleware
             return;
         }
 
+        // Skip tenant check for API Key auth (already validated in ApiKeyMiddleware)
+        if (context.Items.ContainsKey("IsApiKeyAuth"))
+        {
+            await _next(context);
+            return;
+        }
+
         // Extract company ID from route
         var companyId = ExtractCompanyId(context);
         if (companyId == null)
