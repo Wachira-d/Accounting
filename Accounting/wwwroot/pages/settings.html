@@ -6,6 +6,16 @@
   <title>ตั้งค่า - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    @media (max-width: 768px) {
+      #setupBanner { flex-wrap:wrap; }
+      #setupBanner .btn { width:100%; }
+      #industryTypeGrid { grid-template-columns: repeat(2, 1fr) !important; }
+      #coaPreviewPanel [style*="display:flex"] { flex-wrap:wrap; }
+      #seedCoaSection [style*="display:flex"] { flex-wrap:wrap; gap:8px; }
+      #seedCoaSection [style*="display:flex"] .btn { width:100%; }
+    }
+  </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
@@ -40,7 +50,7 @@
       <!-- Logo Upload Section -->
       <div style="margin-bottom:24px;padding:20px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
         <label class="form-label" style="font-weight:600;margin-bottom:12px;display:block">โลโก้บริษัท (แสดงหัวเอกสาร)</label>
-        <div style="display:flex;align-items:center;gap:16px">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div id="logoPreview" style="width:120px;height:80px;border:2px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff">
             <span style="color:#94a3b8;font-size:12px" id="logoPlaceholder">ยังไม่มีโลโก้</span>
           </div>

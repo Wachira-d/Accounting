@@ -123,7 +123,7 @@
               {v:a.over90,c:'var(--danger)',l:'>90'}
             ].filter(x=>x.v>0).map(x=>`<div style="width:${(x.v/a.total*100).toFixed(1)}%;background:${x.c}" title="${x.l}: ${Layout.money(x.v)}"></div>`).join('') : '<div style="width:100%;background:var(--gray-200)"></div>'}
           </div>
-          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;text-align:center">
             <div><div class="text-xs text-gray-500">ปัจจุบัน</div><div class="font-medium">${Layout.money(a.current)}</div></div>
             <div><div class="text-xs text-gray-500">1-30 วัน</div><div class="font-medium">${Layout.money(a.days1To30)}</div></div>
             <div><div class="text-xs text-gray-500">31-60 วัน</div><div class="font-medium">${Layout.money(a.days31To60)}</div></div>
@@ -295,7 +295,7 @@
                 {v:a.days31To60,c:'var(--warning)'},{v:a.days61To90,c:'#f97316'},{v:a.over90,c:'var(--danger)'}
               ].filter(x=>x.v>0).map(x=>`<div style="width:${(x.v/a.total*100).toFixed(1)}%;background:${x.c}"></div>`).join('') : '<div style="width:100%;background:var(--gray-200)"></div>'}
             </div>
-            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;text-align:center">
               <div><div class="text-xs text-gray-500">ปัจจุบัน</div><div class="font-medium">${Layout.money(a.current)}</div></div>
               <div><div class="text-xs text-gray-500">1-30</div><div class="font-medium">${Layout.money(a.days1To30)}</div></div>
               <div><div class="text-xs text-gray-500">31-60</div><div class="font-medium">${Layout.money(a.days31To60)}</div></div>

@@ -558,6 +558,7 @@
           </div>
 
           <!-- Line items -->
+          <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
           <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
             <thead>
               <tr style="background:#4F46E5;color:#fff">
@@ -580,10 +581,11 @@
               </tr>`).join('')}
             </tbody>
           </table>
+          </div>
 
           <!-- Totals -->
           <div style="display:flex;justify-content:flex-end">
-            <div style="width:300px">
+            <div style="width:100%;max-width:300px">
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ยอดรวมก่อนภาษี</span><span>${Layout.money(d.subTotal)}</span></div>
               ${isTaxInvoice ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
               ${d.withholdingTaxAmount > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>หัก ณ ที่จ่าย</span><span>-${Layout.money(d.withholdingTaxAmount)}</span></div>` : ''}
