@@ -398,6 +398,196 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired trials สำเร็จ"));
     }
 
+    // ===== Admin: Direct Subscription Management =====
+
+    /// <summary>
+    /// Admin: เปลี่ยนแพ็กเกจ (ไม่จำเป็นต้อง Active ก็เปลี่ยนได้)
+    /// </summary>
+    [HttpPut("companies/{companyId:guid}/subscription/plan")]
+    public async Task<ActionResult<ApiResponse<object>>> AdminChangePlan(
+        Guid companyId, [FromBody] AdminChangePlanRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบ subscription"));
+
+        var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.Plan && p.IsActive);
+
+        var oldPlan = sub.Plan;
+        sub.Plan = request.Plan;
+
+        if (request.BillingCycle.HasValue)
+            sub.BillingCycle = request.BillingCycle.Value;
+
+        // Use template pricing if available, or allow explicit price
+        if (request.PricePerCycle.HasValue)
+        {
+            sub.PricePerCycle = request.PricePerCycle.Value;
+        }
+        else if (template != null)
+        {
+            sub.PricePerCycle = sub.BillingCycle switch
+            {
+                BillingCycle.Monthly => template.MonthlyPrice,
+                BillingCycle.Quarterly => template.QuarterlyPrice,
+                BillingCycle.SemiAnnual => template.SemiAnnualPrice,
+                BillingCycle.Annual => template.AnnualPrice,
+                _ => template.MonthlyPrice
+            };
+        }
+
+        // Update limits from template if not overridden
+        if (template != null && !request.KeepCurrentLimits)
+        {
+            sub.EnabledFeatures = template.EnabledFeatures;
+            sub.MaxUsers = template.MaxUsers;
+            sub.MaxCompanies = template.MaxCompanies;
+            sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
+            sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
+            sub.MaxStorageBytes = template.MaxStorageBytes;
+        }
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "AdminPlanChanged",
+            FromPlan = oldPlan,
+            ToPlan = request.Plan,
+            Notes = $"Admin changed plan from {oldPlan} to {request.Plan}" + (request.Notes != null ? $": {request.Notes}" : ""),
+            PerformedBy = userId
+        });
+
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { sub.Plan, sub.BillingCycle, sub.PricePerCycle }, "เปลี่ยนแพ็กเกจสำเร็จ"));
+    }
+
+    /// <summary>
+    /// Admin: เปลี่ยนสถานะ subscription (Active, Trial, Expired, Cancelled, Suspended)
+    /// </summary>
+    [HttpPut("companies/{companyId:guid}/subscription/status")]
+    public async Task<ActionResult<ApiResponse<object>>> AdminChangeSubscriptionStatus(
+        Guid companyId, [FromBody] AdminChangeSubStatusRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบ subscription"));
+
+        var oldStatus = sub.Status;
+        sub.Status = request.Status;
+
+        if (request.Status == SubscriptionStatus.Cancelled)
+            sub.CancelledAt = DateTime.UtcNow;
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "AdminStatusChanged",
+            FromStatus = oldStatus,
+            ToStatus = request.Status,
+            Notes = $"Admin changed status from {oldStatus} to {request.Status}" + (request.Notes != null ? $": {request.Notes}" : ""),
+            PerformedBy = userId
+        });
+
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { sub.Status }, "เปลี่ยนสถานะ subscription สำเร็จ"));
+    }
+
+    /// <summary>
+    /// Admin: ปรับวันหมดอายุ / ต่ออายุ
+    /// </summary>
+    [HttpPut("companies/{companyId:guid}/subscription/dates")]
+    public async Task<ActionResult<ApiResponse<object>>> AdminChangeDates(
+        Guid companyId, [FromBody] AdminChangeDatesRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบ subscription"));
+
+        var oldEnd = sub.EndDate;
+
+        if (request.StartDate.HasValue)
+            sub.StartDate = request.StartDate.Value;
+        if (request.EndDate.HasValue)
+            sub.EndDate = request.EndDate.Value;
+        if (request.NextBillingDate.HasValue)
+            sub.NextBillingDate = request.NextBillingDate.Value;
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "AdminDatesChanged",
+            Notes = $"Admin changed end date from {oldEnd:yyyy-MM-dd} to {sub.EndDate:yyyy-MM-dd}" + (request.Notes != null ? $": {request.Notes}" : ""),
+            PerformedBy = userId
+        });
+
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { sub.StartDate, sub.EndDate, sub.NextBillingDate }, "ปรับวันที่สำเร็จ"));
+    }
+
+    /// <summary>
+    /// Admin: ปรับ Usage Limits (จำนวนผู้ใช้, เอกสาร, storage ฯลฯ)
+    /// </summary>
+    [HttpPut("companies/{companyId:guid}/subscription/limits")]
+    public async Task<ActionResult<ApiResponse<object>>> AdminChangeLimits(
+        Guid companyId, [FromBody] AdminChangeLimitsRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบ subscription"));
+
+        if (request.MaxUsers.HasValue) sub.MaxUsers = request.MaxUsers.Value;
+        if (request.MaxDocumentsPerMonth.HasValue) sub.MaxDocumentsPerMonth = request.MaxDocumentsPerMonth.Value;
+        if (request.MaxJournalEntriesPerMonth.HasValue) sub.MaxJournalEntriesPerMonth = request.MaxJournalEntriesPerMonth.Value;
+        if (request.MaxStorageBytes.HasValue) sub.MaxStorageBytes = request.MaxStorageBytes.Value;
+        if (request.MaxCompanies.HasValue) sub.MaxCompanies = request.MaxCompanies.Value;
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "AdminLimitsChanged",
+            Notes = $"Admin adjusted usage limits" + (request.Notes != null ? $": {request.Notes}" : ""),
+            PerformedBy = userId
+        });
+
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new {
+            sub.MaxUsers, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth,
+            sub.MaxStorageBytes, sub.MaxCompanies
+        }, "ปรับ limits สำเร็จ"));
+    }
+
+    /// <summary>
+    /// Admin: ดูประวัติการเปลี่ยนแปลง subscription
+    /// </summary>
+    [HttpGet("companies/{companyId:guid}/subscription/history")]
+    public async Task<ActionResult<ApiResponse<object>>> GetSubscriptionHistory(Guid companyId)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบ subscription"));
+
+        var history = await _db.SubscriptionHistories
+            .Where(h => h.SubscriptionId == sub.Id)
+            .OrderByDescending(h => h.CreatedAt)
+            .Take(50)
+            .Select(h => new
+            {
+                h.Id, h.Action, h.Notes,
+                fromPlan = h.FromPlan.HasValue ? h.FromPlan.Value.ToString() : null,
+                toPlan = h.ToPlan.HasValue ? h.ToPlan.Value.ToString() : null,
+                fromStatus = h.FromStatus.HasValue ? h.FromStatus.Value.ToString() : null,
+                toStatus = h.ToStatus.HasValue ? h.ToStatus.Value.ToString() : null,
+                h.PerformedBy, h.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>(true, history));
+    }
+
     // ===== Subscription Payment Review =====
 
     [HttpGet("subscription-payments/pending")]
