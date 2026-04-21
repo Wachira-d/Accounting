@@ -49,7 +49,7 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">จัดการทีม</h2><p class="page-subtitle">เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง</p></div>
+      <div><h2 class="page-title">จัดการทีม</h2><p class="page-subtitle" id="pageSubtitle">เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง</p></div>
       <button class="btn btn-primary" id="btnInvite" style="display:none" onclick="document.getElementById('addMemberSection').scrollIntoView({behavior:'smooth'}); document.getElementById('addEmail').focus();">+ เชิญสมาชิก</button>
     </div>
 
@@ -136,6 +136,11 @@
           ]);
           this.members = membersRes.data || [];
           this.maxUsers = usageRes?.data?.maxUsers || 999;
+
+          // Show company name so user knows which company they're managing
+          const companyName = Layout.currentCompany?.name || '';
+          document.getElementById('pageSubtitle').textContent =
+            companyName ? `${companyName} · เพิ่ม/ลบสมาชิก กำหนดสิทธิ์การเข้าถึง` : 'เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง';
 
           // Primary: use myRole from company data (injected by server per requesting user)
           // Fallback: find current user in members list (case-insensitive UUID + email match)
