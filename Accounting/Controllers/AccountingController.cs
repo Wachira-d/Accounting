@@ -113,6 +113,21 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "Void ใบสำคัญสำเร็จ"));
     }
 
+    [HttpPost("journals/batch-void")]
+    public async Task<ActionResult<ApiResponse<string>>> BatchVoidJournalEntries(
+        Guid companyId, [FromBody] BatchVoidRequest request)
+    {
+        var count = await _accountingService.BatchVoidJournalEntriesAsync(companyId, request.EntryIds);
+        return Ok(new ApiResponse<string>(true, null, $"ยกเลิกสำเร็จ {count} รายการ"));
+    }
+
+    [HttpPost("journals/batch-post")]
+    public async Task<ActionResult<ApiResponse<string>>> BatchPostJournalEntries(Guid companyId)
+    {
+        var count = await _accountingService.BatchPostJournalEntriesAsync(companyId);
+        return Ok(new ApiResponse<string>(true, null, $"ผ่านรายการสำเร็จ {count} รายการ"));
+    }
+
     // ===== General Ledger =====
 
     [HttpGet("reports/general-ledger")]

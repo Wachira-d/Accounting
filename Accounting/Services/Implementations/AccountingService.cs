@@ -262,6 +262,7 @@ public class AccountingService : IAccountingService
                 JournalType = request.JournalType,
                 Description = request.Description,
                 Reference = request.Reference,
+                Status = JournalEntryStatus.Posted,
                 TotalDebit = totalDebit,
                 TotalCredit = totalCredit,
                 CreatedBy = createdBy
@@ -333,7 +334,7 @@ public class AccountingService : IAccountingService
             query = query.Where(j => j.EntryDate >= fromDate.Value);
 
         if (toDate.HasValue)
-            query = query.Where(j => j.EntryDate <= toDate.Value);
+            query = query.Where(j => j.EntryDate < toDate.Value.Date.AddDays(1));
 
         var total = await query.CountAsync();
         var items = await query
@@ -378,22 +379,60 @@ public class AccountingService : IAccountingService
         var entry = await _db.JournalEntries.FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
 
+        if (entry.Status == JournalEntryStatus.Voided)
+            throw new InvalidOperationException("รายการนี้ถูกยกเลิกไปแล้ว");
+
         entry.Status = JournalEntryStatus.Voided;
+        entry.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+    }
+
+    public async Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds)
+    {
+        var entries = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id) && j.Status != JournalEntryStatus.Voided)
+            .ToListAsync();
+
+        foreach (var entry in entries)
+        {
+            entry.Status = JournalEntryStatus.Voided;
+            entry.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+        return entries.Count;
+    }
+
+    public async Task<int> BatchPostJournalEntriesAsync(Guid companyId)
+    {
+        var entries = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Draft)
+            .ToListAsync();
+
+        foreach (var entry in entries)
+        {
+            entry.Status = JournalEntryStatus.Posted;
+            entry.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+        return entries.Count;
     }
 
     // ==================== General Ledger ====================
 
     public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null)
     {
+        var toDateEnd = toDate.Date.AddDays(1);
+
         // Get all posted journal lines in date range
         var query = _db.JournalEntryLines
             .Include(l => l.Account)
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= fromDate
-                && l.JournalEntry.EntryDate <= toDate);
+                && l.JournalEntry.EntryDate >= fromDate.Date
+                && l.JournalEntry.EntryDate < toDateEnd);
 
         if (accountId.HasValue)
             query = query.Where(l => l.AccountId == accountId.Value);
@@ -409,7 +448,7 @@ public class AccountingService : IAccountingService
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate < fromDate);
+                && l.JournalEntry.EntryDate < fromDate.Date);
 
         if (accountId.HasValue)
             openingQuery = openingQuery.Where(l => l.AccountId == accountId.Value);
@@ -466,7 +505,7 @@ public class AccountingService : IAccountingService
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate <= asOfDate)
+                && l.JournalEntry.EntryDate < asOfDate.Date.AddDays(1))
             .ToListAsync();
 
         var grouped = postedLines
@@ -518,8 +557,8 @@ public class AccountingService : IAccountingService
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= fromDate
-                && l.JournalEntry.EntryDate <= toDate
+                && l.JournalEntry.EntryDate >= fromDate.Date
+                && l.JournalEntry.EntryDate < toDate.Date.AddDays(1)
                 && (l.Account.AccountType == AccountType.Revenue || l.Account.AccountType == AccountType.Expense))
             .ToListAsync();
 
@@ -552,8 +591,8 @@ public class AccountingService : IAccountingService
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= fromDate
-                && l.JournalEntry.EntryDate <= toDate)
+                && l.JournalEntry.EntryDate >= fromDate.Date
+                && l.JournalEntry.EntryDate < toDate.Date.AddDays(1))
             .ToListAsync();
 
         // Operating Activities: Revenue & Expense accounts + changes in current assets/liabilities
