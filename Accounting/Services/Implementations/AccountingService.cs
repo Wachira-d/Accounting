@@ -378,7 +378,11 @@ public class AccountingService : IAccountingService
         var entry = await _db.JournalEntries.FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
 
+        if (entry.Status == JournalEntryStatus.Voided)
+            throw new InvalidOperationException("รายการนี้ถูกยกเลิกไปแล้ว");
+
         entry.Status = JournalEntryStatus.Voided;
+        entry.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
 
