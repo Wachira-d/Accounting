@@ -75,19 +75,20 @@ public class CompanyService : ICompanyService
             .FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
-        // Check access
-        var hasAccess = await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
-        if (!hasAccess) throw new UnauthorizedAccessException("ไม่มีสิทธิ์เข้าถึงบริษัทนี้");
+        var cu = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        if (cu == null) throw new UnauthorizedAccessException("ไม่มีสิทธิ์เข้าถึงบริษัทนี้");
 
-        return MapToResponse(company);
+        return MapToResponse(company) with { MyRole = cu.Role.ToString() };
     }
 
     public async Task<List<CompanyResponse>> GetUserCompaniesAsync(Guid userId)
     {
-        var companyIds = await _db.CompanyUsers
+        var companyUsers = await _db.CompanyUsers
             .Where(cu => cu.UserId == userId)
-            .Select(cu => cu.CompanyId)
             .ToListAsync();
+
+        var companyIds = companyUsers.Select(cu => cu.CompanyId).ToList();
+        var roleMap = companyUsers.ToDictionary(cu => cu.CompanyId, cu => cu.Role.ToString());
 
         var companies = await _db.Companies
             .Include(c => c.Subscription)
@@ -95,7 +96,11 @@ public class CompanyService : ICompanyService
             .Where(c => companyIds.Contains(c.Id))
             .ToListAsync();
 
-        return companies.Select(MapToResponse).ToList();
+        return companies.Select(c => {
+            var resp = MapToResponse(c);
+            roleMap.TryGetValue(c.Id, out var role);
+            return resp with { MyRole = role };
+        }).ToList();
     }
 
     public async Task<CompanyResponse> UpdateAsync(Guid companyId, Guid userId, UpdateCompanyRequest request)

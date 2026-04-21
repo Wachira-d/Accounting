@@ -137,9 +137,16 @@
           this.members = membersRes.data || [];
           this.maxUsers = usageRes?.data?.maxUsers || 999;
 
-          // Determine current user's role
-          const me = this.members.find(m => m.userId === this.currentUserId);
-          this.currentUserRole = me?.role;
+          // Primary: use myRole from company data (injected by server per requesting user)
+          // Fallback: find current user in members list (case-insensitive UUID + email match)
+          const companyRole = Layout.currentCompany?.myRole;
+          const uid = (this.currentUserId || '').toLowerCase();
+          const email = (Layout.user?.email || '').toLowerCase();
+          const me = this.members.find(m =>
+            (m.userId || '').toLowerCase() === uid ||
+            (m.email || '').toLowerCase() === email
+          );
+          this.currentUserRole = companyRole || me?.role;
 
           // Platform SystemAdmin can always manage team regardless of CompanyUser role
           const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin' || this.isPlatformAdmin;
@@ -180,7 +187,8 @@
         document.getElementById('memberList').innerHTML = filtered.map(m => {
           const r = ROLES[m.role] || ROLE_DEFAULT;
           const initials = (m.fullName || '?').substring(0, 2);
-          const isMe = m.userId === this.currentUserId;
+          const isMe = (m.userId || '').toLowerCase() === (this.currentUserId || '').toLowerCase() ||
+                       (m.email || '').toLowerCase() === (Layout.user?.email || '').toLowerCase();
           const joinDate = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' }) : '-';
           const lastLogin = m.lastLoginAt ? Page.timeAgo(m.lastLoginAt) : 'ยังไม่เคยเข้าใช้';
 

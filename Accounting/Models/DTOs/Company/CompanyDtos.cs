@@ -80,7 +80,8 @@ public record CompanyResponse(
     string? Website,
     int FiscalYearStartMonth,
     bool IsSetupComplete,
-    SubscriptionSummary? Subscription);
+    SubscriptionSummary? Subscription,
+    string? MyRole = null);  // current requesting user's role in this company
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,
