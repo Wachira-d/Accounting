@@ -386,6 +386,22 @@ public class AccountingService : IAccountingService
         await _db.SaveChangesAsync();
     }
 
+    public async Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds)
+    {
+        var entries = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id) && j.Status != JournalEntryStatus.Voided)
+            .ToListAsync();
+
+        foreach (var entry in entries)
+        {
+            entry.Status = JournalEntryStatus.Voided;
+            entry.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+        return entries.Count;
+    }
+
     // ==================== General Ledger ====================
 
     public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null)

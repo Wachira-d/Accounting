@@ -65,6 +65,8 @@ public record JournalEntryResponse(
     List<JournalLineResponse> Lines,
     DateTime CreatedAt);
 
+public record BatchVoidRequest(List<Guid> EntryIds);
+
 public record JournalLineResponse(
     Guid Id,
     Guid AccountId,
