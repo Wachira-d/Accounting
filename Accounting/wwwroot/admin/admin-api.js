@@ -93,6 +93,9 @@ const AdminAPI = {
   subHistory(companyId) { return this.get(`/companies/${companyId}/subscription/history`); },
   updateTrialConfig(companyId, data) { return this.put(`/companies/${companyId}/trial`, data); },
 
+  // Company User Role Management (Admin override)
+  changeCompanyUserRole(companyId, userId, role) { return this.put(`/companies/${companyId}/users/${userId}/role`, { role }); },
+
   // Background processing
   processExpiredTrials() { return this.post('/trial/process-expired'); },
   processExpiredSubs() { return this.post('/subscription/process-expired'); },

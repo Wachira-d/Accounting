@@ -360,15 +360,26 @@
             <div class="detail-panel" id="panel-users">
               <div class="admin-table-wrap">
               <table class="admin-table">
-                <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th></tr></thead>
+                <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th><th>จัดการ</th></tr></thead>
                 <tbody>
                   ${d.users.length ? d.users.map(u => `<tr>
                     <td><strong>${u.fullName}</strong></td>
                     <td>${u.email}</td>
-                    <td>${AdminLayout.statusBadge(u.role)}</td>
+                    <td>
+                      <select style="font-size:12px;padding:3px 6px;border-radius:4px;border:1px solid #d1d5db"
+                        onchange="changeUserRole('${c.id}','${u.userId}',this.value)">
+                        <option value="Owner" ${u.role==='Owner'?'selected':''}>Owner</option>
+                        <option value="Accountant" ${u.role==='Accountant'?'selected':''}>นักบัญชี</option>
+                        <option value="Staff" ${u.role==='Staff'?'selected':''}>พนักงาน</option>
+                        <option value="Auditor" ${u.role==='Auditor'?'selected':''}>ผู้ตรวจสอบ</option>
+                        <option value="Viewer" ${u.role==='Viewer'?'selected':''}>ดูอย่างเดียว</option>
+                        <option value="ExternalAccountant" ${u.role==='ExternalAccountant'?'selected':''}>นักบัญชีภายนอก</option>
+                      </select>
+                    </td>
                     <td>${AdminLayout.statusBadge(u.status)}</td>
                     <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
-                  </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px">ไม่มีผู้ใช้</td></tr>'}
+                    <td><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="viewUser('${u.userId}')">ดูผู้ใช้</button></td>
+                  </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">ไม่มีผู้ใช้</td></tr>'}
                 </tbody>
               </table>
               </div>
@@ -502,6 +513,18 @@
         AdminLayout.toast('Trial หมดอายุแล้ว');
         await refreshDetail(companyId);
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function changeUserRole(companyId, userId, role) {
+      try {
+        await AdminAPI.changeCompanyUserRole(companyId, userId, role);
+        AdminLayout.toast(`เปลี่ยน Role เป็น ${role} สำเร็จ`);
+        await loadDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    function viewUser(userId) {
+      window.location.href = `/admin/users.html?userId=${userId}`;
     }
 
     async function loadHistory(companyId) {

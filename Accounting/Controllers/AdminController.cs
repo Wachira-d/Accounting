@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Settings;
 using Accounting.Models.DTOs.Subscription;
+using Accounting.Models.DTOs.Company;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Helpers;
@@ -333,6 +334,20 @@ public class AdminController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(new ApiResponse<string>(true, null, request.IsAdmin ? "กำหนดเป็น Admin สำเร็จ" : "ยกเลิกสิทธิ์ Admin สำเร็จ"));
+    }
+
+    [HttpPut("companies/{companyId:guid}/users/{userId:guid}/role")]
+    public async Task<ActionResult<ApiResponse<string>>> ChangeCompanyUserRole(
+        Guid companyId, Guid userId, [FromBody] UpdateUserRoleRequest request)
+    {
+        var cu = await _db.CompanyUsers
+            .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == userId);
+        if (cu == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบสมาชิกในบริษัทนี้"));
+
+        cu.Role = request.Role;
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<string>(true, null, $"เปลี่ยน Role เป็น {request.Role} สำเร็จ"));
     }
 
     // ===== Plan Template Management =====
