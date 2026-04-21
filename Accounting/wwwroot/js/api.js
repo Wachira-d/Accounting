@@ -104,6 +104,7 @@ const API = {
       postJournal: (id) => API.post(`${base}/accounting/journals/${id}/post`),
       voidJournal: (id) => API.post(`${base}/accounting/journals/${id}/void`),
       batchVoidJournals: (ids) => API.post(`${base}/accounting/journals/batch-void`, { entryIds: ids }),
+      batchPostJournals: () => API.post(`${base}/accounting/journals/batch-post`),
       generalLedger: (q = '') => API.get(`${base}/accounting/reports/general-ledger${q}`),
       trialBalance: (q = '') => API.get(`${base}/accounting/reports/trial-balance${q}`),
       balanceSheet: (q = '') => API.get(`${base}/accounting/reports/balance-sheet${q}`),

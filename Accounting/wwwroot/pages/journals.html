@@ -23,7 +23,10 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">สมุดรายวัน</h2><p class="page-subtitle">สมุดบัญชี 5 เล่มตามมาตรฐานบัญชีไทย</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-success" id="btnPostAll" style="display:none" onclick="Page.batchPostAll()">ผ่านรายการทั้งหมด</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
+      </div>
     </div>
 
     <!-- Journal Type Tabs -->
@@ -169,6 +172,7 @@
         this.updateTabs();
         await this.load();
         this.loadCounts();
+        this.checkDraftCount();
       },
       setType(type) {
         this.currentType = type;
@@ -424,6 +428,25 @@
           this.loadCounts();
           this.updateBatchBar();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async batchPostAll() {
+        if (!confirm('ต้องการผ่านรายการ (Post) ทุกรายการที่เป็นร่าง (Draft)?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.batchPostJournals();
+          Layout.toast(res.message || 'ผ่านรายการสำเร็จ');
+          await this.load();
+          this.loadCounts();
+          this.checkDraftCount();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async checkDraftCount() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getJournals('?page=1&pageSize=1&status=Draft');
+          const count = res.data?.totalCount ?? 0;
+          document.getElementById('btnPostAll').style.display = count > 0 ? '' : 'none';
+        } catch(e) {}
       }
     };
     Page.init();

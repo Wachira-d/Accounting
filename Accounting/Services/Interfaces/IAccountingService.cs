@@ -21,6 +21,7 @@ public interface IAccountingService
     Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId);
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
     Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
+    Task<int> BatchPostJournalEntriesAsync(Guid companyId);
 
     // General Ledger
     Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null);
