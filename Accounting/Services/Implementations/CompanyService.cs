@@ -217,6 +217,10 @@ public class CompanyService : ICompanyService
 
     private async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
     {
+        // Platform SystemAdmin bypasses company-level owner check
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (user?.IsSystemAdmin == true) return;
+
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == userId);
         if (cu == null || (cu.Role != UserRole.Owner && cu.Role != UserRole.SystemAdmin))
             throw new UnauthorizedAccessException("ต้องเป็น Owner เท่านั้น");

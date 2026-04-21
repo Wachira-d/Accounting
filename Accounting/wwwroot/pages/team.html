@@ -122,6 +122,7 @@
         if (!Layout.init('team')) return;
         Layout.setTitle('จัดการทีม');
         this.currentUserId = Layout.user?.id;
+        this.isPlatformAdmin = Layout.user?.isSystemAdmin === true;
         await this.load();
       },
 
@@ -140,8 +141,8 @@
           const me = this.members.find(m => m.userId === this.currentUserId);
           this.currentUserRole = me?.role;
 
-          // Show add form and invite button only for Owner or SystemAdmin
-          const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin';
+          // Platform SystemAdmin can always manage team regardless of CompanyUser role
+          const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin' || this.isPlatformAdmin;
           document.getElementById('addMemberSection').style.display = isOwner ? 'block' : 'none';
           document.getElementById('btnInvite').style.display = isOwner ? '' : 'none';
 
@@ -167,7 +168,7 @@
           m.fullName.toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
         ) : this.members;
 
-        const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin';
+        const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin' || this.isPlatformAdmin;
 
         if (!filtered.length) {
           document.getElementById('memberList').innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">ไม่พบสมาชิก</p>';
