@@ -6,6 +6,39 @@
   <title>จัดการลูกค้า - Admin Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .detail-tabs{display:flex;gap:0;border-bottom:2px solid #e2e8f0;margin-bottom:16px}
+    .detail-tab{padding:10px 18px;cursor:pointer;font-size:13px;font-weight:600;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;white-space:nowrap}
+    .detail-tab.active{color:#4f46e5;border-bottom-color:#4f46e5}
+    .detail-tab:hover{color:#1e293b}
+    .detail-panel{display:none}.detail-panel.active{display:block}
+    .info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+    .info-item .label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:2px;font-weight:600}
+    .info-item .value{font-size:14px;font-weight:500;color:#1e293b}
+    .action-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:12px}
+    .action-card h4{font-size:14px;margin:0 0 12px;color:#1e293b}
+    .action-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+    .action-row .field{display:flex;flex-direction:column;gap:4px}
+    .action-row .field label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase}
+    .action-row .field input,.action-row .field select{padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-width:140px}
+    .history-item{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:13px}
+    .history-item:last-child{border-bottom:none}
+    .history-dot{width:8px;height:8px;border-radius:50%;background:#4f46e5;margin-top:6px;flex-shrink:0}
+    .history-time{font-size:11px;color:#94a3b8;margin-top:2px}
+    .limit-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+    .limit-bar .bar{flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden}
+    .limit-bar .fill{height:100%;border-radius:3px;background:#4f46e5}
+    .limit-bar .fill.warn{background:#f59e0b}
+    .limit-bar .fill.full{background:#ef4444}
+    .limit-label{font-size:12px;color:#64748b;min-width:100px}
+    .limit-value{font-size:12px;font-weight:600;min-width:80px;text-align:right}
+    @media(max-width:768px){
+      .detail-tabs{overflow-x:auto}
+      .info-grid{grid-template-columns:1fr 1fr}
+      .action-row{flex-direction:column}
+      .action-row .field input,.action-row .field select{min-width:100%;width:100%}
+    }
+  </style>
 </head>
 <body>
   <div id="pageContent">
@@ -24,11 +57,12 @@
           <option value="Active">Active</option>
           <option value="Trial">Trial</option>
           <option value="Expired">Expired</option>
+          <option value="Suspended">Suspended</option>
+          <option value="PastDue">PastDue</option>
           <option value="Cancelled">Cancelled</option>
         </select>
         <button class="admin-btn admin-btn-primary" onclick="loadCustomers()">ค้นหา</button>
       </div>
-
       <div id="customerList">กำลังโหลด...</div>
       <div id="pagination" class="admin-pagination"></div>
     </div>
@@ -42,6 +76,7 @@
   <script>
     AdminLayout.init('customers');
     let currentPage = 1;
+    let currentDetail = null; // store current detail data
 
     async function loadCustomers(page = 1) {
       currentPage = page;
@@ -67,14 +102,14 @@
           <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr>
-              <th>บริษัท</th><th>เจ้าของ</th><th>แพ็กเกจ</th><th>สถานะ Subscription</th><th>ผู้ใช้</th><th>สมัครเมื่อ</th><th>หมดอายุ</th><th></th>
+              <th>บริษัท</th><th>เจ้าของ</th><th>แพ็กเกจ</th><th>สถานะ</th><th>ผู้ใช้</th><th>สมัครเมื่อ</th><th>หมดอายุ</th><th></th>
             </tr></thead>
             <tbody>
               ${d.items.map(c => `
                 <tr>
                   <td>
                     <strong>${c.name}</strong>
-                    <div style="font-size:12px;color:#94a3b8">Tax: ${c.taxId || '-'}</div>
+                    <div style="font-size:12px;color:#94a3b8">${c.taxId || '-'}</div>
                   </td>
                   <td>${c.owner ? `<div>${c.owner.fullName}</div><div style="font-size:12px;color:#94a3b8">${c.owner.email}</div>` : '-'}</td>
                   <td>${c.subscription ? AdminLayout.planBadge(c.subscription.plan) : '<span style="color:#94a3b8">-</span>'}</td>
@@ -83,7 +118,7 @@
                   <td>${AdminLayout.date(c.createdAt)}</td>
                   <td>${c.subscription ? AdminLayout.date(c.subscription.endDate) : '-'}</td>
                   <td>
-                    <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="showDetail('${c.id}')">ดูรายละเอียด</button>
+                    <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="showDetail('${c.id}')">จัดการ</button>
                   </td>
                 </tr>
               `).join('')}
@@ -92,7 +127,6 @@
           </div>
         `;
 
-        // Pagination
         let pagHtml = '';
         if (d.totalPages > 1) {
           pagHtml += `<button ${page <= 1 ? 'disabled' : ''} onclick="loadCustomers(${page - 1})">ก่อนหน้า</button>`;
@@ -102,7 +136,6 @@
           pagHtml += `<button ${page >= d.totalPages ? 'disabled' : ''} onclick="loadCustomers(${page + 1})">ถัดไป</button>`;
         }
         document.getElementById('pagination').innerHTML = pagHtml;
-
       } catch (err) {
         document.getElementById('customerList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
       }
@@ -111,132 +144,396 @@
     async function showDetail(companyId) {
       try {
         const res = await AdminAPI.customer(companyId);
-        const d = res.data;
-        const c = d.company;
-        const s = d.subscription;
-        const t = d.trial;
-
-        document.getElementById('detailModal').style.display = '';
-        document.getElementById('detailModal').innerHTML = `
-          <div class="admin-modal-overlay" onclick="if(event.target===this)closeModal()">
-            <div class="admin-modal" style="max-width:700px">
-              <h3>${c.name} ${s ? AdminLayout.planBadge(s.plan) : ''}</h3>
-
-              <div class="admin-grid-2" style="margin-bottom:16px">
-                <div>
-                  <div class="admin-label">เลขผู้เสียภาษี</div>
-                  <div>${c.taxId || '-'}</div>
-                </div>
-                <div>
-                  <div class="admin-label">สถานะบริษัท</div>
-                  <div>${AdminLayout.statusBadge(c.status)}</div>
-                </div>
-                <div>
-                  <div class="admin-label">ที่อยู่</div>
-                  <div>${[c.address, c.province].filter(Boolean).join(', ') || '-'}</div>
-                </div>
-                <div>
-                  <div class="admin-label">สมัครเมื่อ</div>
-                  <div>${AdminLayout.datetime(c.createdAt)}</div>
-                </div>
-              </div>
-
-              ${s ? `
-                <div class="admin-card" style="background:#f8fafc;border:1px solid #e2e8f0">
-                  <div class="admin-card-title" style="margin-bottom:12px">Subscription</div>
-                  <div class="admin-grid-3">
-                    <div><div class="admin-label">แพ็กเกจ</div>${AdminLayout.planBadge(s.plan)}</div>
-                    <div><div class="admin-label">สถานะ</div>${AdminLayout.statusBadge(s.status)}</div>
-                    <div><div class="admin-label">รอบบิล</div>${s.billingCycle}</div>
-                    <div><div class="admin-label">ราคา/รอบ</div>${AdminLayout.money(s.pricePerCycle)}</div>
-                    <div><div class="admin-label">เริ่มต้น</div>${AdminLayout.date(s.startDate)}</div>
-                    <div><div class="admin-label">หมดอายุ</div>${AdminLayout.date(s.endDate)}</div>
-                  </div>
-                </div>
-              ` : ''}
-
-              ${t ? `
-                <div class="admin-card" style="background:#eff6ff;border:1px solid #bfdbfe;margin-top:12px">
-                  <div class="admin-card-title" style="margin-bottom:12px">Trial Info</div>
-                  <div class="admin-grid-3">
-                    <div><div class="admin-label">เริ่ม Trial</div>${AdminLayout.date(t.trialStartDate)}</div>
-                    <div><div class="admin-label">สิ้นสุด</div>${AdminLayout.date(t.trialEndDate)}</div>
-                    <div><div class="admin-label">ต่ออายุแล้ว</div>${t.extensionsUsed}/${t.maxExtensions} ครั้ง</div>
-                    <div><div class="admin-label">หมดอายุแล้ว?</div>${t.isTrialExpired ? '<span style="color:red">ใช่</span>' : '<span style="color:green">ยัง</span>'}</div>
-                    <div><div class="admin-label">Grace Period</div>${AdminLayout.date(t.gracePeriodEndDate)}</div>
-                  </div>
-                </div>
-              ` : ''}
-
-              <div style="margin-top:16px">
-                <div class="admin-card-title" style="margin-bottom:8px">ผู้ใช้งาน (${d.users.length})</div>
-                <div class="admin-table-wrap">
-                <table class="admin-table">
-                  <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th></tr></thead>
-                  <tbody>
-                    ${d.users.map(u => `<tr>
-                      <td>${u.fullName}</td><td>${u.email}</td>
-                      <td>${AdminLayout.statusBadge(u.role)}</td>
-                      <td>${AdminLayout.statusBadge(u.status)}</td>
-                      <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
-                    </tr>`).join('')}
-                  </tbody>
-                </table>
-                </div>
-              </div>
-
-              <div style="margin-top:16px">
-                <div class="admin-card-title" style="margin-bottom:4px">การใช้งาน</div>
-                <div class="admin-flex" style="gap:24px;margin-top:8px">
-                  <div>เอกสาร: <strong>${d.usage.documents}</strong></div>
-                  <div>สมุดรายวัน: <strong>${d.usage.journalEntries}</strong></div>
-                </div>
-              </div>
-
-              ${d.recentPayments.length > 0 ? `
-                <div style="margin-top:16px">
-                  <div class="admin-card-title" style="margin-bottom:8px">การชำระเงินล่าสุด</div>
-                  <div class="admin-table-wrap">
-                  <table class="admin-table">
-                    <thead><tr><th>เลขที่</th><th>จำนวน</th><th>สถานะ</th><th>วันที่</th></tr></thead>
-                    <tbody>
-                      ${d.recentPayments.map(p => `<tr>
-                        <td>${p.paymentNumber}</td><td>${AdminLayout.money(p.amount)}</td>
-                        <td>${AdminLayout.statusBadge(p.status)}</td><td>${AdminLayout.date(p.createdAt)}</td>
-                      </tr>`).join('')}
-                    </tbody>
-                  </table>
-                  </div>
-                </div>
-              ` : ''}
-
-              <div class="admin-modal-actions">
-                <select id="statusSelect" class="admin-select" style="margin-right:auto">
-                  <option value="Active" ${c.status === 'Active' ? 'selected' : ''}>Active</option>
-                  <option value="Inactive" ${c.status === 'Inactive' ? 'selected' : ''}>Inactive</option>
-                  <option value="Suspended" ${c.status === 'Suspended' ? 'selected' : ''}>Suspended</option>
-                </select>
-                <button class="admin-btn admin-btn-primary" onclick="updateStatus('${c.id}')">อัพเดทสถานะ</button>
-                <button class="admin-btn admin-btn-outline" onclick="closeModal()">ปิด</button>
-              </div>
-            </div>
-          </div>
-        `;
+        currentDetail = res.data;
+        renderDetail();
       } catch (err) {
         AdminLayout.toast(err.message, 'error');
       }
     }
 
-    async function updateStatus(companyId) {
-      const status = document.getElementById('statusSelect').value;
+    function renderDetail() {
+      const d = currentDetail;
+      const c = d.company;
+      const s = d.subscription;
+      const t = d.trial;
+
+      const fmtDate = (d) => d ? new Date(d).toISOString().split('T')[0] : '';
+      const fmtBytes = (b) => {
+        if (!b) return '0 B';
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+        if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+        return (b/1073741824).toFixed(2) + ' GB';
+      };
+
+      document.getElementById('detailModal').style.display = '';
+      document.getElementById('detailModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeModal()">
+          <div class="admin-modal" style="max-width:900px;max-height:90vh;overflow-y:auto">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+              <h3 style="margin:0">${c.name} ${s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : ''}</h3>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="closeModal()" style="font-size:18px;padding:2px 10px">&times;</button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="detail-tabs">
+              <div class="detail-tab active" onclick="switchTab('overview',this)">ภาพรวม</div>
+              <div class="detail-tab" onclick="switchTab('subscription',this)">Subscription</div>
+              <div class="detail-tab" onclick="switchTab('actions',this)">จัดการ</div>
+              <div class="detail-tab" onclick="switchTab('users',this)">ผู้ใช้ (${d.users.length})</div>
+              <div class="detail-tab" onclick="switchTab('payments',this)">การชำระเงิน</div>
+              <div class="detail-tab" onclick="switchTab('history',this)">ประวัติ</div>
+            </div>
+
+            <!-- Overview -->
+            <div class="detail-panel active" id="panel-overview">
+              <div class="info-grid">
+                <div class="info-item"><div class="label">ชื่อบริษัท</div><div class="value">${c.name}</div></div>
+                <div class="info-item"><div class="label">เลขผู้เสียภาษี</div><div class="value">${c.taxId || '-'}</div></div>
+                <div class="info-item"><div class="label">สถานะบริษัท</div><div class="value">${AdminLayout.statusBadge(c.status)}</div></div>
+                <div class="info-item"><div class="label">สมัครเมื่อ</div><div class="value">${AdminLayout.datetime(c.createdAt)}</div></div>
+                <div class="info-item"><div class="label">ที่อยู่</div><div class="value">${[c.address, c.province].filter(Boolean).join(', ') || '-'}</div></div>
+                <div class="info-item"><div class="label">จำนวนเอกสาร</div><div class="value">${d.usage.documents}</div></div>
+                <div class="info-item"><div class="label">สมุดรายวัน</div><div class="value">${d.usage.journalEntries}</div></div>
+              </div>
+
+              <!-- Quick Status Change -->
+              <div class="action-card">
+                <h4>สถานะบริษัท</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>สถานะ</label>
+                    <select id="companyStatusSelect">
+                      ${['Active','Inactive','Suspended'].map(st => `<option value="${st}" ${c.status===st?'selected':''}>${st}</option>`).join('')}
+                    </select>
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="updateCompanyStatus('${c.id}')">อัพเดท</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subscription -->
+            <div class="detail-panel" id="panel-subscription">
+              ${s ? `
+                <div class="info-grid">
+                  <div class="info-item"><div class="label">แพ็กเกจ</div><div class="value">${AdminLayout.planBadge(s.plan)}</div></div>
+                  <div class="info-item"><div class="label">สถานะ Subscription</div><div class="value">${AdminLayout.statusBadge(s.status)}</div></div>
+                  <div class="info-item"><div class="label">รอบบิล</div><div class="value">${s.billingCycle}</div></div>
+                  <div class="info-item"><div class="label">ราคา/รอบ</div><div class="value">${AdminLayout.money(s.pricePerCycle)}</div></div>
+                  <div class="info-item"><div class="label">เริ่มต้น</div><div class="value">${AdminLayout.date(s.startDate)}</div></div>
+                  <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${AdminLayout.date(s.endDate)}</div></div>
+                  <div class="info-item"><div class="label">บิลถัดไป</div><div class="value">${AdminLayout.date(s.nextBillingDate)}</div></div>
+                </div>
+
+                ${s.limits ? `
+                <div style="margin-top:16px">
+                  <h4 style="font-size:14px;margin-bottom:12px">Usage Limits</h4>
+                  ${renderLimitBar('ผู้ใช้', s.current?.documentsThisMonth || 0, s.limits.maxUsers, d.users.length)}
+                  ${renderLimitBar('เอกสาร/เดือน', s.current?.documentsThisMonth || 0, s.limits.maxDocumentsPerMonth)}
+                  ${renderLimitBar('สมุดรายวัน/เดือน', s.current?.journalEntriesThisMonth || 0, s.limits.maxJournalEntriesPerMonth)}
+                  ${renderLimitBar('พื้นที่จัดเก็บ', s.current?.storageUsed || 0, s.limits.maxStorageBytes, null, true)}
+                </div>
+                ` : ''}
+
+                ${t ? `
+                <div style="margin-top:16px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
+                  <h4 style="font-size:14px;margin:0 0 8px;color:#1d4ed8">Trial Info</h4>
+                  <div class="info-grid">
+                    <div class="info-item"><div class="label">เริ่ม Trial</div><div class="value">${AdminLayout.date(t.trialStartDate)}</div></div>
+                    <div class="info-item"><div class="label">สิ้นสุด Trial</div><div class="value">${AdminLayout.date(t.trialEndDate)}</div></div>
+                    <div class="info-item"><div class="label">ต่ออายุแล้ว</div><div class="value">${t.extensionsUsed}/${t.maxExtensions} ครั้ง</div></div>
+                    <div class="info-item"><div class="label">หมดอายุ?</div><div class="value">${t.isTrialExpired ? '<span style="color:#ef4444">หมดแล้ว</span>' : '<span style="color:#16a34a">ยังใช้ได้</span>'}</div></div>
+                    <div class="info-item"><div class="label">Grace Period</div><div class="value">${AdminLayout.date(t.gracePeriodEndDate)}</div></div>
+                  </div>
+                </div>
+                ` : ''}
+              ` : '<p style="color:#94a3b8;text-align:center;padding:20px">ยังไม่มี Subscription</p>'}
+            </div>
+
+            <!-- Actions -->
+            <div class="detail-panel" id="panel-actions">
+              ${s ? `
+              <!-- Change Plan -->
+              <div class="action-card">
+                <h4>เปลี่ยนแพ็กเกจ</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>แพ็กเกจใหม่</label>
+                    <select id="actPlan">
+                      ${['FreeTrial','Basic','Pro','Enterprise'].map(p => `<option value="${p}" ${s.plan===p?'selected':''}>${p}</option>`).join('')}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>รอบบิล</label>
+                    <select id="actBillingCycle">
+                      ${['Monthly','Quarterly','SemiAnnual','Annual'].map(bc => `<option value="${bc}" ${s.billingCycle===bc?'selected':''}>${bc}</option>`).join('')}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>ราคา/รอบ (฿) - ว่าง=ใช้ตาม template</label>
+                    <input type="number" id="actPrice" placeholder="auto" step="0.01">
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangePlan('${c.id}')">เปลี่ยนแพ็กเกจ</button>
+                </div>
+              </div>
+
+              <!-- Change Status -->
+              <div class="action-card">
+                <h4>เปลี่ยนสถานะ Subscription</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>สถานะใหม่</label>
+                    <select id="actSubStatus">
+                      ${['Trial','Active','PastDue','Cancelled','Expired','Suspended'].map(st => `<option value="${st}" ${s.status===st?'selected':''}>${st}</option>`).join('')}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>หมายเหตุ</label>
+                    <input type="text" id="actSubStatusNote" placeholder="เหตุผล (optional)">
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangeSubStatus('${c.id}')">เปลี่ยนสถานะ</button>
+                </div>
+              </div>
+
+              <!-- Change Dates -->
+              <div class="action-card">
+                <h4>ปรับวันที่ / ต่ออายุ</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>วันเริ่ม</label>
+                    <input type="date" id="actStartDate" value="${fmtDate(s.startDate)}">
+                  </div>
+                  <div class="field">
+                    <label>วันหมดอายุ</label>
+                    <input type="date" id="actEndDate" value="${fmtDate(s.endDate)}">
+                  </div>
+                  <div class="field">
+                    <label>บิลถัดไป</label>
+                    <input type="date" id="actNextBilling" value="${fmtDate(s.nextBillingDate)}">
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangeDates('${c.id}')">อัพเดทวันที่</button>
+                </div>
+              </div>
+
+              <!-- Change Limits -->
+              <div class="action-card">
+                <h4>ปรับ Usage Limits</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>ผู้ใช้สูงสุด</label>
+                    <input type="number" id="actMaxUsers" value="${s.limits?.maxUsers || ''}" min="1">
+                  </div>
+                  <div class="field">
+                    <label>เอกสาร/เดือน</label>
+                    <input type="number" id="actMaxDocs" value="${s.limits?.maxDocumentsPerMonth || ''}" min="1">
+                  </div>
+                  <div class="field">
+                    <label>สมุดรายวัน/เดือน</label>
+                    <input type="number" id="actMaxJournals" value="${s.limits?.maxJournalEntriesPerMonth || ''}" min="1">
+                  </div>
+                  <div class="field">
+                    <label>Storage (MB)</label>
+                    <input type="number" id="actMaxStorage" value="${s.limits ? Math.round(s.limits.maxStorageBytes / 1048576) : ''}" min="1">
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangeLimits('${c.id}')">ปรับ Limits</button>
+                </div>
+              </div>
+
+              ${t ? `
+              <!-- Trial Actions -->
+              <div class="action-card" style="border-color:#bfdbfe;background:#f0f9ff">
+                <h4 style="color:#1d4ed8">จัดการ Trial</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>ขยายเวลา (วัน)</label>
+                    <input type="number" id="actExtendDays" value="14" min="1" max="365">
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doExtendTrial('${c.id}')">ขยายเวลา Trial</button>
+                  <button class="admin-btn admin-btn-outline admin-btn-sm" style="color:#ef4444;border-color:#ef4444" onclick="doExpireTrial('${c.id}')">บังคับหมดอายุ Trial</button>
+                </div>
+              </div>
+              ` : ''}
+              ` : '<p style="color:#94a3b8;text-align:center;padding:20px">ยังไม่มี Subscription ไม่สามารถจัดการได้</p>'}
+            </div>
+
+            <!-- Users -->
+            <div class="detail-panel" id="panel-users">
+              <div class="admin-table-wrap">
+              <table class="admin-table">
+                <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th></tr></thead>
+                <tbody>
+                  ${d.users.length ? d.users.map(u => `<tr>
+                    <td><strong>${u.fullName}</strong></td>
+                    <td>${u.email}</td>
+                    <td>${AdminLayout.statusBadge(u.role)}</td>
+                    <td>${AdminLayout.statusBadge(u.status)}</td>
+                    <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
+                  </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px">ไม่มีผู้ใช้</td></tr>'}
+                </tbody>
+              </table>
+              </div>
+            </div>
+
+            <!-- Payments -->
+            <div class="detail-panel" id="panel-payments">
+              ${d.recentPayments.length ? `
+              <div class="admin-table-wrap">
+              <table class="admin-table">
+                <thead><tr><th>เลขที่</th><th>จำนวน</th><th>วิธีชำระ</th><th>สถานะ</th><th>แพ็กเกจที่ขอ</th><th>วันที่</th></tr></thead>
+                <tbody>
+                  ${d.recentPayments.map(p => `<tr>
+                    <td>${p.paymentNumber}</td>
+                    <td>${AdminLayout.money(p.amount)}</td>
+                    <td>${p.paymentMethod || '-'}</td>
+                    <td>${AdminLayout.statusBadge(p.status)}</td>
+                    <td>${p.requestedPlan ? AdminLayout.planBadge(p.requestedPlan) : '-'}</td>
+                    <td>${AdminLayout.date(p.createdAt)}</td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+              </div>
+              ` : '<p style="text-align:center;color:#94a3b8;padding:20px">ยังไม่มีการชำระเงิน</p>'}
+            </div>
+
+            <!-- History -->
+            <div class="detail-panel" id="panel-history">
+              <div id="historyContent"><p style="text-align:center;color:#94a3b8;padding:20px">กดโหลดประวัติ</p></div>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="loadHistory('${c.id}')" style="margin-top:8px">โหลดประวัติการเปลี่ยนแปลง</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLimitBar(label, current, max, actualCount, isBytes) {
+      const used = actualCount != null ? actualCount : current;
+      const pct = max > 0 ? Math.min((used / max) * 100, 100) : 0;
+      const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
+      const fmtVal = isBytes
+        ? `${(used/1048576).toFixed(1)}/${(max/1048576).toFixed(0)} MB`
+        : `${used}/${max >= 99999 ? '∞' : max}`;
+      return `<div class="limit-bar">
+        <span class="limit-label">${label}</span>
+        <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>
+        <span class="limit-value">${fmtVal}</span>
+      </div>`;
+    }
+
+    function switchTab(tab, el) {
+      document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.detail-panel').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('panel-' + tab).classList.add('active');
+    }
+
+    // ===== Actions =====
+
+    async function updateCompanyStatus(companyId) {
+      const status = document.getElementById('companyStatusSelect').value;
       try {
         await AdminAPI.updateCustomerStatus(companyId, status);
-        AdminLayout.toast('อัพเดทสถานะสำเร็จ');
-        closeModal();
+        AdminLayout.toast('อัพเดทสถานะบริษัทสำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function doChangePlan(companyId) {
+      const plan = document.getElementById('actPlan').value;
+      const billingCycle = document.getElementById('actBillingCycle').value;
+      const priceVal = document.getElementById('actPrice').value;
+      try {
+        await AdminAPI.changePlan(companyId, {
+          plan, billingCycle,
+          pricePerCycle: priceVal ? parseFloat(priceVal) : null
+        });
+        AdminLayout.toast('เปลี่ยนแพ็กเกจสำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function doChangeSubStatus(companyId) {
+      const status = document.getElementById('actSubStatus').value;
+      const notes = document.getElementById('actSubStatusNote').value;
+      if (!confirm(`เปลี่ยนสถานะ subscription เป็น "${status}"?`)) return;
+      try {
+        await AdminAPI.changeSubStatus(companyId, { status, notes: notes || null });
+        AdminLayout.toast('เปลี่ยนสถานะ subscription สำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function doChangeDates(companyId) {
+      const startDate = document.getElementById('actStartDate').value || null;
+      const endDate = document.getElementById('actEndDate').value || null;
+      const nextBillingDate = document.getElementById('actNextBilling').value || null;
+      try {
+        await AdminAPI.changeDates(companyId, { startDate, endDate, nextBillingDate });
+        AdminLayout.toast('ปรับวันที่สำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function doChangeLimits(companyId) {
+      const maxUsers = parseInt(document.getElementById('actMaxUsers').value) || null;
+      const maxDocumentsPerMonth = parseInt(document.getElementById('actMaxDocs').value) || null;
+      const maxJournalEntriesPerMonth = parseInt(document.getElementById('actMaxJournals').value) || null;
+      const storageMB = parseInt(document.getElementById('actMaxStorage').value);
+      const maxStorageBytes = storageMB ? storageMB * 1048576 : null;
+      try {
+        await AdminAPI.changeLimits(companyId, { maxUsers, maxDocumentsPerMonth, maxJournalEntriesPerMonth, maxStorageBytes });
+        AdminLayout.toast('ปรับ limits สำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function doExtendTrial(companyId) {
+      const additionalDays = parseInt(document.getElementById('actExtendDays').value) || 14;
+      try {
+        await AdminAPI.extendTrial(companyId, { additionalDays });
+        AdminLayout.toast('ขยายเวลา Trial สำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function doExpireTrial(companyId) {
+      if (!confirm('บังคับให้ Trial หมดอายุทันที?')) return;
+      try {
+        await AdminAPI.expireTrial(companyId);
+        AdminLayout.toast('Trial หมดอายุแล้ว');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function loadHistory(companyId) {
+      try {
+        const res = await AdminAPI.subHistory(companyId);
+        const items = res.data || [];
+        if (!items.length) {
+          document.getElementById('historyContent').innerHTML = '<p style="text-align:center;color:#94a3b8">ไม่มีประวัติ</p>';
+          return;
+        }
+        document.getElementById('historyContent').innerHTML = items.map(h => `
+          <div class="history-item">
+            <div class="history-dot"></div>
+            <div style="flex:1;min-width:0">
+              <div><strong>${h.action}</strong></div>
+              ${h.fromPlan && h.toPlan ? `<div style="font-size:12px;color:#64748b">แพ็กเกจ: ${h.fromPlan} → ${h.toPlan}</div>` : ''}
+              ${h.fromStatus && h.toStatus ? `<div style="font-size:12px;color:#64748b">สถานะ: ${h.fromStatus} → ${h.toStatus}</div>` : ''}
+              ${h.notes ? `<div style="font-size:12px;color:#94a3b8">${h.notes}</div>` : ''}
+              <div class="history-time">${AdminLayout.datetime(h.createdAt)}</div>
+            </div>
+          </div>
+        `).join('');
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function refreshDetail(companyId) {
+      try {
+        const res = await AdminAPI.customer(companyId);
+        currentDetail = res.data;
+        renderDetail();
         loadCustomers(currentPage);
-      } catch (err) {
-        AdminLayout.toast(err.message, 'error');
-      }
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
     function closeModal() {

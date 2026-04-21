@@ -30,8 +30,10 @@ public class RateLimitMiddleware
             return;
         }
 
-        // Skip rate limiting for authenticated requests (have JWT token)
-        if (context.Request.Headers.ContainsKey("Authorization"))
+        // Skip rate limiting for authenticated requests (JWT token or API Key)
+        if (context.Request.Headers.ContainsKey("Authorization") ||
+            context.Request.Headers.ContainsKey("X-Api-Key") ||
+            context.Request.Headers.ContainsKey("X-Integration-Key"))
         {
             await _next(context);
             return;

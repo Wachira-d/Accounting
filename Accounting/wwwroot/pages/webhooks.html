@@ -63,7 +63,8 @@
           <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
             <div>
               <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Authentication Header</div>
-              <code style="font-size:14px;color:#1e293b">Authorization: Bearer {API_KEY}</code>
+              <code style="font-size:14px;color:#1e293b">X-Api-Key: {YOUR_API_KEY}</code>
+              <p style="font-size:12px;color:#94a3b8;margin:4px 0 0">สร้าง API Key ได้ที่แท็บ "API Keys" ด้านบน</p>
             </div>
           </div>
 
@@ -220,26 +221,38 @@ const Page = {
     document.getElementById('infoBaseUrl').textContent = origin;
     document.getElementById('infoApiBase').textContent = `${origin}/api/companies/${companyId}/`;
 
-    // Endpoints table
+    // Endpoints table — verified against actual controller routes
     const endpoints = [
+      // Dashboard
       ['GET', '/dashboard', 'ข้อมูลแดชบอร์ด (สรุปรายรับ-จ่าย)'],
+      // Chart of Accounts
       ['GET', '/accounting/accounts', 'ดึงผังบัญชีทั้งหมด'],
-      ['GET', '/accounting/journals?page=1&pageSize=20', 'ดึงสมุดรายวัน'],
+      ['POST', '/accounting/accounts', 'สร้างบัญชีใหม่'],
+      // Journal Entries
+      ['GET', '/accounting/journals?page=1&pageSize=20', 'ดึงสมุดรายวัน (รองรับ pagination)'],
       ['POST', '/accounting/journals', 'สร้างรายการบัญชี (Journal Entry)'],
-      ['GET', '/documents?side=revenue', 'ดึงเอกสารฝั่งรายรับ (ใบแจ้งหนี้, ใบเสร็จ)'],
-      ['GET', '/documents?side=expense', 'ดึงเอกสารฝั่งรายจ่าย'],
-      ['POST', '/documents', 'สร้างเอกสารใหม่'],
-      ['GET', '/contacts', 'ดึงรายชื่อลูกค้า/ผู้จำหน่าย'],
-      ['POST', '/contacts', 'สร้างผู้ติดต่อใหม่'],
+      ['POST', '/accounting/journals/{entryId}/post', 'อนุมัติรายการบัญชี'],
+      // Documents (ใบแจ้งหนี้, ใบเสร็จ, ใบกำกับภาษี)
+      ['GET', '/document?type=Invoice', 'ดึงเอกสารตามประเภท (Invoice, Receipt, PurchaseOrder, ...)'],
+      ['POST', '/document', 'สร้างเอกสารใหม่'],
+      // Contacts (ลูกค้า/ผู้จำหน่าย)
+      ['GET', '/document/contacts', 'ดึงรายชื่อลูกค้า/ผู้จำหน่าย'],
+      ['POST', '/document/contacts', 'สร้างผู้ติดต่อใหม่'],
+      // Products
       ['GET', '/product', 'ดึงรายการสินค้า/บริการ'],
       ['POST', '/product', 'สร้างสินค้า/บริการ'],
-      ['GET', '/payments', 'ดึงรายการชำระเงิน'],
-      ['POST', '/payments', 'สร้างรายการชำระเงิน'],
-      ['GET', '/reports/balance-sheet', 'งบแสดงฐานะการเงิน'],
-      ['GET', '/reports/income-statement', 'งบกำไรขาดทุน'],
-      ['GET', '/reports/trial-balance', 'งบทดลอง'],
-      ['GET', '/webhooks', 'ดึงรายการ Webhooks'],
+      // Payments
+      ['GET', '/document/payments', 'ดึงรายการชำระเงิน'],
+      ['POST', '/document/payments', 'สร้างรายการชำระเงิน'],
+      // Reports
+      ['GET', '/accounting/reports/trial-balance?asOfDate=2025-12-31', 'งบทดลอง'],
+      ['GET', '/accounting/reports/balance-sheet?asOfDate=2025-12-31', 'งบแสดงฐานะการเงิน'],
+      ['GET', '/accounting/reports/profit-loss?fromDate=2025-01-01&toDate=2025-12-31', 'งบกำไรขาดทุน'],
+      ['GET', '/accounting/reports/general-ledger?fromDate=2025-01-01&toDate=2025-12-31', 'บัญชีแยกประเภท'],
+      ['GET', '/accounting/reports/cash-flow?fromDate=2025-01-01&toDate=2025-12-31', 'งบกระแสเงินสด'],
+      // Settings & Webhooks
       ['GET', '/settings', 'ดึงการตั้งค่าบริษัท'],
+      ['GET', '/webhooks', 'ดึงรายการ Webhooks'],
     ];
 
     document.getElementById('endpointList').innerHTML = endpoints.map(([method, path, desc]) => {
@@ -253,8 +266,8 @@ const Page = {
 
     // cURL example
     document.getElementById('curlExample').textContent =
-`curl -X GET "${apiBase}/dashboard" \\
-  -H "Authorization: Bearer YOUR_API_KEY" \\
+`curl -X GET "${apiBase}/accounting/accounts" \\
+  -H "X-Api-Key: YOUR_API_KEY" \\
   -H "Content-Type: application/json"`;
   },
 

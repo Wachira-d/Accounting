@@ -306,3 +306,29 @@ public record UpdateTrialConfigRequest(
     decimal? DiscountPercentOnConversion,
     DateTime? DiscountValidUntil,
     string? ConversionPromoCode);
+
+// ===== Admin: Direct Subscription Management =====
+public record AdminChangePlanRequest(
+    SubscriptionPlan Plan,
+    BillingCycle? BillingCycle = null,
+    decimal? PricePerCycle = null,
+    bool KeepCurrentLimits = false,
+    string? Notes = null);
+
+public record AdminChangeSubStatusRequest(
+    SubscriptionStatus Status,
+    string? Notes = null);
+
+public record AdminChangeDatesRequest(
+    DateTime? StartDate = null,
+    DateTime? EndDate = null,
+    DateTime? NextBillingDate = null,
+    string? Notes = null);
+
+public record AdminChangeLimitsRequest(
+    int? MaxUsers = null,
+    int? MaxDocumentsPerMonth = null,
+    int? MaxJournalEntriesPerMonth = null,
+    long? MaxStorageBytes = null,
+    int? MaxCompanies = null,
+    string? Notes = null);

@@ -85,6 +85,14 @@ const AdminAPI = {
   expireTrial(companyId) { return this.post(`/companies/${companyId}/trial/expire`); },
   companyPayments(id) { return this.get(`/companies/${id}/subscription-payments`); },
 
+  // Admin: Direct Subscription Management
+  changePlan(companyId, data) { return this.put(`/companies/${companyId}/subscription/plan`, data); },
+  changeSubStatus(companyId, data) { return this.put(`/companies/${companyId}/subscription/status`, data); },
+  changeDates(companyId, data) { return this.put(`/companies/${companyId}/subscription/dates`, data); },
+  changeLimits(companyId, data) { return this.put(`/companies/${companyId}/subscription/limits`, data); },
+  subHistory(companyId) { return this.get(`/companies/${companyId}/subscription/history`); },
+  updateTrialConfig(companyId, data) { return this.put(`/companies/${companyId}/trial`, data); },
+
   // Background processing
   processExpiredTrials() { return this.post('/trial/process-expired'); },
   processExpiredSubs() { return this.post('/subscription/process-expired'); },
