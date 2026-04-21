@@ -3,17 +3,25 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>วัสดุสิ้นเปลือง - Accounting</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .tabs { display:flex; gap:4px; background:var(--gray-100); padding:4px; border-radius:10px; margin-bottom:16px; }
+    .tab { padding:8px 16px; border-radius:8px; border:none; background:transparent; cursor:pointer; font-size:13px; font-weight:500; color:var(--gray-600); transition:all .2s; }
+    .tab:hover { background:var(--gray-200); }
+    .tab.active { background:white; color:var(--primary); box-shadow:0 1px 3px rgba(0,0,0,.1); font-weight:600; }
+    .summary-cards { display:flex; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+    .summary-card { flex:1; min-width:140px; padding:16px; border:1px solid var(--gray-200); border-radius:10px; text-align:center; }
+    .summary-value { font-size:24px; font-weight:700; color:var(--gray-800); }
+    .summary-label { font-size:12px; color:var(--gray-500); margin-top:4px; }
+    .breakdown-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--gray-100); font-size:13px; }
+  </style>
 </head>
 <body>
-<div id="app">
-  <div id="layout"></div>
-  <main class="main-content">
+  <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <h1>วัสดุสิ้นเปลือง</h1>
-      <div class="header-actions">
-        <button class="btn btn-primary" onclick="Page.showUseModal()">เบิกใช้วัสดุ</button>
-      </div>
+      <div><h2 class="page-title">วัสดุสิ้นเปลือง</h2><p class="page-subtitle">Supplies - จัดการวัสดุสิ้นเปลืองและการเบิกใช้</p></div>
+      <button class="btn btn-primary" onclick="Page.showUseModal()">เบิกใช้วัสดุ</button>
     </div>
 
     <!-- Tabs -->
@@ -23,323 +31,310 @@
     </div>
 
     <!-- Tab: Balance -->
-    <div id="tab-balance" class="tab-content active">
-      <div class="card">
-        <div class="card-header">
-          <h3>วัสดุสิ้นเปลืองคงเหลือ</h3>
-          <div class="filters" style="display:flex;gap:8px;align-items:center;">
-            <select id="balanceCategory" onchange="Page.loadBalance()">
-              <option value="">ทุกหมวดหมู่</option>
-            </select>
-          </div>
-        </div>
-        <div id="balanceSummary" class="summary-cards" style="display:flex;gap:16px;margin-bottom:16px;"></div>
-        <div class="table-container">
-          <table class="table">
-            <thead><tr>
-              <th>รหัส</th><th>ชื่อวัสดุ</th><th>หมวด</th><th>หน่วย</th>
-              <th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th>
-              <th class="text-right">มูลค่า</th><th class="text-right">ขั้นต่ำ</th>
-              <th>สถานะ</th><th>จัดการ</th>
-            </tr></thead>
-            <tbody id="balanceBody"></tbody>
-          </table>
-        </div>
+    <div id="tab-balance" class="tab-content">
+      <div id="balanceSummary" class="summary-cards"></div>
+      <div class="filter-bar" style="margin-bottom:12px;">
+        <label style="font-size:13px;font-weight:500;color:var(--gray-600);">หมวดหมู่:</label>
+        <select class="form-select" id="balanceCategory" onchange="Page.loadBalance()" style="min-width:160px;">
+          <option value="">ทุกหมวดหมู่</option>
+        </select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr>
+            <th>รหัส</th><th>ชื่อวัสดุ</th><th>หมวด</th><th>หน่วย</th>
+            <th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th>
+            <th class="text-right">มูลค่า</th><th class="text-right">ขั้นต่ำ</th>
+            <th>สถานะ</th><th>จัดการ</th>
+          </tr></thead>
+          <tbody id="balanceBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
       </div>
     </div>
 
     <!-- Tab: Usage Summary -->
     <div id="tab-usage" class="tab-content" style="display:none;">
-      <div class="card">
-        <div class="card-header">
-          <h3>สรุปการเบิกใช้วัสดุ</h3>
-          <div class="filters" style="display:flex;gap:8px;align-items:center;">
-            <input type="date" id="usageFrom" style="padding:6px;">
-            <span>ถึง</span>
-            <input type="date" id="usageTo" style="padding:6px;">
-            <input type="text" id="usageDept" placeholder="แผนก" style="padding:6px;width:120px;">
-            <button class="btn btn-sm" onclick="Page.loadUsageSummary()">ค้นหา</button>
-          </div>
-        </div>
-        <div id="usageSummaryCards" style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;"></div>
-        <div class="table-container">
-          <table class="table">
-            <thead><tr>
-              <th>รหัส</th><th>ชื่อวัสดุ</th><th>หมวด</th><th>แผนก</th><th>หน่วย</th>
-              <th class="text-right">จำนวน</th><th class="text-right">มูลค่า</th>
-            </tr></thead>
-            <tbody id="usageBody"></tbody>
-          </table>
-        </div>
-        <div style="display:flex;gap:24px;margin-top:16px;">
-          <div id="deptChart" class="card" style="flex:1;padding:16px;">
-            <h4>ตามแผนก</h4>
-            <div id="deptChartBody"></div>
-          </div>
-          <div id="catChart" class="card" style="flex:1;padding:16px;">
-            <h4>ตามหมวดหมู่</h4>
-            <div id="catChartBody"></div>
-          </div>
-        </div>
+      <div class="filter-bar" style="margin-bottom:12px;">
+        <label style="font-size:13px;font-weight:500;color:var(--gray-600);">ช่วงวันที่:</label>
+        <input type="date" class="form-input" id="usageFrom" style="min-width:120px;">
+        <span class="text-gray-400">ถึง</span>
+        <input type="date" class="form-input" id="usageTo" style="min-width:120px;">
+        <input type="text" class="form-input" id="usageDept" placeholder="แผนก" style="width:140px;">
+        <button class="btn btn-primary btn-sm" onclick="Page.loadUsageSummary()">ค้นหา</button>
       </div>
-    </div>
-  </main>
-</div>
-
-<!-- Use Supplies Modal -->
-<div id="useModal" class="modal" style="display:none;">
-  <div class="modal-content" style="max-width:500px;">
-    <div class="modal-header">
-      <h3>เบิกใช้วัสดุสิ้นเปลือง</h3>
-      <button class="btn-close" onclick="Page.closeModal('useModal')">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>วัสดุ *</label>
-        <select id="useProductId" class="form-control" onchange="Page.onProductSelect()">
-          <option value="">เลือกวัสดุ</option>
-        </select>
-        <small id="useProductInfo" style="color:#666;"></small>
-      </div>
-      <div class="form-group">
-        <label>จำนวนที่เบิก *</label>
-        <input type="number" id="useQuantity" class="form-control" min="0.01" step="0.01">
-      </div>
-      <div class="form-group">
-        <label>แผนก/ห้อง</label>
-        <input type="text" id="useDepartment" class="form-control" placeholder="เช่น ห้อง 101, แผนกแม่บ้าน">
-      </div>
-      <div class="form-group">
-        <label>วัตถุประสงค์</label>
-        <input type="text" id="usePurpose" class="form-control" placeholder="เช่น เปลี่ยนผ้าปูประจำสัปดาห์">
-      </div>
-      <div class="form-group">
-        <label>เลขที่อ้างอิง</label>
-        <input type="text" id="useReference" class="form-control" placeholder="เช่น REQ-001">
-      </div>
-      <div class="form-group">
-        <label><input type="checkbox" id="useAutoJournal" checked> บันทึกบัญชีอัตโนมัติ (Dr ค่าวัสดุ / Cr วัสดุสิ้นเปลือง)</label>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn" onclick="Page.closeModal('useModal')">ยกเลิก</button>
-      <button class="btn btn-primary" onclick="Page.submitUse()">เบิกใช้</button>
-    </div>
-  </div>
-</div>
-
-<!-- Usage History Modal -->
-<div id="historyModal" class="modal" style="display:none;">
-  <div class="modal-content" style="max-width:700px;">
-    <div class="modal-header">
-      <h3 id="historyTitle">ประวัติการเบิกใช้</h3>
-      <button class="btn-close" onclick="Page.closeModal('historyModal')">&times;</button>
-    </div>
-    <div class="modal-body">
+      <div id="usageSummaryCards" class="summary-cards"></div>
       <div class="table-container">
         <table class="table">
           <thead><tr>
-            <th>วันที่</th><th>จำนวน</th><th>ต้นทุน</th><th>แผนก</th><th>วัตถุประสงค์</th><th>อ้างอิง</th>
+            <th>รหัส</th><th>ชื่อวัสดุ</th><th>หมวด</th><th>แผนก</th><th>หน่วย</th>
+            <th class="text-right">จำนวน</th><th class="text-right">มูลค่า</th>
           </tr></thead>
-          <tbody id="historyBody"></tbody>
+          <tbody id="usageBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">เลือกช่วงวันที่แล้วกด "ค้นหา"</td></tr></tbody>
         </table>
+      </div>
+      <div style="display:flex;gap:24px;margin-top:16px;">
+        <div style="flex:1;border:1px solid var(--gray-200);border-radius:10px;padding:16px;">
+          <h4 style="font-size:14px;font-weight:600;margin-bottom:8px;">ตามแผนก</h4>
+          <div id="deptChartBody"><p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p></div>
+        </div>
+        <div style="flex:1;border:1px solid var(--gray-200);border-radius:10px;padding:16px;">
+          <h4 style="font-size:14px;font-weight:600;margin-bottom:8px;">ตามหมวดหมู่</h4>
+          <div id="catChartBody"><p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p></div>
+        </div>
       </div>
     </div>
   </div>
-</div>
 
-<script src="/js/api.js"></script>
-<script src="/js/layout.js"></script>
-<script>
-const Page = {
-  supplies: [],
+  <!-- Use Supplies Modal -->
+  <div class="modal-overlay" id="useModal">
+    <div class="modal" style="max-width:500px;">
+      <div class="modal-header">
+        <h3 class="modal-title">เบิกใช้วัสดุสิ้นเปลือง</h3>
+        <button class="modal-close" onclick="Layout.closeModal('useModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">วัสดุ *</label>
+          <select id="useProductId" class="form-select" onchange="Page.onProductSelect()">
+            <option value="">เลือกวัสดุ</option>
+          </select>
+          <small id="useProductInfo" style="color:var(--gray-500);font-size:12px;"></small>
+        </div>
+        <div class="form-group">
+          <label class="form-label">จำนวนที่เบิก *</label>
+          <input type="number" id="useQuantity" class="form-input" min="0.01" step="0.01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">แผนก/ห้อง</label>
+          <input type="text" id="useDepartment" class="form-input" placeholder="เช่น ห้อง 101, แผนกแม่บ้าน">
+        </div>
+        <div class="form-group">
+          <label class="form-label">วัตถุประสงค์</label>
+          <input type="text" id="usePurpose" class="form-input" placeholder="เช่น เปลี่ยนผ้าปูประจำสัปดาห์">
+        </div>
+        <div class="form-group">
+          <label class="form-label">เลขที่อ้างอิง</label>
+          <input type="text" id="useReference" class="form-input" placeholder="เช่น REQ-001">
+        </div>
+        <div class="form-group">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="useAutoJournal" checked> บันทึกบัญชีอัตโนมัติ (Dr ค่าวัสดุ / Cr วัสดุสิ้นเปลือง)
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('useModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submitUse()">เบิกใช้</button>
+      </div>
+    </div>
+  </div>
 
-  async init() {
-    if (!Layout.init('supplies')) return;
-    API.init();
-    this.api = Layout.api();
-    if (!this.api) return;
-    this.setDefaultDates();
-    await this.loadBalance();
-    await this.loadCategories();
-  },
+  <!-- Usage History Modal -->
+  <div class="modal-overlay" id="historyModal">
+    <div class="modal" style="max-width:700px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="historyTitle">ประวัติการเบิกใช้</h3>
+        <button class="modal-close" onclick="Layout.closeModal('historyModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-container">
+          <table class="table">
+            <thead><tr>
+              <th>วันที่</th><th>จำนวน</th><th>ต้นทุน</th><th>แผนก</th><th>วัตถุประสงค์</th><th>อ้างอิง</th>
+            </tr></thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  setDefaultDates() {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-    document.getElementById('usageFrom').value = firstDay.toISOString().slice(0, 10);
-    document.getElementById('usageTo').value = now.toISOString().slice(0, 10);
-  },
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+  const Page = {
+    supplies: [],
 
-  switchTab(tab) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => { t.classList.remove('active'); t.style.display = 'none'; });
-    document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
-    const el = document.getElementById(`tab-${tab}`);
-    el.classList.add('active'); el.style.display = '';
-    if (tab === 'usage') this.loadUsageSummary();
-  },
+    async init() {
+      if (!Layout.init('supplies')) return;
+      Layout.setTitle('วัสดุสิ้นเปลือง');
+      this.api = Layout.api();
+      if (!this.api) return;
+      this.setDefaultDates();
+      await this.loadBalance();
+      await this.loadCategories();
+    },
 
-  async loadCategories() {
-    try {
-      const res = await this.api.getProductCategories();
-      if (res?.success && res.data) {
-        const sel = document.getElementById('balanceCategory');
-        res.data.forEach(c => { const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; sel.appendChild(o); });
-      }
-    } catch {}
-  },
+    setDefaultDates() {
+      const now = new Date();
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      document.getElementById('usageFrom').value = firstDay.toISOString().slice(0, 10);
+      document.getElementById('usageTo').value = now.toISOString().slice(0, 10);
+    },
 
-  async loadBalance() {
-    try {
-      const cat = document.getElementById('balanceCategory').value;
-      const q = cat ? `?category=${encodeURIComponent(cat)}` : '';
-      const res = await this.api.getSuppliesBalance(q);
-      if (!res?.success) return;
-      const d = res.data;
+    switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => { t.classList.remove('active'); t.style.display = 'none'; });
+      document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+      const el = document.getElementById(`tab-${tab}`);
+      el.classList.add('active'); el.style.display = '';
+      if (tab === 'usage') this.loadUsageSummary();
+    },
 
-      document.getElementById('balanceSummary').innerHTML = `
-        <div class="summary-card"><div class="summary-value">${d.totalItems}</div><div class="summary-label">รายการ</div></div>
-        <div class="summary-card"><div class="summary-value">${this.fmt(d.totalValue)}</div><div class="summary-label">มูลค่ารวม (บาท)</div></div>
-        <div class="summary-card" style="border-color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">
-          <div class="summary-value" style="color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">${d.lowStockCount}</div>
-          <div class="summary-label">ต่ำกว่าขั้นต่ำ</div></div>`;
+    async loadCategories() {
+      try {
+        const res = await this.api.getProductCategories();
+        if (res?.success && res.data) {
+          const sel = document.getElementById('balanceCategory');
+          res.data.forEach(c => { const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; sel.appendChild(o); });
+        }
+      } catch {}
+    },
 
-      this.supplies = d.items || [];
-      document.getElementById('balanceBody').innerHTML = d.items.length === 0
-        ? '<tr><td colspan="10" class="text-center">ไม่พบวัสดุสิ้นเปลือง</td></tr>'
-        : d.items.map(i => `<tr>
-          <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td><td>${i.unit}</td>
-          <td class="text-right">${this.fmtQty(i.currentStock)}</td>
-          <td class="text-right">${this.fmt(i.averageCost)}</td>
-          <td class="text-right">${this.fmt(i.totalValue)}</td>
-          <td class="text-right">${this.fmtQty(i.minimumStock)}</td>
-          <td>${i.isLow ? '<span class="badge badge-danger">ต่ำ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
-          <td><button class="btn btn-sm" onclick="Page.showHistory('${i.productId}','${i.productName}')">ประวัติ</button></td>
-        </tr>`).join('');
-    } catch (e) { console.error(e); }
-  },
+    async loadBalance() {
+      try {
+        const cat = document.getElementById('balanceCategory').value;
+        const q = cat ? `?category=${encodeURIComponent(cat)}` : '';
+        const res = await this.api.getSuppliesBalance(q);
+        if (!res?.success) return;
+        const d = res.data;
 
-  async loadUsageSummary() {
-    try {
-      const from = document.getElementById('usageFrom').value;
-      const to = document.getElementById('usageTo').value;
-      const dept = document.getElementById('usageDept').value;
-      if (!from || !to) return;
-      let q = `?fromDate=${from}&toDate=${to}`;
-      if (dept) q += `&department=${encodeURIComponent(dept)}`;
+        document.getElementById('balanceSummary').innerHTML = `
+          <div class="summary-card"><div class="summary-value">${d.totalItems}</div><div class="summary-label">รายการ</div></div>
+          <div class="summary-card"><div class="summary-value">${this.fmt(d.totalValue)}</div><div class="summary-label">มูลค่ารวม (บาท)</div></div>
+          <div class="summary-card" style="border-color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">
+            <div class="summary-value" style="color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">${d.lowStockCount}</div>
+            <div class="summary-label">ต่ำกว่าขั้นต่ำ</div></div>`;
 
-      const res = await this.api.getSuppliesUsageSummary(q);
-      if (!res?.success) return;
-      const d = res.data;
-
-      document.getElementById('usageSummaryCards').innerHTML = `
-        <div class="summary-card"><div class="summary-value">${this.fmt(d.grandTotal)}</div><div class="summary-label">ยอดเบิกรวม (บาท)</div></div>
-        <div class="summary-card"><div class="summary-value">${d.items?.length || 0}</div><div class="summary-label">รายการ</div></div>
-        <div class="summary-card"><div class="summary-value">${d.byDepartment?.length || 0}</div><div class="summary-label">แผนก</div></div>`;
-
-      document.getElementById('usageBody').innerHTML = (!d.items || d.items.length === 0)
-        ? '<tr><td colspan="7" class="text-center">ไม่พบข้อมูล</td></tr>'
-        : d.items.map(i => `<tr>
-          <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td>
-          <td>${i.department || '-'}</td><td>${i.unit}</td>
-          <td class="text-right">${this.fmtQty(i.totalQuantity)}</td>
-          <td class="text-right">${this.fmt(i.totalCost)}</td>
-        </tr>`).join('');
-
-      // Department breakdown
-      document.getElementById('deptChartBody').innerHTML = (d.byDepartment || []).map(x =>
-        `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee;">
-          <span>${x.department}</span>
-          <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
-        </div>`).join('') || '<p style="color:#999;">ไม่มีข้อมูล</p>';
-
-      // Category breakdown
-      document.getElementById('catChartBody').innerHTML = (d.byCategory || []).map(x =>
-        `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee;">
-          <span>${x.category}</span>
-          <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
-        </div>`).join('') || '<p style="color:#999;">ไม่มีข้อมูล</p>';
-    } catch (e) { console.error(e); }
-  },
-
-  async showUseModal() {
-    // Load supplies products
-    const sel = document.getElementById('useProductId');
-    sel.innerHTML = '<option value="">เลือกวัสดุ</option>';
-    try {
-      const res = await this.api.getProducts('?pageSize=200&search=');
-      if (res?.success && res.data?.items) {
-        res.data.items.filter(p => p.productType === 4 || p.productType === 'Supplies')
-          .forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = `${p.code} - ${p.name} (คงเหลือ: ${p.currentStock} ${p.unit})`; o.dataset.stock = p.currentStock; o.dataset.unit = p.unit; sel.appendChild(o); });
-      }
-    } catch {}
-    document.getElementById('useQuantity').value = '';
-    document.getElementById('useDepartment').value = '';
-    document.getElementById('usePurpose').value = '';
-    document.getElementById('useReference').value = '';
-    document.getElementById('useProductInfo').textContent = '';
-    document.getElementById('useModal').style.display = 'flex';
-  },
-
-  onProductSelect() {
-    const sel = document.getElementById('useProductId');
-    const opt = sel.options[sel.selectedIndex];
-    if (opt && opt.dataset.stock) {
-      document.getElementById('useProductInfo').textContent = `คงเหลือ: ${opt.dataset.stock} ${opt.dataset.unit}`;
-    }
-  },
-
-  async submitUse() {
-    const productId = document.getElementById('useProductId').value;
-    const quantity = parseFloat(document.getElementById('useQuantity').value);
-    if (!productId || !quantity || quantity <= 0) { Layout.toast('กรุณาเลือกวัสดุและระบุจำนวน', 'error'); return; }
-
-    try {
-      const res = await this.api.useSupplies({
-        productId, quantity,
-        department: document.getElementById('useDepartment').value || null,
-        purpose: document.getElementById('usePurpose').value || null,
-        reference: document.getElementById('useReference').value || null,
-        autoCreateJournal: document.getElementById('useAutoJournal').checked
-      });
-      if (res?.success) {
-        Layout.toast('เบิกใช้วัสดุสำเร็จ', 'success');
-        this.closeModal('useModal');
-        await this.loadBalance();
-      } else {
-        Layout.toast(res?.message || 'เกิดข้อผิดพลาด', 'error');
-      }
-    } catch (e) { Layout.toast(e.message || 'เกิดข้อผิดพลาด', 'error'); }
-  },
-
-  async showHistory(productId, productName) {
-    document.getElementById('historyTitle').textContent = `ประวัติการเบิกใช้ - ${productName}`;
-    try {
-      const res = await this.api.getSuppliesUsageHistory(productId);
-      if (res?.success) {
-        document.getElementById('historyBody').innerHTML = (res.data || []).length === 0
-          ? '<tr><td colspan="6" class="text-center">ไม่พบข้อมูล</td></tr>'
-          : res.data.map(u => `<tr>
-            <td>${new Date(u.usageDate).toLocaleDateString('th-TH')}</td>
-            <td>${this.fmtQty(u.quantity)} ${u.unit}</td>
-            <td>${this.fmt(u.totalCost)}</td>
-            <td>${u.department || '-'}</td>
-            <td>${u.purpose || '-'}</td>
-            <td>${u.reference || '-'}</td>
+        this.supplies = d.items || [];
+        document.getElementById('balanceBody').innerHTML = d.items.length === 0
+          ? '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่พบวัสดุสิ้นเปลือง</td></tr>'
+          : d.items.map(i => `<tr>
+            <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td><td>${i.unit}</td>
+            <td class="text-right">${this.fmtQty(i.currentStock)}</td>
+            <td class="text-right">${this.fmt(i.averageCost)}</td>
+            <td class="text-right">${this.fmt(i.totalValue)}</td>
+            <td class="text-right">${this.fmtQty(i.minimumStock)}</td>
+            <td>${i.isLow ? '<span class="badge badge-danger">ต่ำ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${i.productName}')">ประวัติ</button></td>
           </tr>`).join('');
+      } catch (e) { console.error(e); }
+    },
+
+    async loadUsageSummary() {
+      try {
+        const from = document.getElementById('usageFrom').value;
+        const to = document.getElementById('usageTo').value;
+        const dept = document.getElementById('usageDept').value;
+        if (!from || !to) return;
+        let q = `?fromDate=${from}&toDate=${to}`;
+        if (dept) q += `&department=${encodeURIComponent(dept)}`;
+
+        const res = await this.api.getSuppliesUsageSummary(q);
+        if (!res?.success) return;
+        const d = res.data;
+
+        document.getElementById('usageSummaryCards').innerHTML = `
+          <div class="summary-card"><div class="summary-value">${this.fmt(d.grandTotal)}</div><div class="summary-label">ยอดเบิกรวม (บาท)</div></div>
+          <div class="summary-card"><div class="summary-value">${d.items?.length || 0}</div><div class="summary-label">รายการ</div></div>
+          <div class="summary-card"><div class="summary-value">${d.byDepartment?.length || 0}</div><div class="summary-label">แผนก</div></div>`;
+
+        document.getElementById('usageBody').innerHTML = (!d.items || d.items.length === 0)
+          ? '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบข้อมูล</td></tr>'
+          : d.items.map(i => `<tr>
+            <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td>
+            <td>${i.department || '-'}</td><td>${i.unit}</td>
+            <td class="text-right">${this.fmtQty(i.totalQuantity)}</td>
+            <td class="text-right">${this.fmt(i.totalCost)}</td>
+          </tr>`).join('');
+
+        document.getElementById('deptChartBody').innerHTML = (d.byDepartment || []).map(x =>
+          `<div class="breakdown-row">
+            <span>${x.department}</span>
+            <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
+          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p>';
+
+        document.getElementById('catChartBody').innerHTML = (d.byCategory || []).map(x =>
+          `<div class="breakdown-row">
+            <span>${x.category}</span>
+            <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
+          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p>';
+      } catch (e) { console.error(e); }
+    },
+
+    async showUseModal() {
+      const sel = document.getElementById('useProductId');
+      sel.innerHTML = '<option value="">เลือกวัสดุ</option>';
+      try {
+        const res = await this.api.getProducts('?pageSize=200&search=');
+        if (res?.success && res.data?.items) {
+          res.data.items.filter(p => p.productType === 4 || p.productType === 'Supplies')
+            .forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = `${p.code} - ${p.name} (คงเหลือ: ${p.currentStock} ${p.unit})`; o.dataset.stock = p.currentStock; o.dataset.unit = p.unit; sel.appendChild(o); });
+        }
+      } catch {}
+      document.getElementById('useQuantity').value = '';
+      document.getElementById('useDepartment').value = '';
+      document.getElementById('usePurpose').value = '';
+      document.getElementById('useReference').value = '';
+      document.getElementById('useProductInfo').textContent = '';
+      Layout.openModal('useModal');
+    },
+
+    onProductSelect() {
+      const sel = document.getElementById('useProductId');
+      const opt = sel.options[sel.selectedIndex];
+      if (opt && opt.dataset.stock) {
+        document.getElementById('useProductInfo').textContent = `คงเหลือ: ${opt.dataset.stock} ${opt.dataset.unit}`;
       }
-    } catch {}
-    document.getElementById('historyModal').style.display = 'flex';
-  },
+    },
 
-  closeModal(id) { document.getElementById(id).style.display = 'none'; },
+    async submitUse() {
+      const productId = document.getElementById('useProductId').value;
+      const quantity = parseFloat(document.getElementById('useQuantity').value);
+      if (!productId || !quantity || quantity <= 0) { Layout.toast('กรุณาเลือกวัสดุและระบุจำนวน', 'error'); return; }
 
-  fmt(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
-  fmtQty(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
-};
+      try {
+        const res = await this.api.useSupplies({
+          productId, quantity,
+          department: document.getElementById('useDepartment').value || null,
+          purpose: document.getElementById('usePurpose').value || null,
+          reference: document.getElementById('useReference').value || null,
+          autoCreateJournal: document.getElementById('useAutoJournal').checked
+        });
+        if (res?.success) {
+          Layout.toast('เบิกใช้วัสดุสำเร็จ');
+          Layout.closeModal('useModal');
+          await this.loadBalance();
+        } else {
+          Layout.toast(res?.message || 'เกิดข้อผิดพลาด', 'error');
+        }
+      } catch (e) { Layout.toast(e.message || 'เกิดข้อผิดพลาด', 'error'); }
+    },
 
-document.addEventListener('DOMContentLoaded', () => Page.init());
-</script>
+    async showHistory(productId, productName) {
+      document.getElementById('historyTitle').textContent = `ประวัติการเบิกใช้ - ${productName}`;
+      try {
+        const res = await this.api.getSuppliesUsageHistory(productId);
+        if (res?.success) {
+          document.getElementById('historyBody').innerHTML = (res.data || []).length === 0
+            ? '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่พบข้อมูล</td></tr>'
+            : res.data.map(u => `<tr>
+              <td>${Layout.date(u.usageDate)}</td>
+              <td>${this.fmtQty(u.quantity)} ${u.unit}</td>
+              <td>${this.fmt(u.totalCost)}</td>
+              <td>${u.department || '-'}</td>
+              <td>${u.purpose || '-'}</td>
+              <td>${u.reference || '-'}</td>
+            </tr>`).join('');
+        }
+      } catch {}
+      Layout.openModal('historyModal');
+    },
+
+    fmt(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+    fmtQty(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
+  };
+  Page.init();
+  </script>
 </body>
 </html>
