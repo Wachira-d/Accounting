@@ -142,7 +142,8 @@ public record InboundJournalRequest(
     DateTime EntryDate,
     string? JournalType,       // "General", "Sales", "Purchase", "CashReceipts", "CashPayments"
     string? Description,
-    List<InboundJournalLineRequest> Lines);
+    List<InboundJournalLineRequest> Lines,
+    bool AutoBalanceVat = false);
 
 public record InboundJournalLineRequest(
     string AccountCode, decimal DebitAmount, decimal CreditAmount,
