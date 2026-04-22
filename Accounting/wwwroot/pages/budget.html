@@ -192,7 +192,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async remove(id) {
-        if (!confirm('ยืนยันลบงบประมาณนี้?')) return;
+        if (!(await Layout.confirmDanger({ title: 'ลบงบประมาณ', message: 'งบประมาณและรายการย่อยทั้งหมดจะถูกลบ', mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try { await api.deleteBudget(id); Layout.toast('ลบสำเร็จ'); this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }

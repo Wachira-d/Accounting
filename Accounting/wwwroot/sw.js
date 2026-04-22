@@ -1,44 +1,34 @@
-const CACHE_NAME = 'nextacc-v1';
-const STATIC_ASSETS = [
-  '/app.html',
-  '/login.html',
-  '/css/style.css',
-  '/js/api.js',
-  '/js/layout.js',
-  '/manifest.json'
-];
+const CACHE_VERSION = 'nextacc-v3';
+const CACHE_NAME = CACHE_VERSION;
 
-// Install: cache static assets
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
-  );
   self.skipWaiting();
 });
 
-// Activate: clean old caches
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch: network-first for API, cache-first for static
+// Message handler: allow page to force skipWaiting (for update prompt)
+self.addEventListener('message', event => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+});
+
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Skip non-GET requests
   if (event.request.method !== 'GET') return;
+  if (url.origin !== self.location.origin) return;
 
-  // API calls: network-first
+  // API calls: network-first with offline fallback
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(event.request)
         .then(response => {
-          // Cache successful GET API responses for offline
           if (response.ok) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
@@ -50,27 +40,39 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Static assets: cache-first
+  // HTML/JS/CSS: ALWAYS network-first so code updates show immediately
+  // Cache is used only as offline fallback
+  const isCode = /\.(html|js|css|json)$/i.test(url.pathname) || url.pathname === '/' || !/\.[a-z0-9]+$/i.test(url.pathname);
+  if (isCode) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then(response => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then(cached => cached || caches.match('/app.html')))
+    );
+    return;
+  }
+
+  // Images/fonts: cache-first (they rarely change)
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
       return fetch(event.request).then(response => {
-        if (response.ok && url.origin === self.location.origin) {
+        if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
       });
-    }).catch(() => {
-      // Offline fallback for HTML pages
-      if (event.request.headers.get('accept')?.includes('text/html')) {
-        return caches.match('/app.html');
-      }
     })
   );
 });
 
-// Push notifications
 self.addEventListener('push', event => {
   const data = event.data?.json() || { title: 'Next Acc', body: 'คุณมีการแจ้งเตือนใหม่' };
   event.waitUntil(

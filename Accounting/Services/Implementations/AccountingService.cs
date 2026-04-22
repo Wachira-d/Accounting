@@ -315,7 +315,7 @@ public class AccountingService : IAccountingService
         return MapJournalEntryToResponse(entry);
     }
 
-    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null)
+    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null)
     {
         var query = _db.JournalEntries
             .Include(j => j.Lines).ThenInclude(l => l.Account)
@@ -335,6 +335,35 @@ public class AccountingService : IAccountingService
 
         if (toDate.HasValue)
             query = query.Where(j => j.EntryDate < toDate.Value.Date.AddDays(1));
+
+        if (dimensionId.HasValue)
+        {
+            var dimLineIds = _db.Set<JournalLineDimension>()
+                .Where(d => d.DimensionId == dimensionId.Value)
+                .Select(d => d.JournalEntryLineId);
+            var dimEntryIds = _db.JournalEntryLines
+                .Where(l => dimLineIds.Contains(l.Id))
+                .Select(l => l.JournalEntryId);
+            query = query.Where(j => dimEntryIds.Contains(j.Id));
+        }
+
+        if (branchId.HasValue)
+        {
+            var branchDimId = await _db.Set<Branch>()
+                .Where(b => b.Id == branchId.Value && b.CompanyId == companyId)
+                .Select(b => b.DimensionId)
+                .FirstOrDefaultAsync();
+            if (branchDimId.HasValue)
+            {
+                var bLineIds = _db.Set<JournalLineDimension>()
+                    .Where(d => d.DimensionId == branchDimId.Value)
+                    .Select(d => d.JournalEntryLineId);
+                var bEntryIds = _db.JournalEntryLines
+                    .Where(l => bLineIds.Contains(l.Id))
+                    .Select(l => l.JournalEntryId);
+                query = query.Where(j => bEntryIds.Contains(j.Id));
+            }
+        }
 
         var total = await query.CountAsync();
         var items = await query
@@ -421,10 +450,19 @@ public class AccountingService : IAccountingService
 
     // ==================== General Ledger ====================
 
-    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null)
+    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null)
     {
         var fromDateStart = fromDate.Date;
         var toDateEnd = toDate.Date.AddDays(1);
+
+        Guid? effectiveDimId = dimensionId;
+        if (branchId.HasValue && !effectiveDimId.HasValue)
+        {
+            effectiveDimId = await _db.Set<Branch>()
+                .Where(b => b.Id == branchId.Value && b.CompanyId == companyId)
+                .Select(b => b.DimensionId)
+                .FirstOrDefaultAsync();
+        }
 
         // Query posted entry IDs as subquery to avoid Include/navigation filter issues
         var postedEntryIds = _db.JournalEntries
@@ -442,6 +480,14 @@ public class AccountingService : IAccountingService
 
         if (accountId.HasValue)
             lineQuery = lineQuery.Where(l => l.AccountId == accountId.Value);
+
+        if (effectiveDimId.HasValue)
+        {
+            var dimLineIds = _db.Set<JournalLineDimension>()
+                .Where(d => d.DimensionId == effectiveDimId.Value)
+                .Select(d => d.JournalEntryLineId);
+            lineQuery = lineQuery.Where(l => dimLineIds.Contains(l.Id));
+        }
 
         var lines = await lineQuery
             .OrderBy(l => l.Account!.AccountCode)

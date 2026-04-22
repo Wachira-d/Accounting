@@ -33,6 +33,7 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">สมุดบัญชีแยกประเภท</h2><p class="page-subtitle">General Ledger - แสดงรายการเคลื่อนไหวแยกตามบัญชี</p></div>
+      <div id="pageActions" style="display:flex;gap:8px"></div>
     </div>
 
     <div class="filter-bar">
@@ -43,6 +44,8 @@
       <select class="form-select" id="accountFilter" style="flex:1;min-width:120px">
         <option value="">ทุกบัญชี</option>
       </select>
+      <select class="form-select" id="dimProjectFilter" style="flex:1;min-width:140px"><option value="">ทุกโครงการ/มิติ</option></select>
+      <select class="form-select" id="dimBranchFilter" style="flex:1;min-width:120px"><option value="">ทุกสาขา</option></select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงข้อมูล</button>
     </div>
 
@@ -62,6 +65,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       data: null, currentTypeFilter: '',
@@ -75,7 +79,10 @@
         const y = now.getFullYear();
         document.getElementById('fromDate').value = `${y}-01-01`;
         document.getElementById('toDate').value = now.toISOString().split('T')[0];
-        // Load accounts for filter
+        // Render export buttons in header
+        const holder = document.getElementById('pageActions');
+        if (holder) holder.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportData(f)');
+        // Load accounts + dimensions + branches for filter
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getAccounts();
@@ -89,16 +96,73 @@
             sel.appendChild(opt);
           });
         } catch(e) {}
+        try {
+          const [dimRes, brRes] = await Promise.all([
+            api.getDimensions?.().catch(()=>null),
+            api.getBranches?.().catch(()=>null)
+          ]);
+          const dims = dimRes?.data?.items || dimRes?.data || [];
+          const ps = document.getElementById('dimProjectFilter');
+          if (ps) ps.innerHTML = '<option value="">ทุกโครงการ/มิติ</option>' +
+            dims.map(d => `<option value="${d.id}">${d.code ? `[${d.code}] ` : ''}${d.name || '-'}</option>`).join('');
+          const brs = brRes?.data?.items || brRes?.data || [];
+          const bs = document.getElementById('dimBranchFilter');
+          if (bs) bs.innerHTML = '<option value="">ทุกสาขา</option>' +
+            brs.map(b => `<option value="${b.id}">${b.code ? `[${b.code}] ` : ''}${b.name || '-'}</option>`).join('');
+        } catch(e) {}
         await this.load();
+      },
+      exportData(format) {
+        if (!this.data?.accounts?.length) { Layout.toast('ไม่มีข้อมูลให้ Export', 'error'); return; }
+        const rows = [];
+        (this.data.accounts || []).forEach(acc => {
+          (acc.entries || []).forEach(e => {
+            rows.push({
+              accountCode: acc.accountCode,
+              accountName: acc.accountName,
+              entryDate: e.entryDate,
+              entryNumber: e.entryNumber,
+              journalType: e.journalType,
+              description: e.description,
+              debitAmount: e.debitAmount,
+              creditAmount: e.creditAmount,
+              balance: e.balance
+            });
+          });
+        });
+        const cols = [
+          { key: 'accountCode', label: 'รหัสบัญชี' },
+          { key: 'accountName', label: 'ชื่อบัญชี' },
+          { key: 'entryDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+          { key: 'entryNumber', label: 'เลขที่' },
+          { key: 'journalType', label: 'ประเภท', format: v => this.journalTypeLabels[v] || v || '' },
+          { key: 'description', label: 'คำอธิบาย' },
+          { key: 'debitAmount', label: 'เดบิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'creditAmount', label: 'เครดิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'balance', label: 'ยอดคงเหลือ', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) }
+        ];
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        ExportUtil.exportData(format, {
+          rows, columns: cols,
+          filename: 'สมุดบัญชีแยกประเภท',
+          title: 'สมุดบัญชีแยกประเภท (General Ledger)',
+          subtitle: `ช่วงวันที่: ${from} ถึง ${to} | จำนวน ${rows.length} รายการ`,
+          landscape: true
+        });
       },
       async load() {
         const api = Layout.api(); if (!api) return;
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
         const accountId = document.getElementById('accountFilter').value;
+        const dim = document.getElementById('dimProjectFilter')?.value;
+        const br = document.getElementById('dimBranchFilter')?.value;
         if (!from || !to) { Layout.toast('กรุณาเลือกช่วงวันที่', 'error'); return; }
         let q = `?fromDate=${from}&toDate=${to}`;
         if (accountId) q += `&accountId=${accountId}`;
+        if (dim) q += `&dimensionId=${dim}`;
+        if (br) q += `&branchId=${br}`;
         const content = document.getElementById('ledgerContent');
         content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">กำลังโหลด...</div>';
         try {

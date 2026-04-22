@@ -78,9 +78,9 @@ public class AccountingController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<JournalEntryResponse>>>> GetJournalEntries(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
-        [FromQuery] string? journalType = null)
+        [FromQuery] string? journalType = null, [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null)
     {
-        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType);
+        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }
 
@@ -132,9 +132,10 @@ public class AccountingController : ControllerBase
 
     [HttpGet("reports/general-ledger")]
     public async Task<ActionResult<ApiResponse<GeneralLedgerResponse>>> GetGeneralLedger(
-        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, [FromQuery] Guid? accountId = null)
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, [FromQuery] Guid? accountId = null,
+        [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null)
     {
-        var result = await _accountingService.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId);
+        var result = await _accountingService.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId, dimensionId, branchId);
         return Ok(new ApiResponse<GeneralLedgerResponse>(true, result));
     }
 

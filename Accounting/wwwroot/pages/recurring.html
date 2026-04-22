@@ -244,7 +244,7 @@ const Page = {
   },
 
   async del(id) {
-    if (!confirm('ลบรายการประจำนี้?')) return;
+    if (!(await Layout.confirmDanger({ title: 'ลบรายการประจำ', message: 'การตั้งค่าและประวัติการรันจะถูกลบทั้งหมด', mode: 'math' }))) return;
     const api = Layout.api(); if (!api) return;
     try { await api.deleteRecurring(id); Layout.toast('ลบสำเร็จ'); Layout.closeModal('detailModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
   },

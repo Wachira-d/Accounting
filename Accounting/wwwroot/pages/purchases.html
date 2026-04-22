@@ -14,7 +14,7 @@
         <h2 class="page-title">ซื้อสินค้า</h2>
         <p class="page-subtitle">บันทึกซื้อสินค้า สร้างใบสั่งซื้อ และจัดการเอกสารฝั่งซื้อ</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2" id="pageActions">
         <button class="btn btn-primary" onclick="Page.openCreate('PurchaseOrder')">+ ใบสั่งซื้อ</button>
         <button class="btn btn-secondary" onclick="Page.openCreate('PurchaseInvoice')">+ บันทึกซื้อสินค้า</button>
       </div>
@@ -139,6 +139,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       page: 1, docType: '', contacts: [],
@@ -146,10 +147,39 @@
       async init() {
         if (!Layout.init('purchases')) return;
         Layout.setTitle('ซื้อสินค้า');
+        const pa = document.getElementById('pageActions');
+        if (pa && window.ExportUtil) pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
         const api = Layout.api(); if (!api) return;
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
         await this.load();
         this.loadStats();
+      },
+      async exportAll(format) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
+          let q = '?page=1&pageSize=10000';
+          if (this.docType) q += `&type=${this.docType}`;
+          const status = document.getElementById('statusFilter')?.value;
+          if (status) q += `&status=${status}`;
+          const res = await api.getDocuments(q);
+          let rows = res.data?.items || res.data || [];
+          if (!this.docType) rows = rows.filter(d => this._expenseTypes.includes(d.documentType));
+          const cols = [
+            { key: 'documentNumber', label: 'เลขที่' },
+            { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
+            { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+            { key: 'contact.name', label: 'ผู้จำหน่าย' },
+            { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'status', label: 'สถานะ' }
+          ];
+          ExportUtil.exportData(format, {
+            rows, columns: cols, filename: 'ซื้อสินค้า', title: 'ซื้อสินค้า',
+            subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
+          });
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
       async load() {
         if (typeof Page.init !== 'function') return;
@@ -347,7 +377,7 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidDoc(id) {
-        if (!confirm('ยกเลิกเอกสารนี้?')) return;
+        if (!(await Layout.confirmDanger({ title: 'ยกเลิกเอกสารซื้อ', message: 'เอกสารที่ถูกยกเลิกจะไม่นับในยอดซื้อ/ค่าใช้จ่ายและ GL', mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); this.loadStats(); }
         catch (e) { Layout.toast(e.message, 'error'); }

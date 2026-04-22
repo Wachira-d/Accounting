@@ -504,7 +504,7 @@
         } catch (e) { console.warn('Preview error:', e); }
       },
       async reseedAccounts() {
-        if (!confirm('รีเซ็ตผังบัญชีจะลบบัญชีระบบเดิมทั้งหมด (บัญชีที่ถูกใช้งานแล้วจะไม่ถูกลบ) ต้องการดำเนินการ?')) return;
+        if (!(await Layout.confirmDanger({ title: 'รีเซ็ตผังบัญชี', message: 'บัญชีระบบเดิมจะถูกลบทั้งหมด (บัญชีที่มีการเคลื่อนไหวจะคงไว้) — การดำเนินการนี้<b>ย้อนกลับไม่ได้</b>', mode: 'type', confirmText: 'confirm' }))) return;
         const api = Layout.api(); if (!api) return;
         const biz = document.getElementById('cBizType').value;
         const ind = document.getElementById('cIndustryType').value;

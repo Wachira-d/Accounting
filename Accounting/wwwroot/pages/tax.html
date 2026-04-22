@@ -11,7 +11,7 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">รายงานภาษี</h2><p class="page-subtitle">ภาษีมูลค่าเพิ่ม ภาษีหัก ณ ที่จ่าย</p></div>
-      <button class="btn btn-primary" onclick="Page.openGenerate()">+ สร้างรายงาน</button>
+      <div style="display:flex;gap:8px" id="pageActions"></div>
     </div>
 
     <!-- Summary Cards -->
@@ -97,6 +97,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       page: 1, taxType: '',
@@ -106,11 +107,32 @@
       async init() {
         if (!Layout.init('tax')) return;
         Layout.setTitle('รายงานภาษี');
+        const holder = document.getElementById('pageActions');
+        if (holder) holder.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportAll(f)') + '<button class="btn btn-primary" onclick="Page.openGenerate()">+ สร้างรายงาน</button>';
         // populate year filter
         const sel = document.getElementById('yearFilter');
         const curYear = new Date().getFullYear();
         for (let y = curYear; y >= curYear - 3; y--) { sel.innerHTML += `<option value="${y}">${y}</option>`; }
         await this.load();
+      },
+      exportAll(format) {
+        if (!this.allReports?.length) { Layout.toast('ไม่มีข้อมูลให้ Export', 'error'); return; }
+        const cols = [
+          { key: 'taxType', label: 'ประเภท', format: v => this.typeMap[v] || v },
+          { key: 'year', label: 'ปี' },
+          { key: 'month', label: 'เดือน', format: v => this.monthNames[v] || v },
+          { key: 'outputVat', label: 'ภาษีขาย', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'inputVat', label: 'ภาษีซื้อ', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'netVat', label: 'ภาษีสุทธิ', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'status', label: 'สถานะ' },
+          { key: 'filedDate', label: 'วันที่ยื่น', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' }
+        ];
+        ExportUtil.exportData(format, {
+          rows: this.allReports, columns: cols,
+          filename: 'รายงานภาษี',
+          title: 'รายงานภาษี', subtitle: `จำนวน ${this.allReports.length} รายการ`,
+          landscape: true
+        });
       },
       setType(el) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -250,7 +272,12 @@
         Layout.openModal('genModal');
       },
       async deleteReport(id) {
-        if (!confirm('ยืนยันลบรายงานภาษีนี้? (ไม่สามารถกู้คืนได้)')) return;
+        const ok = await Layout.confirmDanger({
+          title: 'ลบรายงานภาษี',
+          message: 'รายงานภาษีที่ลบจะไม่สามารถกู้คืนได้ หากต้องการบันทึกไว้ก่อนให้กด Export',
+          mode: 'type', confirmText: 'confirm'
+        });
+        if (!ok) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.deleteTaxReport(id);
@@ -260,7 +287,12 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async regenerateReport(id) {
-        if (!confirm('ต้องการสร้างรายงานภาษีใหม่? (ระบบจะลบรายงานเดิมและคำนวณใหม่จากข้อมูลปัจจุบัน)')) return;
+        const ok = await Layout.confirmDanger({
+          title: 'สร้างรายงานภาษีใหม่',
+          message: 'ระบบจะ<b>ลบรายงานเดิม</b>และคำนวณใหม่จากข้อมูลปัจจุบัน ยอดที่แสดงจะเปลี่ยนไป',
+          mode: 'math'
+        });
+        if (!ok) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.regenerateTaxReport(id);
