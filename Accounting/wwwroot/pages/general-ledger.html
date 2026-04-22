@@ -116,7 +116,19 @@
         if (!this.data?.accounts?.length) { Layout.toast('ไม่มีข้อมูลให้ Export', 'error'); return; }
         const rows = [];
         (this.data.accounts || []).forEach(acc => {
-          (acc.entries || []).forEach(e => {
+          // Opening balance row per account
+          rows.push({
+            accountCode: acc.accountCode,
+            accountName: acc.accountName,
+            entryDate: null,
+            entryNumber: '',
+            journalType: '',
+            description: 'ยอดยกมา',
+            debitAmount: 0,
+            creditAmount: 0,
+            balance: acc.openingBalance
+          });
+          (acc.transactions || []).forEach(e => {
             rows.push({
               accountCode: acc.accountCode,
               accountName: acc.accountName,
@@ -126,10 +138,23 @@
               description: e.description,
               debitAmount: e.debitAmount,
               creditAmount: e.creditAmount,
-              balance: e.balance
+              balance: e.runningBalance
             });
           });
+          // Closing total row per account
+          rows.push({
+            accountCode: acc.accountCode,
+            accountName: acc.accountName,
+            entryDate: null,
+            entryNumber: '',
+            journalType: '',
+            description: 'รวม / ยอดยกไป',
+            debitAmount: acc.totalDebit,
+            creditAmount: acc.totalCredit,
+            balance: acc.closingBalance
+          });
         });
+        if (!rows.length) { Layout.toast('ไม่มีรายการเคลื่อนไหวในช่วงวันที่', 'error'); return; }
         const cols = [
           { key: 'accountCode', label: 'รหัสบัญชี' },
           { key: 'accountName', label: 'ชื่อบัญชี' },

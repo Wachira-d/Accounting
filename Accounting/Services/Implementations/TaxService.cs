@@ -164,6 +164,93 @@ public class TaxService : ITaxService
             }
         }
 
+        // ===== Fallback: scan journal entries that have NO source document =====
+        // Handles data imported via /integration/journals or /integration/daily-summary
+        // which create JournalEntries without Documents.
+        // Detection by BOTH account code AND name to support custom charts:
+        //   - Output VAT: code starts with "219" or "215" OR name contains "ภาษีขาย"
+        //   - Input VAT: code starts with "116" or "114" or "115" OR name contains "ภาษีซื้อ"
+        var endDateInclusive = endDate.Date.AddDays(1);
+        var journalOnlyEntryIds = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= startDate && j.EntryDate < endDateInclusive
+                && j.SourceDocumentId == null)
+            .Select(j => j.Id)
+            .ToListAsync();
+
+        if (journalOnlyEntryIds.Any())
+        {
+            var vatLines = await _db.JournalEntryLines
+                .Include(l => l.Account)
+                .Include(l => l.JournalEntry)
+                .Where(l => journalOnlyEntryIds.Contains(l.JournalEntryId)
+                    && l.Account != null
+                    && (l.Account.AccountCode.StartsWith("219")
+                        || l.Account.AccountCode.StartsWith("215")
+                        || l.Account.AccountCode.StartsWith("116")
+                        || l.Account.AccountCode.StartsWith("114")
+                        || l.Account.AccountCode.StartsWith("115")
+                        || l.Account.AccountName.Contains("ภาษีขาย")
+                        || l.Account.AccountName.Contains("ภาษีซื้อ")))
+                .ToListAsync();
+
+            bool IsOutputVat(Models.Entities.ChartOfAccount a) =>
+                a.AccountCode.StartsWith("219") || a.AccountCode.StartsWith("215")
+                || a.AccountName.Contains("ภาษีขาย");
+            bool IsInputVat(Models.Entities.ChartOfAccount a) =>
+                a.AccountCode.StartsWith("116") || a.AccountCode.StartsWith("114") || a.AccountCode.StartsWith("115")
+                || a.AccountName.Contains("ภาษีซื้อ");
+
+            // Group by JournalEntry to aggregate VAT per entry
+            var byEntry = vatLines.GroupBy(l => l.JournalEntryId);
+            foreach (var grp in byEntry)
+            {
+                var je = grp.First().JournalEntry;
+                var outputVatLines = grp.Where(l => IsOutputVat(l.Account)).ToList();
+                var inputVatLines = grp.Where(l => IsInputVat(l.Account)).ToList();
+
+                // Output VAT: credit balance on liability account = VAT on sales
+                var outputVatAmt = outputVatLines.Sum(l => l.CreditAmount - l.DebitAmount);
+                if (outputVatAmt > 0)
+                {
+                    // Base amount = VAT / 0.07 (assuming 7% VAT)
+                    var baseAmount = Math.Round(outputVatAmt / 0.07m, 2);
+                    outputVat += outputVatAmt;
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TransactionDate = je.EntryDate,
+                        Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                        IncomeAmount = baseAmount,
+                        TaxRate = 7,
+                        TaxAmount = outputVatAmt,
+                        IncomeTypeCode = "JE_OUTPUT"
+                    });
+                }
+
+                // Input VAT: debit balance on 1140 = VAT on purchases
+                var inputVatAmt = inputVatLines.Sum(l => l.DebitAmount - l.CreditAmount);
+                if (inputVatAmt > 0)
+                {
+                    var baseAmount = Math.Round(inputVatAmt / 0.07m, 2);
+                    inputVat += inputVatAmt;
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TransactionDate = je.EntryDate,
+                        Description = $"[ภาษีซื้อ-JE] {je.EntryNumber} {je.Description}".Trim(),
+                        IncomeAmount = baseAmount,
+                        TaxRate = 7,
+                        TaxAmount = inputVatAmt,
+                        IncomeTypeCode = "JE_INPUT"
+                    });
+                }
+            }
+        }
+
         // Add summary line for VAT exempt sales/purchases
         if (vatExemptAmount != 0)
         {
@@ -663,6 +750,82 @@ public class TaxService : ITaxService
         report.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return MapToResponse(report);
+    }
+
+    public async Task<object> GetVatDebugAsync(Guid companyId, int year, int month)
+    {
+        var start = new DateTime(year, month, 1);
+        var end = start.AddMonths(1);
+
+        var docs = await _db.Documents
+            .Where(d => d.CompanyId == companyId
+                && d.DocumentDate >= start && d.DocumentDate < end
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.VatAmount, d.Status })
+            .ToListAsync();
+
+        var jeIds = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= start && j.EntryDate < end)
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.SourceDocumentId })
+            .ToListAsync();
+
+        var vatLines = await _db.JournalEntryLines
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate >= start && l.JournalEntry.EntryDate < end
+                && l.Account != null
+                && (l.Account.AccountCode.StartsWith("219")
+                    || l.Account.AccountCode.StartsWith("215")
+                    || l.Account.AccountCode.StartsWith("116")
+                    || l.Account.AccountCode.StartsWith("114")
+                    || l.Account.AccountCode.StartsWith("115")
+                    || l.Account.AccountName.Contains("ภาษีขาย")
+                    || l.Account.AccountName.Contains("ภาษีซื้อ")))
+            .Select(l => new
+            {
+                AccountCode = l.Account.AccountCode,
+                AccountName = l.Account.AccountName,
+                EntryNumber = l.JournalEntry.EntryNumber,
+                EntryDate = l.JournalEntry.EntryDate,
+                Debit = l.DebitAmount,
+                Credit = l.CreditAmount,
+                HasSourceDoc = l.JournalEntry.SourceDocumentId != null
+            })
+            .ToListAsync();
+
+        var byAccount = vatLines
+            .GroupBy(l => new { l.AccountCode, l.AccountName })
+            .Select(g => new
+            {
+                AccountCode = g.Key.AccountCode,
+                AccountName = g.Key.AccountName,
+                LineCount = g.Count(),
+                TotalDebit = g.Sum(l => l.Debit),
+                TotalCredit = g.Sum(l => l.Credit),
+                Balance = g.Sum(l => l.Credit - l.Debit)
+            })
+            .OrderBy(x => x.AccountCode)
+            .ToList();
+
+        return new
+        {
+            Period = $"{year}-{month:D2}",
+            DateRange = new { Start = start, End = end },
+            DocumentsInPeriod = docs.Count,
+            DocumentsWithVat = docs.Count(d => d.VatAmount != 0),
+            SampleDocuments = docs.Take(5),
+            JournalEntriesInPeriod = jeIds.Count,
+            JournalEntriesFromApi = jeIds.Count(j => j.SourceDocumentId == null),
+            JournalEntriesFromDocuments = jeIds.Count(j => j.SourceDocumentId != null),
+            VatAccountsFound = byAccount.Count,
+            VatAccountSummary = byAccount,
+            VatLinesTotal = vatLines.Count,
+            SampleVatLines = vatLines.Take(10)
+        };
     }
 
     public async Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId)

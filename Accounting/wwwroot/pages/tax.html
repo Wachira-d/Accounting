@@ -210,7 +210,8 @@
                 <div><span class="text-gray-500 text-xs">ภาษีซื้อ (Input VAT)</span><div class="text-lg font-bold">${Layout.money(d.inputVat)}</div></div>
                 <div><span class="text-gray-500 text-xs">ภาษีสุทธิ</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน'}</div></div>
               </div>
-            </div>`;
+            </div>
+            <div id="vatDebugBox"></div>`;
           if (d.lines && d.lines.length) {
             html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>#</th><th>รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
             html += d.lines.map((ln, i) => `<tr>
@@ -234,7 +235,50 @@
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
+          // Auto-diagnose if VAT amounts are zero
+          if (d.taxType === 'VAT' && Number(d.outputVat) === 0 && Number(d.inputVat) === 0) {
+            this.renderVatDiagnostic(d.year, d.month);
+          }
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async renderVatDiagnostic(year, month) {
+        const box = document.getElementById('vatDebugBox');
+        if (!box) return;
+        const api = Layout.api(); if (!api) return;
+        box.innerHTML = '<div class="text-center text-gray-400" style="padding:12px">กำลังวินิจฉัย...</div>';
+        try {
+          const res = await api.vatDebug(year, month);
+          const d = res.data;
+          let html = '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px;margin-top:8px;font-size:13px">';
+          html += '<div style="font-weight:600;margin-bottom:8px">🔍 วินิจฉัยทำไมยอดเป็น 0.00</div>';
+          html += '<table style="width:100%;border-collapse:collapse">';
+          html += `<tr><td style="padding:4px">ช่วงเดือน</td><td style="font-weight:600">${d.period}</td></tr>`;
+          html += `<tr><td style="padding:4px">เอกสาร (Documents) ในเดือน</td><td style="font-weight:600;${d.documentsInPeriod === 0 ? 'color:red' : ''}">${d.documentsInPeriod}</td></tr>`;
+          html += `<tr><td style="padding:4px">เอกสารที่มี VAT ≠ 0</td><td style="font-weight:600;${d.documentsWithVat === 0 ? 'color:red' : ''}">${d.documentsWithVat}</td></tr>`;
+          html += `<tr><td style="padding:4px">ใบสำคัญรายวัน (Posted)</td><td style="font-weight:600">${d.journalEntriesInPeriod}</td></tr>`;
+          html += `<tr><td style="padding:4px">JE จาก API (ไม่มี Document)</td><td style="font-weight:600">${d.journalEntriesFromApi}</td></tr>`;
+          html += `<tr><td style="padding:4px">JE จาก Document</td><td style="font-weight:600">${d.journalEntriesFromDocuments}</td></tr>`;
+          html += `<tr><td style="padding:4px">บัญชี VAT ที่พบ</td><td style="font-weight:600;${d.vatAccountsFound === 0 ? 'color:red' : ''}">${d.vatAccountsFound}</td></tr>`;
+          html += `<tr><td style="padding:4px">บรรทัด VAT ทั้งหมด</td><td style="font-weight:600;${d.vatLinesTotal === 0 ? 'color:red' : ''}">${d.vatLinesTotal}</td></tr>`;
+          html += '</table>';
+
+          if (d.vatAccountSummary?.length) {
+            html += '<div style="margin-top:10px;font-weight:600">สรุปบัญชี VAT ที่พบ:</div>';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:4px"><thead><tr style="background:#fef3c7"><th style="padding:4px;text-align:left">รหัส</th><th style="padding:4px;text-align:left">ชื่อบัญชี</th><th style="padding:4px;text-align:right">เดบิต</th><th style="padding:4px;text-align:right">เครดิต</th><th style="padding:4px;text-align:right">ยอด</th></tr></thead><tbody>';
+            d.vatAccountSummary.forEach(a => {
+              html += `<tr><td style="padding:3px">${a.accountCode}</td><td>${a.accountName}</td><td style="text-align:right">${Layout.money(a.totalDebit)}</td><td style="text-align:right">${Layout.money(a.totalCredit)}</td><td style="text-align:right;font-weight:600">${Layout.money(a.balance)}</td></tr>`;
+            });
+            html += '</tbody></table>';
+            html += '<div style="margin-top:8px;color:#065f46;font-size:12px">💡 ระบบพบบัญชี VAT จากรายการ JE — กด "สร้างใหม่" เพื่อคำนวณภาษีจากบัญชีเหล่านี้</div>';
+          } else if (d.journalEntriesInPeriod > 0) {
+            html += '<div style="margin-top:10px;color:#dc2626;font-size:12px">⚠️ พบใบสำคัญรายวัน แต่ไม่พบบัญชี VAT (รหัส 114x/115x/116x/215x/219x หรือชื่อมี "ภาษีขาย"/"ภาษีซื้อ")</div>';
+            html += '<div style="font-size:12px;color:#666;margin-top:4px">วิธีแก้: ตรวจสอบว่า journal lines ที่ยิงเข้ามามีบัญชี VAT หรือไม่ หรือแก้รหัสบัญชีให้ตรงกับมาตรฐาน</div>';
+          } else {
+            html += '<div style="margin-top:10px;color:#dc2626">⚠️ ไม่พบข้อมูลในเดือนนี้เลย — ตรวจสอบว่าวันที่ถูกต้องหรือไม่ (อาจต้องแก้ไขวันที่ +543 ปี)</div>';
+          }
+          html += '</div>';
+          box.innerHTML = html;
+        } catch(e) { box.innerHTML = ''; }
       },
       async saveReport(id) {
         const api = Layout.api(); if (!api) return;
