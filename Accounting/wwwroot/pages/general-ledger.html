@@ -70,10 +70,10 @@
       async init() {
         if (!Layout.init('general-ledger')) return;
         Layout.setTitle('บัญชีแยกประเภท');
-        // Default date range: current month
+        // Default date range: fiscal year (Jan 1 to today)
         const now = new Date();
-        const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
-        document.getElementById('fromDate').value = `${y}-${m}-01`;
+        const y = now.getFullYear();
+        document.getElementById('fromDate').value = `${y}-01-01`;
         document.getElementById('toDate').value = now.toISOString().split('T')[0];
         // Load accounts for filter
         const api = Layout.api(); if (!api) return;
@@ -105,7 +105,41 @@
           const res = await api.generalLedger(q);
           this.data = res.data;
           this.render();
+          if (!this.data?.accounts?.length) await this.showDiagnostics(api);
         } catch(e) { content.innerHTML = `<div class="text-center text-danger" style="padding:60px">${e.message}</div>`; }
+      },
+      async showDiagnostics(api) {
+        try {
+          const draftRes = await api.getJournals('?status=Draft&pageSize=1');
+          const allRes = await api.getJournals('?pageSize=1');
+          const draftCount = draftRes.data?.totalCount || 0;
+          const totalCount = allRes.data?.totalCount || 0;
+          const content = document.getElementById('ledgerContent');
+          let msg = '<div style="text-align:center;padding:40px">';
+          msg += '<div style="color:var(--gray-400);margin-bottom:16px">ไม่พบรายการในช่วงวันที่ที่เลือก</div>';
+          if (draftCount > 0) {
+            msg += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;display:inline-block;max-width:500px">`;
+            msg += `<div style="font-weight:600;color:#92400e;margin-bottom:8px">พบใบสำคัญสถานะ "ฉบับร่าง" ${draftCount} รายการ</div>`;
+            msg += `<div style="color:#92400e;font-size:13px;margin-bottom:12px">บัญชีแยกประเภทแสดงเฉพาะรายการที่ "ผ่านรายการ (Posted)" แล้วเท่านั้น</div>`;
+            msg += `<button class="btn btn-primary" onclick="Page.batchPost()" style="font-size:13px">ผ่านรายการทั้งหมด (${draftCount} รายการ)</button>`;
+            msg += `</div>`;
+          } else if (totalCount > 0) {
+            msg += `<div style="background:#eff6ff;border:1px solid #3b82f6;border-radius:8px;padding:16px;display:inline-block;max-width:500px">`;
+            msg += `<div style="color:#1e40af;font-size:13px">มีใบสำคัญในระบบ ${totalCount} รายการ แต่ไม่อยู่ในช่วงวันที่ที่เลือก</div>`;
+            msg += `<div style="color:#1e40af;font-size:13px;margin-top:4px">ลองขยายช่วงวันที่ให้กว้างขึ้น</div>`;
+            msg += `</div>`;
+          }
+          msg += '</div>';
+          content.innerHTML = msg;
+        } catch(e) {}
+      },
+      async batchPost() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.batchPostJournals();
+          Layout.toast(res.message || 'ผ่านรายการสำเร็จ', 'success');
+          await this.load();
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
       filterType(type) {
         this.currentTypeFilter = type;
