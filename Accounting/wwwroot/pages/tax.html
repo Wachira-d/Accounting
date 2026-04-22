@@ -43,10 +43,16 @@
       </select>
     </div>
 
+    <div id="taxSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
+      <span>เลือกแล้ว <b id="taxSelCount">0</b> รายงาน</span>
+      <span id="taxSelExportSlot"></span>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearTaxSelection()">ยกเลิกการเลือก</button>
+    </div>
+
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ประเภท</th><th>ปี</th><th>เดือน</th><th class="text-right">ภาษีขาย</th><th class="text-right">ภาษีซื้อ</th><th class="text-right">ภาษีสุทธิ</th><th>สถานะ</th><th>วันที่ยื่น</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="taxCheckAll" onchange="Page.toggleAllTax(this.checked)"></th><th>ประเภท</th><th>ปี</th><th>เดือน</th><th class="text-right">ภาษีขาย</th><th class="text-right">ภาษีซื้อ</th><th class="text-right">ภาษีสุทธิ</th><th>สถานะ</th><th>วันที่ยื่น</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -102,8 +108,57 @@
     const Page = {
       page: 1, taxType: '',
       allReports: [],
+      selectedTax: new Set(),
       typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล' },
       monthNames: ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'],
+      onTaxCheck(cb) {
+        if (cb.checked) this.selectedTax.add(cb.dataset.id); else this.selectedTax.delete(cb.dataset.id);
+        this._updateTaxSelectionBar();
+      },
+      toggleAllTax(checked) {
+        document.querySelectorAll('.tax-check').forEach(cb => {
+          cb.checked = checked;
+          if (checked) this.selectedTax.add(cb.dataset.id); else this.selectedTax.delete(cb.dataset.id);
+        });
+        this._updateTaxSelectionBar();
+      },
+      clearTaxSelection() {
+        this.selectedTax.clear();
+        document.querySelectorAll('.tax-check').forEach(cb => cb.checked = false);
+        const ca = document.getElementById('taxCheckAll'); if (ca) ca.checked = false;
+        this._updateTaxSelectionBar();
+      },
+      _updateTaxSelectionBar() {
+        const bar = document.getElementById('taxSelectionBar'); if (!bar) return;
+        const count = this.selectedTax.size;
+        document.getElementById('taxSelCount').textContent = count;
+        bar.style.display = count > 0 ? 'flex' : 'none';
+        const slot = document.getElementById('taxSelExportSlot');
+        if (slot && !slot._rendered && window.ExportUtil) {
+          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelectedTax(f)');
+          slot._rendered = true;
+        }
+      },
+      exportSelectedTax(format) {
+        const ids = [...this.selectedTax];
+        if (!ids.length) { Layout.toast('กรุณาเลือกรายงานก่อน', 'error'); return; }
+        const rows = this.allReports.filter(r => ids.includes(r.id));
+        if (!rows.length) { Layout.toast('ไม่พบรายงานที่เลือก', 'error'); return; }
+        const cols = [
+          { key: 'taxType', label: 'ประเภท', format: v => this.typeMap[v] || v },
+          { key: 'year', label: 'ปี' },
+          { key: 'month', label: 'เดือน', format: v => this.monthNames[v] || v },
+          { key: 'outputVat', label: 'ภาษีขาย', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'inputVat', label: 'ภาษีซื้อ', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'netVat', label: 'ภาษีสุทธิ', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'status', label: 'สถานะ' },
+          { key: 'filedDate', label: 'วันที่ยื่น', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' }
+        ];
+        ExportUtil.exportData(format, {
+          rows, columns: cols, filename: `รายงานภาษี_เลือก${rows.length}รายการ`,
+          title: 'รายงานภาษีที่เลือก', subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
+        });
+      },
       async init() {
         if (!Layout.init('tax')) return;
         Layout.setTitle('รายงานภาษี');
@@ -170,8 +225,9 @@
         let items = this.allReports;
         if (statusF) items = items.filter(r => r.status === statusF);
         const tbody = document.getElementById('tableBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>'; return; }
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>'; return; }
         tbody.innerHTML = items.map(r => `<tr>
+          <td><input type="checkbox" class="tax-check" data-id="${r.id}" ${this.selectedTax?.has(r.id) ? 'checked' : ''} onchange="Page.onTaxCheck(this)"></td>
           <td class="font-medium">${this.typeMap[r.taxType] || r.taxType}</td>
           <td>${r.year}</td>
           <td>${this.monthNames[r.month]}</td>
@@ -187,6 +243,7 @@
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')">ลบ</button>` : ''}
           </td>
         </tr>`).join('');
+        this._updateTaxSelectionBar();
       },
       goPage(p) { Page.page = p; Page.load(); },
       _currentReport: null,

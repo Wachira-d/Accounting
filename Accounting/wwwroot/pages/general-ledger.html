@@ -49,6 +49,13 @@
       <button class="btn btn-primary" onclick="Page.load()">แสดงข้อมูล</button>
     </div>
 
+    <div id="glSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
+      <span>เลือกแล้ว <b id="glSelCount">0</b> บัญชี</span>
+      <label style="margin-left:8px"><input type="checkbox" id="glSelectAll" onchange="Page.toggleAllAccounts(this.checked)"> เลือกทั้งหมดในหน้า</label>
+      <span id="glSelExportSlot"></span>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearAccountSelection()">ยกเลิกการเลือก</button>
+    </div>
+
     <div class="account-type-filters" id="typeFilters">
       <button class="account-type-btn active" data-type="" onclick="Page.filterType('')">ทั้งหมด</button>
       <button class="account-type-btn" data-type="Asset" onclick="Page.filterType('Asset')">สินทรัพย์</button>
@@ -69,8 +76,78 @@
   <script>
     const Page = {
       data: null, currentTypeFilter: '',
+      selectedAccounts: new Set(),
       journalTypeLabels: { 'General':'JV', 'Sales':'SV', 'Purchase':'UV', 'CashReceipts':'RV', 'CashPayments':'PV' },
       journalTypeColors: { 'General':'#6b7280', 'Sales':'#2563eb', 'Purchase':'#d97706', 'CashReceipts':'#059669', 'CashPayments':'#dc2626' },
+      onAccountCheck(cb) {
+        const id = cb.dataset.accountId;
+        if (cb.checked) this.selectedAccounts.add(id);
+        else this.selectedAccounts.delete(id);
+        this.updateSelectionBar();
+      },
+      toggleAllAccounts(checked) {
+        this.selectedAccounts.clear();
+        document.querySelectorAll('.gl-acct-check').forEach(cb => {
+          cb.checked = checked;
+          if (checked) this.selectedAccounts.add(cb.dataset.accountId);
+        });
+        this.updateSelectionBar();
+      },
+      clearAccountSelection() {
+        this.selectedAccounts.clear();
+        document.querySelectorAll('.gl-acct-check').forEach(cb => cb.checked = false);
+        const sa = document.getElementById('glSelectAll');
+        if (sa) sa.checked = false;
+        this.updateSelectionBar();
+      },
+      updateSelectionBar() {
+        const bar = document.getElementById('glSelectionBar');
+        const count = this.selectedAccounts.size;
+        document.getElementById('glSelCount').textContent = count;
+        bar.style.display = count > 0 ? 'flex' : 'none';
+        const slot = document.getElementById('glSelExportSlot');
+        if (slot && !slot._rendered) {
+          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelectedAccounts(f)');
+          slot._rendered = true;
+        }
+      },
+      exportSelectedAccounts(format) {
+        if (!this.selectedAccounts.size) { Layout.toast('กรุณาเลือกบัญชีก่อน', 'error'); return; }
+        const selected = (this.data?.accounts || []).filter(a => this.selectedAccounts.has(a.accountId));
+        if (!selected.length) { Layout.toast('ไม่พบบัญชีที่เลือกในข้อมูลปัจจุบัน', 'error'); return; }
+        const rows = [];
+        selected.forEach(acc => {
+          rows.push({ accountCode: acc.accountCode, accountName: acc.accountName, entryDate: null, entryNumber: '', journalType: '', description: 'ยอดยกมา', debitAmount: 0, creditAmount: 0, balance: acc.openingBalance });
+          (acc.transactions || []).forEach(e => {
+            rows.push({
+              accountCode: acc.accountCode, accountName: acc.accountName,
+              entryDate: e.entryDate, entryNumber: e.entryNumber, journalType: e.journalType,
+              description: e.description, debitAmount: e.debitAmount, creditAmount: e.creditAmount, balance: e.runningBalance
+            });
+          });
+          rows.push({ accountCode: acc.accountCode, accountName: acc.accountName, entryDate: null, entryNumber: '', journalType: '', description: 'รวม / ยอดยกไป', debitAmount: acc.totalDebit, creditAmount: acc.totalCredit, balance: acc.closingBalance });
+        });
+        const cols = [
+          { key: 'accountCode', label: 'รหัสบัญชี' },
+          { key: 'accountName', label: 'ชื่อบัญชี' },
+          { key: 'entryDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+          { key: 'entryNumber', label: 'เลขที่' },
+          { key: 'journalType', label: 'ประเภท', format: v => this.journalTypeLabels[v] || v || '' },
+          { key: 'description', label: 'คำอธิบาย' },
+          { key: 'debitAmount', label: 'เดบิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'creditAmount', label: 'เครดิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'balance', label: 'ยอดคงเหลือ', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) }
+        ];
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        ExportUtil.exportData(format, {
+          rows, columns: cols,
+          filename: `GL_${selected.length}บัญชี`,
+          title: 'สมุดบัญชีแยกประเภท (บัญชีที่เลือก)',
+          subtitle: `ช่วงวันที่: ${from} ถึง ${to} | ${selected.length} บัญชี | ${rows.length - selected.length*2} รายการเคลื่อนไหว`,
+          landscape: true
+        });
+      },
       async init() {
         if (!Layout.init('general-ledger')) return;
         Layout.setTitle('บัญชีแยกประเภท');
@@ -193,6 +270,7 @@
         try {
           const res = await api.generalLedger(q);
           this.data = res.data;
+          this.clearAccountSelection();
           this.render();
           if (!this.data?.accounts?.length) await this.showDiagnostics(api);
         } catch(e) { content.innerHTML = `<div class="text-center text-danger" style="padding:60px">${e.message}</div>`; }
@@ -295,15 +373,20 @@
         }
         content.innerHTML = accounts.map((a, idx) => `
           <div class="gl-account${idx === 0 ? ' open' : ''}" id="acct_${idx}">
-            <div class="gl-account-header" onclick="Page.toggle(${idx})">
-              <div>
-                <span class="gl-account-code">${a.accountCode}</span>
-                <span class="gl-account-title">${a.accountName}</span>
-                <span style="font-size:11px;color:var(--gray-400);margin-left:8px">(${a.transactions.length} รายการ)</span>
-              </div>
-              <div class="gl-account-balance">
-                <div class="label">ยอดคงเหลือ</div>
-                <div class="amount">${Layout.money(Math.abs(a.closingBalance))} ${a.closingBalance < 0 ? 'Cr' : 'Dr'}</div>
+            <div class="gl-account-header">
+              <label style="margin-right:10px;cursor:pointer" onclick="event.stopPropagation()">
+                <input type="checkbox" class="gl-acct-check" data-account-id="${a.accountId}" onchange="Page.onAccountCheck(this)" style="width:16px;height:16px">
+              </label>
+              <div onclick="Page.toggle(${idx})" style="flex:1;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
+                <div>
+                  <span class="gl-account-code">${a.accountCode}</span>
+                  <span class="gl-account-title">${a.accountName}</span>
+                  <span style="font-size:11px;color:var(--gray-400);margin-left:8px">(${a.transactions.length} รายการ)</span>
+                </div>
+                <div class="gl-account-balance">
+                  <div class="label">ยอดคงเหลือ</div>
+                  <div class="amount">${Layout.money(Math.abs(a.closingBalance))} ${a.closingBalance < 0 ? 'Cr' : 'Dr'}</div>
+                </div>
               </div>
             </div>
             <div class="gl-account-body">
