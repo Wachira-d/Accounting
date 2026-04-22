@@ -36,6 +36,7 @@ public interface IIntegrationService
     Task<InboundSyncResponse> ProcessExpenseAsync(Guid companyId, Guid integrationId, InboundExpenseRequest request);
     Task<InboundSyncResponse> ProcessProductAsync(Guid companyId, Guid integrationId, InboundProductRequest request);
     Task<InboundSyncResponse> ProcessJournalAsync(Guid companyId, Guid integrationId, InboundJournalRequest request);
+    Task<InboundSyncResponse> ProcessJournalReverseAsync(Guid companyId, Guid integrationId, InboundReverseJournalRequest request);
     Task<InboundBatchResponse> ProcessBatchAsync(Guid companyId, Guid integrationId, InboundBatchRequest request);
 
     // Outbound data (external systems read FROM Next Acc)

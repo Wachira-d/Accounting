@@ -113,12 +113,35 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "Void ใบสำคัญสำเร็จ"));
     }
 
+    [HttpDelete("journals/{entryId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> DeleteJournalEntry(Guid companyId, Guid entryId)
+    {
+        await _accountingService.DeleteJournalEntryAsync(companyId, entryId);
+        return Ok(new ApiResponse<string>(true, null, "ลบใบสำคัญสำเร็จ"));
+    }
+
+    [HttpPost("journals/{entryId:guid}/reverse")]
+    public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> ReverseJournalEntry(
+        Guid companyId, Guid entryId, [FromBody] ReverseJournalEntryRequest? request = null)
+    {
+        var result = await _accountingService.ReverseJournalEntryAsync(companyId, entryId, request?.ReversalDate, request?.Description);
+        return Ok(new ApiResponse<JournalEntryResponse>(true, result, "กลับรายการสำเร็จ"));
+    }
+
     [HttpPost("journals/batch-void")]
     public async Task<ActionResult<ApiResponse<string>>> BatchVoidJournalEntries(
         Guid companyId, [FromBody] BatchVoidRequest request)
     {
         var count = await _accountingService.BatchVoidJournalEntriesAsync(companyId, request.EntryIds);
         return Ok(new ApiResponse<string>(true, null, $"ยกเลิกสำเร็จ {count} รายการ"));
+    }
+
+    [HttpPost("journals/batch-delete")]
+    public async Task<ActionResult<ApiResponse<string>>> BatchDeleteJournalEntries(
+        Guid companyId, [FromBody] BatchVoidRequest request)
+    {
+        var count = await _accountingService.BatchDeleteJournalEntriesAsync(companyId, request.EntryIds);
+        return Ok(new ApiResponse<string>(true, null, $"ลบสำเร็จ {count} รายการ"));
     }
 
     [HttpPost("journals/batch-post")]

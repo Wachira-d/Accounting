@@ -891,6 +891,7 @@ const Layout = {
       'InProgress': ['badge-info', 'กำลังดำเนินการ'], 'Running': ['badge-info', 'กำลังประมวลผล'],
       'Matched': ['badge-success', 'จับคู่แล้ว'], 'Unmatched': ['badge-warning', 'ยังไม่จับคู่'],
       'Reconciled': ['badge-success', 'กระทบยอดแล้ว'], 'Processing': ['badge-info', 'กำลังประมวลผล'],
+      'Reversed': ['badge-info', 'กลับรายการแล้ว'],
     };
     const [cls, label] = map[status] || ['badge-gray', status];
     return `<span class="badge ${cls}">${label}</span>`;

@@ -244,6 +244,16 @@ public class ExternalIntegrationController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    [HttpPost("journals/reverse")]
+    public async Task<ActionResult<InboundSyncResponse>> ReverseJournal([FromBody] InboundReverseJournalRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessJournalReverseAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("daily-summary")]
     public async Task<ActionResult<InboundSyncResponse>> DailySummary([FromBody] InboundDailySummaryRequest request)
     {
