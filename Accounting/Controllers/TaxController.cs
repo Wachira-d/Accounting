@@ -68,4 +68,11 @@ public class TaxController : ControllerBase
         await _taxService.DeleteTaxReportAsync(companyId, reportId);
         return Ok(new ApiResponse<string>(true, "ลบรายงานภาษีสำเร็จ"));
     }
+
+    [HttpGet("vat-debug")]
+    public async Task<ActionResult<ApiResponse<object>>> GetVatDebug(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var result = await _taxService.GetVatDebugAsync(companyId, year, month);
+        return Ok(new ApiResponse<object>(true, result));
+    }
 }
