@@ -129,7 +129,39 @@ public class BankService : IBankService
             .OrderBy(a => a.AccountName)
             .ToListAsync();
 
-        return accounts.Select(MapToResponse).ToList();
+        // Compute live balance from posted journal entries for each linked COA account.
+        // The stored CurrentBalance only tracks manual transactions/imports — API-posted
+        // journal entries go to the linked COA and must be reflected here.
+        var linkedIds = accounts.Where(a => a.LinkedAccountId.HasValue)
+            .Select(a => a.LinkedAccountId!.Value).Distinct().ToList();
+        var glBalances = new Dictionary<Guid, decimal>();
+        if (linkedIds.Any())
+        {
+            var postedEntryIds = _db.JournalEntries
+                .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+                .Select(j => j.Id);
+            var sums = await _db.JournalEntryLines
+                .Where(l => linkedIds.Contains(l.AccountId) && postedEntryIds.Contains(l.JournalEntryId))
+                .GroupBy(l => l.AccountId)
+                .Select(g => new { AccountId = g.Key, Debit = g.Sum(l => l.DebitAmount), Credit = g.Sum(l => l.CreditAmount) })
+                .ToListAsync();
+            // Bank accounts are Asset type → balance = Debit - Credit
+            foreach (var s in sums)
+                glBalances[s.AccountId] = s.Debit - s.Credit;
+        }
+
+        return accounts.Select(a =>
+        {
+            var gl = a.LinkedAccountId.HasValue && glBalances.TryGetValue(a.LinkedAccountId.Value, out var b) ? b : 0m;
+            // Use GL-computed balance when a linked COA is set (authoritative source).
+            // Fall back to stored CurrentBalance when no COA is linked (pure manual tracking).
+            var displayBalance = a.LinkedAccountId.HasValue ? gl : a.CurrentBalance;
+            return new BankAccountResponse(
+                a.Id, a.AccountName, a.BankName, a.AccountNumber,
+                a.BranchName, a.AccountType, a.Currency, displayBalance,
+                a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
+                a.IsActive);
+        }).ToList();
     }
 
     public async Task<BankAccountResponse> UpdateBankAccountAsync(Guid companyId, Guid accountId, UpdateBankAccountRequest request)
