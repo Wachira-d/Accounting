@@ -160,6 +160,7 @@
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
           <td class="flex gap-1">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')">ดู</button>
+            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${r.id}')">สร้างใหม่</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
           </td>
         </tr>`).join('');
@@ -201,7 +202,7 @@
           document.getElementById('detailContent').innerHTML = html;
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
           if (d.status !== 'Filed') {
-            footer = `<button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
+            footer = `<button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
@@ -222,6 +223,16 @@
         document.getElementById('gYear').value = now.getFullYear();
         document.getElementById('gMonth').value = now.getMonth() + 1;
         Layout.openModal('genModal');
+      },
+      async regenerateReport(id) {
+        if (!confirm('ต้องการสร้างรายงานภาษีใหม่? (ระบบจะลบรายงานเดิมและคำนวณใหม่จากข้อมูลปัจจุบัน)')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.regenerateTaxReport(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('สร้างรายงานภาษีใหม่สำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async generate() {
         const api = Layout.api(); if (!api) return;

@@ -618,6 +618,40 @@ public class TaxService : ITaxService
         return MapToResponse(report);
     }
 
+    public async Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId)
+    {
+        var existing = await _db.TaxReports
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+
+        if (existing.Status == TaxReportStatus.Filed)
+            throw new InvalidOperationException("ไม่สามารถสร้างใหม่ได้ — รายงานนี้ถูกยื่นแล้ว");
+
+        var request = new CreateTaxReportRequest(existing.TaxType, existing.Year, existing.Month);
+
+        _db.TaxReportLines.RemoveRange(existing.Lines);
+        _db.TaxReports.Remove(existing);
+        await _db.SaveChangesAsync();
+
+        return await GenerateTaxReportAsync(companyId, request);
+    }
+
+    public async Task DeleteTaxReportAsync(Guid companyId, Guid reportId)
+    {
+        var existing = await _db.TaxReports
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+
+        if (existing.Status == TaxReportStatus.Filed)
+            throw new InvalidOperationException("ไม่สามารถลบได้ — รายงานนี้ถูกยื่นแล้ว");
+
+        _db.TaxReportLines.RemoveRange(existing.Lines);
+        _db.TaxReports.Remove(existing);
+        await _db.SaveChangesAsync();
+    }
+
     private static TaxReportResponse MapToResponse(TaxReport r) => new(
         r.Id, r.TaxType, r.Year, r.Month, r.Status, r.FiledDate,
         r.OutputVat, r.InputVat, r.NetVat, r.TotalIncome, r.TotalTaxWithheld,
