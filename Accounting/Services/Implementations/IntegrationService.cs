@@ -1751,17 +1751,36 @@ public class IntegrationService : IIntegrationService
                 TotalCredit = original.TotalDebit
             };
 
+            // Load dimension allocations from original lines
+            var originalLineIds = original.Lines.Select(l => l.Id).ToList();
+            var originalDims = await _db.JournalLineDimensions
+                .Where(d => originalLineIds.Contains(d.JournalEntryLineId))
+                .ToListAsync();
+
             int order = 1;
             foreach (var line in original.Lines.OrderBy(l => l.LineOrder))
             {
-                reversal.Lines.Add(new JournalEntryLine
+                var newLine = new JournalEntryLine
                 {
                     AccountId = line.AccountId,
                     DebitAmount = line.CreditAmount,
                     CreditAmount = line.DebitAmount,
                     Description = line.Description,
                     LineOrder = order++
-                });
+                };
+                reversal.Lines.Add(newLine);
+
+                foreach (var dim in originalDims.Where(d => d.JournalEntryLineId == line.Id))
+                {
+                    _db.JournalLineDimensions.Add(new JournalLineDimension
+                    {
+                        CompanyId = companyId,
+                        JournalEntryLineId = newLine.Id,
+                        DimensionId = dim.DimensionId,
+                        AllocatedAmount = dim.AllocatedAmount,
+                        AllocatedPercent = dim.AllocatedPercent
+                    });
+                }
             }
 
             _db.JournalEntries.Add(reversal);

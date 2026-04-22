@@ -106,7 +106,7 @@ public class TaxService : ITaxService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.VatAmount != 0)
             .ToListAsync();
 
@@ -305,7 +305,7 @@ public class TaxService : ITaxService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.WithholdingTaxAmount != 0)
             .ToListAsync();
 
@@ -760,7 +760,7 @@ public class TaxService : ITaxService
         var docs = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= start && d.DocumentDate < end
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.VatAmount, d.Status })
             .ToListAsync();
 

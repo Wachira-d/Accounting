@@ -251,14 +251,13 @@ public class AccountingService : IAccountingService
                 JournalType.CashPayments => "PV",
                 _ => "JV"
             };
-            var count = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId && j.JournalType == request.JournalType);
-            var entryNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+            var entryNumber = await GetNextEntryNumberAsync(companyId, prefix);
 
             var entry = new JournalEntry
             {
                 CompanyId = companyId,
                 EntryNumber = entryNumber,
-                EntryDate = request.EntryDate,
+                EntryDate = NormalizeDate(request.EntryDate),
                 JournalType = request.JournalType,
                 Description = request.Description,
                 Reference = request.Reference,
@@ -411,6 +410,8 @@ public class AccountingService : IAccountingService
         if (entry.Status == JournalEntryStatus.Voided)
             throw new InvalidOperationException("รายการนี้ถูกยกเลิกไปแล้ว");
 
+        await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
+
         entry.Status = JournalEntryStatus.Voided;
         entry.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
@@ -428,6 +429,8 @@ public class AccountingService : IAccountingService
 
         if (entry.SourceDocumentId.HasValue)
             throw new InvalidOperationException("ไม่สามารถลบรายการที่สร้างจากเอกสาร ให้ลบที่เอกสารต้นทางแทน");
+
+        await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
 
         // Soft-delete dimension allocations for each line
         var lineIds = entry.Lines.Select(l => l.Id).ToList();
@@ -466,9 +469,10 @@ public class AccountingService : IAccountingService
         if (original.ReversedByEntryId.HasValue)
             throw new InvalidOperationException("รายการนี้ถูกกลับรายการไปแล้ว");
 
-        var effectiveDate = reversalDate ?? DateTime.UtcNow.Date;
+        await ValidateFiscalPeriodOpenAsync(original.FiscalPeriodId);
 
-        // Generate entry number
+        var effectiveDate = NormalizeDate(reversalDate ?? DateTime.UtcNow.Date);
+
         var prefix = original.JournalType switch
         {
             JournalType.Sales => "SV",
@@ -477,8 +481,7 @@ public class AccountingService : IAccountingService
             JournalType.CashPayments => "PV",
             _ => "JV"
         };
-        var count = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId && j.JournalType == original.JournalType);
-        var entryNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+        var entryNumber = await GetNextEntryNumberAsync(companyId, prefix);
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -498,7 +501,6 @@ public class AccountingService : IAccountingService
                 TotalCredit = original.TotalDebit
             };
 
-            // Find fiscal period for the reversal date
             var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId &&
                 f.StartDate <= effectiveDate &&
@@ -509,11 +511,16 @@ public class AccountingService : IAccountingService
 
             _db.JournalEntries.Add(reversal);
 
-            // Create reversed lines: swap debit <-> credit
+            // Create reversed lines: swap debit <-> credit + copy dimensions
+            var originalLineIds = original.Lines.Select(l => l.Id).ToList();
+            var originalDims = await _db.JournalLineDimensions
+                .Where(d => originalLineIds.Contains(d.JournalEntryLineId))
+                .ToListAsync();
+
             int order = 1;
             foreach (var line in original.Lines.OrderBy(l => l.LineOrder))
             {
-                _db.JournalEntryLines.Add(new JournalEntryLine
+                var newLine = new JournalEntryLine
                 {
                     JournalEntryId = reversal.Id,
                     AccountId = line.AccountId,
@@ -521,10 +528,23 @@ public class AccountingService : IAccountingService
                     CreditAmount = line.DebitAmount,
                     Description = line.Description,
                     LineOrder = order++
-                });
+                };
+                _db.JournalEntryLines.Add(newLine);
+
+                // Copy dimension allocations from original line
+                foreach (var dim in originalDims.Where(d => d.JournalEntryLineId == line.Id))
+                {
+                    _db.JournalLineDimensions.Add(new JournalLineDimension
+                    {
+                        CompanyId = companyId,
+                        JournalEntryLineId = newLine.Id,
+                        DimensionId = dim.DimensionId,
+                        AllocatedAmount = dim.AllocatedAmount,
+                        AllocatedPercent = dim.AllocatedPercent
+                    });
+                }
             }
 
-            // Mark original as Reversed and link
             original.Status = JournalEntryStatus.Reversed;
             original.ReversedByEntryId = reversal.Id;
             original.UpdatedAt = DateTime.UtcNow;
@@ -1279,4 +1299,44 @@ public class AccountingService : IAccountingService
 
     private static FiscalPeriodResponse MapPeriodToResponse(FiscalPeriod f) => new(
         f.Id, f.Name, f.Year, f.Month, f.StartDate, f.EndDate, f.Status);
+
+    private async Task<string> GetNextEntryNumberAsync(Guid companyId, string prefix)
+    {
+        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        var pattern = $"{prefix}-{yearMonth}-";
+
+        var lastEntry = await _db.JournalEntries
+            .IgnoreQueryFilters()
+            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
+            .OrderByDescending(j => j.EntryNumber)
+            .Select(j => j.EntryNumber)
+            .FirstOrDefaultAsync();
+
+        int nextSeq = 1;
+        if (lastEntry != null)
+        {
+            var lastPart = lastEntry[pattern.Length..];
+            if (int.TryParse(lastPart, out var lastNum))
+                nextSeq = lastNum + 1;
+        }
+
+        return $"{pattern}{nextSeq:D4}";
+    }
+
+    private static DateTime NormalizeDate(DateTime date)
+    {
+        if (date.Year < 1900)
+            return date.AddYears(543);
+        if (date.Year > 2400)
+            return new DateTime(date.Year - 543, date.Month, date.Day, date.Hour, date.Minute, date.Second, date.Kind);
+        return date;
+    }
+
+    private async Task ValidateFiscalPeriodOpenAsync(Guid? fiscalPeriodId)
+    {
+        if (!fiscalPeriodId.HasValue) return;
+        var period = await _db.FiscalPeriods.FindAsync(fiscalPeriodId.Value);
+        if (period is { Status: FiscalPeriodStatus.Closed or FiscalPeriodStatus.Locked })
+            throw new InvalidOperationException("ไม่สามารถดำเนินการได้เนื่องจากงวดบัญชีปิดแล้ว");
+    }
 }
