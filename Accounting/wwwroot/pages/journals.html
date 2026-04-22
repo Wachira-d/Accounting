@@ -302,7 +302,7 @@
 
       // ===== Selection =====
       toggleAll(checked) {
-        const selectable = this.currentItems.filter(j => j.status === 'Posted' || j.status === 'Draft');
+        const selectable = this.currentItems.filter(j => j.status !== 'Reversed');
         if (checked) {
           selectable.forEach(j => this.selected.add(j.id));
         } else {
@@ -310,13 +310,13 @@
         }
         document.querySelectorAll('.row-check').forEach(cb => {
           const j = this.currentItems.find(x => x.id === cb.dataset.id);
-          if (j && (j.status === 'Posted' || j.status === 'Draft')) cb.checked = checked;
+          if (j && j.status !== 'Reversed') cb.checked = checked;
         });
         this.updateBatchBar();
       },
       toggleRow(id, checked) {
         if (checked) this.selected.add(id); else this.selected.delete(id);
-        const allCheckable = this.currentItems.filter(j => j.status === 'Posted' || j.status === 'Draft');
+        const allCheckable = this.currentItems.filter(j => j.status !== 'Reversed');
         document.getElementById('checkAll').checked = allCheckable.length > 0 && allCheckable.every(j => this.selected.has(j.id));
         this.updateBatchBar();
       },
@@ -365,7 +365,7 @@
             return;
           }
           tbody.innerHTML = items.map(j => {
-            const canSelect = j.status === 'Posted' || j.status === 'Draft';
+            const canSelect = j.status !== 'Reversed';
             const isChecked = this.selected.has(j.id);
             const statusBadge = j.status === 'Reversed'
               ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
@@ -373,6 +373,8 @@
             let actBtns = `<button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')">ดู</button>`;
             if (j.status === 'Posted') {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#7c3aed" onclick="Page.reverseEntry('${j.id}')" title="กลับรายการ (สร้างรายการตรงข้าม)">กลับรายการ</button>`;
+            }
+            if (j.status !== 'Reversed') {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#ef4444" onclick="Page.deleteEntry('${j.id}')" title="ลบออกจากระบบ">ลบ</button>`;
             }
             return `<tr${isChecked ? ' style="background:#fffbeb"' : ''}>
@@ -388,7 +390,7 @@
               <td>${actBtns}</td>
             </tr>`;
           }).join('');
-          const allCheckable = items.filter(j => j.status === 'Posted' || j.status === 'Draft');
+          const allCheckable = items.filter(j => j.status !== 'Reversed');
           document.getElementById('checkAll').checked = allCheckable.length > 0 && allCheckable.every(j => this.selected.has(j.id));
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -504,12 +506,14 @@
                 <tfoot><tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold">รวม</td><td class="text-right font-semibold">${Layout.money(j.totalDebit)}</td><td class="text-right font-semibold">${Layout.money(j.totalCredit)}</td></tr></tfoot>
               </table>
             </div>`;
-          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">���ิด</button>';
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
           if (j.status === 'Draft') {
-            actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายก���ร</button>`;
-            actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')">ลบ</button>`;
-          } else if (j.status === 'Posted') {
-            actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">ก���ับรายการ</button>`;
+            actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
+          }
+          if (j.status === 'Posted') {
+            actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">กลับรายการ</button>`;
+          }
+          if (j.status !== 'Reversed') {
             actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')">ลบ</button>`;
           }
           document.getElementById('detailActions').innerHTML = actions;
