@@ -153,6 +153,13 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, $"สร้างรายการย่อยใหม่สำเร็จ {count} ใบสำคัญ"));
     }
 
+    [HttpPost("reports/repair-dates")]
+    public async Task<ActionResult<ApiResponse<string>>> RepairBuddhistDates(Guid companyId)
+    {
+        var count = await _accountingService.RepairBuddhistDatesAsync(companyId);
+        return Ok(new ApiResponse<string>(true, null, $"แก้ไขวันที่สำเร็จ {count} รายการ"));
+    }
+
     // ===== Reports =====
 
     [HttpGet("reports/trial-balance")]

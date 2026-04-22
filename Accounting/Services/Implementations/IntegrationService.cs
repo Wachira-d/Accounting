@@ -74,6 +74,15 @@ public class IntegrationService : IIntegrationService
         return $"{pattern}{nextSeq:D4}";
     }
 
+    private static DateTime NormalizeDate(DateTime date)
+    {
+        if (date.Year < 1900)
+            return date.AddYears(543);
+        if (date.Year > 2400)
+            return new DateTime(date.Year - 543, date.Month, date.Day, date.Hour, date.Minute, date.Second, date.Kind);
+        return date;
+    }
+
     /// <summary>Batch-load chart of accounts by codes in one query instead of N+1.</summary>
     private async Task<Dictionary<string, ChartOfAccount>> BatchLoadAccountsByCodesAsync(Guid companyId, IEnumerable<string> accountCodes)
     {
@@ -467,8 +476,8 @@ public class IntegrationService : IIntegrationService
                 DocumentNumber = docNumber,
                 DocumentType = DocumentType.TaxInvoice,
                 Status = DocumentStatus.Approved,
-                DocumentDate = request.DocumentDate,
-                DueDate = request.DueDate ?? request.DocumentDate.AddDays(30),
+                DocumentDate = NormalizeDate(request.DocumentDate),
+                DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30)),
                 ContactId = contact.Id,
                 Reference = request.ExternalRef,
                 SubTotal = subTotal,
@@ -525,7 +534,7 @@ public class IntegrationService : IIntegrationService
                 CompanyId = companyId,
                 PaymentNumber = paymentNumber,
                 DocumentId = document.Id,
-                PaymentDate = request.PaymentDate,
+                PaymentDate = NormalizeDate(request.PaymentDate),
                 Amount = request.Amount,
                 PaymentMethod = ParsePaymentMethod(request.PaymentMethod),
                 BankAccount = request.BankAccountName,
@@ -709,6 +718,7 @@ public class IntegrationService : IIntegrationService
     public async Task<InboundSyncResponse> ProcessDailySummaryAsync(Guid companyId, Guid integrationId, InboundDailySummaryRequest request)
     {
         var sw = Stopwatch.StartNew();
+        request = request with { SummaryDate = NormalizeDate(request.SummaryDate) };
         var log = CreateSyncLog(companyId, integrationId, "daily.summary", null, request.SummaryDate.ToString("yyyy-MM-dd"));
 
         try
@@ -1088,7 +1098,7 @@ public class IntegrationService : IIntegrationService
         {
             CompanyId = companyId,
             EntryNumber = entryNumber,
-            EntryDate = document.DocumentDate,
+            EntryDate = NormalizeDate(document.DocumentDate),
             JournalType = journalType,
             Description = $"Auto: {document.DocumentNumber}",
             Reference = document.DocumentNumber,
@@ -1137,7 +1147,7 @@ public class IntegrationService : IIntegrationService
         {
             CompanyId = companyId,
             EntryNumber = payJournalNumber,
-            EntryDate = payment.PaymentDate,
+            EntryDate = NormalizeDate(payment.PaymentDate),
             JournalType = JournalType.CashReceipts,
             Description = $"รับชำระ {document.DocumentNumber}",
             Reference = payment.PaymentNumber,
@@ -1223,7 +1233,7 @@ public class IntegrationService : IIntegrationService
         {
             CompanyId = companyId,
             EntryNumber = entryNumber,
-            EntryDate = document.DocumentDate,
+            EntryDate = NormalizeDate(document.DocumentDate),
             JournalType = JournalType.Sales,
             Description = $"ใบลดหนี้: {document.DocumentNumber}",
             Reference = document.DocumentNumber,
@@ -1305,7 +1315,7 @@ public class IntegrationService : IIntegrationService
         {
             CompanyId = companyId,
             EntryNumber = entryNumber,
-            EntryDate = document.DocumentDate,
+            EntryDate = NormalizeDate(document.DocumentDate),
             JournalType = JournalType.Sales,
             Description = $"ใบเพิ่มหนี้: {document.DocumentNumber}",
             Reference = document.DocumentNumber,
@@ -1550,8 +1560,8 @@ public class IntegrationService : IIntegrationService
                 DocumentNumber = docNumber,
                 DocumentType = DocumentType.Expense,
                 Status = DocumentStatus.Approved,
-                DocumentDate = request.DocumentDate,
-                DueDate = request.DueDate ?? request.DocumentDate.AddDays(30),
+                DocumentDate = NormalizeDate(request.DocumentDate),
+                DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30)),
                 ContactId = supplier.Id,
                 Reference = request.ExternalRef,
                 SubTotal = subTotal,
