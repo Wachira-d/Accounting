@@ -63,9 +63,15 @@ public record JournalEntryResponse(
     decimal TotalDebit,
     decimal TotalCredit,
     List<JournalLineResponse> Lines,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? ReversedByEntryId = null,
+    Guid? OriginalEntryId = null);
 
 public record BatchVoidRequest(List<Guid> EntryIds);
+
+public record ReverseJournalEntryRequest(
+    DateTime? ReversalDate,
+    string? Description);
 
 public record JournalLineResponse(
     Guid Id,

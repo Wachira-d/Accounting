@@ -519,6 +519,14 @@ public static class DatabaseMigrationHelper
             );
             """,
 
+            // ===== JournalEntries: Reversal tracking =====
+            """
+            ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "ReversedByEntryId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "OriginalEntryId" uuid NULL;
+            """,
+
             // ===== SiteSettings: global site configuration (singleton) =====
             """
             CREATE TABLE IF NOT EXISTS "SiteSettings" (

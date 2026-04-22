@@ -148,6 +148,13 @@ public record InboundJournalLineRequest(
     string AccountCode, decimal DebitAmount, decimal CreditAmount,
     string? Description);
 
+/// <summary>กลับรายการ Journal จากระบบภายนอก</summary>
+public record InboundReverseJournalRequest(
+    string? ExternalId, string? ExternalRef,
+    Guid OriginalJournalEntryId,
+    DateTime? ReversalDate,
+    string? Description);
+
 /// <summary>Batch import — ส่งข้อมูลหลายรายการพร้อมกัน</summary>
 public record InboundBatchRequest(
     List<InboundCustomerRequest>? Customers,

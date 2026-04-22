@@ -20,7 +20,10 @@ public interface IAccountingService
     Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null);
     Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId);
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
+    Task DeleteJournalEntryAsync(Guid companyId, Guid entryId);
+    Task<JournalEntryResponse> ReverseJournalEntryAsync(Guid companyId, Guid entryId, DateTime? reversalDate = null, string? description = null);
     Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
+    Task<int> BatchDeleteJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
     Task<int> BatchPostJournalEntriesAsync(Guid companyId);
 
     // General Ledger
