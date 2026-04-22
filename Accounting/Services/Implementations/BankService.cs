@@ -37,6 +37,15 @@ public class BankService : IBankService
         if (request.OpeningBalance < 0)
             throw new ArgumentException("ยอดเปิดบัญชีต้องไม่ติดลบ");
 
+        var linkedAccountId = request.LinkedAccountId;
+
+        if (!linkedAccountId.HasValue)
+        {
+            var subAccount = await AutoCreateLinkedAccountAsync(companyId, request);
+            if (subAccount != null)
+                linkedAccountId = subAccount.Id;
+        }
+
         var account = new BankAccount
         {
             CompanyId = companyId,
@@ -47,18 +56,75 @@ public class BankService : IBankService
             AccountType = request.AccountType,
             Currency = request.Currency,
             CurrentBalance = request.OpeningBalance,
-            LinkedAccountId = request.LinkedAccountId
+            LinkedAccountId = linkedAccountId
         };
 
         _db.Set<BankAccount>().Add(account);
         await _db.SaveChangesAsync();
 
+        if (account.LinkedAccountId.HasValue)
+        {
+            await _db.Entry(account).Reference(a => a.LinkedAccount).LoadAsync();
+        }
+
         return MapToResponse(account);
+    }
+
+    private async Task<ChartOfAccount?> AutoCreateLinkedAccountAsync(Guid companyId, CreateBankAccountRequest request)
+    {
+        var parentCode = request.AccountType switch
+        {
+            "Current" => "11121",
+            "Fixed" => "11123",
+            _ => "11122" // Savings as default
+        };
+
+        var parent = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == parentCode && a.IsActive);
+
+        if (parent == null) return null;
+
+        var existingChildren = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.ParentAccountId == parent.Id)
+            .OrderByDescending(a => a.AccountCode)
+            .ToListAsync();
+
+        var nextSeq = 1;
+        foreach (var child in existingChildren)
+        {
+            var suffix = child.AccountCode.Replace(parentCode + "-", "");
+            if (int.TryParse(suffix, out var num) && num >= nextSeq)
+                nextSeq = num + 1;
+        }
+
+        var maskedNumber = request.AccountNumber.Length >= 4
+            ? "xxx-" + request.AccountNumber[^4..]
+            : request.AccountNumber;
+
+        var subAccount = new ChartOfAccount
+        {
+            CompanyId = companyId,
+            AccountCode = $"{parentCode}-{nextSeq:D3}",
+            AccountName = $"{parent.AccountName} - {request.BankName} {maskedNumber}",
+            AccountNameEn = $"{parent.AccountNameEn ?? parent.AccountName} - {request.BankName} {maskedNumber}",
+            AccountType = AccountType.Asset,
+            ParentAccountId = parent.Id,
+            Level = parent.Level + 1,
+            IsActive = true,
+            IsSystemAccount = true,
+            Description = $"สร้างอัตโนมัติจากบัญชีธนาคาร: {request.BankName} {request.AccountNumber}"
+        };
+
+        _db.ChartOfAccounts.Add(subAccount);
+        await _db.SaveChangesAsync();
+
+        return subAccount;
     }
 
     public async Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId)
     {
         var accounts = await _db.Set<BankAccount>()
+            .Include(a => a.LinkedAccount)
             .Where(a => a.CompanyId == companyId && !a.IsDeleted)
             .OrderBy(a => a.AccountName)
             .ToListAsync();
@@ -456,7 +522,8 @@ public class BankService : IBankService
     private static BankAccountResponse MapToResponse(BankAccount a) => new(
         a.Id, a.AccountName, a.BankName, a.AccountNumber,
         a.BranchName, a.AccountType, a.Currency, a.CurrentBalance,
-        a.LinkedAccountId, a.IsActive);
+        a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
+        a.IsActive);
 
     private static BankTransactionResponse MapTransactionToResponse(BankTransaction t) => new(
         t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType,

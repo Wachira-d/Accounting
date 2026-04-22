@@ -284,6 +284,7 @@
               </div>
               <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
               <div class="text-xs text-gray-400">${a.accountType === 'Savings' ? 'ออมทรัพย์' : a.accountType === 'Current' ? 'กระแสรายวัน' : a.accountType === 'Fixed' ? 'ฝากประจำ' : a.accountType || ''} | ${a.branchName || '-'}</div>
+              ${a.linkedAccountCode ? `<div class="text-xs" style="color:var(--primary);margin-top:4px">ผังบัญชี: ${a.linkedAccountCode} ${a.linkedAccountName || ''}</div>` : ''}
               <div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
               <div class="text-xs text-gray-400">${a.currency || 'THB'}</div>
             </div>
