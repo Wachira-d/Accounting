@@ -342,12 +342,16 @@
         const status = document.getElementById('statusFilter').value;
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
+        const dim = document.getElementById('dimProjectFilter')?.value;
+        const br = document.getElementById('dimBranchFilter')?.value;
         let q = `?page=${this.page}&pageSize=20`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (this.currentType) q += `&journalType=${this.currentType}`;
         if (status) q += `&status=${status}`;
         if (from) q += `&fromDate=${from}`;
         if (to) q += `&toDate=${to}`;
+        if (dim) q += `&dimensionId=${dim}`;
+        if (br) q += `&branchId=${br}`;
         try {
           const res = await api.getJournals(q);
           const data = res.data;
