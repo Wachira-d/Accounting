@@ -618,6 +618,53 @@ public class TaxService : ITaxService
         return MapToResponse(report);
     }
 
+    public async Task<TaxReportResponse> UpdateTaxReportAsync(Guid companyId, Guid reportId, UpdateTaxReportRequest request)
+    {
+        var report = await _db.TaxReports
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+
+        if (report.Status == TaxReportStatus.Filed)
+            throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่นแล้ว");
+
+        if (request.Notes != null)
+            report.Notes = request.Notes;
+
+        if (request.Lines is { Count: > 0 })
+        {
+            foreach (var lineUpdate in request.Lines)
+            {
+                var line = report.Lines.FirstOrDefault(l => l.Id == lineUpdate.Id);
+                if (line == null) continue;
+
+                if (lineUpdate.IncomeAmount.HasValue) line.IncomeAmount = lineUpdate.IncomeAmount.Value;
+                if (lineUpdate.TaxRate.HasValue) line.TaxRate = lineUpdate.TaxRate.Value;
+                if (lineUpdate.TaxAmount.HasValue) line.TaxAmount = lineUpdate.TaxAmount.Value;
+                if (lineUpdate.Description != null) line.Description = lineUpdate.Description;
+                line.UpdatedAt = DateTime.UtcNow;
+            }
+
+            if (report.TaxType == TaxType.VAT)
+            {
+                var nonSummaryLines = report.Lines.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
+                report.OutputVat = nonSummaryLines.Where(l => l.IncomeTypeCode != "INPUT").Sum(l => l.TaxAmount);
+                report.InputVat = nonSummaryLines.Where(l => l.IncomeTypeCode == "INPUT").Sum(l => l.TaxAmount);
+                var creditCf = report.Lines.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
+                report.NetVat = report.OutputVat - report.InputVat - creditCf;
+            }
+            else
+            {
+                report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
+                report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
+            }
+        }
+
+        report.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return MapToResponse(report);
+    }
+
     public async Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId)
     {
         var existing = await _db.TaxReports
@@ -658,5 +705,6 @@ public class TaxService : ITaxService
         r.Lines.OrderBy(l => l.LineOrder).Select(l => new TaxReportLineResponse(
             l.Id, l.LineOrder, l.TaxPayerId, l.TaxPayerName,
             l.TransactionDate, l.Description, l.IncomeAmount,
-            l.TaxRate, l.TaxAmount, l.IncomeTypeCode)).ToList());
+            l.TaxRate, l.TaxAmount, l.IncomeTypeCode)).ToList(),
+        r.Notes);
 }

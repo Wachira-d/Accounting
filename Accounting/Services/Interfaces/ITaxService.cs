@@ -9,6 +9,7 @@ public interface ITaxService
     Task<TaxReportResponse> GetTaxReportAsync(Guid companyId, Guid reportId);
     Task<List<TaxReportResponse>> GetTaxReportsAsync(Guid companyId, TaxType? taxType = null, int? year = null);
     Task<TaxReportResponse> FileTaxReportAsync(Guid companyId, Guid reportId);
+    Task<TaxReportResponse> UpdateTaxReportAsync(Guid companyId, Guid reportId, UpdateTaxReportRequest request);
     Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId);
     Task DeleteTaxReportAsync(Guid companyId, Guid reportId);
 }

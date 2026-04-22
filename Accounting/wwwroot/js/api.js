@@ -219,6 +219,7 @@ const API = {
       getTaxReport: (id) => API.get(`${base}/tax/${id}`),
       generateTaxReport: (d) => API.post(`${base}/tax/generate`, d),
       fileTaxReport: (id) => API.post(`${base}/tax/${id}/file`),
+      updateTaxReport: (id, d) => API.put(`${base}/tax/${id}`, d),
       regenerateTaxReport: (id) => API.post(`${base}/tax/${id}/regenerate`),
       deleteTaxReport: (id) => API.del(`${base}/tax/${id}`),
       // Tax Filing Export

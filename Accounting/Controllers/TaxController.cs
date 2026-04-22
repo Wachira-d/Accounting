@@ -48,6 +48,13 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "ยื่นรายงานภาษีสำเร็จ"));
     }
 
+    [HttpPut("{reportId:guid}")]
+    public async Task<ActionResult<ApiResponse<TaxReportResponse>>> UpdateTaxReport(Guid companyId, Guid reportId, [FromBody] UpdateTaxReportRequest request)
+    {
+        var result = await _taxService.UpdateTaxReportAsync(companyId, reportId, request);
+        return Ok(new ApiResponse<TaxReportResponse>(true, result, "แก้ไขรายงานภาษีสำเร็จ"));
+    }
+
     [HttpPost("{reportId:guid}/regenerate")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> RegenerateTaxReport(Guid companyId, Guid reportId)
     {

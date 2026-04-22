@@ -87,7 +87,7 @@
 
     <!-- Detail Modal -->
     <div class="modal-overlay" id="detailModal">
-      <div class="modal" style="max-width:700px">
+      <div class="modal" style="max-width:900px">
         <div class="modal-header"><h3 class="modal-title">รายละเอียดรายงานภาษี</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body" id="detailContent"></div>
         <div class="modal-footer" id="detailFooter"></div>
@@ -162,15 +162,19 @@
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')">ดู</button>
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${r.id}')">สร้างใหม่</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
+            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')">ลบ</button>` : ''}
           </td>
         </tr>`).join('');
       },
       goPage(p) { Page.page = p; Page.load(); },
+      _currentReport: null,
       async viewDetail(id) {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getTaxReport(id);
           const d = res.data || {};
+          this._currentReport = d;
+          const editable = d.status !== 'Filed';
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
               <div><span class="text-gray-500 text-xs">ประเภท</span><div class="font-semibold">${this.typeMap[d.taxType] || d.taxType}</div></div>
@@ -185,27 +189,48 @@
                 <div><span class="text-gray-500 text-xs">ภาษีสุทธิ</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน'}</div></div>
               </div>
             </div>`;
-          if (d.details && d.details.length) {
-            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>รายการ</th><th>เลขที่เอกสาร</th><th>ผู้ติดต่อ</th><th class="text-right">มูลค่า</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
-            html += d.details.map(dt => `<tr>
-              <td>${dt.description || '-'}</td>
-              <td class="text-xs">${dt.documentNumber || '-'}</td>
-              <td>${dt.contactName || '-'}</td>
-              <td class="text-right">${Layout.money(dt.baseAmount)}</td>
-              <td class="text-right">${Layout.money(dt.taxAmount)}</td>
+          if (d.lines && d.lines.length) {
+            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>#</th><th>รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
+            html += d.lines.map((ln, i) => `<tr>
+              <td>${ln.lineOrder}</td>
+              <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${(ln.description||'').replace(/"/g,'&quot;')}" style="min-width:120px">` : (ln.description || '-')}</td>
+              <td class="text-xs">${ln.taxPayerName || '-'}</td>
+              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
+              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:70px">` : ln.taxRate}</td>
+              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
             </tr>`).join('');
             html += '</tbody></table></div>';
           }
+          html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${d.notes || ''}</textarea>` : `<div>${d.notes || '-'}</div>`}</div>`;
           if (d.filingReference) {
             html += `<div style="margin-top:12px"><span class="text-gray-500 text-xs">เลขอ้างอิงการยื่น</span><div class="font-medium">${d.filingReference}</div></div>`;
           }
           document.getElementById('detailContent').innerHTML = html;
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
-          if (d.status !== 'Filed') {
-            footer = `<button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
+          if (editable) {
+            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px">ลบ</button><button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async saveReport(id) {
+        const api = Layout.api(); if (!api) return;
+        const notes = document.getElementById('taxNotes')?.value || '';
+        const lineInputs = document.querySelectorAll('#detailContent input[data-line]');
+        const lineMap = {};
+        lineInputs.forEach(inp => {
+          const lid = inp.dataset.line;
+          if (!lineMap[lid]) lineMap[lid] = { id: lid };
+          const field = inp.dataset.field;
+          lineMap[lid][field] = field === 'description' ? inp.value : parseFloat(inp.value) || 0;
+        });
+        const lines = Object.values(lineMap);
+        try {
+          await api.updateTaxReport(id, { notes, lines });
+          Layout.toast('บันทึกสำเร็จ');
+          await this.load();
+          await this.viewDetail(id);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async fileReport(id) {
@@ -223,6 +248,16 @@
         document.getElementById('gYear').value = now.getFullYear();
         document.getElementById('gMonth').value = now.getMonth() + 1;
         Layout.openModal('genModal');
+      },
+      async deleteReport(id) {
+        if (!confirm('ยืนยันลบรายงานภาษีนี้? (ไม่สามารถกู้คืนได้)')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteTaxReport(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบรายงานภาษีสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async regenerateReport(id) {
         if (!confirm('ต้องการสร้างรายงานภาษีใหม่? (ระบบจะลบรายงานเดิมและคำนวณใหม่จากข้อมูลปัจจุบัน)')) return;
