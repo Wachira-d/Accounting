@@ -352,7 +352,7 @@
     },
 
     async void(id) {
-      if (!confirm('ต้องการยกเลิก e-Tax Invoice นี้?')) return;
+      if (!(await Layout.confirmDanger({ title: 'ยกเลิก e-Tax Invoice', message: 'e-Tax Invoice ที่ส่งกรมสรรพากรแล้ว ต้องแจ้งยกเลิกตามขั้นตอน', mode: 'type', confirmText: 'confirm' }))) return;
       try {
         await API.post(`/api/companies/${this.companyId}/etax/${id}/void`);
         alert('ยกเลิกสำเร็จ');

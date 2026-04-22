@@ -47,4 +47,25 @@ public class TaxController : ControllerBase
         var result = await _taxService.FileTaxReportAsync(companyId, reportId);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "ยื่นรายงานภาษีสำเร็จ"));
     }
+
+    [HttpPut("{reportId:guid}")]
+    public async Task<ActionResult<ApiResponse<TaxReportResponse>>> UpdateTaxReport(Guid companyId, Guid reportId, [FromBody] UpdateTaxReportRequest request)
+    {
+        var result = await _taxService.UpdateTaxReportAsync(companyId, reportId, request);
+        return Ok(new ApiResponse<TaxReportResponse>(true, result, "แก้ไขรายงานภาษีสำเร็จ"));
+    }
+
+    [HttpPost("{reportId:guid}/regenerate")]
+    public async Task<ActionResult<ApiResponse<TaxReportResponse>>> RegenerateTaxReport(Guid companyId, Guid reportId)
+    {
+        var result = await _taxService.RegenerateTaxReportAsync(companyId, reportId);
+        return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีใหม่สำเร็จ"));
+    }
+
+    [HttpDelete("{reportId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> DeleteTaxReport(Guid companyId, Guid reportId)
+    {
+        await _taxService.DeleteTaxReportAsync(companyId, reportId);
+        return Ok(new ApiResponse<string>(true, "ลบรายงานภาษีสำเร็จ"));
+    }
 }

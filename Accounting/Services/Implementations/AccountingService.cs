@@ -315,7 +315,7 @@ public class AccountingService : IAccountingService
         return MapJournalEntryToResponse(entry);
     }
 
-    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null)
+    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null)
     {
         var query = _db.JournalEntries
             .Include(j => j.Lines).ThenInclude(l => l.Account)
@@ -335,6 +335,35 @@ public class AccountingService : IAccountingService
 
         if (toDate.HasValue)
             query = query.Where(j => j.EntryDate < toDate.Value.Date.AddDays(1));
+
+        if (dimensionId.HasValue)
+        {
+            var dimLineIds = _db.Set<JournalLineDimension>()
+                .Where(d => d.DimensionId == dimensionId.Value)
+                .Select(d => d.JournalEntryLineId);
+            var dimEntryIds = _db.JournalEntryLines
+                .Where(l => dimLineIds.Contains(l.Id))
+                .Select(l => l.JournalEntryId);
+            query = query.Where(j => dimEntryIds.Contains(j.Id));
+        }
+
+        if (branchId.HasValue)
+        {
+            var branchDimId = await _db.Set<Branch>()
+                .Where(b => b.Id == branchId.Value && b.CompanyId == companyId)
+                .Select(b => b.DimensionId)
+                .FirstOrDefaultAsync();
+            if (branchDimId.HasValue)
+            {
+                var bLineIds = _db.Set<JournalLineDimension>()
+                    .Where(d => d.DimensionId == branchDimId.Value)
+                    .Select(d => d.JournalEntryLineId);
+                var bEntryIds = _db.JournalEntryLines
+                    .Where(l => bLineIds.Contains(l.Id))
+                    .Select(l => l.JournalEntryId);
+                query = query.Where(j => bEntryIds.Contains(j.Id));
+            }
+        }
 
         var total = await query.CountAsync();
         var items = await query
@@ -421,10 +450,19 @@ public class AccountingService : IAccountingService
 
     // ==================== General Ledger ====================
 
-    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null)
+    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null)
     {
         var fromDateStart = fromDate.Date;
         var toDateEnd = toDate.Date.AddDays(1);
+
+        Guid? effectiveDimId = dimensionId;
+        if (branchId.HasValue && !effectiveDimId.HasValue)
+        {
+            effectiveDimId = await _db.Set<Branch>()
+                .Where(b => b.Id == branchId.Value && b.CompanyId == companyId)
+                .Select(b => b.DimensionId)
+                .FirstOrDefaultAsync();
+        }
 
         // Query posted entry IDs as subquery to avoid Include/navigation filter issues
         var postedEntryIds = _db.JournalEntries
@@ -442,6 +480,14 @@ public class AccountingService : IAccountingService
 
         if (accountId.HasValue)
             lineQuery = lineQuery.Where(l => l.AccountId == accountId.Value);
+
+        if (effectiveDimId.HasValue)
+        {
+            var dimLineIds = _db.Set<JournalLineDimension>()
+                .Where(d => d.DimensionId == effectiveDimId.Value)
+                .Select(d => d.JournalEntryLineId);
+            lineQuery = lineQuery.Where(l => dimLineIds.Contains(l.Id));
+        }
 
         var lines = await lineQuery
             .OrderBy(l => l.Account!.AccountCode)
@@ -598,23 +644,21 @@ public class AccountingService : IAccountingService
 
     public async Task<int> RepairBuddhistDatesAsync(Guid companyId)
     {
-        // Fix entries where dates were incorrectly stored by subtracting 543 from Gregorian year
-        // e.g., 2026 - 543 = 1483, so entries with year < 1900 need +543
+        int totalFixed = 0;
+
         var badEntries = await _db.JournalEntries
             .Where(j => j.CompanyId == companyId && j.EntryDate.Year < 1900)
             .ToListAsync();
-
         foreach (var entry in badEntries)
         {
             entry.EntryDate = entry.EntryDate.AddYears(543);
             entry.UpdatedAt = DateTime.UtcNow;
         }
+        totalFixed += badEntries.Count;
 
-        // Also fix documents with bad dates
         var badDocs = await _db.Documents
             .Where(d => d.CompanyId == companyId && d.DocumentDate.Year < 1900)
             .ToListAsync();
-
         foreach (var doc in badDocs)
         {
             doc.DocumentDate = doc.DocumentDate.AddYears(543);
@@ -622,20 +666,90 @@ public class AccountingService : IAccountingService
                 doc.DueDate = doc.DueDate.Value.AddYears(543);
             doc.UpdatedAt = DateTime.UtcNow;
         }
+        totalFixed += badDocs.Count;
 
-        // Also fix payments with bad dates
         var badPayments = await _db.Payments
             .Where(p => p.CompanyId == companyId && p.PaymentDate.Year < 1900)
             .ToListAsync();
-
         foreach (var payment in badPayments)
         {
             payment.PaymentDate = payment.PaymentDate.AddYears(543);
             payment.UpdatedAt = DateTime.UtcNow;
         }
+        totalFixed += badPayments.Count;
+
+        var badBankTxns = await _db.BankTransactions
+            .Where(b => b.CompanyId == companyId && b.TransactionDate.Year < 1900)
+            .ToListAsync();
+        foreach (var bt in badBankTxns)
+        {
+            bt.TransactionDate = bt.TransactionDate.AddYears(543);
+            bt.UpdatedAt = DateTime.UtcNow;
+        }
+        totalFixed += badBankTxns.Count;
+
+        var badRecurring = await _db.RecurringTransactions
+            .Where(r => r.CompanyId == companyId && r.StartDate.Year < 1900)
+            .ToListAsync();
+        foreach (var r in badRecurring)
+        {
+            r.StartDate = r.StartDate.AddYears(543);
+            if (r.EndDate.HasValue && r.EndDate.Value.Year < 1900)
+                r.EndDate = r.EndDate.Value.AddYears(543);
+            if (r.NextRunDate.Year < 1900)
+                r.NextRunDate = r.NextRunDate.AddYears(543);
+            if (r.LastRunDate.HasValue && r.LastRunDate.Value.Year < 1900)
+                r.LastRunDate = r.LastRunDate.Value.AddYears(543);
+            r.UpdatedAt = DateTime.UtcNow;
+        }
+        totalFixed += badRecurring.Count;
+
+        var badAssets = await _db.FixedAssets
+            .Where(a => a.CompanyId == companyId && a.PurchaseDate.Year < 1900)
+            .ToListAsync();
+        foreach (var a in badAssets)
+        {
+            a.PurchaseDate = a.PurchaseDate.AddYears(543);
+            if (a.DisposalDate.HasValue && a.DisposalDate.Value.Year < 1900)
+                a.DisposalDate = a.DisposalDate.Value.AddYears(543);
+            a.UpdatedAt = DateTime.UtcNow;
+        }
+        totalFixed += badAssets.Count;
+
+        var badDeposits = await _db.DepositTransactions
+            .Where(d => d.CompanyId == companyId && d.TransactionDate.Year < 1900)
+            .ToListAsync();
+        foreach (var d in badDeposits)
+        {
+            d.TransactionDate = d.TransactionDate.AddYears(543);
+            if (d.ExpectedReturnDate.HasValue && d.ExpectedReturnDate.Value.Year < 1900)
+                d.ExpectedReturnDate = d.ExpectedReturnDate.Value.AddYears(543);
+            d.UpdatedAt = DateTime.UtcNow;
+        }
+        totalFixed += badDeposits.Count;
+
+        var badStockMoves = await _db.StockMovements
+            .Where(s => s.CompanyId == companyId && s.MovementDate.Year < 1900)
+            .ToListAsync();
+        foreach (var s in badStockMoves)
+        {
+            s.MovementDate = s.MovementDate.AddYears(543);
+            s.UpdatedAt = DateTime.UtcNow;
+        }
+        totalFixed += badStockMoves.Count;
+
+        var badTaxLines = await _db.TaxReportLines
+            .Where(l => l.TransactionDate.Year < 1900)
+            .ToListAsync();
+        foreach (var l in badTaxLines)
+        {
+            l.TransactionDate = l.TransactionDate.AddYears(543);
+            l.UpdatedAt = DateTime.UtcNow;
+        }
+        totalFixed += badTaxLines.Count;
 
         await _db.SaveChangesAsync();
-        return badEntries.Count + badDocs.Count + badPayments.Count;
+        return totalFixed;
     }
 
     public async Task<int> RebuildMissingLinesAsync(Guid companyId)

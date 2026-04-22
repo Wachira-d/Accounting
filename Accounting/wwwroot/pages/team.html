@@ -247,7 +247,7 @@
       },
 
       async removeMember(userId, name) {
-        if (!confirm(`ต้องการลบ "${name}" ออกจากบริษัทหรือไม่?`)) return;
+        if (!(await Layout.confirmDanger({ title: 'ลบสมาชิก', message: `ลบ <b>${name}</b> ออกจากบริษัท — ผู้ใช้จะเข้าถึงข้อมูลบริษัทไม่ได้อีก`, mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.removeMember(userId);

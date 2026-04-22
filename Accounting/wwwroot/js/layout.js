@@ -25,11 +25,32 @@ const Layout = {
     return true;
   },
 
-  // PWA Service Worker
+  // PWA Service Worker — auto-update when new version deployed
   initServiceWorker() {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
+    if (!('serviceWorker' in navigator)) return;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      // Check for updates every 60s so new deploys appear quickly
+      setInterval(() => reg.update().catch(() => {}), 60000);
+
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            newWorker.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing || !hadController) return;
+        refreshing = true;
+        if (this.toast) this.toast('ระบบอัปเดตเวอร์ชันใหม่ กำลังโหลด...', 'info');
+        setTimeout(() => window.location.reload(), 500);
+      });
+    }).catch(() => {});
   },
 
   // SignalR real-time notifications
@@ -760,6 +781,77 @@ const Layout = {
   // Modal helpers
   openModal(id) { document.getElementById(id).classList.add('active'); },
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
+
+  // Danger confirm: requires solving math problem OR typing "confirm"
+  // Usage: await Layout.confirmDanger({ title, message, mode: 'math'|'type', confirmText }) → boolean
+  confirmDanger(opts = {}) {
+    return new Promise(resolve => {
+      const title = opts.title || 'ยืนยันการดำเนินการ';
+      const message = opts.message || 'การดำเนินการนี้ไม่สามารถย้อนกลับได้';
+      const mode = opts.mode || 'math';
+      const confirmText = opts.confirmText || 'confirm';
+      const a = Math.floor(Math.random() * 9) + 2;
+      const b = Math.floor(Math.random() * 9) + 2;
+      const expected = mode === 'math' ? String(a + b) : confirmText;
+      const prompt = mode === 'math'
+        ? `เพื่อยืนยัน กรุณาคำนวณ: <b>${a} + ${b} = ?</b>`
+        : `เพื่อยืนยัน กรุณาพิมพ์ <b>${confirmText}</b>`;
+
+      let wrap = document.getElementById('dangerConfirmModal');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.id = 'dangerConfirmModal';
+        wrap.className = 'modal-overlay';
+        wrap.innerHTML = `
+          <div class="modal" style="max-width:440px">
+            <div class="modal-header" style="border-bottom:2px solid var(--danger,#dc2626)">
+              <h3 class="modal-title" id="dcTitle" style="color:var(--danger,#dc2626)">⚠️ ยืนยัน</h3>
+              <button class="modal-close" id="dcClose">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div id="dcMessage" style="margin-bottom:12px;line-height:1.5"></div>
+              <div id="dcPrompt" style="margin-bottom:8px;font-size:14px"></div>
+              <input type="text" class="form-input" id="dcInput" autocomplete="off" placeholder="คำตอบ..." style="font-size:16px">
+              <div id="dcError" style="color:var(--danger,#dc2626);font-size:13px;margin-top:6px;min-height:18px"></div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="dcCancel">ยกเลิก</button>
+              <button class="btn btn-danger" id="dcOk">ยืนยัน</button>
+            </div>
+          </div>`;
+        document.body.appendChild(wrap);
+      }
+      wrap.querySelector('#dcTitle').innerHTML = '⚠️ ' + title;
+      wrap.querySelector('#dcMessage').innerHTML = message;
+      wrap.querySelector('#dcPrompt').innerHTML = prompt;
+      const input = wrap.querySelector('#dcInput');
+      const errDiv = wrap.querySelector('#dcError');
+      input.value = '';
+      errDiv.textContent = '';
+      wrap.classList.add('active');
+      setTimeout(() => input.focus(), 50);
+
+      const cleanup = (val) => {
+        wrap.classList.remove('active');
+        wrap.querySelector('#dcOk').onclick = null;
+        wrap.querySelector('#dcCancel').onclick = null;
+        wrap.querySelector('#dcClose').onclick = null;
+        input.onkeydown = null;
+        resolve(val);
+      };
+      const tryConfirm = () => {
+        if (input.value.trim() === expected) cleanup(true);
+        else { errDiv.textContent = 'คำตอบไม่ถูกต้อง กรุณาลองใหม่'; input.select(); }
+      };
+      wrap.querySelector('#dcOk').onclick = tryConfirm;
+      wrap.querySelector('#dcCancel').onclick = () => cleanup(false);
+      wrap.querySelector('#dcClose').onclick = () => cleanup(false);
+      input.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); tryConfirm(); }
+        if (e.key === 'Escape') cleanup(false);
+      };
+    });
+  },
 
   // Format helpers
   money(n) {

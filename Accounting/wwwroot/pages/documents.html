@@ -14,7 +14,7 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">เอกสารทั้งหมด</h2><p class="page-subtitle">จัดการเอกสารฝั่งรายรับและรายจ่าย</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2" id="pageActions">
         <button class="btn btn-primary" onclick="Page.openCreate('revenue')">+ เอกสารรายรับ</button>
         <button class="btn btn-secondary" onclick="Page.openCreate('expense')">+ เอกสารรายจ่าย</button>
       </div>
@@ -196,6 +196,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       page: 1, docType: '', side: '', contacts: [],
@@ -206,11 +207,48 @@
         const navId = sideParam === 'expense' ? 'expense-docs' : sideParam === 'revenue' ? 'documents' : 'documents';
         if (!Layout.init(navId)) return;
         Layout.setTitle(sideParam === 'revenue' ? 'เอกสารฝั่งรายรับ' : sideParam === 'expense' ? 'เอกสารฝั่งรายจ่าย' : 'เอกสาร');
+        // Inject Export button into header actions
+        const pa = document.getElementById('pageActions');
+        if (pa && window.ExportUtil) {
+          pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
+        }
         const api = Layout.api(); if (!api) return;
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
         else await this.load();
+      },
+      async exportAll(format) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
+          let q = '?page=1&pageSize=10000';
+          if (this.docType) q += `&documentType=${this.docType}`;
+          const status = document.getElementById('statusFilter')?.value;
+          if (status) q += `&status=${status}`;
+          const res = await api.getDocuments(q);
+          let rows = res.data?.items || res.data || [];
+          if (!this.docType && this.side) {
+            const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
+            rows = rows.filter(d => types.includes(d.documentType));
+          }
+          const cols = [
+            { key: 'documentNumber', label: 'เลขที่' },
+            { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
+            { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+            { key: 'contact.name', label: 'ผู้ติดต่อ' },
+            { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'status', label: 'สถานะ' }
+          ];
+          ExportUtil.exportData(format, {
+            rows, columns: cols,
+            filename: `เอกสาร${this.side === 'revenue' ? '_รายรับ' : this.side === 'expense' ? '_รายจ่าย' : ''}`,
+            title: `เอกสาร${this.side === 'revenue' ? ' (รายรับ)' : this.side === 'expense' ? ' (รายจ่าย)' : ''}`,
+            subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
+          });
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
       populateContacts() {
         const sel = document.getElementById('fContact');
@@ -274,6 +312,7 @@
             const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
             items = items.filter(d => types.includes(d.documentType));
           }
+          this._currentItems = items;
           const tbody = document.getElementById('tableBody');
           const sideLabel = this.side === 'revenue' ? 'รายรับ' : this.side === 'expense' ? 'รายจ่าย' : '';
           if (!items.length) { tbody.innerHTML = `<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีเอกสาร${sideLabel ? 'ฝั่ง' + sideLabel : ''}</td></tr>`; return; }
@@ -476,7 +515,7 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidDoc(id) {
-        if (!confirm('ยกเลิกเอกสารนี้?')) return;
+        if (!(await Layout.confirmDanger({ title: 'ยกเลิกเอกสาร', message: 'เอกสารที่ถูกยกเลิกจะไม่นับในยอดขาย/รายได้และ GL', mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }

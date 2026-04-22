@@ -17,14 +17,14 @@ public interface IAccountingService
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
     Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId);
-    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null);
+    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null);
     Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId);
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
     Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
     Task<int> BatchPostJournalEntriesAsync(Guid companyId);
 
     // General Ledger
-    Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null);
+    Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null);
     Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null);
     Task<int> RebuildMissingLinesAsync(Guid companyId);
     Task<int> RepairBuddhistDatesAsync(Guid companyId);

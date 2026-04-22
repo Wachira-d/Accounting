@@ -272,7 +272,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidCert(id) {
-        if (!confirm('ต้องการยกเลิกหนังสือรับรองนี้?')) return;
+        if (!(await Layout.confirmDanger({ title: 'ยกเลิกหนังสือรับรอง', message: 'หนังสือรับรองหัก ณ ที่จ่ายจะถูกยกเลิก ไม่สามารถออกเลขที่เดิมซ้ำได้', mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.voidWhtCert(id);

@@ -23,10 +23,7 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">สมุดรายวัน</h2><p class="page-subtitle">สมุดบัญชี 5 เล่มตามมาตรฐานบัญชีไทย</p></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-success" id="btnPostAll" style="display:none" onclick="Page.batchPostAll()">ผ่านรายการทั้งหมด</button>
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
-      </div>
+      <div style="display:flex;gap:8px" id="pageActions"></div>
     </div>
 
     <!-- Journal Type Tabs -->
@@ -50,11 +47,14 @@
       <input type="date" class="form-input" id="fromDate" style="width:160px" onchange="Page.load()">
       <span class="text-gray-400">ถึง</span>
       <input type="date" class="form-input" id="toDate" style="width:160px" onchange="Page.load()">
+      <select class="filter-select" id="dimProjectFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกโครงการ</option></select>
+      <select class="filter-select" id="dimBranchFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกสาขา</option></select>
     </div>
 
     <!-- Batch Action Bar -->
     <div class="batch-bar" id="batchBar">
       <span>เลือกแล้ว <span class="count" id="batchCount">0</span> รายการ</span>
+      <span id="batchExportSlot"></span>
       <button class="btn btn-danger btn-sm" onclick="Page.batchVoid()">ยกเลิกรายการที่เลือก</button>
       <button class="btn btn-secondary btn-sm" onclick="Page.clearSelection()">ยกเลิกการเลือก</button>
     </div>
@@ -140,6 +140,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       page: 1, accounts: [], currentType: '', selected: new Set(), currentItems: [],
@@ -167,12 +168,102 @@
           const res = await api.getAccounts();
           this.accounts = res.data?.items || res.data || [];
         } catch(e) {}
+        this.renderHeaderActions();
+        await this.loadDimensionFilters();
         const urlType = new URLSearchParams(window.location.search).get('type');
         if (urlType) this.currentType = urlType;
         this.updateTabs();
         await this.load();
         this.loadCounts();
         this.checkDraftCount();
+      },
+      renderHeaderActions() {
+        const holder = document.getElementById('pageActions');
+        if (!holder) return;
+        holder.innerHTML = `
+          ${ExportUtil.renderButtons('(f)=>Page.exportAll(f)')}
+          <button class="btn btn-success" id="btnPostAll" style="display:none" onclick="Page.batchPostAll()">ผ่านรายการทั้งหมด</button>
+          <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
+        `;
+      },
+      async loadDimensionFilters() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [projRes, branchRes] = await Promise.all([
+            api.getDimensions?.().catch(()=>null),
+            api.getBranches?.().catch(()=>null)
+          ]);
+          const projSel = document.getElementById('dimProjectFilter');
+          const branchSel = document.getElementById('dimBranchFilter');
+          const projects = (projRes?.data?.items || projRes?.data || []).filter(d => (d.type||'').toLowerCase().includes('project') || d.type === 'Project' || d.code?.toLowerCase().startsWith('proj'));
+          const dims = projRes?.data?.items || projRes?.data || [];
+          if (projSel) {
+            projSel.innerHTML = '<option value="">ทุกโครงการ/มิติ</option>' +
+              dims.map(d => `<option value="${d.id}">${d.code ? `[${d.code}] ` : ''}${d.name || '-'}</option>`).join('');
+          }
+          const branches = branchRes?.data?.items || branchRes?.data || [];
+          if (branchSel) {
+            branchSel.innerHTML = '<option value="">ทุกสาขา</option>' +
+              branches.map(b => `<option value="${b.id}">${b.code ? `[${b.code}] ` : ''}${b.name || '-'}</option>`).join('');
+          }
+        } catch(e) {}
+      },
+      _exportColumns() {
+        return [
+          { key: 'entryNumber', label: 'เลขที่' },
+          { key: 'journalType', label: 'ประเภท', format: v => this.journalTypeLabels[v] || v || '' },
+          { key: 'entryDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+          { key: 'description', label: 'คำอธิบาย' },
+          { key: 'reference', label: 'อ้างอิง' },
+          { key: 'totalDebit', label: 'เดบิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'totalCredit', label: 'เครดิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'status', label: 'สถานะ' }
+        ];
+      },
+      async exportAll(format) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
+          let q = `?page=1&pageSize=10000`;
+          if (this.currentType) q += `&journalType=${this.currentType}`;
+          const statusF = document.getElementById('statusFilter').value;
+          const fromD = document.getElementById('fromDate').value;
+          const toD = document.getElementById('toDate').value;
+          const proj = document.getElementById('dimProjectFilter')?.value;
+          const branch = document.getElementById('dimBranchFilter')?.value;
+          if (statusF) q += `&status=${statusF}`;
+          if (fromD) q += `&fromDate=${fromD}`;
+          if (toD) q += `&toDate=${toD}`;
+          if (proj) q += `&dimensionId=${proj}`;
+          if (branch) q += `&branchId=${branch}`;
+          const res = await api.getJournals(q);
+          const rows = res.data?.items || res.data || [];
+          const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
+          const totalC = rows.reduce((a,r)=>a+Number(r.totalCredit||0),0);
+          ExportUtil.exportData(format, {
+            rows, columns: this._exportColumns(),
+            filename: `สมุดรายวัน${this.currentType ? '_'+this.journalTypeLabels[this.currentType] : ''}`,
+            title: `สมุดรายวัน${this.currentType ? ' - '+this.journalTypeLabels[this.currentType] : ''}`,
+            subtitle: `ช่วงวันที่: ${fromD||'ทั้งหมด'} ถึง ${toD||'ทั้งหมด'} | จำนวน ${rows.length} รายการ`,
+            landscape: true,
+            totals: { 'รวมเดบิต': totalD.toLocaleString('en-US',{minimumFractionDigits:2}), 'รวมเครดิต': totalC.toLocaleString('en-US',{minimumFractionDigits:2}) }
+          });
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      exportSelected(format) {
+        const ids = [...this.selected];
+        if (!ids.length) { Layout.toast('กรุณาเลือกรายการก่อน', 'error'); return; }
+        const rows = this.currentItems.filter(j => ids.includes(j.id));
+        const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
+        const totalC = rows.reduce((a,r)=>a+Number(r.totalCredit||0),0);
+        ExportUtil.exportData(format, {
+          rows, columns: this._exportColumns(),
+          filename: `สมุดรายวัน_รายการที่เลือก`,
+          title: 'สมุดรายวัน (รายการที่เลือก)',
+          subtitle: `จำนวน ${rows.length} รายการ`,
+          landscape: true,
+          totals: { 'รวมเดบิต': totalD.toLocaleString('en-US',{minimumFractionDigits:2}), 'รวมเครดิต': totalC.toLocaleString('en-US',{minimumFractionDigits:2}) }
+        });
       },
       setType(type) {
         this.currentType = type;
@@ -238,6 +329,11 @@
         const count = this.selected.size;
         document.getElementById('batchCount').textContent = count;
         document.getElementById('batchBar').classList.toggle('show', count > 0);
+        const slot = document.getElementById('batchExportSlot');
+        if (slot && !slot._rendered) {
+          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelected(f)');
+          slot._rendered = true;
+        }
       },
 
       async load() {
@@ -403,7 +499,12 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidEntry(id) {
-        if (!confirm('ต้องการยกเลิกรายการนี้?')) return;
+        const ok = await Layout.confirmDanger({
+          title: 'ยกเลิกรายการสมุดรายวัน',
+          message: 'การยกเลิกจะเปลี่ยนสถานะเป็น <b>Voided</b> และไม่นำไปคำนวณใน GL/รายงาน การดำเนินการนี้ย้อนกลับไม่ได้',
+          mode: 'math'
+        });
+        if (!ok) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.voidJournal(id);
@@ -418,7 +519,13 @@
       async batchVoid() {
         const ids = [...this.selected];
         if (!ids.length) { Layout.toast('กรุณาเลือกรายการก่อน', 'error'); return; }
-        if (!confirm(`ต้องการยกเลิก ${ids.length} รายการที่เลือก?`)) return;
+        const ok = await Layout.confirmDanger({
+          title: `ยกเลิก ${ids.length} รายการ`,
+          message: `คุณกำลังจะยกเลิก <b>${ids.length} รายการ</b> พร้อมกัน กรุณาตรวจสอบให้แน่ใจก่อน เพราะการดำเนินการนี้ย้อนกลับไม่ได้`,
+          mode: ids.length >= 5 ? 'type' : 'math',
+          confirmText: 'confirm'
+        });
+        if (!ok) return;
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.batchVoidJournals(ids);

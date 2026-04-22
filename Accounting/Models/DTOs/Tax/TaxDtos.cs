@@ -19,7 +19,19 @@ public record TaxReportResponse(
     decimal NetVat,
     decimal TotalIncome,
     decimal TotalTaxWithheld,
-    List<TaxReportLineResponse> Lines);
+    List<TaxReportLineResponse> Lines,
+    string? Notes = null);
+
+public record UpdateTaxReportRequest(
+    string? Notes,
+    List<UpdateTaxReportLineRequest>? Lines);
+
+public record UpdateTaxReportLineRequest(
+    Guid Id,
+    decimal? IncomeAmount,
+    decimal? TaxRate,
+    decimal? TaxAmount,
+    string? Description);
 
 public record TaxReportLineResponse(
     Guid Id,

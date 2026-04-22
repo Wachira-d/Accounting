@@ -117,7 +117,7 @@ const Page = {
   },
 
   async confirm(id) { const api = Layout.api(); if (!api) return; try { await api.confirmIntercompanyTxn(id); Layout.toast('ยืนยันสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); } },
-  async void(id) { if (!confirm('ยกเลิกรายการนี้?')) return; const api = Layout.api(); if (!api) return; try { await api.voidIntercompanyTxn(id); Layout.toast('ยกเลิกสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); } },
+  async void(id) { if (!(await Layout.confirmDanger({ title: 'ยกเลิกรายการระหว่างบริษัท', message: 'รายการนี้จะถูกยกเลิกทั้งฝั่งผู้ส่งและผู้รับ', mode: 'math' }))) return; const api = Layout.api(); if (!api) return; try { await api.voidIntercompanyTxn(id); Layout.toast('ยกเลิกสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); } },
 
   async loadBalances() {
     const api = Layout.api(); if (!api) return;
