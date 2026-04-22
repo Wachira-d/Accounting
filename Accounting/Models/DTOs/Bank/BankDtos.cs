@@ -28,6 +28,8 @@ public record BankAccountResponse(
     string Currency,
     decimal CurrentBalance,
     Guid? LinkedAccountId,
+    string? LinkedAccountCode,
+    string? LinkedAccountName,
     bool IsActive);
 
 public record CreateBankTransactionRequest(
