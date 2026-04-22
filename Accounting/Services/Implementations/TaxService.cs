@@ -106,7 +106,7 @@ public class TaxService : ITaxService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.VatAmount != 0)
             .ToListAsync();
 
@@ -305,7 +305,7 @@ public class TaxService : ITaxService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.WithholdingTaxAmount != 0)
             .ToListAsync();
 
@@ -358,6 +358,51 @@ public class TaxService : ITaxService
                 TaxAmount = group.Sum(l => l.TaxAmount),
                 IncomeTypeCode = "SUMMARY"
             });
+        }
+
+        // ===== Fallback: scan journal entries that have NO source document =====
+        var endDateInclusive = endDate.Date.AddDays(1);
+        var journalOnlyEntryIds = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= startDate && j.EntryDate < endDateInclusive
+                && j.SourceDocumentId == null)
+            .Select(j => j.Id)
+            .ToListAsync();
+
+        if (journalOnlyEntryIds.Any())
+        {
+            // WHT accounts: 2191x (payable) or 11910 (receivable) or name contains "หัก ณ ที่จ่าย"
+            var whtLines = await _db.JournalEntryLines
+                .Include(l => l.Account)
+                .Include(l => l.JournalEntry)
+                .Where(l => journalOnlyEntryIds.Contains(l.JournalEntryId)
+                    && l.Account != null
+                    && (l.Account.AccountCode.StartsWith("2191")
+                        || l.Account.AccountCode.StartsWith("11910")
+                        || l.Account.AccountName.Contains("หัก ณ ที่จ่าย")))
+                .ToListAsync();
+
+            var byEntry = whtLines.GroupBy(l => l.JournalEntryId);
+            foreach (var grp in byEntry)
+            {
+                var je = grp.First().JournalEntry;
+                var whtAmount = grp.Sum(l => l.CreditAmount - l.DebitAmount);
+                if (whtAmount <= 0) continue;
+
+                var baseAmount = Math.Round(whtAmount / 0.03m, 2);
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id,
+                    LineOrder = lineOrder++,
+                    TransactionDate = je.EntryDate,
+                    Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                    IncomeAmount = baseAmount,
+                    TaxRate = 3,
+                    TaxAmount = whtAmount,
+                    IncomeTypeCode = "40(8)"
+                });
+            }
         }
 
         report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
@@ -760,7 +805,7 @@ public class TaxService : ITaxService
         var docs = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= start && d.DocumentDate < end
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.VatAmount, d.Status })
             .ToListAsync();
 

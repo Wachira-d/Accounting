@@ -131,6 +131,7 @@ const API = {
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
       updateContact: (id, d) => API.put(`${base}/document/contacts/${id}`, d),
+      getContactSmartDefaults: (id) => API.get(`${base}/document/contacts/${id}/smart-defaults`),
       // Payments
       getPayments: (q = '') => API.get(`${base}/document/payments${q}`),
       createPayment: (d) => API.post(`${base}/document/payments`, d),
@@ -209,6 +210,7 @@ const API = {
       reconcile: (d) => API.post(`${base}/bank/reconcile`, d),
       autoMatch: (id) => API.post(`${base}/bank/accounts/${id}/auto-match`),
       getUnreconciled: (id) => API.get(`${base}/bank/accounts/${id}/unreconciled`),
+      importBankStatement: (d) => API.post(`${base}/bank/import-statement`, d),
       // Open Banking
       getConnections: () => API.get(`${base}/open-banking/connections`),
       createConnection: (d) => API.post(`${base}/open-banking/connections`, d),

@@ -311,6 +311,19 @@ public class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         doc.Status = DocumentStatus.Voided;
+        doc.UpdatedAt = DateTime.UtcNow;
+
+        // Void linked journal entries
+        var linkedJournals = await _db.JournalEntries
+            .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted)
+            .ToListAsync();
+        foreach (var je in linkedJournals)
+        {
+            je.Status = JournalEntryStatus.Voided;
+            je.UpdatedAt = DateTime.UtcNow;
+        }
+
         await _db.SaveChangesAsync();
     }
 
