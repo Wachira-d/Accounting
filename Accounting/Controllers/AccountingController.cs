@@ -138,6 +138,21 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<GeneralLedgerResponse>(true, result));
     }
 
+    [HttpGet("reports/gl-debug")]
+    public async Task<ActionResult<ApiResponse<object>>> GetGlDebug(
+        Guid companyId, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+    {
+        var debug = await _accountingService.GetGlDebugAsync(companyId, fromDate, toDate);
+        return Ok(new ApiResponse<object>(true, debug));
+    }
+
+    [HttpPost("reports/rebuild-lines")]
+    public async Task<ActionResult<ApiResponse<string>>> RebuildMissingLines(Guid companyId)
+    {
+        var count = await _accountingService.RebuildMissingLinesAsync(companyId);
+        return Ok(new ApiResponse<string>(true, null, $"สร้างรายการย่อยใหม่สำเร็จ {count} ใบสำคัญ"));
+    }
+
     // ===== Reports =====
 
     [HttpGet("reports/trial-balance")]

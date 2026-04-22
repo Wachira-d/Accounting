@@ -508,6 +508,187 @@ public class AccountingService : IAccountingService
         return new GeneralLedgerResponse(accounts, fromDate, toDate);
     }
 
+    public async Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null)
+    {
+        var from = fromDate?.Date ?? DateTime.UtcNow.Date.AddMonths(-6);
+        var to = toDate?.Date.AddDays(1) ?? DateTime.UtcNow.Date.AddDays(1);
+
+        var totalEntries = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId)
+            .CountAsync();
+
+        var postedEntries = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+            .CountAsync();
+
+        var postedInRange = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= from
+                && j.EntryDate < to)
+            .CountAsync();
+
+        var totalLines = await _db.JournalEntryLines
+            .CountAsync(l => _db.JournalEntries
+                .Where(j => j.CompanyId == companyId)
+                .Select(j => j.Id)
+                .Contains(l.JournalEntryId));
+
+        var postedLines = await _db.JournalEntryLines
+            .CountAsync(l => _db.JournalEntries
+                .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+                .Select(j => j.Id)
+                .Contains(l.JournalEntryId));
+
+        var postedLinesInRange = await _db.JournalEntryLines
+            .CountAsync(l => _db.JournalEntries
+                .Where(j => j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.EntryDate >= from
+                    && j.EntryDate < to)
+                .Select(j => j.Id)
+                .Contains(l.JournalEntryId));
+
+        var sampleEntry = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+            .OrderByDescending(j => j.EntryDate)
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.Status, j.TotalDebit, j.TotalCredit })
+            .FirstOrDefaultAsync();
+
+        object? sampleLines = null;
+        if (sampleEntry != null)
+        {
+            var lineCount = await _db.JournalEntryLines
+                .CountAsync(l => l.JournalEntryId == sampleEntry.Id);
+            var lines = await _db.JournalEntryLines
+                .Where(l => l.JournalEntryId == sampleEntry.Id)
+                .Select(l => new { l.Id, l.AccountId, l.DebitAmount, l.CreditAmount, l.Description })
+                .Take(5)
+                .ToListAsync();
+            sampleLines = new { lineCount, lines };
+        }
+
+        var statusBreakdown = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId)
+            .GroupBy(j => j.Status)
+            .Select(g => new { status = g.Key.ToString(), count = g.Count() })
+            .ToListAsync();
+
+        var dateRange = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId)
+            .GroupBy(j => 1)
+            .Select(g => new { minDate = g.Min(j => j.EntryDate), maxDate = g.Max(j => j.EntryDate) })
+            .FirstOrDefaultAsync();
+
+        return new
+        {
+            queryRange = new { from, to },
+            totalEntries,
+            postedEntries,
+            postedInRange,
+            totalLines,
+            postedLines,
+            postedLinesInRange,
+            statusBreakdown,
+            dateRange,
+            sampleEntry,
+            sampleLines
+        };
+    }
+
+    public async Task<int> RebuildMissingLinesAsync(Guid companyId)
+    {
+        // Find entries that have no lines
+        var entriesWithoutLines = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && !j.Lines.Any())
+            .ToListAsync();
+
+        if (!entriesWithoutLines.Any()) return 0;
+
+        // Load account mappings by journal type
+        var cashAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive && !a.IsDeleted);
+        var bankAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("112") && a.IsActive && !a.IsDeleted);
+        var arAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive && !a.IsDeleted);
+        var apAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive && !a.IsDeleted);
+        var revenueAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.IsActive && !a.IsDeleted);
+        var expenseAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("51") && a.IsActive && !a.IsDeleted);
+        var depositAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("215") && a.IsActive && !a.IsDeleted);
+
+        var defaultDebit = cashAccount ?? bankAccount;
+        var defaultCredit = revenueAccount ?? arAccount;
+
+        int rebuilt = 0;
+        foreach (var entry in entriesWithoutLines)
+        {
+            var amount = entry.TotalDebit > 0 ? entry.TotalDebit : entry.TotalCredit;
+            if (amount <= 0) continue;
+
+            Guid? debitAccountId = null;
+            Guid? creditAccountId = null;
+
+            switch (entry.JournalType)
+            {
+                case JournalType.Sales:
+                    debitAccountId = arAccount?.Id;
+                    creditAccountId = revenueAccount?.Id;
+                    break;
+                case JournalType.CashReceipts:
+                    debitAccountId = (bankAccount ?? cashAccount)?.Id;
+                    // Check if description mentions deposit
+                    if (entry.Description?.Contains("มัดจำ") == true)
+                        creditAccountId = depositAccount?.Id ?? arAccount?.Id;
+                    else
+                        creditAccountId = arAccount?.Id;
+                    break;
+                case JournalType.CashPayments:
+                    debitAccountId = expenseAccount?.Id ?? apAccount?.Id;
+                    creditAccountId = (bankAccount ?? cashAccount)?.Id;
+                    break;
+                case JournalType.Purchase:
+                    debitAccountId = expenseAccount?.Id;
+                    creditAccountId = apAccount?.Id;
+                    break;
+                default:
+                    debitAccountId = defaultDebit?.Id;
+                    creditAccountId = defaultCredit?.Id;
+                    break;
+            }
+
+            if (debitAccountId == null || creditAccountId == null) continue;
+
+            entry.Lines = new List<JournalEntryLine>
+            {
+                new()
+                {
+                    AccountId = debitAccountId.Value,
+                    DebitAmount = amount,
+                    CreditAmount = 0,
+                    Description = entry.Description,
+                    LineOrder = 1
+                },
+                new()
+                {
+                    AccountId = creditAccountId.Value,
+                    DebitAmount = 0,
+                    CreditAmount = amount,
+                    Description = entry.Description,
+                    LineOrder = 2
+                }
+            };
+            rebuilt++;
+        }
+
+        await _db.SaveChangesAsync();
+        return rebuilt;
+    }
+
     // ==================== Reports ====================
 
     public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate)
