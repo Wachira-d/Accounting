@@ -423,52 +423,64 @@ public class AccountingService : IAccountingService
 
     public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null)
     {
+        var fromDateStart = fromDate.Date;
         var toDateEnd = toDate.Date.AddDays(1);
 
-        // Get all posted journal lines in date range
-        var query = _db.JournalEntryLines
+        // Query posted entry IDs as subquery to avoid Include/navigation filter issues
+        var postedEntryIds = _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= fromDateStart
+                && j.EntryDate < toDateEnd)
+            .Select(j => j.Id);
+
+        // Get all lines for posted entries, joined with accounts
+        var lineQuery = _db.JournalEntryLines
             .Include(l => l.Account)
             .Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= fromDate.Date
-                && l.JournalEntry.EntryDate < toDateEnd);
+            .Where(l => postedEntryIds.Contains(l.JournalEntryId));
 
         if (accountId.HasValue)
-            query = query.Where(l => l.AccountId == accountId.Value);
+            lineQuery = lineQuery.Where(l => l.AccountId == accountId.Value);
 
-        var lines = await query.OrderBy(l => l.Account.AccountCode)
+        var lines = await lineQuery
+            .OrderBy(l => l.Account!.AccountCode)
             .ThenBy(l => l.JournalEntry.EntryDate)
             .ThenBy(l => l.JournalEntry.EntryNumber)
             .ToListAsync();
 
         // Get opening balances (all posted entries before fromDate)
-        var openingQuery = _db.JournalEntryLines
+        var openingEntryIds = _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate < fromDateStart)
+            .Select(j => j.Id);
+
+        var openingLineQuery = _db.JournalEntryLines
             .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate < fromDate.Date);
+            .Where(l => openingEntryIds.Contains(l.JournalEntryId));
 
         if (accountId.HasValue)
-            openingQuery = openingQuery.Where(l => l.AccountId == accountId.Value);
+            openingLineQuery = openingLineQuery.Where(l => l.AccountId == accountId.Value);
 
-        var openingLines = await openingQuery.ToListAsync();
+        var openingLines = await openingLineQuery.ToListAsync();
 
         var openingBalances = openingLines
+            .Where(l => l.Account != null)
             .GroupBy(l => l.AccountId)
             .ToDictionary(g => g.Key, g =>
             {
                 var acctType = g.First().Account.AccountType;
                 var debit = g.Sum(l => l.DebitAmount);
                 var credit = g.Sum(l => l.CreditAmount);
-                // Debit-normal: Asset, Expense; Credit-normal: Liability, Equity, Revenue
                 return (acctType == AccountType.Asset || acctType == AccountType.Expense)
                     ? debit - credit : credit - debit;
             });
 
-        // Group by account
-        var grouped = lines.GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType });
+        // Group by account (filter out lines with missing accounts)
+        var grouped = lines
+            .Where(l => l.Account != null)
+            .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType });
 
         var accounts = new List<GeneralLedgerAccount>();
         foreach (var g in grouped.OrderBy(g => g.Key.AccountCode))
@@ -500,15 +512,20 @@ public class AccountingService : IAccountingService
 
     public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate)
     {
+        var postedEntryIds = _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate < asOfDate.Date.AddDays(1))
+            .Select(j => j.Id);
+
         var postedLines = await _db.JournalEntryLines
             .Include(l => l.Account)
             .Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate < asOfDate.Date.AddDays(1))
+            .Where(l => postedEntryIds.Contains(l.JournalEntryId))
             .ToListAsync();
 
         var grouped = postedLines
+            .Where(l => l.Account != null)
             .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
             .Select(g => new TrialBalanceItem(
                 g.Key.AccountCode,
@@ -552,17 +569,21 @@ public class AccountingService : IAccountingService
 
     public async Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
+        var postedEntryIds = _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= fromDate.Date
+                && j.EntryDate < toDate.Date.AddDays(1))
+            .Select(j => j.Id);
+
         var postedLines = await _db.JournalEntryLines
             .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= fromDate.Date
-                && l.JournalEntry.EntryDate < toDate.Date.AddDays(1)
-                && (l.Account.AccountType == AccountType.Revenue || l.Account.AccountType == AccountType.Expense))
+            .Where(l => postedEntryIds.Contains(l.JournalEntryId)
+                && (l.Account!.AccountType == AccountType.Revenue || l.Account!.AccountType == AccountType.Expense))
             .ToListAsync();
 
         var grouped = postedLines
+            .Where(l => l.Account != null)
             .GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
             .ToList();
 
@@ -586,14 +607,19 @@ public class AccountingService : IAccountingService
 
     public async Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
-        var postedLines = await _db.JournalEntryLines
+        var postedEntryIds = _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= fromDate.Date
+                && j.EntryDate < toDate.Date.AddDays(1))
+            .Select(j => j.Id);
+
+        var allLines = await _db.JournalEntryLines
             .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= fromDate.Date
-                && l.JournalEntry.EntryDate < toDate.Date.AddDays(1))
+            .Where(l => postedEntryIds.Contains(l.JournalEntryId))
             .ToListAsync();
+
+        var postedLines = allLines.Where(l => l.Account != null).ToList();
 
         // Operating Activities: Revenue & Expense accounts + changes in current assets/liabilities
         var operatingItems = new List<CashFlowLineItem>();
