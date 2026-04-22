@@ -60,10 +60,16 @@
       </select>
     </div>
 
+    <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
+      <span>เลือกแล้ว <b id="docSelCount">0</b> เอกสาร</span>
+      <span id="docSelExportSlot"></span>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearDocSelection()">ยกเลิกการเลือก</button>
+    </div>
+
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -199,7 +205,58 @@
   <script src="/js/export.js"></script>
   <script>
     const Page = {
-      page: 1, docType: '', side: '', contacts: [],
+      page: 1, docType: '', side: '', contacts: [], selectedDocs: new Set(),
+      onDocCheck(cb) {
+        if (cb.checked) this.selectedDocs.add(cb.dataset.id);
+        else this.selectedDocs.delete(cb.dataset.id);
+        this._updateDocSelectionBar();
+      },
+      toggleAllDocs(checked) {
+        document.querySelectorAll('.doc-check').forEach(cb => {
+          cb.checked = checked;
+          if (checked) this.selectedDocs.add(cb.dataset.id);
+          else this.selectedDocs.delete(cb.dataset.id);
+        });
+        this._updateDocSelectionBar();
+      },
+      clearDocSelection() {
+        this.selectedDocs.clear();
+        document.querySelectorAll('.doc-check').forEach(cb => cb.checked = false);
+        const ca = document.getElementById('docCheckAll'); if (ca) ca.checked = false;
+        this._updateDocSelectionBar();
+      },
+      _updateDocSelectionBar() {
+        const bar = document.getElementById('docSelectionBar');
+        if (!bar) return;
+        const count = this.selectedDocs.size;
+        document.getElementById('docSelCount').textContent = count;
+        bar.style.display = count > 0 ? 'flex' : 'none';
+        const slot = document.getElementById('docSelExportSlot');
+        if (slot && !slot._rendered && window.ExportUtil) {
+          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelectedDocs(f)');
+          slot._rendered = true;
+        }
+      },
+      exportSelectedDocs(format) {
+        const ids = [...this.selectedDocs];
+        if (!ids.length) { Layout.toast('กรุณาเลือกเอกสารก่อน', 'error'); return; }
+        const rows = (this._currentItems || []).filter(d => ids.includes(d.id));
+        if (!rows.length) { Layout.toast('ไม่พบเอกสารที่เลือกในหน้าปัจจุบัน', 'error'); return; }
+        const cols = [
+          { key: 'documentNumber', label: 'เลขที่' },
+          { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
+          { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+          { key: 'contact.name', label: 'ผู้ติดต่อ' },
+          { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'status', label: 'สถานะ' }
+        ];
+        ExportUtil.exportData(format, {
+          rows, columns: cols, filename: `เอกสาร_เลือก${rows.length}รายการ`,
+          title: 'เอกสารที่เลือก', subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
+        });
+      },
       async init() {
         // Detect page context: sidebar links use ?side= param, also support expense-docs nav id
         const params = new URLSearchParams(window.location.search);
@@ -315,8 +372,9 @@
           this._currentItems = items;
           const tbody = document.getElementById('tableBody');
           const sideLabel = this.side === 'revenue' ? 'รายรับ' : this.side === 'expense' ? 'รายจ่าย' : '';
-          if (!items.length) { tbody.innerHTML = `<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีเอกสาร${sideLabel ? 'ฝั่ง' + sideLabel : ''}</td></tr>`; return; }
+          if (!items.length) { tbody.innerHTML = `<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีเอกสาร${sideLabel ? 'ฝั่ง' + sideLabel : ''}</td></tr>`; return; }
           tbody.innerHTML = items.map(d => `<tr>
+            <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
             <td class="font-medium">${d.documentNumber}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
@@ -329,6 +387,7 @@
               <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF</button>
             </td>
           </tr>`).join('');
+          this._updateDocSelectionBar();
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
