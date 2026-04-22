@@ -108,6 +108,7 @@ const API = {
       generalLedger: (q = '') => API.get(`${base}/accounting/reports/general-ledger${q}`),
       glDebug: (q = '') => API.get(`${base}/accounting/reports/gl-debug${q}`),
       rebuildLines: () => API.post(`${base}/accounting/reports/rebuild-lines`),
+      repairDates: () => API.post(`${base}/accounting/reports/repair-dates`),
       trialBalance: (q = '') => API.get(`${base}/accounting/reports/trial-balance${q}`),
       balanceSheet: (q = '') => API.get(`${base}/accounting/reports/balance-sheet${q}`),
       profitLoss: (q = '') => API.get(`${base}/accounting/reports/profit-loss${q}`),

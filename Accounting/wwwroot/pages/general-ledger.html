@@ -139,7 +139,15 @@
               msg += `<div style="font-size:12px;color:${d.sampleLines.lineCount === 0 ? 'red;font-weight:600' : '#666'}">Lines ในตัวอย่าง: ${d.sampleLines.lineCount} รายการ</div>`;
             }
           }
-          if (d.totalLines === 0 && d.totalEntries > 0) {
+          // Detect bad dates (year < 1900 means Buddhist calendar double-conversion)
+          const minYear = d.dateRange?.minDate ? parseInt(d.dateRange.minDate.split('-')[0]) : 9999;
+          if (minYear < 1900 && d.totalEntries > 0) {
+            msg += `<div style="margin-top:12px;background:#fee2e2;padding:8px 12px;border-radius:4px;color:#dc2626;font-weight:600">`;
+            msg += `⚠️ พบปัญหา: วันที่ถูกเก็บเป็นปี ${minYear} (ค.ศ. ${minYear} แทนที่จะเป็น ${minYear + 543})`;
+            msg += `<div style="font-weight:400;font-size:12px;margin-top:4px">สาเหตุ: ระบบแปลง พ.ศ.→ค.ศ. ซ้ำ ทำให้ปีผิด (${minYear + 543} - 543 = ${minYear})</div>`;
+            msg += `<button class="btn btn-primary" onclick="Page.repairDates()" style="margin-top:8px;font-size:13px">แก้ไขวันที่ทั้งหมด (+543 ปี)</button>`;
+            msg += `</div>`;
+          } else if (d.totalLines === 0 && d.totalEntries > 0) {
             msg += `<div style="margin-top:12px;background:#fee2e2;padding:8px;border-radius:4px;color:#dc2626;font-weight:600">`;
             msg += `⚠️ พบปัญหา: มีใบสำคัญ ${d.totalEntries} รายการ แต่ไม่มีรายการย่อย (JournalEntryLines) เลย`;
             msg += `<br><button class="btn btn-primary" onclick="Page.rebuildLines()" style="margin-top:8px;font-size:13px">สร้างรายการย่อยใหม่</button>`;
@@ -165,6 +173,15 @@
         try {
           const res = await api.rebuildLines();
           Layout.toast(res.message || 'สร้างรายการย่อยสำเร็จ', 'success');
+          await this.load();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async repairDates() {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ระบบจะแก้ไขวันที่ทั้งหมดที่ปีน้อยกว่า 1900 โดยบวก 543 ปี (เช่น 1483→2026) ดำเนินการ?')) return;
+        try {
+          const res = await api.repairDates();
+          Layout.toast(res.message || 'แก้ไขวันที่สำเร็จ', 'success');
           await this.load();
         } catch(e) { Layout.toast(e.message, 'error'); }
       },

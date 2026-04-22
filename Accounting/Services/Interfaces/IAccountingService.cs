@@ -27,6 +27,7 @@ public interface IAccountingService
     Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null);
     Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null);
     Task<int> RebuildMissingLinesAsync(Guid companyId);
+    Task<int> RepairBuddhistDatesAsync(Guid companyId);
 
     // Reports
     Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate);

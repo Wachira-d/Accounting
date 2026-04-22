@@ -14,7 +14,9 @@ public partial class FinancialManagementService
     public async Task<CITResponse> CalculateCITAsync(Guid companyId, CalculateCITRequest request, string userId)
     {
         // Calculate revenue & expenses from journal entries for the tax year
-        var yearStart = new DateTime(int.Parse(request.TaxYear) - 543, 1, 1); // BE to CE
+        var taxYear = int.Parse(request.TaxYear);
+        var ceYear = taxYear > 2400 ? taxYear - 543 : taxYear;
+        var yearStart = new DateTime(ceYear, 1, 1);
         var yearEnd = yearStart.AddYears(1);
 
         if (request.TaxPeriod == "HalfYear")

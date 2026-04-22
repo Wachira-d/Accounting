@@ -596,6 +596,48 @@ public class AccountingService : IAccountingService
         };
     }
 
+    public async Task<int> RepairBuddhistDatesAsync(Guid companyId)
+    {
+        // Fix entries where dates were incorrectly stored by subtracting 543 from Gregorian year
+        // e.g., 2026 - 543 = 1483, so entries with year < 1900 need +543
+        var badEntries = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.EntryDate.Year < 1900)
+            .ToListAsync();
+
+        foreach (var entry in badEntries)
+        {
+            entry.EntryDate = entry.EntryDate.AddYears(543);
+            entry.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Also fix documents with bad dates
+        var badDocs = await _db.Documents
+            .Where(d => d.CompanyId == companyId && d.DocumentDate.Year < 1900)
+            .ToListAsync();
+
+        foreach (var doc in badDocs)
+        {
+            doc.DocumentDate = doc.DocumentDate.AddYears(543);
+            if (doc.DueDate.HasValue && doc.DueDate.Value.Year < 1900)
+                doc.DueDate = doc.DueDate.Value.AddYears(543);
+            doc.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Also fix payments with bad dates
+        var badPayments = await _db.Payments
+            .Where(p => p.CompanyId == companyId && p.PaymentDate.Year < 1900)
+            .ToListAsync();
+
+        foreach (var payment in badPayments)
+        {
+            payment.PaymentDate = payment.PaymentDate.AddYears(543);
+            payment.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+        return badEntries.Count + badDocs.Count + badPayments.Count;
+    }
+
     public async Task<int> RebuildMissingLinesAsync(Guid companyId)
     {
         // Find entries that have no lines
