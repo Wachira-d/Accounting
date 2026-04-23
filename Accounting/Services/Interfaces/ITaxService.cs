@@ -12,5 +12,6 @@ public interface ITaxService
     Task<TaxReportResponse> UpdateTaxReportAsync(Guid companyId, Guid reportId, UpdateTaxReportRequest request);
     Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId);
     Task DeleteTaxReportAsync(Guid companyId, Guid reportId);
+    Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2);
     Task<object> GetVatDebugAsync(Guid companyId, int year, int month);
 }

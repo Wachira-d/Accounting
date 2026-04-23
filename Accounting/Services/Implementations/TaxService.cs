@@ -907,6 +907,47 @@ public class TaxService : ITaxService
         await _db.SaveChangesAsync();
     }
 
+    public async Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2)
+    {
+        var now = DateTime.UtcNow;
+        var taxTypes = new[] { TaxType.VAT, TaxType.WithholdingTax3, TaxType.WithholdingTax53 };
+        int refreshed = 0;
+
+        for (int i = 0; i < months; i++)
+        {
+            var target = now.AddMonths(-i);
+            var year = target.Year;
+            var month = target.Month;
+
+            foreach (var taxType in taxTypes)
+            {
+                var existing = await _db.TaxReports
+                    .Include(r => r.Lines)
+                    .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                        && r.TaxType == taxType && r.Year == year && r.Month == month);
+
+                if (existing is { Status: TaxReportStatus.Filed })
+                    continue;
+
+                if (existing != null)
+                {
+                    _db.TaxReportLines.RemoveRange(existing.Lines);
+                    _db.TaxReports.Remove(existing);
+                    await _db.SaveChangesAsync();
+                }
+
+                try
+                {
+                    await GenerateTaxReportAsync(companyId, new CreateTaxReportRequest(taxType, year, month));
+                    refreshed++;
+                }
+                catch { }
+            }
+        }
+
+        return refreshed;
+    }
+
     private static TaxReportResponse MapToResponse(TaxReport r) => new(
         r.Id, r.TaxType, r.Year, r.Month, r.Status, r.FiledDate,
         r.OutputVat, r.InputVat, r.NetVat, r.TotalIncome, r.TotalTaxWithheld,

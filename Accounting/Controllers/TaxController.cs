@@ -69,6 +69,13 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<string>(true, "ลบรายงานภาษีสำเร็จ"));
     }
 
+    [HttpPost("auto-refresh")]
+    public async Task<ActionResult<ApiResponse<object>>> AutoRefresh(Guid companyId, [FromQuery] int months = 2)
+    {
+        var count = await _taxService.AutoRefreshReportsAsync(companyId, months);
+        return Ok(new ApiResponse<object>(true, new { refreshed = count }));
+    }
+
     [HttpGet("vat-debug")]
     public async Task<ActionResult<ApiResponse<object>>> GetVatDebug(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
