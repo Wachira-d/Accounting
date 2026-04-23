@@ -163,11 +163,15 @@
         if (!Layout.init('tax')) return;
         Layout.setTitle('รายงานภาษี');
         const holder = document.getElementById('pageActions');
-        if (holder) holder.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportAll(f)') + '<button class="btn btn-primary" onclick="Page.openGenerate()">+ สร้างรายงาน</button>';
-        // populate year filter
+        if (holder) holder.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportAll(f)') + '<button class="btn btn-secondary" onclick="Page.openGenerate()">+ สร้างรายงาน</button>';
         const sel = document.getElementById('yearFilter');
         const curYear = new Date().getFullYear();
         for (let y = curYear; y >= curYear - 3; y--) { sel.innerHTML += `<option value="${y}">${y}</option>`; }
+        sel.value = String(curYear);
+        const api = Layout.api();
+        if (api) {
+          try { await api.autoRefreshTaxReports(2); } catch {}
+        }
         await this.load();
       },
       exportAll(format) {

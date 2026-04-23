@@ -222,6 +222,7 @@ const API = {
       // Tax
       getTaxReports: (q = '') => API.get(`${base}/tax${q}`),
       getTaxReport: (id) => API.get(`${base}/tax/${id}`),
+      autoRefreshTaxReports: (months = 2) => API.post(`${base}/tax/auto-refresh?months=${months}`),
       generateTaxReport: (d) => API.post(`${base}/tax/generate`, d),
       fileTaxReport: (id) => API.post(`${base}/tax/${id}/file`),
       updateTaxReport: (id, d) => API.put(`${base}/tax/${id}`, d),
