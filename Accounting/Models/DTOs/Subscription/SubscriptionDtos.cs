@@ -71,6 +71,7 @@ public record SubscriptionResponse(
     DateTime EndDate,
     DateTime? NextBillingDate,
     FeatureFlags EnabledFeatures,
+    List<string> EnabledFeatureNames,
     UsageLimits Limits,
     UsageCurrent Current);
 
@@ -125,12 +126,14 @@ public record UpdatePlanTemplateRequest(
     int? MaxJournalEntriesPerMonth,
     long? MaxStorageBytes,
     FeatureFlags? EnabledFeatures,
+    List<string>? EnabledFeatureNames,
     bool? IsActive,
     // Trial settings
     int? TrialDurationDays,
     int? TrialMaxExtensions,
     int? TrialExtensionDays,
     FeatureFlags? TrialFeatures,
+    List<string>? TrialFeatureNames,
     int? TrialMaxUsers,
     int? TrialMaxDocumentsPerMonth,
     int? TrialMaxJournalEntriesPerMonth,
@@ -153,10 +156,12 @@ public record PlanTemplateResponse(
     int MaxJournalEntriesPerMonth,
     long MaxStorageBytes,
     FeatureFlags EnabledFeatures,
+    List<string> EnabledFeatureNames,
     int TrialDurationDays,
     int TrialMaxExtensions,
     int TrialExtensionDays,
-    FeatureFlags TrialFeatures);
+    FeatureFlags TrialFeatures,
+    List<string> TrialFeatureNames);
 
 // ===== Subscription Notification Settings =====
 public record UpdateSubscriptionNotificationRequest(

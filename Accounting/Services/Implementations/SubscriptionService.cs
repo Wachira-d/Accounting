@@ -289,6 +289,7 @@ public class SubscriptionService : ISubscriptionService
             sub.Id, sub.CompanyId, sub.Plan, sub.Status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, sub.EndDate, sub.NextBillingDate,
             sub.EnabledFeatures,
+            FeatureFlagsHelper.ToNameList(sub.EnabledFeatures),
             new UsageLimits(sub.MaxUsers, sub.MaxCompanies, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth, sub.MaxStorageBytes),
             new UsageCurrent(sub.CurrentMonthDocuments, sub.CurrentMonthJournalEntries, sub.CurrentStorageUsed));
     }
@@ -492,12 +493,24 @@ public class SubscriptionService : ISubscriptionService
         if (request.MaxDocumentsPerMonth.HasValue) template.MaxDocumentsPerMonth = request.MaxDocumentsPerMonth.Value;
         if (request.MaxJournalEntriesPerMonth.HasValue) template.MaxJournalEntriesPerMonth = request.MaxJournalEntriesPerMonth.Value;
         if (request.MaxStorageBytes.HasValue) template.MaxStorageBytes = request.MaxStorageBytes.Value;
-        if (request.EnabledFeatures.HasValue) template.EnabledFeatures = request.EnabledFeatures.Value;
+        // Resolve features: prefer NameList over enum value if provided
+        var oldEnabled = template.EnabledFeatures;
+        var oldTrial = template.TrialFeatures;
+
+        if (request.EnabledFeatureNames != null)
+            template.EnabledFeatures = FeatureFlagsHelper.FromNameList(request.EnabledFeatureNames);
+        else if (request.EnabledFeatures.HasValue)
+            template.EnabledFeatures = request.EnabledFeatures.Value;
+
+        if (request.TrialFeatureNames != null)
+            template.TrialFeatures = FeatureFlagsHelper.FromNameList(request.TrialFeatureNames);
+        else if (request.TrialFeatures.HasValue)
+            template.TrialFeatures = request.TrialFeatures.Value;
+
         if (request.IsActive.HasValue) template.IsActive = request.IsActive.Value;
         if (request.TrialDurationDays.HasValue) template.TrialDurationDays = request.TrialDurationDays.Value;
         if (request.TrialMaxExtensions.HasValue) template.TrialMaxExtensions = request.TrialMaxExtensions.Value;
         if (request.TrialExtensionDays.HasValue) template.TrialExtensionDays = request.TrialExtensionDays.Value;
-        if (request.TrialFeatures.HasValue) template.TrialFeatures = request.TrialFeatures.Value;
         if (request.TrialMaxUsers.HasValue) template.TrialMaxUsers = request.TrialMaxUsers.Value;
         if (request.TrialMaxDocumentsPerMonth.HasValue) template.TrialMaxDocumentsPerMonth = request.TrialMaxDocumentsPerMonth.Value;
         if (request.TrialMaxJournalEntriesPerMonth.HasValue) template.TrialMaxJournalEntriesPerMonth = request.TrialMaxJournalEntriesPerMonth.Value;
@@ -505,6 +518,32 @@ public class SubscriptionService : ISubscriptionService
         if (request.TrialGracePeriodDays.HasValue) template.TrialGracePeriodDays = request.TrialGracePeriodDays.Value;
 
         await _db.SaveChangesAsync();
+
+        // Propagate feature changes to all subscriptions of this plan so users
+        // see updated feature access without re-subscribing.
+        if (template.EnabledFeatures != oldEnabled || template.TrialFeatures != oldTrial)
+        {
+            var subs = await _db.Subscriptions
+                .Include(s => s.TrialConfig)
+                .Where(s => s.Plan == template.Plan)
+                .ToListAsync();
+            foreach (var sub in subs)
+            {
+                if (sub.Status == SubscriptionStatus.Trial)
+                {
+                    sub.EnabledFeatures = template.TrialFeatures;
+                    if (sub.TrialConfig != null)
+                        sub.TrialConfig.TrialFeatures = template.TrialFeatures;
+                }
+                else
+                {
+                    sub.EnabledFeatures = template.EnabledFeatures;
+                }
+                sub.UpdatedAt = DateTime.UtcNow;
+            }
+            if (subs.Any()) await _db.SaveChangesAsync();
+        }
+
         return MapTemplateToResponse(template);
     }
 
@@ -1205,6 +1244,120 @@ public class SubscriptionService : ISubscriptionService
             t.MonthlyPrice, t.QuarterlyPrice, t.SemiAnnualPrice, t.AnnualPrice,
             t.MaxUsers, t.MaxCompanies, t.MaxDocumentsPerMonth, t.MaxJournalEntriesPerMonth,
             t.MaxStorageBytes, t.EnabledFeatures,
-            t.TrialDurationDays, t.TrialMaxExtensions, t.TrialExtensionDays, t.TrialFeatures);
+            FeatureFlagsHelper.ToNameList(t.EnabledFeatures),
+            t.TrialDurationDays, t.TrialMaxExtensions, t.TrialExtensionDays, t.TrialFeatures,
+            FeatureFlagsHelper.ToNameList(t.TrialFeatures));
     }
 }
+
+/// <summary>
+/// Helper for converting FeatureFlags bitmask to/from name lists
+/// </summary>
+public static class FeatureFlagsHelper
+{
+    private static readonly string[] PresetNames = { "None", "TrialFeatures", "BasicFeatures", "ProFeatures", "EnterpriseFeatures" };
+
+    public static List<string> ToNameList(FeatureFlags flags)
+    {
+        var result = new List<string>();
+        foreach (FeatureFlags v in Enum.GetValues(typeof(FeatureFlags)))
+        {
+            var name = v.ToString();
+            if (PresetNames.Contains(name)) continue;
+            var val = (long)v;
+            // Single-bit flag only (power of 2)
+            if (val > 0 && (val & (val - 1)) == 0 && flags.HasFlag(v))
+                result.Add(name);
+        }
+        return result;
+    }
+
+    public static FeatureFlags FromNameList(IEnumerable<string>? names)
+    {
+        var result = FeatureFlags.None;
+        if (names == null) return result;
+        foreach (var n in names)
+        {
+            if (string.IsNullOrWhiteSpace(n)) continue;
+            if (Enum.TryParse<FeatureFlags>(n, true, out var f) && !PresetNames.Contains(f.ToString()))
+                result |= f;
+        }
+        return result;
+    }
+
+    public static List<FeatureFlagInfo> AllFeatures()
+    {
+        var result = new List<FeatureFlagInfo>();
+        foreach (FeatureFlags v in Enum.GetValues(typeof(FeatureFlags)))
+        {
+            var name = v.ToString();
+            if (PresetNames.Contains(name)) continue;
+            var val = (long)v;
+            if (val > 0 && (val & (val - 1)) == 0)
+                result.Add(new FeatureFlagInfo(name, FeatureCategory(name), FeatureLabelTh(name)));
+        }
+        return result;
+    }
+
+    private static string FeatureCategory(string name) => name switch
+    {
+        "BasicAccounting" or "DocumentEngine" or "TaxManagement" or "Dashboard" or "CustomChartOfAccounts" or "AutoPosting" => "core",
+        "AdvancedReporting" or "AgingReport" or "ReportBuilder" or "FPA" or "BudgetManagement" => "reporting",
+        "MultiCompany" or "MultiUser" or "MultiCurrency" or "Consolidation" or "Intercompany" => "multi",
+        "Inventory" or "WarehouseManagement" or "FixedAssets" or "BankReconciliation" or "ExpenseManagement" or "PurchaseOrders" or "RecurringTransactions" or "CostCenter" or "ProjectAccounting" or "Payroll" or "Commission" or "FreelanceManagement" or "TimeBilling" or "LoanManagement" or "RevenueRecognition" => "operations",
+        "WorkflowEngine" or "ApprovalWorkflow" or "AuditLog" or "EtaxInvoice" or "OpenBanking" or "Webhook" => "advanced",
+        "APIAccess" or "BulkImport" or "EmailNotification" or "FileAttachments" or "CustomerPortal" => "integration",
+        "AI_Features" or "DocumentOCR" => "ai",
+        _ => "other"
+    };
+
+    private static string FeatureLabelTh(string name) => name switch
+    {
+        "BasicAccounting" => "บัญชีพื้นฐาน",
+        "AdvancedReporting" => "รายงานขั้นสูง",
+        "TaxManagement" => "จัดการภาษี",
+        "DocumentEngine" => "ระบบเอกสาร",
+        "MultiCompany" => "หลายบริษัท",
+        "APIAccess" => "เปิดใช้ API",
+        "BulkImport" => "นำเข้าจำนวนมาก",
+        "CustomChartOfAccounts" => "ผังบัญชีแบบกำหนดเอง",
+        "AutoPosting" => "ลงบัญชีอัตโนมัติ",
+        "EtaxInvoice" => "e-Tax Invoice",
+        "WorkflowEngine" => "Workflow Engine",
+        "AuditLog" => "บันทึกประวัติการใช้งาน",
+        "EmailNotification" => "แจ้งเตือนทางอีเมล",
+        "MultiUser" => "ผู้ใช้หลายคน",
+        "BankReconciliation" => "กระทบยอดธนาคาร",
+        "Inventory" => "สินค้าคงคลัง",
+        "FixedAssets" => "สินทรัพย์ถาวร",
+        "RecurringTransactions" => "รายการอัตโนมัติ",
+        "MultiCurrency" => "หลายสกุลเงิน",
+        "FreelanceManagement" => "จัดการฟรีแลนซ์",
+        "ApprovalWorkflow" => "ระบบอนุมัติ",
+        "FileAttachments" => "แนบไฟล์",
+        "PurchaseOrders" => "ใบสั่งซื้อ",
+        "ExpenseManagement" => "จัดการค่าใช้จ่าย",
+        "Dashboard" => "แดชบอร์ด",
+        "BudgetManagement" => "จัดการงบประมาณ",
+        "AgingReport" => "รายงาน Aging",
+        "Payroll" => "เงินเดือน",
+        "ProjectAccounting" => "บัญชีโครงการ",
+        "CostCenter" => "ศูนย์ต้นทุน",
+        "Consolidation" => "รวมงบบริษัทในกลุ่ม",
+        "WarehouseManagement" => "จัดการคลังสินค้า",
+        "LoanManagement" => "จัดการสินเชื่อ",
+        "Commission" => "ระบบค่าคอมมิชชั่น",
+        "AI_Features" => "ฟีเจอร์ AI",
+        "DocumentOCR" => "OCR เอกสาร",
+        "ReportBuilder" => "สร้างรายงานเอง",
+        "CustomerPortal" => "พอร์ทัลลูกค้า",
+        "TimeBilling" => "บันทึกชั่วโมงทำงาน",
+        "OpenBanking" => "Open Banking",
+        "Webhook" => "Webhook",
+        "RevenueRecognition" => "รับรู้รายได้",
+        "FPA" => "วางแผน/วิเคราะห์การเงิน",
+        _ => name
+    };
+}
+
+public record FeatureFlagInfo(string Name, string Category, string LabelTh);

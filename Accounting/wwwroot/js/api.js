@@ -33,7 +33,24 @@ const API = {
         throw new Error(json.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
       }
       if (res.status === 403) {
-        throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+        // Try to parse structured 403 (feature locked / subscription inactive)
+        try {
+          const json = await res.json();
+          if (json.code === 'FEATURE_NOT_AVAILABLE' || json.code === 'SUBSCRIPTION_INACTIVE') {
+            // Auto-redirect to subscription page on locked feature
+            if (typeof Layout !== 'undefined' && Layout.toast) {
+              Layout.toast(json.message || 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ', 'error');
+              setTimeout(() => { window.location.href = json.upgradeUrl || '/pages/subscription.html'; }, 1500);
+            }
+            const err = new Error(json.message || 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ');
+            err.code = json.code; err.feature = json.feature;
+            throw err;
+          }
+          throw new Error(json.message || 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+        } catch (parseErr) {
+          if (parseErr.code) throw parseErr;
+          throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+        }
       }
       if (res.status === 429) {
         // Rate limited - silently skip, don't show error to user

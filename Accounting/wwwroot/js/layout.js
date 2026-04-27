@@ -6,6 +6,9 @@ const Layout = {
   user: null,
   companies: [],
   currentCompany: null,
+  subscription: null,
+  features: [],          // array of enabled feature names
+  subscriptionStatus: null,
   _initialized: false,
 
   init(pageName) {
@@ -16,13 +19,89 @@ const Layout = {
     this._initialized = true;
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
+    // Restore cached subscription so menu renders correctly on first paint
+    try {
+      const cached = JSON.parse(localStorage.getItem('subscription') || 'null');
+      if (cached) {
+        this.subscription = cached;
+        this.features = cached.enabledFeatureNames || [];
+        this.subscriptionStatus = cached.status;
+      }
+    } catch {}
     if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return false; }
     this.render();
     this.bindEvents();
     this.loadNotificationCount();
     this.initServiceWorker();
     this.initSignalR();
+    // Page-level feature check — redirect to subscription if locked
+    this._enforcePageAccess();
     return true;
+  },
+
+  // ===== Feature & Subscription Helpers =====
+  hasFeature(name) {
+    if (!name) return true;
+    // Without subscription data, allow access (graceful fallback)
+    if (!this.subscription) return true;
+    return this.features.includes(name);
+  },
+
+  // Throws by redirecting to subscription page; returns true if has access
+  requireFeature(name, opts = {}) {
+    if (this.hasFeature(name)) return true;
+    if (opts.silent) return false;
+    const label = opts.label || name;
+    this.toast(`ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, 'error');
+    setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1200);
+    return false;
+  },
+
+  isSubscriptionActive() {
+    const s = this.subscriptionStatus;
+    return s === 'Trial' || s === 'Active';
+  },
+
+  async loadSubscription() {
+    if (!this.currentCompany?.id) return;
+    try {
+      const res = await API.get(`/api/subscription/${this.currentCompany.id}`);
+      if (res?.success && res.data) {
+        this.subscription = res.data;
+        this.features = res.data.enabledFeatureNames || [];
+        this.subscriptionStatus = res.data.status;
+        try { localStorage.setItem('subscription', JSON.stringify(res.data)); } catch {}
+        // Re-render menu with updated feature list
+        this._refreshNavMenu();
+        this._enforcePageAccess();
+      }
+    } catch (e) { /* trial/no subscription — keep features empty */ }
+  },
+
+  _refreshNavMenu() {
+    const nav = document.querySelector('.sidebar-nav');
+    if (!nav) return;
+    nav.innerHTML = this.navItems.map(item => this._renderNavItem(item)).join('');
+  },
+
+  _enforcePageAccess() {
+    if (!this.subscription || !this.currentPage) return;
+    const item = this.navItems.find(n => n.id === this.currentPage);
+    if (!item || !item.feature) return;
+    if (!this.hasFeature(item.feature)) {
+      this.toast(`ฟีเจอร์ "${item.label}" ไม่อยู่ในแพ็กเกจของคุณ — กำลังพาไปหน้าแพ็กเกจ`, 'error');
+      setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1500);
+    }
+  },
+
+  _renderNavItem(item) {
+    if (item.section) return `<div class="nav-section">${item.section}</div>`;
+    const active = item.id === this.currentPage ? ' active' : '';
+    const locked = item.feature && this.subscription && !this.hasFeature(item.feature);
+    if (locked) {
+      return `<a href="/pages/subscription.html" class="nav-item nav-item-locked${active}" title="ต้องอัพเกรดแพ็กเกจเพื่อใช้งาน ${item.label}" style="opacity:0.5"><span class="icon">${item.icon}</span>${item.label}<span style="margin-left:auto;font-size:11px">🔒</span></a>`;
+    }
+    return `<a href="${item.href}" class="nav-item${active}"><span class="icon">${item.icon}</span>${item.label}</a>`;
   },
 
   // PWA Service Worker — auto-update when new version deployed
@@ -95,91 +174,91 @@ const Layout = {
   // Navigation organized following PEAK Account structure
   navItems: [
     { section: 'หลัก' },
-    { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html' },
+    { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard' },
 
     { section: 'รายรับ' },
-    { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue' },
-    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html' },
+    { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue', feature: 'DocumentEngine' },
+    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition' },
 
     { section: 'รายจ่าย' },
-    { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html' },
-    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html' },
-    { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense' },
-    { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳', href: '/pages/payments.html' },
+    { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine' },
+    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement' },
+    { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense', feature: 'DocumentEngine' },
+    { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine' },
 
     { section: 'รายการอัตโนมัติ' },
-    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html' },
+    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html', feature: 'RecurringTransactions' },
 
     { section: 'ผู้ติดต่อ' },
-    { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html' },
-    { id: 'freelance', label: 'Freelancer/ผู้รับจ้าง', icon: '👤', href: '/pages/freelance.html' },
+    { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html', feature: 'DocumentEngine' },
+    { id: 'freelance', label: 'Freelancer/ผู้รับจ้าง', icon: '👤', href: '/pages/freelance.html', feature: 'FreelanceManagement' },
 
     { section: 'สินค้า/บริการ' },
-    { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html' },
-    { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html' },
-    { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊', href: '/pages/inventory-reports.html' },
-    { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html' },
+    { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html', feature: 'Inventory' },
+    { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html', feature: 'WarehouseManagement' },
+    { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊', href: '/pages/inventory-reports.html', feature: 'Inventory' },
+    { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html', feature: 'Inventory' },
 
     { section: 'POS ขายหน้าร้าน' },
-    { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html' },
-    { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html' },
-    { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html' },
-    { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html' },
+    { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html', feature: 'DocumentEngine' },
+    { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html', feature: 'DocumentEngine' },
+    { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html', feature: 'DocumentEngine' },
+    { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html', feature: 'DocumentEngine' },
 
     { section: 'การเงิน' },
-    { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html' },
-    { id: 'loans', label: 'สินเชื่อ/เงินกู้', icon: '💰', href: '/pages/loans.html' },
-    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html' },
+    { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation' },
+    { id: 'loans', label: 'สินเชื่อ/เงินกู้', icon: '💰', href: '/pages/loans.html', feature: 'LoanManagement' },
+    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html', feature: 'MultiCurrency' },
 
     { section: 'บัญชี' },
-    { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html' },
-    { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html' },
-    { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html' },
-    { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html' },
-    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html' },
-    { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html' },
+    { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html', feature: 'BasicAccounting' },
+    { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html', feature: 'BasicAccounting' },
+    { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html', feature: 'BasicAccounting' },
+    { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html', feature: 'BasicAccounting' },
+    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets' },
+    { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html', feature: 'AdvancedReporting' },
 
     { section: 'ภาษี' },
-    { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️', href: '/pages/tax.html' },
-    { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜', href: '/pages/wht.html' },
-    { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html' },
-    { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html' },
-    { id: 'tax-export', label: 'Export ยื่นภาษี/ประกันสังคม', icon: '📤', href: '/pages/tax-export.html' },
+    { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️', href: '/pages/tax.html', feature: 'TaxManagement' },
+    { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement' },
+    { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement' },
+    { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html', feature: 'EtaxInvoice' },
+    { id: 'tax-export', label: 'Export ยื่นภาษี/ประกันสังคม', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement' },
 
     { section: 'เงินเดือน' },
-    { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html' },
-    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html' },
+    { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll' },
+    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission' },
 
     { section: 'รายงาน' },
-    { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html' },
-    { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html' },
-    { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html' },
-    { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍', href: '/pages/arap-analysis.html' },
-    { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html' },
+    { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html', feature: 'BasicAccounting' },
+    { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html', feature: 'BudgetManagement' },
+    { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html', feature: 'AgingReport' },
+    { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting' },
+    { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html', feature: 'FPA' },
 
     { section: 'โครงการ/องค์กร' },
-    { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html' },
-    { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html' },
-    { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬', href: '/pages/dimensions.html' },
-    { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html' },
-    { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html' },
+    { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html', feature: 'ProjectAccounting' },
+    { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html', feature: 'TimeBilling' },
+    { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬', href: '/pages/dimensions.html', feature: 'CostCenter' },
+    { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html', feature: 'MultiCompany' },
+    { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation' },
 
     { section: 'คลังเอกสาร' },
-    { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html' },
-    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html' },
-    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html' },
+    { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport' },
+    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html', feature: 'CustomerPortal' },
+    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features' },
 
     { section: 'ตั้งค่า' },
-    { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html' },
+    { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html' },
-    { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html' },
-    { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html' },
-    { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html' },
-    { id: 'api-developer', label: 'API Developer', icon: '📘', href: '/pages/api-developer.html' },
-    { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html' },
+    { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html', feature: 'ApprovalWorkflow' },
+    { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html', feature: 'ApprovalWorkflow' },
+    { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html', feature: 'APIAccess' },
+    { id: 'api-developer', label: 'API Developer', icon: '📘', href: '/pages/api-developer.html', feature: 'APIAccess' },
+    { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html', feature: 'Webhook' },
     { id: 'subscription', label: 'แพ็กเกจ', icon: '💎', href: '/pages/subscription.html' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html' },
-    { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍', href: '/pages/audit.html' },
+    { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog' },
   ],
 
   render() {
@@ -197,11 +276,7 @@ const Layout = {
         </select>
       </div>
       <nav class="sidebar-nav">
-        ${this.navItems.map(item => {
-          if (item.section) return `<div class="nav-section">${item.section}</div>`;
-          const active = item.id === this.currentPage ? ' active' : '';
-          return `<a href="${item.href}" class="nav-item${active}"><span class="icon">${item.icon}</span>${item.label}</a>`;
-        }).join('')}
+        ${this.navItems.map(item => this._renderNavItem(item)).join('')}
       </nav>
       <div class="sidebar-footer">
         <a href="#" class="nav-item" onclick="Layout.logout();return false"><span class="icon">🚪</span>ออกจากระบบ</a>
@@ -334,6 +409,9 @@ const Layout = {
           this.showSetupReminder();
         }
       }
+
+      // Load subscription/features for the selected company (no await - menu refreshes when ready)
+      this.loadSubscription();
 
       // Load page data with selected company (use load() not init() to avoid re-init loop)
       if (typeof Dashboard !== 'undefined' && Dashboard.load) Dashboard.load();

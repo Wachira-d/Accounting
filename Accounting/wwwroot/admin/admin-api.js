@@ -72,6 +72,7 @@ const AdminAPI = {
   plans(includeInactive = true) { return this.get(`/plans?includeInactive=${includeInactive}`); },
   createPlan(data) { return this.post('/plans', data); },
   updatePlan(id, data) { return this.put(`/plans/${id}`, data); },
+  features() { return this.get('/features'); },
 
   // Payments
   pendingPayments() { return this.get('/subscription-payments/pending'); },
