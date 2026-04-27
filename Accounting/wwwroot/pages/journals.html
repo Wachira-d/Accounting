@@ -105,6 +105,10 @@
             <div class="form-group"><label class="form-label">แท็ก (คั่นด้วย ,)</label><input type="text" class="form-input" id="fTags" placeholder="เช่น audit,2026Q1"></div>
           </div>
           <div class="form-group">
+            <label class="form-label">เลขเอกสารอ้างอิง</label>
+            <input type="text" class="form-input" id="fSrcDocNumber" placeholder="เช่น INV-2026-001 (ระบบจะเชื่อมอัตโนมัติถ้าพบในระบบ)">
+          </div>
+          <div class="form-group">
             <label class="form-label">หมายเหตุเพิ่มเติม</label>
             <textarea class="form-input" id="fNote" rows="2" placeholder="หมายเหตุภายใน..."></textarea>
           </div>
@@ -447,6 +451,7 @@
         document.getElementById('fDesc').value = '';
         document.getElementById('fTags').value = '';
         document.getElementById('fNote').value = '';
+        const srcEl = document.getElementById('fSrcDocNumber'); if (srcEl) srcEl.value = '';
         // Mirror filter project into form, fall back to first option
         const filterProj = document.getElementById('projectFilter')?.value || '';
         // Populate project dropdown from active projects
@@ -496,6 +501,7 @@
             projectId: document.getElementById('fProject').value || null,
             note: document.getElementById('fNote').value || null,
             tags: document.getElementById('fTags').value || null,
+            sourceDocumentNumber: document.getElementById('fSrcDocNumber').value || null,
             lines
           });
           Layout.closeModal('formModal');
@@ -526,6 +532,7 @@
               <div class="detail-item"><span class="detail-label">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
               <div class="detail-item"><span class="detail-label">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
               <div class="detail-item"><span class="detail-label">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
+              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value">${j.sourceDocumentNumber}${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
               ${reversalInfo}
             </div>
             <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>

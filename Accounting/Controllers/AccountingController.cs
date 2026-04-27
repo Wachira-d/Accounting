@@ -79,9 +79,10 @@ public class AccountingController : ControllerBase
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
         [FromQuery] string? journalType = null, [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null,
-        [FromQuery] Guid? projectId = null, [FromQuery] string? tag = null)
+        [FromQuery] Guid? projectId = null, [FromQuery] string? tag = null,
+        [FromQuery] Guid? sourceDocumentId = null, [FromQuery] string? sourceDocumentNumber = null)
     {
-        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId, projectId, tag);
+        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId, projectId, tag, sourceDocumentId, sourceDocumentNumber);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }
 

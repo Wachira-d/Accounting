@@ -41,7 +41,9 @@ public record CreateJournalEntryRequest(
     Guid? BranchId = null,
     Guid? DimensionId = null,
     string? Note = null,
-    string? Tags = null);
+    string? Tags = null,
+    Guid? SourceDocumentId = null,           // ลิงก์ไปยัง Document ในระบบ (optional)
+    string? SourceDocumentNumber = null);    // เลขเอกสารต้นทาง (resolve อัตโนมัติเมื่อให้ Id)
 
 public record JournalLineRequest(
     Guid AccountId,
@@ -63,7 +65,9 @@ public record UpdateJournalEntryRequest(
     Guid? BranchId = null,
     Guid? DimensionId = null,
     string? Note = null,
-    string? Tags = null);
+    string? Tags = null,
+    Guid? SourceDocumentId = null,
+    string? SourceDocumentNumber = null);
 
 public record JournalEntryResponse(
     Guid Id,
@@ -85,7 +89,10 @@ public record JournalEntryResponse(
     Guid? BranchId = null,
     Guid? DimensionId = null,
     string? Note = null,
-    string? Tags = null);
+    string? Tags = null,
+    Guid? SourceDocumentId = null,
+    string? SourceDocumentNumber = null,
+    string? SourceDocumentType = null);
 
 public record BatchVoidRequest(List<Guid> EntryIds);
 

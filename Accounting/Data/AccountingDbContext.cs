@@ -383,6 +383,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(j => new { j.CompanyId, j.ProjectId }).HasDatabaseName("IX_JournalEntries_CompanyId_ProjectId");
             e.HasIndex(j => new { j.CompanyId, j.BranchId }).HasDatabaseName("IX_JournalEntries_CompanyId_BranchId");
             e.HasIndex(j => new { j.CompanyId, j.DimensionId }).HasDatabaseName("IX_JournalEntries_CompanyId_DimensionId");
+            e.HasIndex(j => new { j.CompanyId, j.SourceDocumentId }).HasDatabaseName("IX_JournalEntries_CompanyId_SourceDocumentId");
             e.HasQueryFilter(j => !j.IsDeleted);
         });
 
