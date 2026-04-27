@@ -100,13 +100,16 @@ const DbdLookup = {
         const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(taxId)}`);
         if (res.data) {
           const d = res.data;
-          const hasData = d.nameTh || d.nameEn || d.address;
+          const hasName = d.nameTh || d.nameEn;
+          const hasAny = hasName || d.address;
           if (onResult) onResult(d);
           if (typeof Layout !== 'undefined') {
-            if (hasData) {
-              Layout.toast('ดึงข้อมูลจาก DBD สำเร็จ');
+            if (hasName) {
+              Layout.toast('ดึงข้อมูลจาก DBD สำเร็จ — ' + (d.nameTh || d.nameEn));
+            } else if (hasAny) {
+              Layout.toast('ดึงข้อมูลบางส่วนได้ — กรุณากรอกชื่อบริษัทเพิ่มเติม', 'info');
             } else {
-              Layout.toast('พบเลขทะเบียนในระบบ แต่ไม่มีข้อมูลรายละเอียด', 'info');
+              Layout.toast('พบเลขทะเบียนในระบบ แต่ DBD ไม่ได้ส่งรายละเอียดกลับมา กรุณากรอกข้อมูลเอง', 'info');
             }
           }
         } else {
@@ -129,17 +132,30 @@ const DbdLookup = {
       }
     };
 
-    // Auto-fetch when 13 digits entered
+    let lastAutoLookupId = '';
+    // Auto-fetch when 13 digits entered (works even if a button is provided)
     inputEl.addEventListener('input', () => {
       const val = inputEl.value.replace(/[^0-9]/g, '');
-      if (val.length === 13 && !btnEl) {
+      if (val.length === 13 && val !== lastAutoLookupId) {
+        lastAutoLookupId = val;
         setTimeout(doLookup, 300);
+      } else if (val.length < 13) {
+        lastAutoLookupId = '';
+      }
+    });
+
+    // Trigger on blur/change too (for paste / programmatic fills)
+    inputEl.addEventListener('change', () => {
+      const val = inputEl.value.replace(/[^0-9]/g, '');
+      if (val.length === 13 && val !== lastAutoLookupId) {
+        lastAutoLookupId = val;
+        doLookup();
       }
     });
 
     // Button click
     if (btnEl) {
-      btnEl.addEventListener('click', (e) => { e.preventDefault(); doLookup(); });
+      btnEl.addEventListener('click', (e) => { e.preventDefault(); lastAutoLookupId = ''; doLookup(); });
     }
   },
 

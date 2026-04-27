@@ -113,10 +113,16 @@
         this._dbdAttached = true;
         const fillFromDbd = (result) => {
           if (!result) return;
-          const name = result.nameTh || result.nameEn || '';
-          if (name) document.getElementById('fName').value = name;
-          if (result.juristicId) document.getElementById('fTaxId').value = result.juristicId;
-          if (result.address) document.getElementById('fAddress').value = result.address;
+          // Use fillCompanyForm helper for consistent population across all fields
+          DbdLookup.fillCompanyForm(result, {
+            nameTh: 'fName',
+            taxId: 'fTaxId',
+            address: 'fAddress'
+          });
+          // If response gave us an address but no taxId in the box, set it
+          if (result.juristicId && !document.getElementById('fTaxId').value) {
+            document.getElementById('fTaxId').value = result.juristicId;
+          }
         };
         DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd);
         DbdLookup.attachTaxIdLookup(
