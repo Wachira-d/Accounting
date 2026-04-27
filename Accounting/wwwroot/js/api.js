@@ -504,6 +504,18 @@ const API = {
       uploadLogo: (formData) => API.upload(`${base}/settings/logo`, formData),
       deleteLogo: () => API.del(`${base}/settings/logo`),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
+      // Email config
+      getEmailConfig: () => API.get(`${base}/email-config`),
+      updateEmailConfig: (d) => API.put(`${base}/email-config`, d),
+      testEmailConfig: (d) => API.post(`${base}/email-config/test`, d),
+      // eTax config + send
+      getEtaxConfig: () => API.get(`${base}/etax/config`),
+      updateEtaxConfig: (d) => API.put(`${base}/etax/config`, d),
+      sendEtaxByEmail: (etaxId, d) => API.post(`${base}/etax/${etaxId}/send-email`, d),
+      getEtaxEmailLogs: (etaxId) => API.get(`${base}/etax/${etaxId}/email-logs`),
+      // Document email
+      sendDocumentEmail: (documentId, d) => API.post(`${base}/document/${documentId}/send-email`, d),
+      getDocumentEmailLogs: (documentId) => API.get(`${base}/document/${documentId}/email-logs`),
       // Aging
       getAgingReceivables: (q = '') => API.get(`${base}/aging/receivables${q}`),
       getAgingPayables: (q = '') => API.get(`${base}/aging/payables${q}`),

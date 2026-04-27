@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.DocumentTemplate;
+using Accounting.Models.DTOs.Email;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -17,12 +18,15 @@ public class EtaxController : ControllerBase
     private readonly IEtaxInvoiceService _etaxService;
     private readonly IConfiguration _configuration;
     private readonly Data.AccountingDbContext _db;
+    private readonly IDocumentEmailService _docEmailService;
 
-    public EtaxController(IEtaxInvoiceService etaxService, IConfiguration configuration, Data.AccountingDbContext db)
+    public EtaxController(IEtaxInvoiceService etaxService, IConfiguration configuration,
+        Data.AccountingDbContext db, IDocumentEmailService docEmailService)
     {
         _etaxService = etaxService;
         _configuration = configuration;
         _db = db;
+        _docEmailService = docEmailService;
     }
 
     [HttpPost("generate")]
@@ -157,7 +161,113 @@ public class EtaxController : ControllerBase
             AutoSubmit = autoSubmit,
             ServiceProvider = serviceProvider,
             UsingCompanyConfig = useCompanyConfig,
-            CompanyEtaxEnabled = companySettings?.EtaxEnabled ?? false
+            CompanyEtaxEnabled = companySettings?.EtaxEnabled ?? false,
+            Mode = companySettings?.EtaxMode.ToString() ?? "None",
+            ByEmailRdRegistered = companySettings?.EtaxByEmailRdRegistered ?? false,
+            ByEmailSenderEmail = companySettings?.EtaxByEmailSenderEmail
         }));
     }
+
+    /// <summary>ส่ง e-Tax ทางอีเมล (พร้อม CC csemail@etax.teda.th สำหรับ time-stamping)</summary>
+    [HttpPost("{etaxId:guid}/send-email")]
+    public async Task<ActionResult<ApiResponse<DocumentEmailLogResponse>>> SendByEmail(
+        Guid companyId, Guid etaxId, [FromBody] SendEtaxByEmailRequest request)
+    {
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+        var log = await _docEmailService.SendEtaxByEmailAsync(companyId, etaxId, request, actor);
+        var dto = MapLog(log);
+        return log.Status == EmailLogStatus.Sent
+            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, "ส่งอีเมลสำเร็จ"))
+            : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
+    }
+
+    /// <summary>ประวัติการส่งอีเมลของ e-Tax</summary>
+    [HttpGet("{etaxId:guid}/email-logs")]
+    public async Task<ActionResult<ApiResponse<List<DocumentEmailLogResponse>>>> GetEmailLogs(
+        Guid companyId, Guid etaxId)
+    {
+        var logs = await _docEmailService.GetEtaxEmailLogsAsync(companyId, etaxId);
+        return Ok(new ApiResponse<List<DocumentEmailLogResponse>>(true,
+            logs.Select(MapLog).ToList()));
+    }
+
+    /// <summary>ดึงการตั้งค่า e-Tax mode (ByEmail / Direct / Both)</summary>
+    [HttpGet("config")]
+    public async Task<ActionResult<ApiResponse<EtaxConfigResponse>>> GetConfig(Guid companyId)
+    {
+        var s = await GetOrCreateSettings(companyId);
+        return Ok(new ApiResponse<EtaxConfigResponse>(true, BuildEtaxConfigResponse(s)));
+    }
+
+    /// <summary>บันทึกการตั้งค่า e-Tax mode + RD registration</summary>
+    [HttpPut("config")]
+    public async Task<ActionResult<ApiResponse<EtaxConfigResponse>>> UpdateConfig(
+        Guid companyId, [FromBody] UpdateEtaxConfigRequest req)
+    {
+        var s = await GetOrCreateSettings(companyId);
+        if (req.Mode.HasValue) s.EtaxMode = req.Mode.Value;
+        if (req.Enabled.HasValue) s.EtaxEnabled = req.Enabled.Value;
+        if (req.TestMode.HasValue) s.EtaxTestMode = req.TestMode.Value;
+        if (req.AutoSign.HasValue) s.EtaxAutoSign = req.AutoSign.Value;
+        if (req.AutoSubmit.HasValue) s.EtaxAutoSubmit = req.AutoSubmit.Value;
+        if (req.ByEmailRdRegistered.HasValue) s.EtaxByEmailRdRegistered = req.ByEmailRdRegistered.Value;
+        if (req.ByEmailRegistrationDate.HasValue) s.EtaxByEmailRegistrationDate = req.ByEmailRegistrationDate;
+        if (req.ByEmailRegistrationNumber != null) s.EtaxByEmailRegistrationNumber = req.ByEmailRegistrationNumber;
+        if (req.ByEmailSenderEmail != null) s.EtaxByEmailSenderEmail = req.ByEmailSenderEmail;
+        if (!string.IsNullOrWhiteSpace(req.ByEmailRdTimestampAddress))
+            s.EtaxByEmailRdTimestampAddress = req.ByEmailRdTimestampAddress;
+        if (req.ByEmailEmbedXml.HasValue) s.EtaxByEmailEmbedXml = req.ByEmailEmbedXml.Value;
+        if (req.ByEmailAutoSendOnApprove.HasValue) s.EtaxByEmailAutoSendOnApprove = req.ByEmailAutoSendOnApprove.Value;
+        if (req.ServiceProvider != null) s.EtaxServiceProvider = req.ServiceProvider;
+        s.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<EtaxConfigResponse>(true, BuildEtaxConfigResponse(s), "บันทึกการตั้งค่าเรียบร้อย"));
+    }
+
+    private async Task<Models.Entities.CompanySettings> GetOrCreateSettings(Guid companyId)
+    {
+        var s = await _db.CompanySettings.FirstOrDefaultAsync(x => x.CompanyId == companyId);
+        if (s == null)
+        {
+            s = new Models.Entities.CompanySettings { CompanyId = companyId };
+            _db.CompanySettings.Add(s);
+            await _db.SaveChangesAsync();
+        }
+        return s;
+    }
+
+    private static EtaxConfigResponse BuildEtaxConfigResponse(Models.Entities.CompanySettings s) => new(
+        Mode: s.EtaxMode,
+        Enabled: s.EtaxEnabled,
+        TestMode: s.EtaxTestMode,
+        AutoSign: s.EtaxAutoSign,
+        AutoSubmit: s.EtaxAutoSubmit,
+        ByEmailRdRegistered: s.EtaxByEmailRdRegistered,
+        ByEmailRegistrationDate: s.EtaxByEmailRegistrationDate,
+        ByEmailRegistrationNumber: s.EtaxByEmailRegistrationNumber,
+        ByEmailSenderEmail: s.EtaxByEmailSenderEmail,
+        ByEmailRdTimestampAddress: s.EtaxByEmailRdTimestampAddress,
+        ByEmailEmbedXml: s.EtaxByEmailEmbedXml,
+        ByEmailAutoSendOnApprove: s.EtaxByEmailAutoSendOnApprove,
+        DirectCertificateInstalled: !string.IsNullOrEmpty(s.EtaxCertificatePath) && System.IO.File.Exists(s.EtaxCertificatePath),
+        DirectApiCredentialsSet: !string.IsNullOrEmpty(s.EtaxRdApiKey) && !string.IsNullOrEmpty(s.EtaxRdApiSecret),
+        ServiceProvider: s.EtaxServiceProvider);
+
+    private static DocumentEmailLogResponse MapLog(Models.Entities.DocumentEmailLog l) => new(
+        Id: l.Id,
+        DocumentId: l.DocumentId,
+        EtaxInvoiceId: l.EtaxInvoiceId,
+        ToEmail: l.ToEmail,
+        CcEmail: l.CcEmail,
+        Subject: l.Subject,
+        AttachedPdf: l.AttachedPdf,
+        AttachedXml: l.AttachedXml,
+        Provider: l.Provider,
+        Status: l.Status,
+        SentAt: l.SentAt,
+        ErrorMessage: l.ErrorMessage,
+        IsEtaxByEmail: l.IsEtaxByEmail,
+        IncludedRdTimestamp: l.IncludedRdTimestamp,
+        CreatedAt: l.CreatedAt);
 }

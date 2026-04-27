@@ -71,7 +71,13 @@ public class SubscriptionCheckMiddleware
         // Banking
         ("/bank",                     FeatureFlags.BankReconciliation),
 
-        // Tax / Documents
+        // Tax / Documents — more specific eTax routes evaluated first (longest-key wins in OrderByDescending)
+        ("/etax/send-email",          FeatureFlags.EtaxByEmail),
+        ("/etax/by-email",            FeatureFlags.EtaxByEmail),
+        ("/etax/sign-and-submit",     FeatureFlags.EtaxDirect),
+        ("/etax/quick-submit",        FeatureFlags.EtaxDirect),
+        ("/etax/submit",              FeatureFlags.EtaxDirect),
+        ("/etax/sign",                FeatureFlags.EtaxDirect),
         ("/etax",                     FeatureFlags.EtaxInvoice),
         ("/tax",                      FeatureFlags.TaxManagement),
         ("/withholding-tax-certs",    FeatureFlags.TaxManagement),

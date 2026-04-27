@@ -158,6 +158,8 @@ builder.Services.AddHttpClient();
 
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IEmailSenderFactory, Accounting.Services.Implementations.Email.EmailSenderFactory>();
+builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 
 // Error logging service
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();

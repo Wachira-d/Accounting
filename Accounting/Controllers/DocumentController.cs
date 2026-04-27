@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
+using Accounting.Models.DTOs.Email;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -14,11 +15,53 @@ namespace Accounting.Controllers;
 public class DocumentController : ControllerBase
 {
     private readonly IDocumentService _documentService;
+    private readonly IDocumentEmailService _docEmailService;
 
-    public DocumentController(IDocumentService documentService)
+    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService)
     {
         _documentService = documentService;
+        _docEmailService = docEmailService;
     }
+
+    // ===== Send document via email =====
+
+    [HttpPost("{documentId:guid}/send-email")]
+    public async Task<ActionResult<ApiResponse<DocumentEmailLogResponse>>> SendEmail(
+        Guid companyId, Guid documentId, [FromBody] SendDocumentEmailRequest request)
+    {
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+        var log = await _docEmailService.SendDocumentEmailAsync(companyId, documentId, request, actor);
+        var dto = MapEmailLog(log);
+        return log.Status == EmailLogStatus.Sent
+            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, "ส่งอีเมลสำเร็จ"))
+            : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
+    }
+
+    [HttpGet("{documentId:guid}/email-logs")]
+    public async Task<ActionResult<ApiResponse<List<DocumentEmailLogResponse>>>> GetEmailLogs(
+        Guid companyId, Guid documentId)
+    {
+        var logs = await _docEmailService.GetDocumentEmailLogsAsync(companyId, documentId);
+        return Ok(new ApiResponse<List<DocumentEmailLogResponse>>(true,
+            logs.Select(MapEmailLog).ToList()));
+    }
+
+    private static DocumentEmailLogResponse MapEmailLog(Models.Entities.DocumentEmailLog l) => new(
+        Id: l.Id,
+        DocumentId: l.DocumentId,
+        EtaxInvoiceId: l.EtaxInvoiceId,
+        ToEmail: l.ToEmail,
+        CcEmail: l.CcEmail,
+        Subject: l.Subject,
+        AttachedPdf: l.AttachedPdf,
+        AttachedXml: l.AttachedXml,
+        Provider: l.Provider,
+        Status: l.Status,
+        SentAt: l.SentAt,
+        ErrorMessage: l.ErrorMessage,
+        IsEtaxByEmail: l.IsEtaxByEmail,
+        IncludedRdTimestamp: l.IncludedRdTimestamp,
+        CreatedAt: l.CreatedAt);
 
     // ===== Documents =====
 

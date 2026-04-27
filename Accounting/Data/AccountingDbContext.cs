@@ -107,6 +107,9 @@ public class AccountingDbContext : DbContext
     // e-Tax Invoices
     public DbSet<EtaxInvoice> EtaxInvoices => Set<EtaxInvoice>();
 
+    // Document Email Logs (sent emails for documents and e-Tax)
+    public DbSet<DocumentEmailLog> DocumentEmailLogs => Set<DocumentEmailLog>();
+
     // Expense Claims
     public DbSet<ExpenseClaim> ExpenseClaims => Set<ExpenseClaim>();
     public DbSet<ExpenseClaimLine> ExpenseClaimLines => Set<ExpenseClaimLine>();
@@ -696,6 +699,21 @@ public class AccountingDbContext : DbContext
             e.Property(ei => ei.BuyerTaxId).HasMaxLength(13);
             e.HasOne(ei => ei.Document).WithMany().HasForeignKey(ei => ei.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(ei => !ei.IsDeleted);
+        });
+
+        // ===== DocumentEmailLog =====
+        modelBuilder.Entity<DocumentEmailLog>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.DocumentId });
+            e.HasIndex(l => new { l.CompanyId, l.EtaxInvoiceId });
+            e.Property(l => l.ToEmail).HasMaxLength(500);
+            e.Property(l => l.CcEmail).HasMaxLength(1000);
+            e.Property(l => l.BccEmail).HasMaxLength(1000);
+            e.Property(l => l.Subject).HasMaxLength(500);
+            e.Property(l => l.ProviderMessageId).HasMaxLength(200);
+            e.HasOne(l => l.Document).WithMany().HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(l => l.EtaxInvoice).WithMany().HasForeignKey(l => l.EtaxInvoiceId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(l => !l.IsDeleted);
         });
 
         // ===== ExpenseClaim =====

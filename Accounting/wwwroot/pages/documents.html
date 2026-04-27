@@ -137,6 +137,26 @@
             <div class="text-sm">หัก ณ ที่จ่าย: <strong id="sumWht">0.00</strong></div>
             <div class="text-lg font-bold" style="margin-top:4px">ยอดสุทธิ: <span id="sumTotal">0.00</span></div>
           </div>
+
+          <!-- Send via email (visible only if email configured) -->
+          <div id="sendEmailSection" style="display:none;margin-top:20px;padding:16px;background:#f0f9ff;border-radius:8px;border:1px solid #bae6fd">
+            <div class="form-group form-checkbox" style="margin-bottom:12px">
+              <input type="checkbox" id="fSendEmail" onchange="Page.toggleSendEmail()">
+              <label for="fSendEmail" style="font-weight:600">📧 ส่งอีเมลให้ลูกค้าหลังบันทึก</label>
+            </div>
+            <div id="sendEmailFields" style="display:none">
+              <div class="form-row">
+                <div class="form-group" style="flex:1"><label class="form-label">ถึง <span style="color:red">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
+                <div class="form-group" style="flex:1"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
+              </div>
+              <div class="form-group"><label class="form-label">หัวข้อ</label><input type="text" class="form-input" id="fEmailSubject"></div>
+              <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint" style="display:none">
+                <input type="checkbox" id="fEmailAsEtax">
+                <span>ส่งในรูปแบบ <strong>e-Tax by Email</strong> (CC สรรพากร + แนบ XML)</span>
+              </label>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
@@ -271,9 +291,38 @@
         }
         const api = Layout.api(); if (!api) return;
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
+        // Check if email is configured for this company
+        try {
+          const ec = await api.getEmailConfig();
+          this._emailConfigured = ec?.data?.configured === true;
+        } catch(e) { this._emailConfigured = false; }
+        try {
+          const tc = await api.getEtaxConfig();
+          this._etaxConfig = tc?.data || null;
+        } catch(e) { this._etaxConfig = null; }
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
         else await this.load();
+      },
+      toggleSendEmail() {
+        const on = document.getElementById('fSendEmail').checked;
+        document.getElementById('sendEmailFields').style.display = on ? 'block' : 'none';
+      },
+      _populateEmailDefaults(contactId) {
+        const c = this.contacts.find(x => x.id === contactId);
+        if (c?.email && !document.getElementById('fEmailTo').value) {
+          document.getElementById('fEmailTo').value = c.email;
+        }
+        // Show e-Tax option if mode is ByEmail or Both AND document type qualifies
+        const docType = document.getElementById('fType')?.value;
+        const eligibleTypes = ['TaxInvoice', 'Receipt', 'CreditNote', 'DebitNote'];
+        const mode = this._etaxConfig?.mode;
+        const modeStr = (typeof mode === 'number') ? ['None','ByEmail','Direct','Both'][mode] : mode;
+        const showEtax = (modeStr === 'ByEmail' || modeStr === 'Both')
+                      && this._etaxConfig?.byEmailRdRegistered
+                      && eligibleTypes.includes(docType);
+        const hint = document.getElementById('etaxByEmailHint');
+        if (hint) hint.style.display = showEtax ? 'flex' : 'none';
       },
       async exportAll(format) {
         const api = Layout.api(); if (!api) return;
@@ -447,6 +496,12 @@
         this.lineCount = 0;
         this.addLine();
         this.calcSum();
+        // Show send-email section if email is configured
+        const sec = document.getElementById('sendEmailSection');
+        if (sec) sec.style.display = this._emailConfigured ? 'block' : 'none';
+        document.getElementById('fSendEmail').checked = false;
+        document.getElementById('sendEmailFields').style.display = 'none';
+        ['fEmailTo','fEmailCc','fEmailSubject','fEmailBody'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         Layout.openModal('formModal');
       },
       async openEdit(id) {
@@ -508,13 +563,53 @@
           lines
         };
         try {
+          let savedDocId = this.editingId;
           if (this.editingId) {
             await api.updateDocument(this.editingId, payload);
             Layout.toast('แก้ไขเอกสารสำเร็จ');
           } else {
-            await api.createDocument(payload);
+            const cr = await api.createDocument(payload);
+            savedDocId = cr.data?.id;
             Layout.toast('สร้างเอกสารสำเร็จ');
           }
+
+          // Send via email if requested
+          if (document.getElementById('fSendEmail')?.checked && savedDocId) {
+            const to = document.getElementById('fEmailTo').value.trim();
+            if (!to) {
+              Layout.toast('เอกสารบันทึกแล้ว แต่ไม่ส่งอีเมล (ไม่มีผู้รับ)', 'info');
+            } else {
+              try {
+                const asEtax = document.getElementById('fEmailAsEtax')?.checked;
+                const emailReq = {
+                  to,
+                  cc: document.getElementById('fEmailCc').value || null,
+                  subject: document.getElementById('fEmailSubject').value || null,
+                  body: document.getElementById('fEmailBody').value || null,
+                  attachPdf: true,
+                  attachXml: !!asEtax
+                };
+                if (asEtax) {
+                  // Need to generate eTax first then send via /etax/{id}/send-email
+                  const etax = await API.post(`/api/companies/${Layout.getCompanyId()}/etax/generate`,
+                    { documentId: savedDocId, signDigitally: true });
+                  if (etax?.data?.id) {
+                    await api.sendEtaxByEmail(etax.data.id, {
+                      to, cc: emailReq.cc, subject: emailReq.subject, body: emailReq.body,
+                      includePdf: true, includeXml: true, includeRdTimestamp: true
+                    });
+                    Layout.toast('ส่ง e-Tax by Email สำเร็จ (CC สรรพากรแล้ว)');
+                  }
+                } else {
+                  await api.sendDocumentEmail(savedDocId, emailReq);
+                  Layout.toast('ส่งอีเมลสำเร็จ');
+                }
+              } catch (e) {
+                Layout.toast('เอกสารบันทึกแล้ว แต่ส่งอีเมลไม่สำเร็จ: ' + e.message, 'error');
+              }
+            }
+          }
+
           Layout.closeModal('formModal');
           this.editingId = null;
           await this.load();

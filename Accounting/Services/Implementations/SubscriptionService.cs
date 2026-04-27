@@ -1353,7 +1353,7 @@ public static class FeatureFlagsHelper
         "AdvancedReporting" or "AgingReport" or "ReportBuilder" or "FPA" or "BudgetManagement" => "reporting",
         "MultiCompany" or "MultiUser" or "MultiCurrency" or "Consolidation" or "Intercompany" => "multi",
         "Inventory" or "WarehouseManagement" or "FixedAssets" or "BankReconciliation" or "ExpenseManagement" or "PurchaseOrders" or "RecurringTransactions" or "CostCenter" or "ProjectAccounting" or "Payroll" or "Commission" or "FreelanceManagement" or "TimeBilling" or "LoanManagement" or "RevenueRecognition" => "operations",
-        "WorkflowEngine" or "ApprovalWorkflow" or "AuditLog" or "EtaxInvoice" or "OpenBanking" or "Webhook" => "advanced",
+        "WorkflowEngine" or "ApprovalWorkflow" or "AuditLog" or "EtaxInvoice" or "EtaxByEmail" or "EtaxDirect" or "OpenBanking" or "Webhook" => "advanced",
         "APIAccess" or "BulkImport" or "EmailNotification" or "FileAttachments" or "CustomerPortal" => "integration",
         "AI_Features" or "DocumentOCR" => "ai",
         _ => "other"
@@ -1371,6 +1371,8 @@ public static class FeatureFlagsHelper
         "CustomChartOfAccounts" => "ผังบัญชีแบบกำหนดเอง",
         "AutoPosting" => "ลงบัญชีอัตโนมัติ",
         "EtaxInvoice" => "e-Tax Invoice",
+        "EtaxByEmail" => "e-Tax by Email (RD เก็บเวลาประทับ)",
+        "EtaxDirect" => "e-Tax Direct (ยิง XML เข้า RD API)",
         "WorkflowEngine" => "Workflow Engine",
         "AuditLog" => "บันทึกประวัติการใช้งาน",
         "EmailNotification" => "แจ้งเตือนทางอีเมล",
