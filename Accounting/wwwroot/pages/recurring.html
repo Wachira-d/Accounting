@@ -64,9 +64,40 @@
             <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><select class="form-select" id="fContact"><option value="">-- เลือก --</option></select></div>
             <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
           </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">VAT (%)</label><input type="number" class="form-input" id="fVatRate" step="0.01" value="7"></div>
+            <div class="form-group"><label class="form-label">หักภาษี ณ ที่จ่าย (%)</label>
+              <select class="form-select" id="fWhtRate">
+                <option value="0">ไม่หัก</option>
+                <option value="1">1% (ขนส่ง)</option>
+                <option value="2">2% (โฆษณา/รับเหมา)</option>
+                <option value="3">3% (บริการทั่วไป)</option>
+                <option value="5">5% (เช่าทรัพย์/วิชาชีพอิสระ)</option>
+                <option value="10">10% (ค่าธรรมเนียม)</option>
+                <option value="15">15% (ดอกเบี้ย)</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">ประเภทเงินได้</label>
+              <select class="form-select" id="fIncomeType">
+                <option value="">-- ไม่ระบุ --</option>
+                <option value="40(2)">40(2) ค่าจ้างทั่วไป</option>
+                <option value="40(3)">40(3) ค่าวิชาชีพอิสระ</option>
+                <option value="40(4)">40(4) ดอกเบี้ย/เงินปันผล</option>
+                <option value="40(5)">40(5) ค่าเช่า</option>
+                <option value="40(6)">40(6) ค่าวิชาชีพ</option>
+                <option value="40(7)">40(7) ค่ารับเหมา</option>
+                <option value="40(8)">40(8) ค่าบริการ/อื่นๆ</option>
+              </select>
+            </div>
+          </div>
           <div class="form-group"><label class="form-label">รายละเอียด</label><textarea class="form-input" id="fDescription" rows="2" placeholder="รายละเอียดที่จะปรากฏในเอกสาร"></textarea></div>
-          <div class="form-group">
-            <label class="form-label"><input type="checkbox" id="fAutoApprove"> อนุมัติอัตโนมัติ</label>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label"><input type="checkbox" id="fAutoApprove"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+            </div>
+            <div class="form-group">
+              <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
+            </div>
           </div>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.save()">บันทึก</button></div>
@@ -135,9 +166,12 @@ const Page = {
   async openCreate() {
     document.getElementById('formTitle').textContent = 'สร้างรายการประจำ';
     document.getElementById('fId').value = '';
-    ['fName','fStartDate','fEndDate','fAmount','fDescription'].forEach(id => document.getElementById(id).value = '');
+    ['fName','fStartDate','fEndDate','fAmount','fDescription','fIncomeType'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('fFrequency').value = 'Monthly';
+    document.getElementById('fVatRate').value = '7';
+    document.getElementById('fWhtRate').value = '0';
     document.getElementById('fAutoApprove').checked = false;
+    document.getElementById('fAutoWht').checked = true;
     await this.loadContacts();
     Layout.openModal('formModal');
   },
@@ -155,18 +189,45 @@ const Page = {
   async save() {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('fId').value;
+    const name = document.getElementById('fName').value.trim();
+    const startDate = document.getElementById('fStartDate').value;
+    const amount = parseFloat(document.getElementById('fAmount').value) || 0;
+    const description = document.getElementById('fDescription').value.trim();
+    if (!name || !startDate || !amount) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน', 'error'); return; }
+
+    const vatRate = parseFloat(document.getElementById('fVatRate').value) || 0;
+    const whtRate = parseFloat(document.getElementById('fWhtRate').value) || 0;
+    const incomeType = document.getElementById('fIncomeType').value || null;
+
+    // Build templateData JSON expected by backend (RecurringTransactionService)
+    const templateData = JSON.stringify({
+      lines: [{
+        description: description || name,
+        quantity: 1,
+        unitPrice: amount,
+        vatRate: vatRate,
+        withholdingTaxRate: whtRate,
+        incomeTypeCode: incomeType
+      }],
+      autoGenerateWht: document.getElementById('fAutoWht').checked,
+      dueDays: 30
+    });
+
     const data = {
-      name: document.getElementById('fName').value,
+      name,
+      description,
+      templateType: 'Document',
       documentType: document.getElementById('fDocType').value,
       frequency: document.getElementById('fFrequency').value,
-      startDate: document.getElementById('fStartDate').value,
+      startDate,
       endDate: document.getElementById('fEndDate').value || null,
       contactId: document.getElementById('fContact').value || null,
-      amount: parseFloat(document.getElementById('fAmount').value) || 0,
-      description: document.getElementById('fDescription').value,
+      templateData,
       autoApprove: document.getElementById('fAutoApprove').checked,
+      notifyBeforeRun: true,
+      notifyDaysBefore: 1
     };
-    if (!data.name || !data.startDate || !data.amount) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+
     try {
       if (id) await api.updateRecurring(id, data);
       else await api.createRecurring(data);
