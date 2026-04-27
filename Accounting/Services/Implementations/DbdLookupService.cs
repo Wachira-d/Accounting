@@ -66,44 +66,43 @@ public class DbdLookupService : IDbdLookupService
         try
         {
             var client = _httpClientFactory.CreateClient("Dbd");
-            client.Timeout = TimeSpan.FromSeconds(10);
+            client.Timeout = TimeSpan.FromSeconds(15);
 
-            // Try DBD Open API first
-            DbdCompanyResult? apiResult = null;
+            // Strategy: try multiple sources, return the first one that has a NAME.
+            // We accept "found ID with no name" only as a last resort.
+            DbdCompanyResult? bestPartial = null;
+
+            // 1) DBD Open API (often empty without API key, but try anyway)
             try
             {
                 var url = $"https://openapi.dbd.go.th/api/v1/juristic_person/{Uri.EscapeDataString(juristicId)}";
                 var response = await client.GetAsync(url);
                 var body = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation("DBD Open API response ({Status}): {Body}",
-                    response.StatusCode, body.Length > 500 ? body[..500] : body);
+                _logger.LogInformation("DBD Open API ({Status}): {Len} chars", response.StatusCode, body.Length);
 
-                if (response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body))
+                if (response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body) && body.TrimStart().StartsWith('{'))
                 {
                     var json = JsonSerializer.Deserialize<JsonElement>(body);
-                    apiResult = MapDbdApiResponse(json, juristicId);
-                    if (!string.IsNullOrWhiteSpace(apiResult.NameTh))
-                        return apiResult;
-                    _logger.LogWarning("DBD Open API returned empty name fields for {Id}", juristicId);
+                    var r = MapDbdApiResponse(json, juristicId);
+                    if (!string.IsNullOrWhiteSpace(r.NameTh) || !string.IsNullOrWhiteSpace(r.NameEn))
+                        return r;
+                    bestPartial ??= r;
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "DBD Open API call failed for {Id}, trying CKAN", juristicId);
-            }
+            catch (Exception ex) { _logger.LogWarning(ex, "DBD Open API failed for {Id}", juristicId); }
 
-            // Fallback: CKAN datastore search by ID
+            // 2) CKAN datastore — use FILTERS parameter for exact ID match
+            //    This is the most reliable free public source.
             try
             {
+                var filters = JsonSerializer.Serialize(new Dictionary<string, string> { ["juristic_id"] = juristicId });
                 var ckanUrl = $"https://opendata.dbd.go.th/api/3/action/datastore_search" +
                               $"?resource_id=08a1d598-2df0-4d37-9661-08e2555041e4" +
-                              $"&q={Uri.EscapeDataString(juristicId)}" +
-                              $"&limit=5";
-
+                              $"&filters={Uri.EscapeDataString(filters)}" +
+                              $"&limit=1";
                 var ckanResponse = await client.GetAsync(ckanUrl);
                 var ckanBody = await ckanResponse.Content.ReadAsStringAsync();
-                _logger.LogInformation("CKAN response ({Status}): {Body}",
-                    ckanResponse.StatusCode, ckanBody.Length > 500 ? ckanBody[..500] : ckanBody);
+                _logger.LogInformation("CKAN filter ({Status}): {Len} chars", ckanResponse.StatusCode, ckanBody.Length);
 
                 if (ckanResponse.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(ckanBody))
                 {
@@ -112,42 +111,67 @@ public class DbdLookupService : IDbdLookupService
                         result.TryGetProperty("records", out var records) &&
                         records.GetArrayLength() > 0)
                     {
-                        return MapCkanRecord(records[0]);
+                        var r = MapCkanRecord(records[0]);
+                        if (!string.IsNullOrWhiteSpace(r.NameTh) || !string.IsNullOrWhiteSpace(r.NameEn))
+                            return r;
+                        bestPartial ??= r;
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "CKAN search failed for {Id}", juristicId);
-            }
+            catch (Exception ex) { _logger.LogWarning(ex, "CKAN filter failed for {Id}", juristicId); }
 
-            // Fallback: try DBD DataWarehouse
+            // 3) CKAN datastore — fallback to text search (resource may have updated structure)
             try
             {
-                var dwUrl = $"https://datawarehouse.dbd.go.th/api/juristic/{Uri.EscapeDataString(juristicId)}";
+                var ckanUrl = $"https://opendata.dbd.go.th/api/3/action/datastore_search" +
+                              $"?resource_id=08a1d598-2df0-4d37-9661-08e2555041e4" +
+                              $"&q={Uri.EscapeDataString(juristicId)}" +
+                              $"&limit=5";
+                var ckanResponse = await client.GetAsync(ckanUrl);
+                var ckanBody = await ckanResponse.Content.ReadAsStringAsync();
+
+                if (ckanResponse.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(ckanBody))
+                {
+                    var ckanJson = JsonSerializer.Deserialize<JsonElement>(ckanBody);
+                    if (ckanJson.TryGetProperty("result", out var result) &&
+                        result.TryGetProperty("records", out var records))
+                    {
+                        // Pick the record whose juristic_id exactly matches
+                        foreach (var rec in records.EnumerateArray())
+                        {
+                            var r = MapCkanRecord(rec);
+                            if (r.JuristicId == juristicId &&
+                                (!string.IsNullOrWhiteSpace(r.NameTh) || !string.IsNullOrWhiteSpace(r.NameEn)))
+                                return r;
+                            if (r.JuristicId == juristicId)
+                                bestPartial ??= r;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "CKAN search failed for {Id}", juristicId); }
+
+            // 4) DataWarehouse public endpoint (no auth required for basic info)
+            try
+            {
+                var dwUrl = $"https://datawarehouse.dbd.go.th/api/searchJuristicInfoByID/{Uri.EscapeDataString(juristicId)}";
                 var dwResponse = await client.GetAsync(dwUrl);
                 if (dwResponse.IsSuccessStatusCode)
                 {
                     var dwBody = await dwResponse.Content.ReadAsStringAsync();
-                    _logger.LogInformation("DBD DataWarehouse response: {Body}",
-                        dwBody.Length > 500 ? dwBody[..500] : dwBody);
-
-                    if (!string.IsNullOrWhiteSpace(dwBody))
+                    if (!string.IsNullOrWhiteSpace(dwBody) && dwBody.TrimStart().StartsWith('{'))
                     {
                         var dwJson = JsonSerializer.Deserialize<JsonElement>(dwBody);
-                        var dwResult = MapDbdApiResponse(dwJson, juristicId);
-                        if (!string.IsNullOrWhiteSpace(dwResult.NameTh))
-                            return dwResult;
+                        var r = MapDbdApiResponse(dwJson, juristicId);
+                        if (!string.IsNullOrWhiteSpace(r.NameTh) || !string.IsNullOrWhiteSpace(r.NameEn))
+                            return r;
+                        bestPartial ??= r;
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "DBD DataWarehouse call failed for {Id}", juristicId);
-            }
+            catch (Exception ex) { _logger.LogWarning(ex, "DBD DataWarehouse failed for {Id}", juristicId); }
 
-            // Return the partial result from primary API if we got one
-            return apiResult;
+            return bestPartial;
         }
         catch (Exception ex)
         {

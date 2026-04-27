@@ -414,6 +414,26 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Idempotency: if a document with the same ExternalRef already exists,
+            // return it instead of creating a duplicate. This makes re-syncs safe.
+            if (!string.IsNullOrEmpty(request.ExternalRef))
+            {
+                var existing = await _db.Documents
+                    .FirstOrDefaultAsync(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef
+                        && !d.IsDeleted
+                        && d.DocumentType == DocumentType.TaxInvoice);
+                if (existing != null && existing.Status != DocumentStatus.Voided)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = existing.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+
             // Resolve or create contact
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, request.CustomerTaxId);
 
@@ -584,6 +604,23 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Idempotent re-sync: skip if same ExternalRef already created
+            if (!string.IsNullOrEmpty(request.ExternalRef))
+            {
+                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    && d.Reference == request.ExternalRef && !d.IsDeleted
+                    && d.DocumentType == DocumentType.CreditNote);
+                if (existing != null && existing.Status != DocumentStatus.Voided)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = existing.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, null);
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CreditNote);
 
@@ -660,6 +697,23 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Idempotent re-sync: skip if same ExternalRef already created
+            if (!string.IsNullOrEmpty(request.ExternalRef))
+            {
+                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    && d.Reference == request.ExternalRef && !d.IsDeleted
+                    && d.DocumentType == DocumentType.DebitNote);
+                if (existing != null && existing.Status != DocumentStatus.Voided)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = existing.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, null);
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.DebitNote);
 

@@ -455,13 +455,26 @@
           });
           Layout.toast('ดึงข้อมูล ' + result.nameTh + ' จาก DBD สำเร็จ');
         });
-        // DBD Lookup: tax ID lookup button
+        // DBD Lookup: tax ID lookup (auto-triggers on 13 digits + button click)
         DbdLookup.attachTaxIdLookup(document.getElementById('cTaxId'), (result) => {
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'cName', nameEn: 'cNameEn', juristicId: 'cJuristicId',
             address: 'cAddress',
             addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
           });
+          // Also map registered capital and biz type if available
+          if (result?.juristicType) {
+            const sel = document.getElementById('cBizType');
+            if (sel) {
+              const t = (result.juristicType || '').toString();
+              const opt = t.includes('มหาชน') ? 'PublicCompany'
+                        : t.includes('ห้างหุ้นส่วน') ? 'Partnership'
+                        : t.includes('มูลนิธิ') ? 'Foundation'
+                        : t.includes('สมาคม') ? 'Association'
+                        : (t.includes('บริษัท') ? 'JuristicPerson' : null);
+              if (opt) { sel.value = opt; sel.dispatchEvent(new Event('change')); }
+            }
+          }
         }, document.getElementById('cDbdBtn'));
       },
       showTab(tab, el) {

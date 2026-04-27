@@ -669,8 +669,21 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidDoc(id) {
-        if (!(await Layout.confirmDanger({ title: 'ยกเลิกเอกสาร', message: 'เอกสารที่ถูกยกเลิกจะไม่นับในยอดขาย/รายได้และ GL', mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
+        // Count linked journal entries to warn the user about cascade
+        let linkedCount = 0;
+        try {
+          const r = await api.getJournals(`?sourceDocumentId=${id}&pageSize=1`);
+          linkedCount = r?.data?.totalItems || r?.data?.total || (r?.data?.items?.length || 0);
+        } catch {}
+        const extra = linkedCount > 0
+          ? `<br><strong style="color:#dc2626">มีใบสำคัญทางบัญชี ${linkedCount} รายการที่เชื่อมโยงกับเอกสารนี้ — จะถูกยกเลิกอัตโนมัติพร้อมกัน</strong>`
+          : '';
+        if (!(await Layout.confirmDanger({
+          title: 'ยกเลิกเอกสาร',
+          message: 'เอกสารที่ถูกยกเลิกจะไม่นับในยอดขาย/รายได้และ GL' + extra,
+          mode: 'math'
+        }))) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }
       },
