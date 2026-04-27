@@ -172,6 +172,9 @@ builder.Services.AddScoped<IIntegrationService, IntegrationService>();
 // Signature & Approval
 builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>();
 
+// Executive Reports
+builder.Services.AddScoped<IExecutiveReportService, ExecutiveReportService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 

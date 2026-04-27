@@ -230,6 +230,7 @@ const Layout = {
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission' },
 
     { section: 'รายงาน' },
+    { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔', href: '/pages/executive-reports.html', feature: 'AdvancedReporting' },
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html', feature: 'BasicAccounting' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html', feature: 'BudgetManagement' },
     { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html', feature: 'AgingReport' },

@@ -46,6 +46,7 @@ public class SubscriptionCheckMiddleware
         ("/reports/fpa",              FeatureFlags.FPA),
         ("/reports/arap",             FeatureFlags.AdvancedReporting),
         ("/reports/financial-mgmt",   FeatureFlags.AdvancedReporting),
+        ("/executive-reports",        FeatureFlags.AdvancedReporting),
 
         // Operations
         ("/payroll",                  FeatureFlags.Payroll),

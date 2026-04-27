@@ -647,6 +647,19 @@ const API = {
       getIntegrationDepositSummary: (q = '') => API.get(`${base}/integrations/reports/deposit-summary${q}`),
       getIntegrationDailyRevenue: (q = '') => API.get(`${base}/integrations/reports/daily-revenue${q}`),
 
+      // Executive Reports
+      getExecutiveSummary: (q = '') => API.get(`${base}/executive-reports/summary${q}`),
+      getFinancialRatios: (q = '') => API.get(`${base}/executive-reports/ratios${q}`),
+      getTrendAnalysis: (q = '') => API.get(`${base}/executive-reports/trends${q}`),
+      getCustomerAnalytics: (q = '') => API.get(`${base}/executive-reports/customers${q}`),
+      getSupplierAnalytics: (q = '') => API.get(`${base}/executive-reports/suppliers${q}`),
+      getProductAnalytics: (q = '') => API.get(`${base}/executive-reports/products${q}`),
+      getBudgetVariance: (q = '') => API.get(`${base}/executive-reports/budget-variance${q}`),
+      getCashFlowForecast: (q = '') => API.get(`${base}/executive-reports/cash-flow-forecast${q}`),
+      getBreakEvenAnalysis: (q = '') => API.get(`${base}/executive-reports/break-even${q}`),
+      getSalesPerformance: (q = '') => API.get(`${base}/executive-reports/sales-performance${q}`),
+      getProjectProfitability: (q = '') => API.get(`${base}/executive-reports/project-profitability${q}`),
+
       // Document Approvals (Signature-based)
       setupDocApproval: (d) => API.post(`${base}/approvals/setup`, d),
       getDocApprovals: (documentId) => API.get(`${base}/approvals/document/${documentId}`),
