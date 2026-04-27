@@ -111,6 +111,9 @@
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
                     <span>ต่ออายุได้</span><strong>${p.trialMaxExtensions || 0} ครั้ง (${p.trialExtensionDays || 0} วัน/ครั้ง)</strong>
                   </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ลิมิต Trial</span><strong>${p.trialMaxUsers || 0} คน / ${(p.trialMaxDocumentsPerMonth || 0).toLocaleString()} เอกสาร / เดือน</strong>
+                  </div>
                 </div>
 
                 <div style="margin-top:16px">
@@ -261,35 +264,70 @@
                 </div>
               </div>
 
-              <div style="font-weight:600;margin:16px 0 8px">ลิมิต</div>
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิตการใช้งาน (แผนแบบเสียเงิน)</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
                   <label class="admin-label">ผู้ใช้สูงสุด</label>
-                  <input type="number" class="admin-input" id="ep_users" value="${p.maxUsers}">
+                  <input type="number" min="1" class="admin-input" id="ep_users" value="${p.maxUsers}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">บริษัทสูงสุด</label>
-                  <input type="number" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
+                  <input type="number" min="1" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">เอกสาร/เดือน</label>
-                  <input type="number" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
+                  <input type="number" min="0" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายการบัญชี/เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_journals" value="${p.maxJournalEntriesPerMonth || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">พื้นที่จัดเก็บ (MB)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_storage_mb" value="${Math.round((p.maxStorageBytes || 0) / 1048576)}">
                 </div>
               </div>
 
-              <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้</div>
+              <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้ (Trial)</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
                   <label class="admin-label">ระยะเวลา (วัน)</label>
-                  <input type="number" class="admin-input" id="ep_trial_days" value="${p.trialDurationDays || 0}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_days" value="${p.trialDurationDays || 0}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">ต่อได้ (ครั้ง)</label>
-                  <input type="number" class="admin-input" id="ep_trial_ext" value="${p.trialMaxExtensions || 0}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_ext" value="${p.trialMaxExtensions || 0}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">ต่อครั้งละ (วัน)</label>
-                  <input type="number" class="admin-input" id="ep_trial_ext_days" value="${p.trialExtensionDays || 0}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_ext_days" value="${p.trialExtensionDays || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Grace Period (วัน)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_grace" value="${p.trialGracePeriodDays || 0}" title="วันที่ผู้ใช้ยังเข้าระบบได้หลังหมด trial">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">หลังหมดอายุ</label>
+                  <select class="admin-select" id="ep_trial_block" style="width:100%">
+                    <option value="false" ${!p.trialBlockOnExpiry ? 'selected' : ''}>อ่านอย่างเดียว (Read-only)</option>
+                    <option value="true" ${p.trialBlockOnExpiry ? 'selected' : ''}>บล็อกการเข้าใช้</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิตช่วง Trial</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ผู้ใช้สูงสุด (Trial)</label>
+                  <input type="number" min="1" class="admin-input" id="ep_trial_users" value="${p.trialMaxUsers || 1}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เอกสาร/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_docs" value="${p.trialMaxDocumentsPerMonth || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายการบัญชี/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_journals" value="${p.trialMaxJournalEntriesPerMonth || 0}">
                 </div>
               </div>
 
@@ -315,6 +353,7 @@
       try {
         const enabledFeatureNames = getSelectedFeatures('feat_paid');
         const trialFeatureNames = getSelectedFeatures('feat_trial');
+        const storageMB = parseInt(document.getElementById('ep_storage_mb').value) || 0;
         await AdminAPI.updatePlan(planId, {
           name: document.getElementById('ep_name').value,
           description: document.getElementById('ep_desc').value,
@@ -323,16 +362,26 @@
           quarterlyPrice: parseFloat(document.getElementById('ep_quarterly').value),
           semiAnnualPrice: parseFloat(document.getElementById('ep_semiannual').value),
           annualPrice: parseFloat(document.getElementById('ep_annual').value),
+          // Paid plan limits
           maxUsers: parseInt(document.getElementById('ep_users').value),
           maxCompanies: parseInt(document.getElementById('ep_companies').value),
           maxDocumentsPerMonth: parseInt(document.getElementById('ep_docs').value),
+          maxJournalEntriesPerMonth: parseInt(document.getElementById('ep_journals').value),
+          maxStorageBytes: storageMB * 1048576,
+          // Trial settings
           trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),
           trialMaxExtensions: parseInt(document.getElementById('ep_trial_ext').value),
           trialExtensionDays: parseInt(document.getElementById('ep_trial_ext_days').value),
+          trialMaxUsers: parseInt(document.getElementById('ep_trial_users').value),
+          trialMaxDocumentsPerMonth: parseInt(document.getElementById('ep_trial_docs').value),
+          trialMaxJournalEntriesPerMonth: parseInt(document.getElementById('ep_trial_journals').value),
+          trialGracePeriodDays: parseInt(document.getElementById('ep_trial_grace').value),
+          trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
+          // Features
           enabledFeatureNames,
           trialFeatureNames,
         });
-        AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ — ฟีเจอร์อัพเดตให้บริษัทที่อยู่ในแพ็กเกจนี้แล้ว');
+        AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ — อัพเดตให้บริษัทที่อยู่ในแพ็กเกจนี้แล้ว');
         closeEditModal();
         loadPlans();
       } catch (err) {

@@ -482,6 +482,20 @@ public class SubscriptionService : ISubscriptionService
         var template = await _db.PlanTemplates.FindAsync(templateId)
             ?? throw new KeyNotFoundException("ไม่พบ plan template");
 
+        // Track which fields changed so we can propagate to existing subscriptions
+        var oldEnabled = template.EnabledFeatures;
+        var oldTrial = template.TrialFeatures;
+        var oldMaxUsers = template.MaxUsers;
+        var oldMaxCompanies = template.MaxCompanies;
+        var oldMaxDocs = template.MaxDocumentsPerMonth;
+        var oldMaxJournals = template.MaxJournalEntriesPerMonth;
+        var oldMaxStorage = template.MaxStorageBytes;
+        var oldTrialMaxUsers = template.TrialMaxUsers;
+        var oldTrialMaxDocs = template.TrialMaxDocumentsPerMonth;
+        var oldTrialMaxJournals = template.TrialMaxJournalEntriesPerMonth;
+        var oldGrace = template.TrialGracePeriodDays;
+        var oldBlock = template.TrialBlockOnExpiry;
+
         if (request.Name != null) template.Name = request.Name;
         if (request.Description != null) template.Description = request.Description;
         if (request.MonthlyPrice.HasValue) template.MonthlyPrice = request.MonthlyPrice.Value;
@@ -493,10 +507,8 @@ public class SubscriptionService : ISubscriptionService
         if (request.MaxDocumentsPerMonth.HasValue) template.MaxDocumentsPerMonth = request.MaxDocumentsPerMonth.Value;
         if (request.MaxJournalEntriesPerMonth.HasValue) template.MaxJournalEntriesPerMonth = request.MaxJournalEntriesPerMonth.Value;
         if (request.MaxStorageBytes.HasValue) template.MaxStorageBytes = request.MaxStorageBytes.Value;
-        // Resolve features: prefer NameList over enum value if provided
-        var oldEnabled = template.EnabledFeatures;
-        var oldTrial = template.TrialFeatures;
 
+        // Resolve features: prefer NameList over enum value if provided
         if (request.EnabledFeatureNames != null)
             template.EnabledFeatures = FeatureFlagsHelper.FromNameList(request.EnabledFeatureNames);
         else if (request.EnabledFeatures.HasValue)
@@ -519,9 +531,21 @@ public class SubscriptionService : ISubscriptionService
 
         await _db.SaveChangesAsync();
 
-        // Propagate feature changes to all subscriptions of this plan so users
-        // see updated feature access without re-subscribing.
-        if (template.EnabledFeatures != oldEnabled || template.TrialFeatures != oldTrial)
+        // Propagate changes (features + limits + trial config) to all subscriptions
+        // of this plan so users see updates without re-subscribing.
+        var featuresChanged = template.EnabledFeatures != oldEnabled || template.TrialFeatures != oldTrial;
+        var paidLimitsChanged = template.MaxUsers != oldMaxUsers
+            || template.MaxCompanies != oldMaxCompanies
+            || template.MaxDocumentsPerMonth != oldMaxDocs
+            || template.MaxJournalEntriesPerMonth != oldMaxJournals
+            || template.MaxStorageBytes != oldMaxStorage;
+        var trialLimitsChanged = template.TrialMaxUsers != oldTrialMaxUsers
+            || template.TrialMaxDocumentsPerMonth != oldTrialMaxDocs
+            || template.TrialMaxJournalEntriesPerMonth != oldTrialMaxJournals
+            || template.TrialGracePeriodDays != oldGrace
+            || template.TrialBlockOnExpiry != oldBlock;
+
+        if (featuresChanged || paidLimitsChanged || trialLimitsChanged)
         {
             var subs = await _db.Subscriptions
                 .Include(s => s.TrialConfig)
@@ -531,13 +555,37 @@ public class SubscriptionService : ISubscriptionService
             {
                 if (sub.Status == SubscriptionStatus.Trial)
                 {
-                    sub.EnabledFeatures = template.TrialFeatures;
+                    if (featuresChanged) sub.EnabledFeatures = template.TrialFeatures;
+                    if (trialLimitsChanged)
+                    {
+                        sub.MaxUsers = template.TrialMaxUsers;
+                        sub.MaxDocumentsPerMonth = template.TrialMaxDocumentsPerMonth;
+                        sub.MaxJournalEntriesPerMonth = template.TrialMaxJournalEntriesPerMonth;
+                    }
                     if (sub.TrialConfig != null)
-                        sub.TrialConfig.TrialFeatures = template.TrialFeatures;
+                    {
+                        if (featuresChanged) sub.TrialConfig.TrialFeatures = template.TrialFeatures;
+                        if (trialLimitsChanged)
+                        {
+                            sub.TrialConfig.TrialMaxUsers = template.TrialMaxUsers;
+                            sub.TrialConfig.TrialMaxDocumentsPerMonth = template.TrialMaxDocumentsPerMonth;
+                            sub.TrialConfig.TrialMaxJournalEntriesPerMonth = template.TrialMaxJournalEntriesPerMonth;
+                            sub.TrialConfig.GracePeriodDays = template.TrialGracePeriodDays;
+                            sub.TrialConfig.BlockAccessOnExpiry = template.TrialBlockOnExpiry;
+                        }
+                    }
                 }
                 else
                 {
-                    sub.EnabledFeatures = template.EnabledFeatures;
+                    if (featuresChanged) sub.EnabledFeatures = template.EnabledFeatures;
+                    if (paidLimitsChanged)
+                    {
+                        sub.MaxUsers = template.MaxUsers;
+                        sub.MaxCompanies = template.MaxCompanies;
+                        sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
+                        sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
+                        sub.MaxStorageBytes = template.MaxStorageBytes;
+                    }
                 }
                 sub.UpdatedAt = DateTime.UtcNow;
             }
