@@ -29,6 +29,8 @@
       <input type="date" class="form-input" id="fromDate" style="width:160px">
       <label class="text-sm font-medium">ถึง:</label>
       <input type="date" class="form-input" id="toDate" style="width:160px">
+      <label class="text-sm font-medium" style="margin-left:12px">โครงการ:</label>
+      <select class="form-select" id="projectFilter" style="min-width:160px"><option value="">ทุกโครงการ</option></select>
       <button class="btn btn-primary" onclick="Page.loadReport()">แสดงรายงาน</button>
     </div>
 
@@ -97,7 +99,7 @@
       dataSources: [],
       columns: [],
       selectedColumns: [],
-      init() {
+      async init() {
         if (!Layout.init('reports')) return;
         Layout.setTitle('รายงานการเงิน');
         const today = new Date().toISOString().split('T')[0];
@@ -105,6 +107,23 @@
         document.getElementById('asOfDate').value = today;
         document.getElementById('fromDate').value = firstDay;
         document.getElementById('toDate').value = today;
+        // Load active projects
+        const api = Layout.api();
+        if (api) {
+          try {
+            const res = await api.getActiveProjects?.();
+            const projects = res?.data?.items || res?.data || [];
+            const sel = document.getElementById('projectFilter');
+            if (sel) {
+              sel.innerHTML = '<option value="">ทุกโครงการ</option>' +
+                projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
+            }
+          } catch(e) {}
+        }
+      },
+      _projQuery() {
+        const v = document.getElementById('projectFilter')?.value;
+        return v ? `&projectId=${v}` : '';
       },
       showReport(type, el) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -131,7 +150,7 @@
       },
       async loadTrial(api, el) {
         const date = document.getElementById('asOfDate').value;
-        const res = await api.trialBalance(`?asOfDate=${date}`);
+        const res = await api.trialBalance(`?asOfDate=${date}${this._projQuery()}`);
         const d = res.data;
         el.innerHTML = `
           <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบทดลอง</h3>
@@ -152,7 +171,7 @@
       },
       async loadBalance(api, el) {
         const date = document.getElementById('asOfDate').value;
-        const res = await api.balanceSheet(`?asOfDate=${date}`);
+        const res = await api.balanceSheet(`?asOfDate=${date}${this._projQuery()}`);
         const d = res.data;
         const renderSection = (items, indent = 0) => items ? items.map(s =>
           `<tr><td style="padding-left:${16+indent*20}px">${s.accountCode || ''}</td><td style="padding-left:${indent*20}px">${s.accountName}</td><td class="text-right font-medium">${Layout.money(s.amount)}</td></tr>` +
@@ -184,7 +203,7 @@
       async loadPnl(api, el) {
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
-        const res = await api.profitLoss(`?fromDate=${from}&toDate=${to}`);
+        const res = await api.profitLoss(`?fromDate=${from}&toDate=${to}${this._projQuery()}`);
         const d = res.data;
         const renderItems = (items) => items ? items.map(s =>
           `<tr><td>${s.accountCode || ''}</td><td>${s.accountName}</td><td class="text-right">${Layout.money(s.amount)}</td></tr>`
@@ -210,7 +229,7 @@
       async loadCashFlow(api, el) {
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
-        const res = await api.cashFlow(`?fromDate=${from}&toDate=${to}`);
+        const res = await api.cashFlow(`?fromDate=${from}&toDate=${to}${this._projQuery()}`);
         const d = res.data;
         const renderSection = (section) => section ? `
           <tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold">${section.sectionName}</td><td></td></tr>

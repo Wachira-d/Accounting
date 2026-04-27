@@ -20,6 +20,16 @@ public class JournalEntry : TenantEntity
     public Guid? ReversedByEntryId { get; set; }        // รายการกลับรายการที่สร้างจากรายการนี้
     public Guid? OriginalEntryId { get; set; }          // รายการต้นทางที่ถูกกลับรายการ
 
+    // Project / Branch / Cost Center allocation (header-level default)
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? BranchId { get; set; }
+    public Guid? DimensionId { get; set; }              // Cost center / department
+
+    // Free-form metadata
+    public string? Note { get; set; }                   // หมายเหตุเพิ่มเติม
+    public string? Tags { get; set; }                   // CSV tags e.g. "audit,external,2026Q1"
+
     public decimal TotalDebit { get; set; }
     public decimal TotalCredit { get; set; }
 
@@ -41,6 +51,13 @@ public class JournalEntryLine : BaseEntity
     public decimal CreditAmount { get; set; }
     public string? Description { get; set; }
     public int LineOrder { get; set; }
+
+    // Optional per-line allocation - falls back to header values when null
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? BranchId { get; set; }
+    public Guid? DimensionId { get; set; }
+    public string? Tags { get; set; }
 }
 
 /// <summary>

@@ -17,7 +17,7 @@ public interface IAccountingService
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
     Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId);
-    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null);
+    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null, string? tag = null);
     Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId);
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
     Task DeleteJournalEntryAsync(Guid companyId, Guid entryId);
@@ -27,16 +27,16 @@ public interface IAccountingService
     Task<int> BatchPostJournalEntriesAsync(Guid companyId);
 
     // General Ledger
-    Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null);
+    Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);
     Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null);
     Task<int> RebuildMissingLinesAsync(Guid companyId);
     Task<int> RepairBuddhistDatesAsync(Guid companyId);
 
     // Reports
-    Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate);
-    Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate);
-    Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate);
-    Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate);
+    Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
+    Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
+    Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
+    Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
 
     // Fiscal Period
     Task<FiscalPeriodResponse> CreateFiscalPeriodAsync(Guid companyId, CreateFiscalPeriodRequest request);

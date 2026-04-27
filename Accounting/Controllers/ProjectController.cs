@@ -23,8 +23,12 @@ public class ProjectController : ControllerBase
         => Ok(new ApiResponse<ProjectResponse>(true, await _service.GetByIdAsync(companyId, projectId)));
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<PagedResponse<ProjectResponse>>>> GetAll(Guid companyId, [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => Ok(new ApiResponse<PagedResponse<ProjectResponse>>(true, await _service.GetAllAsync(companyId, status, new PagedRequest(page, pageSize))));
+    public async Task<ActionResult<ApiResponse<PagedResponse<ProjectResponse>>>> GetAll(Guid companyId, [FromQuery] string? status, [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        => Ok(new ApiResponse<PagedResponse<ProjectResponse>>(true, await _service.GetAllAsync(companyId, status, new PagedRequest(page, pageSize, search))));
+
+    [HttpGet("active")]
+    public async Task<ActionResult<ApiResponse<List<ProjectResponse>>>> GetActive(Guid companyId)
+        => Ok(new ApiResponse<List<ProjectResponse>>(true, await _service.GetActiveListAsync(companyId)));
 
     [HttpPut("{projectId:guid}")]
     public async Task<ActionResult<ApiResponse<ProjectResponse>>> Update(Guid companyId, Guid projectId, [FromBody] UpdateProjectRequest request)
@@ -33,6 +37,13 @@ public class ProjectController : ControllerBase
     [HttpPost("{projectId:guid}/complete")]
     public async Task<ActionResult<ApiResponse<ProjectResponse>>> Complete(Guid companyId, Guid projectId)
         => Ok(new ApiResponse<ProjectResponse>(true, await _service.CompleteAsync(companyId, projectId)));
+
+    [HttpDelete("{projectId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid projectId)
+    {
+        await _service.DeleteAsync(companyId, projectId);
+        return Ok(new ApiResponse<string>(true, null, "ลบโครงการสำเร็จ"));
+    }
 
     // Tasks
     [HttpPost("{projectId:guid}/tasks")]
@@ -43,6 +54,17 @@ public class ProjectController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<ProjectTaskResponse>>>> GetTasks(Guid companyId, Guid projectId)
         => Ok(new ApiResponse<List<ProjectTaskResponse>>(true, await _service.GetTasksAsync(companyId, projectId)));
 
+    [HttpPut("tasks/{taskId:guid}")]
+    public async Task<ActionResult<ApiResponse<ProjectTaskResponse>>> UpdateTask(Guid companyId, Guid taskId, [FromBody] UpdateProjectTaskRequest request)
+        => Ok(new ApiResponse<ProjectTaskResponse>(true, await _service.UpdateTaskAsync(companyId, taskId, request)));
+
+    [HttpDelete("tasks/{taskId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> DeleteTask(Guid companyId, Guid taskId)
+    {
+        await _service.DeleteTaskAsync(companyId, taskId);
+        return Ok(new ApiResponse<string>(true, null, "ลบงานสำเร็จ"));
+    }
+
     // Cost entries
     [HttpPost("{projectId:guid}/costs")]
     public async Task<ActionResult<ApiResponse<ProjectCostEntryResponse>>> AddCost(Guid companyId, Guid projectId, [FromBody] CreateProjectCostEntryRequest request)
@@ -52,10 +74,21 @@ public class ProjectController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<ProjectCostEntryResponse>>>> GetCosts(Guid companyId, Guid projectId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => Ok(new ApiResponse<PagedResponse<ProjectCostEntryResponse>>(true, await _service.GetCostEntriesAsync(companyId, projectId, new PagedRequest(page, pageSize))));
 
+    [HttpDelete("costs/{costEntryId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> DeleteCost(Guid companyId, Guid costEntryId)
+    {
+        await _service.DeleteCostEntryAsync(companyId, costEntryId);
+        return Ok(new ApiResponse<string>(true, null, "ลบรายการต้นทุนสำเร็จ"));
+    }
+
     // Reports
     [HttpGet("{projectId:guid}/profitability")]
     public async Task<ActionResult<ApiResponse<ProjectProfitabilityResponse>>> GetProfitability(Guid companyId, Guid projectId)
         => Ok(new ApiResponse<ProjectProfitabilityResponse>(true, await _service.GetProfitabilityAsync(companyId, projectId)));
+
+    [HttpGet("{projectId:guid}/gl-summary")]
+    public async Task<ActionResult<ApiResponse<ProjectGlSummaryResponse>>> GetGlSummary(Guid companyId, Guid projectId, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+        => Ok(new ApiResponse<ProjectGlSummaryResponse>(true, await _service.GetGlSummaryAsync(companyId, projectId, fromDate, toDate)));
 
     [HttpGet("summary")]
     public async Task<ActionResult<ApiResponse<List<ProjectSummaryResponse>>>> GetSummary(Guid companyId)

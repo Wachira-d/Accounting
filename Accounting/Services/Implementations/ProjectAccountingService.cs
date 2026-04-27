@@ -123,6 +123,41 @@ public class ProjectAccountingService : IProjectAccountingService
         return MapToResponse(project);
     }
 
+    public async Task DeleteAsync(Guid companyId, Guid projectId)
+    {
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบโครงการ");
+
+        // Block delete if project is referenced by posted journals or has cost entries
+        var hasJournalRef = await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId && j.ProjectId == projectId)
+            || await _db.JournalEntryLines.AnyAsync(l => l.ProjectId == projectId);
+        var hasCosts = await _db.ProjectCostEntries.AnyAsync(c => c.ProjectId == projectId);
+
+        if (hasJournalRef || hasCosts)
+        {
+            // Soft-delete to preserve history
+            project.IsDeleted = true;
+            project.Status = "Cancelled";
+        }
+        else
+        {
+            // No references → safe hard delete (still soft-delete for audit)
+            project.IsDeleted = true;
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<List<ProjectResponse>> GetActiveListAsync(Guid companyId)
+    {
+        var list = await _db.Projects
+            .Where(p => p.CompanyId == companyId && p.Status == "Active")
+            .OrderBy(p => p.Code)
+            .ToListAsync();
+        return list.Select(MapToResponse).ToList();
+    }
+
     // ===== Tasks =====
 
     public async Task<ProjectTaskResponse> CreateTaskAsync(Guid companyId, Guid projectId, CreateProjectTaskRequest request)
@@ -181,6 +216,77 @@ public class ProjectAccountingService : IProjectAccountingService
 
         await _db.SaveChangesAsync();
         return MapTaskToResponse(task);
+    }
+
+    public async Task DeleteTaskAsync(Guid companyId, Guid taskId)
+    {
+        var task = await _db.ProjectTasks
+            .FirstOrDefaultAsync(t => t.Id == taskId && t.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบงาน");
+        task.IsDeleted = true;
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task DeleteCostEntryAsync(Guid companyId, Guid costEntryId)
+    {
+        var entry = await _db.ProjectCostEntries
+            .FirstOrDefaultAsync(c => c.Id == costEntryId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการต้นทุน");
+
+        if (entry.IsBilled)
+            throw new InvalidOperationException("ไม่สามารถลบรายการต้นทุนที่ออกบิลแล้ว");
+
+        // Roll back actual cost
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == entry.ProjectId && p.CompanyId == companyId);
+        if (project != null)
+            project.ActualCost = Math.Max(0, project.ActualCost - entry.Amount);
+
+        entry.IsDeleted = true;
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<ProjectGlSummaryResponse> GetGlSummaryAsync(Guid companyId, Guid projectId, DateTime? fromDate, DateTime? toDate)
+    {
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบโครงการ");
+
+        var from = fromDate?.Date ?? DateTime.UtcNow.AddYears(-1).Date;
+        var to = (toDate?.Date ?? DateTime.UtcNow.Date).AddDays(1);
+
+        var lines = await _db.JournalEntryLines
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate >= from
+                && l.JournalEntry.EntryDate < to
+                && (l.ProjectId == projectId || l.JournalEntry.ProjectId == projectId))
+            .ToListAsync();
+
+        var byAccount = lines
+            .Where(l => l.Account != null)
+            .GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
+            .Select(g => new ProjectGlAccountSummary(
+                g.Key.AccountCode, g.Key.AccountName, g.Key.AccountType.ToString(),
+                g.Sum(l => l.DebitAmount), g.Sum(l => l.CreditAmount),
+                g.Key.AccountType == AccountType.Asset || g.Key.AccountType == AccountType.Expense
+                    ? g.Sum(l => l.DebitAmount - l.CreditAmount)
+                    : g.Sum(l => l.CreditAmount - l.DebitAmount)))
+            .OrderBy(a => a.AccountCode)
+            .ToList();
+
+        var revenue = lines.Where(l => l.Account != null && l.Account.AccountType == AccountType.Revenue)
+            .Sum(l => l.CreditAmount - l.DebitAmount);
+        var expense = lines.Where(l => l.Account != null && l.Account.AccountType == AccountType.Expense)
+            .Sum(l => l.DebitAmount - l.CreditAmount);
+
+        var entryCount = lines.Select(l => l.JournalEntryId).Distinct().Count();
+
+        return new ProjectGlSummaryResponse(
+            project.Id, project.Name, from, to.AddDays(-1),
+            revenue, expense, revenue - expense,
+            entryCount, lines.Count, byAccount);
     }
 
     // ===== Cost Entries =====

@@ -264,8 +264,21 @@ public class AccountingService : IAccountingService
                 Status = JournalEntryStatus.Posted,
                 TotalDebit = totalDebit,
                 TotalCredit = totalCredit,
-                CreatedBy = createdBy
+                CreatedBy = createdBy,
+                ProjectId = request.ProjectId,
+                BranchId = request.BranchId,
+                DimensionId = request.DimensionId,
+                Note = request.Note,
+                Tags = request.Tags
             };
+
+            // Validate project belongs to company (if provided)
+            if (request.ProjectId.HasValue)
+            {
+                var projOk = await _db.Projects.AnyAsync(p => p.Id == request.ProjectId.Value && p.CompanyId == companyId);
+                if (!projOk)
+                    throw new InvalidOperationException("ไม่พบโครงการที่ระบุในบริษัทนี้");
+            }
 
             // Find fiscal period
             var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
@@ -288,7 +301,11 @@ public class AccountingService : IAccountingService
                     DebitAmount = line.DebitAmount,
                     CreditAmount = line.CreditAmount,
                     Description = line.Description,
-                    LineOrder = order++
+                    LineOrder = order++,
+                    ProjectId = line.ProjectId ?? request.ProjectId,
+                    BranchId = line.BranchId ?? request.BranchId,
+                    DimensionId = line.DimensionId ?? request.DimensionId,
+                    Tags = line.Tags
                 });
             }
 
@@ -314,11 +331,18 @@ public class AccountingService : IAccountingService
         return MapJournalEntryToResponse(entry);
     }
 
-    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null)
+    public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null, string? tag = null)
     {
         var query = _db.JournalEntries
             .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Project)
             .Where(j => j.CompanyId == companyId);
+
+        if (projectId.HasValue)
+            query = query.Where(j => j.ProjectId == projectId.Value || j.Lines.Any(l => l.ProjectId == projectId.Value));
+
+        if (!string.IsNullOrWhiteSpace(tag))
+            query = query.Where(j => (j.Tags != null && j.Tags.Contains(tag)) || j.Lines.Any(l => l.Tags != null && l.Tags.Contains(tag)));
 
         if (!string.IsNullOrEmpty(journalType) && Enum.TryParse<Models.Enums.JournalType>(journalType, true, out var parsedType))
             query = query.Where(j => j.JournalType == parsedType);
@@ -629,7 +653,7 @@ public class AccountingService : IAccountingService
 
     // ==================== General Ledger ====================
 
-    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null)
+    public async Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null)
     {
         var fromDateStart = fromDate.Date;
         var toDateEnd = toDate.Date.AddDays(1);
@@ -660,12 +684,18 @@ public class AccountingService : IAccountingService
         if (accountId.HasValue)
             lineQuery = lineQuery.Where(l => l.AccountId == accountId.Value);
 
+        if (projectId.HasValue)
+            lineQuery = lineQuery.Where(l => l.ProjectId == projectId.Value || l.JournalEntry.ProjectId == projectId.Value);
+
+        if (branchId.HasValue)
+            lineQuery = lineQuery.Where(l => l.BranchId == branchId.Value || l.JournalEntry.BranchId == branchId.Value);
+
         if (effectiveDimId.HasValue)
         {
             var dimLineIds = _db.Set<JournalLineDimension>()
                 .Where(d => d.DimensionId == effectiveDimId.Value)
                 .Select(d => d.JournalEntryLineId);
-            lineQuery = lineQuery.Where(l => dimLineIds.Contains(l.Id));
+            lineQuery = lineQuery.Where(l => dimLineIds.Contains(l.Id) || l.DimensionId == effectiveDimId.Value || l.JournalEntry.DimensionId == effectiveDimId.Value);
         }
 
         var lines = await lineQuery
@@ -1026,7 +1056,7 @@ public class AccountingService : IAccountingService
 
     // ==================== Reports ====================
 
-    public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate)
+    public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
@@ -1034,11 +1064,19 @@ public class AccountingService : IAccountingService
                 && j.EntryDate < asOfDate.Date.AddDays(1))
             .Select(j => j.Id);
 
-        var postedLines = await _db.JournalEntryLines
+        var lineQuery = _db.JournalEntryLines
             .Include(l => l.Account)
             .Include(l => l.JournalEntry)
-            .Where(l => postedEntryIds.Contains(l.JournalEntryId))
-            .ToListAsync();
+            .Where(l => postedEntryIds.Contains(l.JournalEntryId));
+
+        if (projectId.HasValue)
+            lineQuery = lineQuery.Where(l => l.ProjectId == projectId.Value || l.JournalEntry.ProjectId == projectId.Value);
+        if (branchId.HasValue)
+            lineQuery = lineQuery.Where(l => l.BranchId == branchId.Value || l.JournalEntry.BranchId == branchId.Value);
+        if (dimensionId.HasValue)
+            lineQuery = lineQuery.Where(l => l.DimensionId == dimensionId.Value || l.JournalEntry.DimensionId == dimensionId.Value);
+
+        var postedLines = await lineQuery.ToListAsync();
 
         var grouped = postedLines
             .Where(l => l.Account != null)
@@ -1059,9 +1097,9 @@ public class AccountingService : IAccountingService
             grouped.Sum(i => i.CreditBalance));
     }
 
-    public async Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate)
+    public async Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
-        var trial = await GetTrialBalanceAsync(companyId, asOfDate);
+        var trial = await GetTrialBalanceAsync(companyId, asOfDate, projectId, branchId, dimensionId);
 
         var assets = trial.Items.Where(i => i.AccountType == AccountType.Asset)
             .Select(i => new BalanceSheetSection(i.AccountCode, i.AccountName, i.DebitBalance - i.CreditBalance, null)).ToList();
@@ -1083,7 +1121,7 @@ public class AccountingService : IAccountingService
             equity.Sum(e => e.Amount));
     }
 
-    public async Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate)
+    public async Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
@@ -1092,11 +1130,20 @@ public class AccountingService : IAccountingService
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
 
-        var postedLines = await _db.JournalEntryLines
+        var lineQuery = _db.JournalEntryLines
             .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
             .Where(l => postedEntryIds.Contains(l.JournalEntryId)
-                && (l.Account!.AccountType == AccountType.Revenue || l.Account!.AccountType == AccountType.Expense))
-            .ToListAsync();
+                && (l.Account!.AccountType == AccountType.Revenue || l.Account!.AccountType == AccountType.Expense));
+
+        if (projectId.HasValue)
+            lineQuery = lineQuery.Where(l => l.ProjectId == projectId.Value || l.JournalEntry.ProjectId == projectId.Value);
+        if (branchId.HasValue)
+            lineQuery = lineQuery.Where(l => l.BranchId == branchId.Value || l.JournalEntry.BranchId == branchId.Value);
+        if (dimensionId.HasValue)
+            lineQuery = lineQuery.Where(l => l.DimensionId == dimensionId.Value || l.JournalEntry.DimensionId == dimensionId.Value);
+
+        var postedLines = await lineQuery.ToListAsync();
 
         var grouped = postedLines
             .Where(l => l.Account != null)
@@ -1121,7 +1168,7 @@ public class AccountingService : IAccountingService
 
     // ==================== Cash Flow Statement ====================
 
-    public async Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate)
+    public async Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
@@ -1130,10 +1177,19 @@ public class AccountingService : IAccountingService
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
 
-        var allLines = await _db.JournalEntryLines
+        var lineQuery = _db.JournalEntryLines
             .Include(l => l.Account)
-            .Where(l => postedEntryIds.Contains(l.JournalEntryId))
-            .ToListAsync();
+            .Include(l => l.JournalEntry)
+            .Where(l => postedEntryIds.Contains(l.JournalEntryId));
+
+        if (projectId.HasValue)
+            lineQuery = lineQuery.Where(l => l.ProjectId == projectId.Value || l.JournalEntry.ProjectId == projectId.Value);
+        if (branchId.HasValue)
+            lineQuery = lineQuery.Where(l => l.BranchId == branchId.Value || l.JournalEntry.BranchId == branchId.Value);
+        if (dimensionId.HasValue)
+            lineQuery = lineQuery.Where(l => l.DimensionId == dimensionId.Value || l.JournalEntry.DimensionId == dimensionId.Value);
+
+        var allLines = await lineQuery.ToListAsync();
 
         var postedLines = allLines.Where(l => l.Account != null).ToList();
 
@@ -1294,8 +1350,10 @@ public class AccountingService : IAccountingService
         j.Status, j.IsAutoGenerated, j.TotalDebit, j.TotalCredit,
         j.Lines.OrderBy(l => l.LineOrder).Select(l => new JournalLineResponse(
             l.Id, l.AccountId, l.Account.AccountCode, l.Account.AccountName,
-            l.DebitAmount, l.CreditAmount, l.Description, l.LineOrder)).ToList(),
-        j.CreatedAt, j.ReversedByEntryId, j.OriginalEntryId);
+            l.DebitAmount, l.CreditAmount, l.Description, l.LineOrder,
+            l.ProjectId, null, l.BranchId, l.DimensionId, l.Tags)).ToList(),
+        j.CreatedAt, j.ReversedByEntryId, j.OriginalEntryId,
+        j.ProjectId, j.Project?.Name, j.BranchId, j.DimensionId, j.Note, j.Tags);
 
     private static FiscalPeriodResponse MapPeriodToResponse(FiscalPeriod f) => new(
         f.Id, f.Name, f.Year, f.Month, f.StartDate, f.EndDate, f.Status);

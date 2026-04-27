@@ -36,20 +36,34 @@ public record CreateJournalEntryRequest(
     string? Description,
     string? Reference,
     List<JournalLineRequest> Lines,
-    JournalType JournalType = JournalType.General);
+    JournalType JournalType = JournalType.General,
+    Guid? ProjectId = null,
+    Guid? BranchId = null,
+    Guid? DimensionId = null,
+    string? Note = null,
+    string? Tags = null);
 
 public record JournalLineRequest(
     Guid AccountId,
     decimal DebitAmount,
     decimal CreditAmount,
-    string? Description);
+    string? Description,
+    Guid? ProjectId = null,
+    Guid? BranchId = null,
+    Guid? DimensionId = null,
+    string? Tags = null);
 
 public record UpdateJournalEntryRequest(
     DateTime? EntryDate,
     string? Description,
     string? Reference,
     List<JournalLineRequest>? Lines,
-    JournalType? JournalType = null);
+    JournalType? JournalType = null,
+    Guid? ProjectId = null,
+    Guid? BranchId = null,
+    Guid? DimensionId = null,
+    string? Note = null,
+    string? Tags = null);
 
 public record JournalEntryResponse(
     Guid Id,
@@ -65,7 +79,13 @@ public record JournalEntryResponse(
     List<JournalLineResponse> Lines,
     DateTime CreatedAt,
     Guid? ReversedByEntryId = null,
-    Guid? OriginalEntryId = null);
+    Guid? OriginalEntryId = null,
+    Guid? ProjectId = null,
+    string? ProjectName = null,
+    Guid? BranchId = null,
+    Guid? DimensionId = null,
+    string? Note = null,
+    string? Tags = null);
 
 public record BatchVoidRequest(List<Guid> EntryIds);
 
@@ -81,7 +101,12 @@ public record JournalLineResponse(
     decimal DebitAmount,
     decimal CreditAmount,
     string? Description,
-    int LineOrder);
+    int LineOrder,
+    Guid? ProjectId = null,
+    string? ProjectName = null,
+    Guid? BranchId = null,
+    Guid? DimensionId = null,
+    string? Tags = null);
 
 // ===== Reports =====
 public record TrialBalanceRequest(

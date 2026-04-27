@@ -376,7 +376,13 @@ public class AccountingDbContext : DbContext
             e.Property(j => j.EntryNumber).HasMaxLength(50);
             e.Property(j => j.TotalDebit).HasPrecision(18, 2);
             e.Property(j => j.TotalCredit).HasPrecision(18, 2);
+            e.Property(j => j.Note).HasMaxLength(2000);
+            e.Property(j => j.Tags).HasMaxLength(500);
             e.HasOne(j => j.FiscalPeriod).WithMany(f => f.JournalEntries).HasForeignKey(j => j.FiscalPeriodId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(j => j.Project).WithMany().HasForeignKey(j => j.ProjectId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(j => new { j.CompanyId, j.ProjectId }).HasDatabaseName("IX_JournalEntries_CompanyId_ProjectId");
+            e.HasIndex(j => new { j.CompanyId, j.BranchId }).HasDatabaseName("IX_JournalEntries_CompanyId_BranchId");
+            e.HasIndex(j => new { j.CompanyId, j.DimensionId }).HasDatabaseName("IX_JournalEntries_CompanyId_DimensionId");
             e.HasQueryFilter(j => !j.IsDeleted);
         });
 
@@ -385,8 +391,11 @@ public class AccountingDbContext : DbContext
         {
             e.HasOne(l => l.JournalEntry).WithMany(j => j.Lines).HasForeignKey(l => l.JournalEntryId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Account).WithMany(a => a.JournalEntryLines).HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.Project).WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.SetNull);
             e.Property(l => l.DebitAmount).HasPrecision(18, 2);
             e.Property(l => l.CreditAmount).HasPrecision(18, 2);
+            e.Property(l => l.Tags).HasMaxLength(500);
+            e.HasIndex(l => l.ProjectId).HasDatabaseName("IX_JournalEntryLines_ProjectId");
         });
 
         // ===== FiscalPeriod =====
