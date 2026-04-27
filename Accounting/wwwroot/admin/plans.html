@@ -58,8 +58,9 @@
         document.getElementById('planList').innerHTML = `
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
             ${plans.map(p => `
-              <div class="admin-card" style="border:2px solid ${p.isActive ? 'var(--admin-primary)' : '#e2e8f0'};position:relative">
+              <div class="admin-card" style="border:2px solid ${p.isPermanentFree ? '#f59e0b' : (p.isActive ? 'var(--admin-primary)' : '#e2e8f0')};position:relative">
                 ${!p.isActive ? '<div style="position:absolute;top:12px;right:12px"><span class="admin-badge-sm bg-gray">ปิดใช้งาน</span></div>' : ''}
+                ${p.isPermanentFree ? '<div style="position:absolute;top:12px;right:12px"><span class="admin-badge-sm" style="background:#fef3c7;color:#92400e">🎁 ฟรีตลอดไป</span></div>' : ''}
                 <div style="margin-bottom:16px">
                   <div style="font-size:18px;font-weight:800">${p.name}</div>
                   <div style="font-size:12px;color:#94a3b8">${AdminLayout.planBadge(p.plan)}</div>
@@ -244,6 +245,16 @@
                 <textarea class="admin-input" id="ep_desc" rows="3">${p.description || ''}</textarea>
               </div>
 
+              <div class="admin-form-group" style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:12px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+                  <input type="checkbox" id="ep_perm_free" ${p.isPermanentFree ? 'checked' : ''}>
+                  <span>🎁 แพ็กเกจฟรีตลอดไป (ไม่หมดอายุ ไม่นับวัน trial)</span>
+                </label>
+                <div style="font-size:12px;color:#92400e;margin-top:4px;margin-left:24px">
+                  เมื่อเปิด: subscription จะถูกตั้งเป็น Active ตลอดไป, ระบบจะข้ามการตรวจสอบวันหมด trial และใช้ <code>EnabledFeatures</code> (ไม่ใช่ <code>TrialFeatures</code>)
+                </div>
+              </div>
+
               <div style="font-weight:600;margin:16px 0 8px">ราคา (THB)</div>
               <div class="admin-grid-2">
                 <div class="admin-form-group">
@@ -377,6 +388,8 @@
           trialMaxJournalEntriesPerMonth: parseInt(document.getElementById('ep_trial_journals').value),
           trialGracePeriodDays: parseInt(document.getElementById('ep_trial_grace').value),
           trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
+          // Permanent free flag
+          isPermanentFree: document.getElementById('ep_perm_free').checked,
           // Features
           enabledFeatureNames,
           trialFeatureNames,
