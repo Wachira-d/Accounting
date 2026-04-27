@@ -73,7 +73,8 @@ public record SubscriptionResponse(
     FeatureFlags EnabledFeatures,
     List<string> EnabledFeatureNames,
     UsageLimits Limits,
-    UsageCurrent Current);
+    UsageCurrent Current,
+    bool IsPermanentFree = false);
 
 public record UsageLimits(
     int MaxUsers,
@@ -111,7 +112,8 @@ public record CreatePlanTemplateRequest(
     int TrialMaxDocumentsPerMonth = 20,
     int TrialMaxJournalEntriesPerMonth = 50,
     bool TrialBlockOnExpiry = false,
-    int TrialGracePeriodDays = 7);
+    int TrialGracePeriodDays = 7,
+    bool IsPermanentFree = false);
 
 public record UpdatePlanTemplateRequest(
     string? Name,
@@ -138,7 +140,8 @@ public record UpdatePlanTemplateRequest(
     int? TrialMaxDocumentsPerMonth,
     int? TrialMaxJournalEntriesPerMonth,
     bool? TrialBlockOnExpiry,
-    int? TrialGracePeriodDays);
+    int? TrialGracePeriodDays,
+    bool? IsPermanentFree = null);
 
 public record PlanTemplateResponse(
     Guid Id,
@@ -161,7 +164,8 @@ public record PlanTemplateResponse(
     int TrialMaxExtensions,
     int TrialExtensionDays,
     FeatureFlags TrialFeatures,
-    List<string> TrialFeatureNames);
+    List<string> TrialFeatureNames,
+    bool IsPermanentFree = false);
 
 // ===== Subscription Notification Settings =====
 public record UpdateSubscriptionNotificationRequest(

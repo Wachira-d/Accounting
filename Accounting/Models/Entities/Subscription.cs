@@ -32,6 +32,9 @@ public class Subscription : BaseEntity
     // Feature Access
     public FeatureFlags EnabledFeatures { get; set; } = FeatureFlags.TrialFeatures;
 
+    // ฟรีตลอดไป (ไม่หมดอายุ ไม่นับวัน trial)
+    public bool IsPermanentFree { get; set; } = false;
+
     // Usage Limits
     public int MaxUsers { get; set; } = 1;
     public int MaxCompanies { get; set; } = 1;
@@ -165,6 +168,9 @@ public class PlanTemplate : BaseEntity
 
     // Features
     public FeatureFlags EnabledFeatures { get; set; }
+
+    // Permanent free plan — ไม่หมดอายุ, ไม่นับวัน trial
+    public bool IsPermanentFree { get; set; } = false;
 
     // Trial Settings (สำหรับ trial ของ plan นี้)
     public int TrialDurationDays { get; set; } = 30;

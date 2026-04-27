@@ -36,17 +36,23 @@ public class SubscriptionService : ISubscriptionService
         // Get plan template for trial settings
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.TargetPlan && p.IsActive);
 
-        var trialDays = request.TrialDays ?? template?.TrialDurationDays ?? 30;
+        var isPermanentFree = template?.IsPermanentFree ?? false;
+        var trialDays = isPermanentFree
+            ? 36500
+            : (request.TrialDays ?? template?.TrialDurationDays ?? 30);
         var now = DateTime.UtcNow;
 
         var subscription = new Subscription
         {
             CompanyId = request.CompanyId,
             Plan = request.TargetPlan,
-            Status = SubscriptionStatus.Trial,
+            Status = isPermanentFree ? SubscriptionStatus.Active : SubscriptionStatus.Trial,
             StartDate = now,
             EndDate = now.AddDays(trialDays),
-            EnabledFeatures = template?.TrialFeatures ?? FeatureFlags.TrialFeatures,
+            IsPermanentFree = isPermanentFree,
+            EnabledFeatures = isPermanentFree
+                ? (template?.EnabledFeatures ?? FeatureFlags.TrialFeatures)
+                : (template?.TrialFeatures ?? FeatureFlags.TrialFeatures),
             MaxUsers = template?.TrialMaxUsers ?? 2,
             MaxCompanies = 1,
             MaxDocumentsPerMonth = template?.TrialMaxDocumentsPerMonth ?? 20,
@@ -291,7 +297,8 @@ public class SubscriptionService : ISubscriptionService
             sub.EnabledFeatures,
             FeatureFlagsHelper.ToNameList(sub.EnabledFeatures),
             new UsageLimits(sub.MaxUsers, sub.MaxCompanies, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth, sub.MaxStorageBytes),
-            new UsageCurrent(sub.CurrentMonthDocuments, sub.CurrentMonthJournalEntries, sub.CurrentStorageUsed));
+            new UsageCurrent(sub.CurrentMonthDocuments, sub.CurrentMonthJournalEntries, sub.CurrentStorageUsed),
+            sub.IsPermanentFree);
     }
 
     public async Task<SubscriptionResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy)
@@ -326,6 +333,9 @@ public class SubscriptionService : ISubscriptionService
         sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
         sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
         sub.MaxStorageBytes = template.MaxStorageBytes;
+        sub.IsPermanentFree = template.IsPermanentFree;
+        if (template.IsPermanentFree)
+            sub.EndDate = DateTime.UtcNow.AddYears(100);
 
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
@@ -458,7 +468,8 @@ public class SubscriptionService : ISubscriptionService
             TrialMaxDocumentsPerMonth = request.TrialMaxDocumentsPerMonth,
             TrialMaxJournalEntriesPerMonth = request.TrialMaxJournalEntriesPerMonth,
             TrialBlockOnExpiry = request.TrialBlockOnExpiry,
-            TrialGracePeriodDays = request.TrialGracePeriodDays
+            TrialGracePeriodDays = request.TrialGracePeriodDays,
+            IsPermanentFree = request.IsPermanentFree
         };
 
         _db.PlanTemplates.Add(template);
@@ -528,6 +539,7 @@ public class SubscriptionService : ISubscriptionService
         if (request.TrialMaxJournalEntriesPerMonth.HasValue) template.TrialMaxJournalEntriesPerMonth = request.TrialMaxJournalEntriesPerMonth.Value;
         if (request.TrialBlockOnExpiry.HasValue) template.TrialBlockOnExpiry = request.TrialBlockOnExpiry.Value;
         if (request.TrialGracePeriodDays.HasValue) template.TrialGracePeriodDays = request.TrialGracePeriodDays.Value;
+        if (request.IsPermanentFree.HasValue) template.IsPermanentFree = request.IsPermanentFree.Value;
 
         await _db.SaveChangesAsync();
 
@@ -585,6 +597,19 @@ public class SubscriptionService : ISubscriptionService
                         sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
                         sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
                         sub.MaxStorageBytes = template.MaxStorageBytes;
+                    }
+                }
+
+                // Propagate permanent-free flag — if template now is permanent free,
+                // sync the subscription so existing customers benefit immediately
+                if (sub.IsPermanentFree != template.IsPermanentFree)
+                {
+                    sub.IsPermanentFree = template.IsPermanentFree;
+                    if (template.IsPermanentFree)
+                    {
+                        sub.Status = SubscriptionStatus.Active;
+                        sub.EndDate = DateTime.UtcNow.AddYears(100);
+                        sub.EnabledFeatures = template.EnabledFeatures;
                     }
                 }
                 sub.UpdatedAt = DateTime.UtcNow;
@@ -769,7 +794,7 @@ public class SubscriptionService : ISubscriptionService
         var now = DateTime.UtcNow;
         var expiredTrials = await _db.Subscriptions
             .Include(s => s.TrialConfig)
-            .Where(s => s.Status == SubscriptionStatus.Trial && s.EndDate < now)
+            .Where(s => s.Status == SubscriptionStatus.Trial && s.EndDate < now && !s.IsPermanentFree)
             .ToListAsync();
 
         foreach (var sub in expiredTrials)
@@ -1294,7 +1319,8 @@ public class SubscriptionService : ISubscriptionService
             t.MaxStorageBytes, t.EnabledFeatures,
             FeatureFlagsHelper.ToNameList(t.EnabledFeatures),
             t.TrialDurationDays, t.TrialMaxExtensions, t.TrialExtensionDays, t.TrialFeatures,
-            FeatureFlagsHelper.ToNameList(t.TrialFeatures));
+            FeatureFlagsHelper.ToNameList(t.TrialFeatures),
+            t.IsPermanentFree);
     }
 }
 
