@@ -59,3 +59,13 @@ public record ProjectSummaryResponse(
     Guid Id, string Code, string Name, string Status,
     decimal BudgetAmount, decimal ActualCost,
     decimal CompletionPercent, decimal ProfitPercent);
+
+public record ProjectGlSummaryResponse(
+    Guid ProjectId, string ProjectName, DateTime FromDate, DateTime ToDate,
+    decimal TotalRevenue, decimal TotalExpense, decimal NetIncome,
+    int JournalEntryCount, int LineCount,
+    List<ProjectGlAccountSummary> Accounts);
+
+public record ProjectGlAccountSummary(
+    string AccountCode, string AccountName, string AccountType,
+    decimal DebitTotal, decimal CreditTotal, decimal Balance);

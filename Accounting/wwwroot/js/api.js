@@ -33,7 +33,24 @@ const API = {
         throw new Error(json.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
       }
       if (res.status === 403) {
-        throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+        // Try to parse structured 403 (feature locked / subscription inactive)
+        try {
+          const json = await res.json();
+          if (json.code === 'FEATURE_NOT_AVAILABLE' || json.code === 'SUBSCRIPTION_INACTIVE') {
+            // Auto-redirect to subscription page on locked feature
+            if (typeof Layout !== 'undefined' && Layout.toast) {
+              Layout.toast(json.message || 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ', 'error');
+              setTimeout(() => { window.location.href = json.upgradeUrl || '/pages/subscription.html'; }, 1500);
+            }
+            const err = new Error(json.message || 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ');
+            err.code = json.code; err.feature = json.feature;
+            throw err;
+          }
+          throw new Error(json.message || 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+        } catch (parseErr) {
+          if (parseErr.code) throw parseErr;
+          throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+        }
       }
       if (res.status === 429) {
         // Rate limited - silently skip, don't show error to user
@@ -287,15 +304,22 @@ const API = {
       voidExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/void`),
       // Projects
       getProjects: (q = '') => API.get(`${base}/projects${q}`),
+      getActiveProjects: () => API.get(`${base}/projects/active`),
       getProject: (id) => API.get(`${base}/projects/${id}`),
       createProject: (d) => API.post(`${base}/projects`, d),
       updateProject: (id, d) => API.put(`${base}/projects/${id}`, d),
       completeProject: (id) => API.post(`${base}/projects/${id}/complete`),
+      deleteProject: (id) => API.del(`${base}/projects/${id}`),
       getProjectTasks: (id) => API.get(`${base}/projects/${id}/tasks`),
       createProjectTask: (id, d) => API.post(`${base}/projects/${id}/tasks`, d),
+      updateProjectTask: (id, d) => API.put(`${base}/projects/tasks/${id}`, d),
+      deleteProjectTask: (id) => API.del(`${base}/projects/tasks/${id}`),
       getProjectCosts: (id, q = '') => API.get(`${base}/projects/${id}/costs${q}`),
       addProjectCost: (id, d) => API.post(`${base}/projects/${id}/costs`, d),
+      deleteProjectCost: (id) => API.del(`${base}/projects/costs/${id}`),
       getProjectProfit: (id) => API.get(`${base}/projects/${id}/profitability`),
+      getProjectGlSummary: (id, q = '') => API.get(`${base}/projects/${id}/gl-summary${q}`),
+      getProjectsSummary: () => API.get(`${base}/projects/summary`),
       // Loans
       getLoans: (q = '') => API.get(`${base}/loans${q}`),
       getLoan: (id) => API.get(`${base}/loans/${id}`),
@@ -487,6 +511,18 @@ const API = {
       uploadLogo: (formData) => API.upload(`${base}/settings/logo`, formData),
       deleteLogo: () => API.del(`${base}/settings/logo`),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
+      // Email config
+      getEmailConfig: () => API.get(`${base}/email-config`),
+      updateEmailConfig: (d) => API.put(`${base}/email-config`, d),
+      testEmailConfig: (d) => API.post(`${base}/email-config/test`, d),
+      // eTax config + send
+      getEtaxConfig: () => API.get(`${base}/etax/config`),
+      updateEtaxConfig: (d) => API.put(`${base}/etax/config`, d),
+      sendEtaxByEmail: (etaxId, d) => API.post(`${base}/etax/${etaxId}/send-email`, d),
+      getEtaxEmailLogs: (etaxId) => API.get(`${base}/etax/${etaxId}/email-logs`),
+      // Document email
+      sendDocumentEmail: (documentId, d) => API.post(`${base}/document/${documentId}/send-email`, d),
+      getDocumentEmailLogs: (documentId) => API.get(`${base}/document/${documentId}/email-logs`),
       // Aging
       getAgingReceivables: (q = '') => API.get(`${base}/aging/receivables${q}`),
       getAgingPayables: (q = '') => API.get(`${base}/aging/payables${q}`),
@@ -610,6 +646,19 @@ const API = {
       getIntegrationRevenueBySource: (q = '') => API.get(`${base}/integrations/reports/revenue-by-source${q}`),
       getIntegrationDepositSummary: (q = '') => API.get(`${base}/integrations/reports/deposit-summary${q}`),
       getIntegrationDailyRevenue: (q = '') => API.get(`${base}/integrations/reports/daily-revenue${q}`),
+
+      // Executive Reports
+      getExecutiveSummary: (q = '') => API.get(`${base}/executive-reports/summary${q}`),
+      getFinancialRatios: (q = '') => API.get(`${base}/executive-reports/ratios${q}`),
+      getTrendAnalysis: (q = '') => API.get(`${base}/executive-reports/trends${q}`),
+      getCustomerAnalytics: (q = '') => API.get(`${base}/executive-reports/customers${q}`),
+      getSupplierAnalytics: (q = '') => API.get(`${base}/executive-reports/suppliers${q}`),
+      getProductAnalytics: (q = '') => API.get(`${base}/executive-reports/products${q}`),
+      getBudgetVariance: (q = '') => API.get(`${base}/executive-reports/budget-variance${q}`),
+      getCashFlowForecast: (q = '') => API.get(`${base}/executive-reports/cash-flow-forecast${q}`),
+      getBreakEvenAnalysis: (q = '') => API.get(`${base}/executive-reports/break-even${q}`),
+      getSalesPerformance: (q = '') => API.get(`${base}/executive-reports/sales-performance${q}`),
+      getProjectProfitability: (q = '') => API.get(`${base}/executive-reports/project-profitability${q}`),
 
       // Document Approvals (Signature-based)
       setupDocApproval: (d) => API.post(`${base}/approvals/setup`, d),

@@ -456,14 +456,18 @@ public enum FeatureFlags : long
     RevenueRecognition = 1L << 41,
     FPA = 1L << 42,
 
+    // eTax modes (split from EtaxInvoice for granular control)
+    EtaxByEmail = 1L << 43,   // PDF/A-3 with embedded XML, sent to customer + RD csemail timestamp
+    EtaxDirect = 1L << 44,    // XML submitted directly to RD API
+
     // Preset combos
     TrialFeatures = BasicAccounting | DocumentEngine | TaxManagement | Dashboard,
     BasicFeatures = TrialFeatures | AuditLog | EmailNotification | FileAttachments | AgingReport,
     ProFeatures = BasicFeatures | AdvancedReporting | MultiCompany | APIAccess | BulkImport
         | CustomChartOfAccounts | AutoPosting | MultiUser | BankReconciliation | Inventory
         | RecurringTransactions | ApprovalWorkflow | PurchaseOrders | ExpenseManagement | BudgetManagement
-        | CostCenter,
-    EnterpriseFeatures = ProFeatures | EtaxInvoice | WorkflowEngine | FixedAssets
+        | CostCenter | EtaxByEmail,
+    EnterpriseFeatures = ProFeatures | EtaxInvoice | EtaxDirect | WorkflowEngine | FixedAssets
         | MultiCurrency | FreelanceManagement | Payroll | ProjectAccounting | Consolidation
         | WarehouseManagement | LoanManagement | Commission | AI_Features | DocumentOCR
         | ReportBuilder | CustomerPortal | TimeBilling | OpenBanking | Webhook
@@ -602,4 +606,37 @@ public enum EtaxStatus
     Accepted = 3,
     Rejected = 4,
     Error = 5
+}
+
+// e-Tax delivery mode chosen by the company
+public enum EtaxMode
+{
+    None = 0,        // ไม่ใช้ e-Tax
+    ByEmail = 1,     // e-Tax Invoice & Receipt by Email (รายได้ < 30 ล้าน, ส่งทางอีเมลพร้อม CC csemail@etax.teda.th)
+    Direct = 2,      // e-Tax Invoice & Receipt (Full) ยิง XML เข้าระบบสรรพากรโดยตรง ต้องมี CA cert
+    Both = 3         // เปิดทั้งสอง โหมด ให้ user เลือกตอนสร้างเอกสาร
+}
+
+// e-Tax delivery channel for a single send action (logged per send)
+public enum EtaxDeliveryChannel
+{
+    Email = 0,       // ส่งทางอีเมล (รวม CC RD timestamp)
+    RdApi = 1        // ยิง XML เข้า RD API
+}
+
+// ==================== Email Provider ====================
+public enum EmailProvider
+{
+    Smtp = 0,            // Generic SMTP (Gmail SMTP, Office365 SMTP, etc.)
+    MicrosoftGraph = 1,  // Microsoft Graph API (OAuth2 client credentials)
+    GmailApi = 2,        // Gmail API (OAuth2 refresh token)
+    SendGrid = 3         // SendGrid HTTP API
+}
+
+public enum EmailLogStatus
+{
+    Pending = 0,
+    Sent = 1,
+    Failed = 2,
+    Bounced = 3
 }

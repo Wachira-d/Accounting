@@ -78,9 +78,11 @@ public class AccountingController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<JournalEntryResponse>>>> GetJournalEntries(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
-        [FromQuery] string? journalType = null, [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null)
+        [FromQuery] string? journalType = null, [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null,
+        [FromQuery] Guid? projectId = null, [FromQuery] string? tag = null,
+        [FromQuery] Guid? sourceDocumentId = null, [FromQuery] string? sourceDocumentNumber = null)
     {
-        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId);
+        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId, projectId, tag, sourceDocumentId, sourceDocumentNumber);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }
 
@@ -156,9 +158,9 @@ public class AccountingController : ControllerBase
     [HttpGet("reports/general-ledger")]
     public async Task<ActionResult<ApiResponse<GeneralLedgerResponse>>> GetGeneralLedger(
         Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, [FromQuery] Guid? accountId = null,
-        [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null)
+        [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? projectId = null)
     {
-        var result = await _accountingService.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId, dimensionId, branchId);
+        var result = await _accountingService.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId, dimensionId, branchId, projectId);
         return Ok(new ApiResponse<GeneralLedgerResponse>(true, result));
     }
 
@@ -187,32 +189,38 @@ public class AccountingController : ControllerBase
     // ===== Reports =====
 
     [HttpGet("reports/trial-balance")]
-    public async Task<ActionResult<ApiResponse<TrialBalanceResponse>>> GetTrialBalance(Guid companyId, [FromQuery] DateTime? asOfDate = null)
+    public async Task<ActionResult<ApiResponse<TrialBalanceResponse>>> GetTrialBalance(
+        Guid companyId, [FromQuery] DateTime? asOfDate = null,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)
     {
-        var result = await _accountingService.GetTrialBalanceAsync(companyId, asOfDate ?? DateTime.UtcNow);
+        var result = await _accountingService.GetTrialBalanceAsync(companyId, asOfDate ?? DateTime.UtcNow, projectId, branchId, dimensionId);
         return Ok(new ApiResponse<TrialBalanceResponse>(true, result));
     }
 
     [HttpGet("reports/balance-sheet")]
-    public async Task<ActionResult<ApiResponse<BalanceSheetResponse>>> GetBalanceSheet(Guid companyId, [FromQuery] DateTime? asOfDate = null)
+    public async Task<ActionResult<ApiResponse<BalanceSheetResponse>>> GetBalanceSheet(
+        Guid companyId, [FromQuery] DateTime? asOfDate = null,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)
     {
-        var result = await _accountingService.GetBalanceSheetAsync(companyId, asOfDate ?? DateTime.UtcNow);
+        var result = await _accountingService.GetBalanceSheetAsync(companyId, asOfDate ?? DateTime.UtcNow, projectId, branchId, dimensionId);
         return Ok(new ApiResponse<BalanceSheetResponse>(true, result));
     }
 
     [HttpGet("reports/profit-loss")]
     public async Task<ActionResult<ApiResponse<ProfitAndLossResponse>>> GetProfitAndLoss(
-        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)
     {
-        var result = await _accountingService.GetProfitAndLossAsync(companyId, fromDate, toDate);
+        var result = await _accountingService.GetProfitAndLossAsync(companyId, fromDate, toDate, projectId, branchId, dimensionId);
         return Ok(new ApiResponse<ProfitAndLossResponse>(true, result));
     }
 
     [HttpGet("reports/cash-flow")]
     public async Task<ActionResult<ApiResponse<CashFlowStatementResponse>>> GetCashFlowStatement(
-        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)
     {
-        var result = await _accountingService.GetCashFlowStatementAsync(companyId, fromDate, toDate);
+        var result = await _accountingService.GetCashFlowStatementAsync(companyId, fromDate, toDate, projectId, branchId, dimensionId);
         return Ok(new ApiResponse<CashFlowStatementResponse>(true, result));
     }
 

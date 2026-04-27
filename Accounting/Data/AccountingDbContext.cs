@@ -107,6 +107,9 @@ public class AccountingDbContext : DbContext
     // e-Tax Invoices
     public DbSet<EtaxInvoice> EtaxInvoices => Set<EtaxInvoice>();
 
+    // Document Email Logs (sent emails for documents and e-Tax)
+    public DbSet<DocumentEmailLog> DocumentEmailLogs => Set<DocumentEmailLog>();
+
     // Expense Claims
     public DbSet<ExpenseClaim> ExpenseClaims => Set<ExpenseClaim>();
     public DbSet<ExpenseClaimLine> ExpenseClaimLines => Set<ExpenseClaimLine>();
@@ -373,7 +376,14 @@ public class AccountingDbContext : DbContext
             e.Property(j => j.EntryNumber).HasMaxLength(50);
             e.Property(j => j.TotalDebit).HasPrecision(18, 2);
             e.Property(j => j.TotalCredit).HasPrecision(18, 2);
+            e.Property(j => j.Note).HasMaxLength(2000);
+            e.Property(j => j.Tags).HasMaxLength(500);
             e.HasOne(j => j.FiscalPeriod).WithMany(f => f.JournalEntries).HasForeignKey(j => j.FiscalPeriodId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(j => j.Project).WithMany().HasForeignKey(j => j.ProjectId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(j => new { j.CompanyId, j.ProjectId }).HasDatabaseName("IX_JournalEntries_CompanyId_ProjectId");
+            e.HasIndex(j => new { j.CompanyId, j.BranchId }).HasDatabaseName("IX_JournalEntries_CompanyId_BranchId");
+            e.HasIndex(j => new { j.CompanyId, j.DimensionId }).HasDatabaseName("IX_JournalEntries_CompanyId_DimensionId");
+            e.HasIndex(j => new { j.CompanyId, j.SourceDocumentId }).HasDatabaseName("IX_JournalEntries_CompanyId_SourceDocumentId");
             e.HasQueryFilter(j => !j.IsDeleted);
         });
 
@@ -382,8 +392,11 @@ public class AccountingDbContext : DbContext
         {
             e.HasOne(l => l.JournalEntry).WithMany(j => j.Lines).HasForeignKey(l => l.JournalEntryId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Account).WithMany(a => a.JournalEntryLines).HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.Project).WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.SetNull);
             e.Property(l => l.DebitAmount).HasPrecision(18, 2);
             e.Property(l => l.CreditAmount).HasPrecision(18, 2);
+            e.Property(l => l.Tags).HasMaxLength(500);
+            e.HasIndex(l => l.ProjectId).HasDatabaseName("IX_JournalEntryLines_ProjectId");
         });
 
         // ===== FiscalPeriod =====
@@ -696,6 +709,21 @@ public class AccountingDbContext : DbContext
             e.Property(ei => ei.BuyerTaxId).HasMaxLength(13);
             e.HasOne(ei => ei.Document).WithMany().HasForeignKey(ei => ei.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(ei => !ei.IsDeleted);
+        });
+
+        // ===== DocumentEmailLog =====
+        modelBuilder.Entity<DocumentEmailLog>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.DocumentId });
+            e.HasIndex(l => new { l.CompanyId, l.EtaxInvoiceId });
+            e.Property(l => l.ToEmail).HasMaxLength(500);
+            e.Property(l => l.CcEmail).HasMaxLength(1000);
+            e.Property(l => l.BccEmail).HasMaxLength(1000);
+            e.Property(l => l.Subject).HasMaxLength(500);
+            e.Property(l => l.ProviderMessageId).HasMaxLength(200);
+            e.HasOne(l => l.Document).WithMany().HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(l => l.EtaxInvoice).WithMany().HasForeignKey(l => l.EtaxInvoiceId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(l => !l.IsDeleted);
         });
 
         // ===== ExpenseClaim =====

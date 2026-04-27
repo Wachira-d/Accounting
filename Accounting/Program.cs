@@ -158,6 +158,8 @@ builder.Services.AddHttpClient();
 
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IEmailSenderFactory, Accounting.Services.Implementations.Email.EmailSenderFactory>();
+builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 
 // Error logging service
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
@@ -169,6 +171,9 @@ builder.Services.AddScoped<IIntegrationService, IntegrationService>();
 
 // Signature & Approval
 builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>();
+
+// Executive Reports
+builder.Services.AddScoped<IExecutiveReportService, ExecutiveReportService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();

@@ -48,8 +48,9 @@
       <input type="date" class="form-input" id="fromDate" style="width:160px" onchange="Page.load()">
       <span class="text-gray-400">ถึง</span>
       <input type="date" class="form-input" id="toDate" style="width:160px" onchange="Page.load()">
-      <select class="filter-select" id="dimProjectFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกโครงการ</option></select>
+      <select class="filter-select" id="projectFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกโครงการ</option></select>
       <select class="filter-select" id="dimBranchFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกสาขา</option></select>
+      <input type="text" class="form-input" id="tagFilter" placeholder="แท็ก..." onchange="Page.load()" style="width:120px">
     </div>
 
     <!-- Batch Action Bar -->
@@ -95,6 +96,21 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
             <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">โครงการ</label>
+              <select class="form-select" id="fProject"><option value="">-- ไม่ระบุ --</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">แท็ก (คั่นด้วย ,)</label><input type="text" class="form-input" id="fTags" placeholder="เช่น audit,2026Q1"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลขเอกสารอ้างอิง</label>
+            <input type="text" class="form-input" id="fSrcDocNumber" placeholder="เช่น INV-2026-001 (ระบบจะเชื่อมอัตโนมัติถ้าพบในระบบ)">
+          </div>
+          <div class="form-group">
+            <label class="form-label">หมายเหตุเพิ่มเติม</label>
+            <textarea class="form-input" id="fNote" rows="2" placeholder="หมายเหตุภายใน..."></textarea>
           </div>
 
           <div style="margin-top:16px">
@@ -191,16 +207,15 @@
         const api = Layout.api(); if (!api) return;
         try {
           const [projRes, branchRes] = await Promise.all([
-            api.getDimensions?.().catch(()=>null),
+            api.getActiveProjects?.().catch(()=>null),
             api.getBranches?.().catch(()=>null)
           ]);
-          const projSel = document.getElementById('dimProjectFilter');
+          const projSel = document.getElementById('projectFilter');
           const branchSel = document.getElementById('dimBranchFilter');
-          const projects = (projRes?.data?.items || projRes?.data || []).filter(d => (d.type||'').toLowerCase().includes('project') || d.type === 'Project' || d.code?.toLowerCase().startsWith('proj'));
-          const dims = projRes?.data?.items || projRes?.data || [];
+          const projects = projRes?.data?.items || projRes?.data || [];
           if (projSel) {
-            projSel.innerHTML = '<option value="">ทุกโครงการ/มิติ</option>' +
-              dims.map(d => `<option value="${d.id}">${d.code ? `[${d.code}] ` : ''}${d.name || '-'}</option>`).join('');
+            projSel.innerHTML = '<option value="">ทุกโครงการ</option>' +
+              projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
           }
           const branches = branchRes?.data?.items || branchRes?.data || [];
           if (branchSel) {
@@ -230,13 +245,15 @@
           const statusF = document.getElementById('statusFilter').value;
           const fromD = document.getElementById('fromDate').value;
           const toD = document.getElementById('toDate').value;
-          const proj = document.getElementById('dimProjectFilter')?.value;
+          const proj = document.getElementById('projectFilter')?.value;
           const branch = document.getElementById('dimBranchFilter')?.value;
+          const tag = document.getElementById('tagFilter')?.value?.trim();
           if (statusF) q += `&status=${statusF}`;
           if (fromD) q += `&fromDate=${fromD}`;
           if (toD) q += `&toDate=${toD}`;
-          if (proj) q += `&dimensionId=${proj}`;
+          if (proj) q += `&projectId=${proj}`;
           if (branch) q += `&branchId=${branch}`;
+          if (tag) q += `&tag=${encodeURIComponent(tag)}`;
           const res = await api.getJournals(q);
           const rows = res.data?.items || res.data || [];
           const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
@@ -343,16 +360,18 @@
         const status = document.getElementById('statusFilter').value;
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
-        const dim = document.getElementById('dimProjectFilter')?.value;
+        const proj = document.getElementById('projectFilter')?.value;
         const br = document.getElementById('dimBranchFilter')?.value;
+        const tag = document.getElementById('tagFilter')?.value?.trim();
         let q = `?page=${this.page}&pageSize=20`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (this.currentType) q += `&journalType=${this.currentType}`;
         if (status) q += `&status=${status}`;
         if (from) q += `&fromDate=${from}`;
         if (to) q += `&toDate=${to}`;
-        if (dim) q += `&dimensionId=${dim}`;
+        if (proj) q += `&projectId=${proj}`;
         if (br) q += `&branchId=${br}`;
+        if (tag) q += `&tag=${encodeURIComponent(tag)}`;
         try {
           const res = await api.getJournals(q);
           const data = res.data;
@@ -424,12 +443,29 @@
         document.getElementById('totalCredit').textContent = Layout.money(c);
         document.getElementById('balanceWarning').classList.toggle('hidden', Math.abs(d - c) < 0.01);
       },
-      openCreate() {
+      async openCreate() {
         document.getElementById('formTitle').textContent = 'บันทึกรายการใหม่';
         document.getElementById('fType').value = this.currentType || 'General';
         document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('fRef').value = '';
         document.getElementById('fDesc').value = '';
+        document.getElementById('fTags').value = '';
+        document.getElementById('fNote').value = '';
+        const srcEl = document.getElementById('fSrcDocNumber'); if (srcEl) srcEl.value = '';
+        // Mirror filter project into form, fall back to first option
+        const filterProj = document.getElementById('projectFilter')?.value || '';
+        // Populate project dropdown from active projects
+        const api = Layout.api();
+        if (api) {
+          try {
+            const res = await api.getActiveProjects?.();
+            const projects = res?.data?.items || res?.data || [];
+            const sel = document.getElementById('fProject');
+            sel.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
+              projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
+            if (filterProj) sel.value = filterProj;
+          } catch(e) {}
+        }
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
         this.addLine(); this.addLine();
@@ -462,6 +498,10 @@
             description: document.getElementById('fDesc').value || null,
             reference: document.getElementById('fRef').value || null,
             journalType: document.getElementById('fType').value,
+            projectId: document.getElementById('fProject').value || null,
+            note: document.getElementById('fNote').value || null,
+            tags: document.getElementById('fTags').value || null,
+            sourceDocumentNumber: document.getElementById('fSrcDocNumber').value || null,
             lines
           });
           Layout.closeModal('formModal');
@@ -492,6 +532,7 @@
               <div class="detail-item"><span class="detail-label">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
               <div class="detail-item"><span class="detail-label">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
               <div class="detail-item"><span class="detail-label">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
+              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value">${j.sourceDocumentNumber}${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
               ${reversalInfo}
             </div>
             <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>

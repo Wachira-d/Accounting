@@ -44,7 +44,7 @@
       <select class="form-select" id="accountFilter" style="flex:1;min-width:120px">
         <option value="">ทุกบัญชี</option>
       </select>
-      <select class="form-select" id="dimProjectFilter" style="flex:1;min-width:140px"><option value="">ทุกโครงการ/มิติ</option></select>
+      <select class="form-select" id="projectFilter" style="flex:1;min-width:140px"><option value="">ทุกโครงการ</option></select>
       <select class="form-select" id="dimBranchFilter" style="flex:1;min-width:120px"><option value="">ทุกสาขา</option></select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงข้อมูล</button>
     </div>
@@ -174,14 +174,14 @@
           });
         } catch(e) {}
         try {
-          const [dimRes, brRes] = await Promise.all([
-            api.getDimensions?.().catch(()=>null),
+          const [projRes, brRes] = await Promise.all([
+            api.getActiveProjects?.().catch(()=>null),
             api.getBranches?.().catch(()=>null)
           ]);
-          const dims = dimRes?.data?.items || dimRes?.data || [];
-          const ps = document.getElementById('dimProjectFilter');
-          if (ps) ps.innerHTML = '<option value="">ทุกโครงการ/มิติ</option>' +
-            dims.map(d => `<option value="${d.id}">${d.code ? `[${d.code}] ` : ''}${d.name || '-'}</option>`).join('');
+          const projects = projRes?.data?.items || projRes?.data || [];
+          const ps = document.getElementById('projectFilter');
+          if (ps) ps.innerHTML = '<option value="">ทุกโครงการ</option>' +
+            projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
           const brs = brRes?.data?.items || brRes?.data || [];
           const bs = document.getElementById('dimBranchFilter');
           if (bs) bs.innerHTML = '<option value="">ทุกสาขา</option>' +
@@ -258,12 +258,12 @@
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
         const accountId = document.getElementById('accountFilter').value;
-        const dim = document.getElementById('dimProjectFilter')?.value;
+        const proj = document.getElementById('projectFilter')?.value;
         const br = document.getElementById('dimBranchFilter')?.value;
         if (!from || !to) { Layout.toast('กรุณาเลือกช่วงวันที่', 'error'); return; }
         let q = `?fromDate=${from}&toDate=${to}`;
         if (accountId) q += `&accountId=${accountId}`;
-        if (dim) q += `&dimensionId=${dim}`;
+        if (proj) q += `&projectId=${proj}`;
         if (br) q += `&branchId=${br}`;
         const content = document.getElementById('ledgerContent');
         content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">กำลังโหลด...</div>';

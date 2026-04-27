@@ -247,6 +247,8 @@
             footer += ` <button class="btn btn-primary" onclick="Page.openAddCost('${id}')">+ บันทึกต้นทุน</button>`;
             footer += ` <button class="btn btn-success" onclick="Page.completeProject('${id}')">เสร็จสิ้นโครงการ</button>`;
           }
+          footer += ` <button class="btn btn-warning" onclick="Page.openEdit('${id}')">แก้ไข</button>`;
+          footer += ` <button class="btn btn-danger" onclick="Page.deleteProject('${id}')">ลบ</button>`;
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -357,6 +359,29 @@
           await api.completeProject(id);
           Layout.toast('โครงการเสร็จสิ้น'); Layout.closeModal('detailModal'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteProject(id) {
+        if (!confirm('ยืนยันลบโครงการนี้? หากมีรายการเชื่อมโยงระบบจะเปลี่ยนสถานะเป็นยกเลิกแทน')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteProject(id);
+          Layout.toast('ลบโครงการสำเร็จ'); Layout.closeModal('detailModal'); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProject(id);
+          const p = res.data;
+          if (!p) return;
+          // Reuse create modal if same form. Otherwise prompt.
+          const newName = prompt('ชื่อโครงการใหม่', p.name);
+          if (newName == null) return;
+          await api.updateProject(id, { name: newName });
+          Layout.toast('อัปเดตสำเร็จ');
+          Layout.closeModal('detailModal');
+          this.load();
+        } catch(e) { Layout.toast(e.message, 'error'); }
       }
     };
     Page.init();

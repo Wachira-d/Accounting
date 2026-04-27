@@ -101,6 +101,36 @@
       </div>
     </div>
 
+    <!-- Send by Email Modal -->
+    <div id="sendEmailModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('sendEmailModal')"></div>
+      <div class="modal-content" style="max-width:600px">
+        <div class="modal-header">
+          <h3>📧 ส่ง e-Tax ทางอีเมล</h3>
+          <button class="btn-close" onclick="Page.closeModal('sendEmailModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="sendEmailWarning" style="display:none;padding:12px;background:#fef3c7;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
+          <div class="form-group"><label class="form-label">ถึง <span style="color:red">*</span></label><input type="email" class="form-input" id="seTo" placeholder="customer@example.com"></div>
+          <div class="form-group"><label class="form-label">CC (อื่นๆ)</label><input type="text" class="form-input" id="seCc" placeholder="cc1@example.com, cc2@example.com"></div>
+          <div class="form-group"><label class="form-label">หัวข้อ</label><input type="text" class="form-input" id="seSubject"></div>
+          <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="seBody" rows="8"></textarea></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludePdf" checked> แนบ PDF</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludeXml" checked> แนบ XML</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludeRd" checked> CC สรรพากร</label>
+          </div>
+          <div style="margin-top:12px;padding:10px;background:#f0fdf4;border-radius:6px;font-size:12px;color:#166534">
+            ℹ️ การ CC <code>csemail@etax.teda.th</code> เป็นข้อกำหนดของสรรพากรเพื่อให้ระบบลงเวลาประทับ (Time Stamp) — โปรดเปิดไว้
+          </div>
+        </div>
+        <div class="modal-footer" style="padding:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px">
+          <button class="btn btn-outline" onclick="Page.closeModal('sendEmailModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doSendByEmail()">ส่งอีเมล</button>
+        </div>
+      </div>
+    </div>
+
     <!-- XML Preview Modal -->
     <div id="xmlModal" class="modal" style="display:none">
       <div class="modal-overlay" onclick="Page.closeModal('xmlModal')"></div>
@@ -239,6 +269,7 @@
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-primary" onclick="Page.sign('${e.id}')">ลงนาม</button>` : ''}
               ${e.status === 'Signed' ? `<button class="btn btn-xs btn-success" onclick="Page.submit('${e.id}')">ส่ง RD</button>` : ''}
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-success" onclick="Page.signAndSubmit('${e.id}')">ลงนาม+ส่ง</button>` : ''}
+              ${(e.status === 'Signed' || e.status === 'Submitted' || e.status === 'Accepted') ? `<button class="btn btn-xs btn-info" onclick="Page.openSendByEmail('${e.id}')">📧 ส่งทางอีเมล</button>` : ''}
               ${e.status === 'Error' ? `<button class="btn btn-xs btn-warning" onclick="Page.sign('${e.id}')">ลองใหม่</button>` : ''}
               ${e.status !== 'Accepted' ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')">ยกเลิก</button>` : ''}
             </div>
@@ -358,6 +389,74 @@
         alert('ยกเลิกสำเร็จ');
         await this.load();
       } catch(e) { alert(e.message); }
+    },
+
+    async openSendByEmail(etaxId) {
+      this._sendingEtaxId = etaxId;
+      // Load eTax details and pre-fill email defaults
+      const etax = (this.items || []).find(x => x.id === etaxId);
+      if (!etax) { Layout.toast('ไม่พบเอกสาร', 'error'); return; }
+
+      // Pre-validate config
+      try {
+        const cfg = await API.get(`/api/companies/${this.companyId}/etax/config`);
+        const c = cfg.data || {};
+        const warnings = [];
+        if (!c.byEmailRdRegistered) warnings.push('⚠ ยังไม่ได้ลงทะเบียน e-Tax by Email กับสรรพากร');
+        if (!c.byEmailSenderEmail) warnings.push('⚠ ยังไม่ได้ตั้งค่าอีเมลผู้ส่งที่ลงทะเบียน');
+        const w = document.getElementById('sendEmailWarning');
+        if (warnings.length > 0) {
+          w.style.display = 'block';
+          w.innerHTML = warnings.join('<br>') + '<br><a href="/pages/settings.html" style="color:#0369a1">→ ไปตั้งค่า</a>';
+        } else { w.style.display = 'none'; }
+      } catch(e) {}
+
+      // Get email config to check if any provider is configured
+      try {
+        const ec = await API.get(`/api/companies/${this.companyId}/email-config`);
+        if (!ec.data?.configured) {
+          const w = document.getElementById('sendEmailWarning');
+          w.style.display = 'block';
+          w.innerHTML = (w.innerHTML || '') + '<br>⚠ ยังไม่ได้ตั้งค่าอีเมลผู้ส่ง — โปรดไปที่หน้าตั้งค่า';
+        }
+      } catch(e) {}
+
+      document.getElementById('seTo').value = etax.buyerEmail || '';
+      document.getElementById('seCc').value = '';
+      document.getElementById('seSubject').value = `[e-Tax] ${etax.documentType || ''} เลขที่ ${etax.etaxRefNumber || ''}`;
+      document.getElementById('seBody').value = `<p>เรียน คุณ${etax.buyerName || 'ลูกค้า'}</p>
+<p>โปรดตรวจสอบ e-Tax Invoice เลขที่ <strong>${etax.etaxRefNumber}</strong> ตามไฟล์แนบ</p>
+<p style="background:#fef3c7;padding:10px;border-radius:6px;font-size:13px">ℹ️ อีเมลฉบับนี้เป็น e-Tax Invoice & Receipt by Email ซึ่งกรมสรรพากรจะลงเวลาประทับอัตโนมัติ — โปรดเก็บอีเมลและไฟล์แนบไว้เป็นหลักฐาน</p>`;
+      document.getElementById('seIncludePdf').checked = true;
+      document.getElementById('seIncludeXml').checked = true;
+      document.getElementById('seIncludeRd').checked = true;
+      document.getElementById('sendEmailModal').style.display = 'flex';
+    },
+
+    async doSendByEmail() {
+      const to = document.getElementById('seTo').value.trim();
+      if (!to) { Layout.toast('กรุณากรอกอีเมลผู้รับ', 'error'); return; }
+
+      const req = {
+        to,
+        cc: document.getElementById('seCc').value || null,
+        subject: document.getElementById('seSubject').value || null,
+        body: document.getElementById('seBody').value || null,
+        includePdf: document.getElementById('seIncludePdf').checked,
+        includeXml: document.getElementById('seIncludeXml').checked,
+        includeRdTimestamp: document.getElementById('seIncludeRd').checked
+      };
+
+      try {
+        const res = await API.post(
+          `/api/companies/${this.companyId}/etax/${this._sendingEtaxId}/send-email`, req);
+        if (res.success) {
+          Layout.toast(req.includeRdTimestamp ? 'ส่ง e-Tax สำเร็จ — สรรพากรจะลงเวลาประทับ' : 'ส่งอีเมลสำเร็จ');
+          this.closeModal('sendEmailModal');
+        } else {
+          Layout.toast(res.message || 'ส่งไม่สำเร็จ', 'error');
+        }
+      } catch(e) { Layout.toast(e.message, 'error'); }
     },
 
     async showConfig() {

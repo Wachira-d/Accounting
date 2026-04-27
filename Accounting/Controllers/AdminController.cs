@@ -6,6 +6,7 @@ using Accounting.Models.DTOs.Company;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Helpers;
+using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -351,6 +352,13 @@ public class AdminController : ControllerBase
     }
 
     // ===== Plan Template Management =====
+
+    [HttpGet("features")]
+    public ActionResult<ApiResponse<List<FeatureFlagInfo>>> GetAllFeatures()
+    {
+        var result = FeatureFlagsHelper.AllFeatures();
+        return Ok(new ApiResponse<List<FeatureFlagInfo>>(true, result));
+    }
 
     [HttpPost("plans")]
     public async Task<ActionResult<ApiResponse<PlanTemplateResponse>>> CreatePlanTemplate([FromBody] CreatePlanTemplateRequest request)

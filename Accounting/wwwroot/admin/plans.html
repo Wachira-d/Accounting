@@ -24,7 +24,28 @@
   <script>
     AdminLayout.init('plans');
 
+    let allFeatures = [];
+    const categoryLabels = {
+      core: 'หลัก/พื้นฐาน',
+      reporting: 'รายงาน',
+      multi: 'หลายบริษัท/หลายสกุลเงิน',
+      operations: 'การดำเนินงาน',
+      advanced: 'ขั้นสูง/Workflow',
+      integration: 'เชื่อมต่อ/นำเข้า',
+      ai: 'AI / OCR',
+      other: 'อื่นๆ'
+    };
+    const categoryOrder = ['core', 'reporting', 'multi', 'operations', 'advanced', 'integration', 'ai', 'other'];
+
+    async function loadFeatures() {
+      try {
+        const res = await AdminAPI.features();
+        allFeatures = res.data || [];
+      } catch (e) { console.warn('Could not load features', e); }
+    }
+
     async function loadPlans() {
+      await loadFeatures();
       try {
         const res = await AdminAPI.plans(true);
         const plans = res.data;
@@ -73,6 +94,16 @@
                 </div>
 
                 <div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-top:12px;font-size:13px">
+                  <div style="font-weight:600;margin-bottom:6px">ฟีเจอร์ที่เปิดใช้</div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>เปิดใช้</span><strong>${(p.enabledFeatureNames || []).length} / ${allFeatures.length} ฟีเจอร์</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ทดลองใช้</span><strong>${(p.trialFeatureNames || []).length} / ${allFeatures.length} ฟีเจอร์</strong>
+                  </div>
+                </div>
+
+                <div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-top:12px;font-size:13px">
                   <div style="font-weight:600;margin-bottom:6px">การทดลองใช้</div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
                     <span>ระยะเวลา</span><strong>${p.trialDurationDays || 0} วัน</strong>
@@ -81,7 +112,7 @@
                     <span>ต่ออายุได้</span><strong>${p.trialMaxExtensions || 0} ครั้ง (${p.trialExtensionDays || 0} วัน/ครั้ง)</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
-                    <span>Grace Period</span><strong>${p.trialGracePeriodDays || 0} วัน</strong>
+                    <span>ลิมิต Trial</span><strong>${p.trialMaxUsers || 0} คน / ${(p.trialMaxDocumentsPerMonth || 0).toLocaleString()} เอกสาร / เดือน</strong>
                   </div>
                 </div>
 
@@ -106,6 +137,85 @@
       return (bytes / 1024).toFixed(0) + ' KB';
     }
 
+    function buildFeaturePickerHtml(idPrefix, enabledNames) {
+      if (!allFeatures.length) {
+        return '<div style="color:#94a3b8;font-style:italic">ไม่สามารถโหลดรายการฟีเจอร์ได้</div>';
+      }
+      const enabledSet = new Set(enabledNames || []);
+      const byCategory = {};
+      allFeatures.forEach(f => {
+        const cat = f.category || 'other';
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(f);
+      });
+      const total = allFeatures.length;
+      const enabled = (enabledNames || []).filter(n => allFeatures.some(f => f.name === n)).length;
+
+      let html = `
+        <div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:12px;color:#64748b">เปิดใช้ <strong id="${idPrefix}_count">${enabled}</strong> / ${total} ฟีเจอร์</div>
+          <div style="display:flex;gap:6px">
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureSelectAll('${idPrefix}', true)">เลือกทั้งหมด</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureSelectAll('${idPrefix}', false)">ล้างทั้งหมด</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','trial')">ค่ามาตรฐาน Trial</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','basic')">Basic</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','pro')">Pro</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','enterprise')">Enterprise</button>
+          </div>
+        </div>
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;max-height:280px;overflow:auto;background:#f8fafc">`;
+      categoryOrder.forEach(cat => {
+        if (!byCategory[cat]) return;
+        const features = byCategory[cat];
+        html += `<div style="margin-bottom:10px">
+          <div style="font-weight:600;font-size:12px;color:#334155;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">${categoryLabels[cat] || cat}</div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px 12px;font-size:13px">`;
+        features.forEach(f => {
+          const checked = enabledSet.has(f.name) ? 'checked' : '';
+          html += `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0">
+            <input type="checkbox" class="${idPrefix}_feat" data-name="${f.name}" ${checked} onchange="featureCount('${idPrefix}')">
+            <span>${f.labelTh || f.name}</span>
+          </label>`;
+        });
+        html += `</div></div>`;
+      });
+      html += `</div>`;
+      return html;
+    }
+
+    function featureCount(prefix) {
+      const checked = document.querySelectorAll('.' + prefix + '_feat:checked').length;
+      const el = document.getElementById(prefix + '_count');
+      if (el) el.textContent = checked;
+    }
+
+    function featureSelectAll(prefix, val) {
+      document.querySelectorAll('.' + prefix + '_feat').forEach(cb => cb.checked = val);
+      featureCount(prefix);
+    }
+
+    const presets = {
+      trial: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard'],
+      basic: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard', 'AuditLog', 'EmailNotification', 'FileAttachments', 'AgingReport'],
+      pro: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard', 'AuditLog', 'EmailNotification', 'FileAttachments', 'AgingReport',
+        'AdvancedReporting', 'MultiCompany', 'APIAccess', 'BulkImport', 'CustomChartOfAccounts', 'AutoPosting', 'MultiUser',
+        'BankReconciliation', 'Inventory', 'RecurringTransactions', 'ApprovalWorkflow', 'PurchaseOrders', 'ExpenseManagement',
+        'BudgetManagement', 'CostCenter'],
+      enterprise: allFeatures.map(f => f.name)
+    };
+
+    function featureApplyPreset(prefix, preset) {
+      const set = new Set(presets[preset] || []);
+      document.querySelectorAll('.' + prefix + '_feat').forEach(cb => {
+        cb.checked = set.has(cb.dataset.name);
+      });
+      featureCount(prefix);
+    }
+
+    function getSelectedFeatures(prefix) {
+      return [...document.querySelectorAll('.' + prefix + '_feat:checked')].map(cb => cb.dataset.name);
+    }
+
     function editPlan(planId) {
       const p = window._plans.find(x => x.id === planId);
       if (!p) return;
@@ -113,7 +223,7 @@
       document.getElementById('editModal').style.display = '';
       document.getElementById('editModal').innerHTML = `
         <div class="admin-modal-overlay" onclick="if(event.target===this)closeEditModal()">
-          <div class="admin-modal" style="max-width:600px">
+          <div class="admin-modal" style="max-width:760px;max-height:90vh;overflow:auto">
             <h3>แก้ไขแพ็กเกจ: ${p.name}</h3>
             <form onsubmit="savePlan(event,'${p.id}')">
               <div class="admin-grid-2">
@@ -154,37 +264,79 @@
                 </div>
               </div>
 
-              <div style="font-weight:600;margin:16px 0 8px">ลิมิต</div>
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิตการใช้งาน (แผนแบบเสียเงิน)</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
                   <label class="admin-label">ผู้ใช้สูงสุด</label>
-                  <input type="number" class="admin-input" id="ep_users" value="${p.maxUsers}">
+                  <input type="number" min="1" class="admin-input" id="ep_users" value="${p.maxUsers}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">บริษัทสูงสุด</label>
-                  <input type="number" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
+                  <input type="number" min="1" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">เอกสาร/เดือน</label>
-                  <input type="number" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
+                  <input type="number" min="0" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายการบัญชี/เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_journals" value="${p.maxJournalEntriesPerMonth || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">พื้นที่จัดเก็บ (MB)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_storage_mb" value="${Math.round((p.maxStorageBytes || 0) / 1048576)}">
                 </div>
               </div>
 
-              <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้</div>
+              <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้ (Trial)</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
                   <label class="admin-label">ระยะเวลา (วัน)</label>
-                  <input type="number" class="admin-input" id="ep_trial_days" value="${p.trialDurationDays || 0}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_days" value="${p.trialDurationDays || 0}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">ต่อได้ (ครั้ง)</label>
-                  <input type="number" class="admin-input" id="ep_trial_ext" value="${p.trialMaxExtensions || 0}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_ext" value="${p.trialMaxExtensions || 0}">
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">ต่อครั้งละ (วัน)</label>
-                  <input type="number" class="admin-input" id="ep_trial_ext_days" value="${p.trialExtensionDays || 0}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_ext_days" value="${p.trialExtensionDays || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Grace Period (วัน)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_grace" value="${p.trialGracePeriodDays || 0}" title="วันที่ผู้ใช้ยังเข้าระบบได้หลังหมด trial">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">หลังหมดอายุ</label>
+                  <select class="admin-select" id="ep_trial_block" style="width:100%">
+                    <option value="false" ${!p.trialBlockOnExpiry ? 'selected' : ''}>อ่านอย่างเดียว (Read-only)</option>
+                    <option value="true" ${p.trialBlockOnExpiry ? 'selected' : ''}>บล็อกการเข้าใช้</option>
+                  </select>
                 </div>
               </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิตช่วง Trial</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ผู้ใช้สูงสุด (Trial)</label>
+                  <input type="number" min="1" class="admin-input" id="ep_trial_users" value="${p.trialMaxUsers || 1}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เอกสาร/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_docs" value="${p.trialMaxDocumentsPerMonth || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายการบัญชี/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_journals" value="${p.trialMaxJournalEntriesPerMonth || 0}">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:20px 0 8px;border-top:2px solid #e2e8f0;padding-top:16px">ฟีเจอร์ที่เปิดใช้ในแพ็กเกจนี้</div>
+              <div id="features_paid_picker">${buildFeaturePickerHtml('feat_paid', p.enabledFeatureNames)}</div>
+
+              <div style="font-weight:600;margin:20px 0 8px;border-top:1px dashed #e2e8f0;padding-top:16px">ฟีเจอร์ระหว่างทดลองใช้</div>
+              <div style="font-size:12px;color:#64748b;margin-bottom:8px">เมื่อบริษัทอยู่ในสถานะ Trial จะใช้ฟีเจอร์ตามรายการนี้แทน</div>
+              <div id="features_trial_picker">${buildFeaturePickerHtml('feat_trial', p.trialFeatureNames)}</div>
 
               <div class="admin-modal-actions">
                 <button type="submit" class="admin-btn admin-btn-primary">บันทึก</button>
@@ -199,6 +351,9 @@
     async function savePlan(e, planId) {
       e.preventDefault();
       try {
+        const enabledFeatureNames = getSelectedFeatures('feat_paid');
+        const trialFeatureNames = getSelectedFeatures('feat_trial');
+        const storageMB = parseInt(document.getElementById('ep_storage_mb').value) || 0;
         await AdminAPI.updatePlan(planId, {
           name: document.getElementById('ep_name').value,
           description: document.getElementById('ep_desc').value,
@@ -207,14 +362,26 @@
           quarterlyPrice: parseFloat(document.getElementById('ep_quarterly').value),
           semiAnnualPrice: parseFloat(document.getElementById('ep_semiannual').value),
           annualPrice: parseFloat(document.getElementById('ep_annual').value),
+          // Paid plan limits
           maxUsers: parseInt(document.getElementById('ep_users').value),
           maxCompanies: parseInt(document.getElementById('ep_companies').value),
           maxDocumentsPerMonth: parseInt(document.getElementById('ep_docs').value),
+          maxJournalEntriesPerMonth: parseInt(document.getElementById('ep_journals').value),
+          maxStorageBytes: storageMB * 1048576,
+          // Trial settings
           trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),
           trialMaxExtensions: parseInt(document.getElementById('ep_trial_ext').value),
           trialExtensionDays: parseInt(document.getElementById('ep_trial_ext_days').value),
+          trialMaxUsers: parseInt(document.getElementById('ep_trial_users').value),
+          trialMaxDocumentsPerMonth: parseInt(document.getElementById('ep_trial_docs').value),
+          trialMaxJournalEntriesPerMonth: parseInt(document.getElementById('ep_trial_journals').value),
+          trialGracePeriodDays: parseInt(document.getElementById('ep_trial_grace').value),
+          trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
+          // Features
+          enabledFeatureNames,
+          trialFeatureNames,
         });
-        AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ');
+        AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ — อัพเดตให้บริษัทที่อยู่ในแพ็กเกจนี้แล้ว');
         closeEditModal();
         loadPlans();
       } catch (err) {
