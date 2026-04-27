@@ -43,7 +43,8 @@ public record CreateJournalEntryRequest(
     string? Note = null,
     string? Tags = null,
     Guid? SourceDocumentId = null,           // ลิงก์ไปยัง Document ในระบบ (optional)
-    string? SourceDocumentNumber = null);    // เลขเอกสารต้นทาง (resolve อัตโนมัติเมื่อให้ Id)
+    string? SourceDocumentNumber = null,     // เลขเอกสารต้นทาง (resolve อัตโนมัติเมื่อให้ Id)
+    bool ReplaceExistingForSource = false);  // ถ้า true: void รายการเดิมที่ link กับ source doc นี้ก่อนสร้างใหม่ (สำหรับ re-sync)
 
 public record JournalLineRequest(
     Guid AccountId,
