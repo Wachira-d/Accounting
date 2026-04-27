@@ -99,8 +99,16 @@ const DbdLookup = {
       try {
         const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(taxId)}`);
         if (res.data) {
-          if (onResult) onResult(res.data);
-          if (typeof Layout !== 'undefined') Layout.toast('ดึงข้อมูลจาก DBD สำเร็จ');
+          const d = res.data;
+          const hasData = d.nameTh || d.nameEn || d.address;
+          if (onResult) onResult(d);
+          if (typeof Layout !== 'undefined') {
+            if (hasData) {
+              Layout.toast('ดึงข้อมูลจาก DBD สำเร็จ');
+            } else {
+              Layout.toast('พบเลขทะเบียนในระบบ แต่ไม่มีข้อมูลรายละเอียด', 'info');
+            }
+          }
         } else {
           if (typeof Layout !== 'undefined') Layout.toast('ไม่พบข้อมูลนิติบุคคล', 'error');
         }

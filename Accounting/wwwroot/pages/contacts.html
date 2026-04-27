@@ -112,7 +112,9 @@
         if (this._dbdAttached) return;
         this._dbdAttached = true;
         const fillFromDbd = (result) => {
-          if (result.nameTh) document.getElementById('fName').value = result.nameTh;
+          if (!result) return;
+          const name = result.nameTh || result.nameEn || '';
+          if (name) document.getElementById('fName').value = name;
           if (result.juristicId) document.getElementById('fTaxId').value = result.juristicId;
           if (result.address) document.getElementById('fAddress').value = result.address;
         };
