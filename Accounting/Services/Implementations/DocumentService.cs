@@ -83,8 +83,20 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == request.DocumentType);
-            var docNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+            var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+            var docPrefix = $"{prefix}-{yearMonth}-";
+            var maxNumber = await _db.Documents
+                .IgnoreQueryFilters()
+                .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
+                .Select(d => d.DocumentNumber)
+                .MaxAsync() as string;
+            var nextSeq = 1;
+            if (maxNumber != null)
+            {
+                var lastPart = maxNumber.Substring(docPrefix.Length);
+                if (int.TryParse(lastPart, out var parsed)) nextSeq = parsed + 1;
+            }
+            var docNumber = $"{docPrefix}{nextSeq:D4}";
 
             var doc = new Document
             {
@@ -109,7 +121,8 @@ public class DocumentService : IDocumentService
                 var lineAmount = line.Quantity * line.UnitPrice;
                 var discountAmt = lineAmount * line.DiscountPercent / 100;
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = afterDiscount * line.VatRate / 100;
+                // VatRate -1 = exempt (ยกเว้นภาษี): VAT must be 0, not negative
+                var vatAmt = line.VatRate > 0 ? afterDiscount * line.VatRate / 100 : 0m;
                 var whtAmt = afterDiscount * line.WithholdingTaxRate / 100;
 
                 subTotal += afterDiscount;
@@ -258,7 +271,7 @@ public class DocumentService : IDocumentService
                 var lineAmount = line.Quantity * line.UnitPrice;
                 var discountAmt = lineAmount * line.DiscountPercent / 100;
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = afterDiscount * line.VatRate / 100;
+                var vatAmt = line.VatRate > 0 ? afterDiscount * line.VatRate / 100 : 0m;
                 var whtAmt = afterDiscount * line.WithholdingTaxRate / 100;
 
                 subTotal += afterDiscount;
@@ -475,11 +488,23 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var count = await _db.Payments.CountAsync(p => p.CompanyId == companyId);
+            var payYearMonth = DateTime.UtcNow.ToString("yyyyMM");
+            var payPrefix = $"PAY-{payYearMonth}-";
+            var maxPayNum = await _db.Payments
+                .IgnoreQueryFilters()
+                .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(payPrefix))
+                .Select(p => p.PaymentNumber)
+                .MaxAsync() as string;
+            var paySeq = 1;
+            if (maxPayNum != null)
+            {
+                var lastPart = maxPayNum.Substring(payPrefix.Length);
+                if (int.TryParse(lastPart, out var parsed)) paySeq = parsed + 1;
+            }
             var payment = new Payment
             {
                 CompanyId = companyId,
-                PaymentNumber = $"PAY-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}",
+                PaymentNumber = $"{payPrefix}{paySeq:D4}",
                 DocumentId = request.DocumentId,
                 PaymentDate = request.PaymentDate,
                 Amount = request.Amount,
@@ -591,10 +616,10 @@ public class DocumentService : IDocumentService
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     docLine.AccountId!.Value, 0, docLine.Amount, docLine.Description));
 
-            // Cr: ภาษีขาย (212101)
+            // Cr: ภาษีขาย (21911 ภาษีขาย ภ.พ. 30)
             if (doc.VatAmount > 0)
             {
-                var vatAccount = await FindAccountAsync(companyId, "219");
+                var vatAccount = await FindAccountAsync(companyId, "21911");
                 if (vatAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
@@ -633,10 +658,11 @@ public class DocumentService : IDocumentService
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}"));
 
-            // Cr: ภาษีหัก ณ ที่จ่าย ค้างจ่าย (212201)
+            // Cr: ภาษีหัก ณ ที่จ่าย ค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53)
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await FindAccountAsync(companyId, "219");
+                var whtAccount = await FindAccountAsync(companyId, "21916")
+                    ?? await FindAccountAsync(companyId, "21917");
                 if (whtAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
