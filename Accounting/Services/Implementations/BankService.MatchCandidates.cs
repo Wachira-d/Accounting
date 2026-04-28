@@ -92,6 +92,26 @@ public partial class BankService
                      && !paymentExclude.Contains(p.Id))
             .ToListAsync();
 
+        // Pre-fetch all JE lines (with ChartOfAccount) for candidates to derive
+        // "deposit destination" per JE without N+1. We pull lines for ALL JEs in
+        // the date window, not just candidates, since candidates aren't decided yet.
+        var jeLinesLookup = await _db.Set<JournalEntryLine>()
+            .AsNoTracking()
+            .Include(l => l.Account)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                     && l.JournalEntry.EntryDate >= dateMin && l.JournalEntry.EntryDate <= dateMax
+                     && !l.JournalEntry.IsDeleted
+                     && (l.DebitAmount > 0 || l.CreditAmount > 0)
+                     && l.Account != null
+                     && l.Account.AccountCode.StartsWith("11")) // 11xx = current assets (cash + bank)
+            .Select(l => new JeLineSummary(
+                l.JournalEntryId, l.DebitAmount, l.CreditAmount,
+                l.Account!.AccountCode, l.Account.AccountName))
+            .ToListAsync();
+        var jeLinesByEntry = jeLinesLookup
+            .GroupBy(l => l.JournalEntryId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         var rankedPayments = paymentCandidates
             .Select(p =>
             {
@@ -100,6 +120,15 @@ public partial class BankService
                 var (score, reason) = ScoreCandidate(p.Amount, bankAmount, p.PaymentDate.Date, bankDate,
                     p.Reference, p.Notes, p.Document?.DocumentNumber, p.Document?.Contact?.Name,
                     bankDescLower, bankRefLower);
+
+                // Deposit info: derive from PaymentMethod + BankAccount field on Payment.
+                var (depLabel, depCat) = DerivePaymentDeposit(p);
+
+                // Bonus: bank-deposit txns prefer Bank candidates; if cash-only payment, slight penalty
+                var bankTxnIsDeposit = bankTxn.TransactionType == BankTransactionType.Deposit
+                    || bankTxn.TransactionType == BankTransactionType.Interest;
+                if (bankTxnIsDeposit && depCat == "Bank") score = Math.Min(100, score + 5);
+                if (depCat == "Cash" && bankTxnIsDeposit && p.Amount < 5000) score = Math.Max(0, score - 5);
 
                 return new MatchCandidate(
                     Type: "Payment",
@@ -113,7 +142,9 @@ public partial class BankService
                     DateDiffDays: dateDiff,
                     AmountDiff: amountDiff,
                     Score: score,
-                    ScoreReason: reason);
+                    ScoreReason: reason,
+                    DepositLabel: depLabel,
+                    DepositCategory: depCat);
             })
             .OrderByDescending(c => c.Score)
             .ThenBy(c => c.DateDiffDays)
@@ -131,6 +162,9 @@ public partial class BankService
                      && !jeExclude.Contains(j.Id))
             .ToListAsync();
 
+        var bankTxnIsDeposit2 = bankTxn.TransactionType == BankTransactionType.Deposit
+            || bankTxn.TransactionType == BankTransactionType.Interest;
+
         var rankedJournals = jeCandidates
             .Select(j =>
             {
@@ -141,6 +175,15 @@ public partial class BankService
                 var (score, reason) = ScoreCandidate(jeAmount, bankAmount, j.EntryDate.Date, bankDate,
                     j.Reference, j.Description, null, null,
                     bankDescLower, bankRefLower);
+
+                // Deposit info from JE lines: which 11xx asset account(s) received the money
+                jeLinesByEntry.TryGetValue(j.Id, out var lines);
+                var (depLabel, depCat) = DeriveJeDeposit(lines, bankTxnIsDeposit2);
+
+                // Score adjustment: prefer bank-posting JEs for bank deposits
+                if (bankTxnIsDeposit2 && depCat == "Bank") score = Math.Min(100, score + 8);
+                else if (bankTxnIsDeposit2 && depCat == "Mixed") score = Math.Min(100, score + 4);
+                else if (bankTxnIsDeposit2 && depCat == "Cash") score = Math.Max(0, score - 8);
 
                 return new MatchCandidate(
                     Type: "JournalEntry",
@@ -154,7 +197,9 @@ public partial class BankService
                     DateDiffDays: dateDiff,
                     AmountDiff: amountDiff,
                     Score: score,
-                    ScoreReason: reason);
+                    ScoreReason: reason,
+                    DepositLabel: depLabel,
+                    DepositCategory: depCat);
             })
             .OrderByDescending(c => c.Score)
             .ThenBy(c => c.DateDiffDays)
@@ -315,5 +360,100 @@ public partial class BankService
         if (textMatch) { score += 10; reasons.Add("คำอธิบาย/ชื่อตรงกัน"); }
 
         return (Math.Min(score, 100), reasons.Count > 0 ? string.Join(", ", reasons) : "");
+    }
+
+    /// <summary>
+    /// Derive a "deposit destination" label + category from a Payment record.
+    /// The Payment entity stores PaymentMethod (enum) and BankAccount (free text).
+    /// </summary>
+    private static (string? label, string? category) DerivePaymentDeposit(Payment p)
+    {
+        var method = p.PaymentMethod;
+        var bankAcct = (p.BankAccount ?? "").Trim();
+
+        switch (method)
+        {
+            case PaymentMethod.Cash:
+                return ("💵 เงินสด", "Cash");
+            case PaymentMethod.BankTransfer:
+            case PaymentMethod.PromptPay:
+            case PaymentMethod.DirectDebit:
+                return (string.IsNullOrEmpty(bankAcct) ? "🏦 โอนผ่านธนาคาร" : $"🏦 {bankAcct}", "Bank");
+            case PaymentMethod.CreditCard:
+                return ("💳 บัตรเครดิต", "Bank");
+            case PaymentMethod.Cheque:
+                return (string.IsNullOrEmpty(bankAcct) ? "📄 เช็ค" : $"📄 เช็ค ({bankAcct})", "Bank");
+            case PaymentMethod.EWallet:
+                return ("📱 e-Wallet", "Bank");
+            default:
+                return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Inspect the JE's lines to determine where the money was booked. Looks at
+    /// lines posting to 11xx (current asset) accounts:
+    ///   • 1110-1111: Cash (เงินสด) — "💵"
+    ///   • 1112-1119: Bank deposits (เงินฝากธนาคาร) — "🏦"
+    /// For a deposit-direction bank txn, we look at DEBIT lines (money coming in).
+    /// For a withdrawal direction, we look at CREDIT lines (money going out of bank).
+    /// </summary>
+    /// <summary>JE-line projection used to compute deposit destination.</summary>
+    private record JeLineSummary(
+        Guid JournalEntryId,
+        decimal DebitAmount,
+        decimal CreditAmount,
+        string AccountCode,
+        string AccountName);
+
+    private static (string? label, string? category) DeriveJeDeposit(
+        List<JeLineSummary>? lines, bool isDepositTxn)
+    {
+        if (lines == null || lines.Count == 0) return (null, null);
+
+        // For a deposit, the asset account is debited (money in).
+        // For a withdrawal, the asset account is credited (money out).
+        decimal cashAmount = 0;
+        decimal bankAmount = 0;
+        var bankAccountNames = new HashSet<string>();
+        var cashAccountNames = new HashSet<string>();
+
+        foreach (var l in lines)
+        {
+            var code = l.AccountCode;
+            var name = l.AccountName;
+            var amt = isDepositTxn ? l.DebitAmount : l.CreditAmount;
+            if (amt <= 0) continue;
+
+            if (code.StartsWith("1110") || code.StartsWith("1111"))
+            {
+                cashAmount += amt;
+                cashAccountNames.Add(name);
+            }
+            else if (code.StartsWith("1112") || code.StartsWith("1113") ||
+                     code.StartsWith("1114") || code.StartsWith("1115") ||
+                     code.StartsWith("1116") || code.StartsWith("1117") ||
+                     code.StartsWith("1118") || code.StartsWith("1119"))
+            {
+                bankAmount += amt;
+                bankAccountNames.Add(name);
+            }
+        }
+
+        if (cashAmount == 0 && bankAmount == 0) return (null, null);
+
+        if (bankAmount > 0 && cashAmount > 0)
+        {
+            // Both — likely a "deposit cash to bank" transfer JE
+            var bankPart = bankAccountNames.FirstOrDefault() ?? "ธนาคาร";
+            return ($"💵 → 🏦 {bankPart}", "Mixed");
+        }
+        if (bankAmount > 0)
+        {
+            var name = bankAccountNames.FirstOrDefault() ?? "บัญชีธนาคาร";
+            return ($"🏦 {name}", "Bank");
+        }
+        // cashAmount > 0
+        return ("💵 เงินสด", "Cash");
     }
 }

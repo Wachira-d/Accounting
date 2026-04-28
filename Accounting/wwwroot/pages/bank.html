@@ -386,6 +386,18 @@
                 ✨ AI จับคู่อัตโนมัติ
               </button>
             </div>
+            <!-- Deposit category filter chips -->
+            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
+              <span style="font-size:11px;color:#64748b">กรองตามที่ลงบัญชี:</span>
+              <button class="dep-chip active" data-cat="" onclick="Page.setDepositFilter('')"
+                style="padding:3px 10px;border:1px solid #4F46E5;background:#4F46E5;color:#fff;border-radius:14px;font-size:11px;cursor:pointer">ทั้งหมด</button>
+              <button class="dep-chip" data-cat="Bank" onclick="Page.setDepositFilter('Bank')"
+                style="padding:3px 10px;border:1px solid #93c5fd;background:#fff;color:#0369a1;border-radius:14px;font-size:11px;cursor:pointer">🏦 บัญชีธนาคาร</button>
+              <button class="dep-chip" data-cat="Mixed" onclick="Page.setDepositFilter('Mixed')"
+                style="padding:3px 10px;border:1px solid #c4b5fd;background:#fff;color:#7c3aed;border-radius:14px;font-size:11px;cursor:pointer">🔄 โอนข้ามบัญชี</button>
+              <button class="dep-chip" data-cat="Cash" onclick="Page.setDepositFilter('Cash')"
+                style="padding:3px 10px;border:1px solid #fcd34d;background:#fff;color:#b45309;border-radius:14px;font-size:11px;cursor:pointer">💵 เงินสด</button>
+            </div>
             <div id="rAiHint" style="font-size:11px;color:#64748b;margin-top:6px">
               💡 ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว (Many-to-one) — หรือกด "AI จับคู่อัตโนมัติ" ให้ระบบวิเคราะห์ยอดและติ๊กให้
             </div>
@@ -858,11 +870,15 @@
       _pickerData: null,    // { bankTransactionId, bankTransactionDate, ..., payments:[], journalEntries:[] }
       _pickerTab: 'payment',
       _pickerSelected: [],  // [{ type, id, number, amount }]  — accumulates across tabs
+      _pickerDepFilter: '', // '' | 'Bank' | 'Mixed' | 'Cash'
       async openReconcileOne(transId) {
         document.getElementById('rTransId').value = transId;
         document.getElementById('rPickerSearch').value = '';
         this._pickerTab = 'payment';
         this._pickerSelected = [];
+        this._pickerDepFilter = '';
+        // Reset chip styles
+        setTimeout(() => this.setDepositFilter(''), 10);
         document.getElementById('rBankInfo').textContent = 'กำลังโหลด...';
         document.getElementById('rCandidateList').innerHTML =
           '<div style="text-align:center;color:#94a3b8;padding:40px">⏳ กำลังค้นหารายการที่อาจตรงกัน...</div>';
@@ -909,6 +925,22 @@
         this.renderPickerCandidates();
       },
       filterPickerCandidates() { this.renderPickerCandidates(); },
+      setDepositFilter(cat) {
+        this._pickerDepFilter = cat || '';
+        document.querySelectorAll('.dep-chip').forEach(b => {
+          const isActive = (b.dataset.cat || '') === this._pickerDepFilter;
+          b.style.background = isActive ? '#4F46E5' : '#fff';
+          b.style.color = isActive ? '#fff' : (
+            b.dataset.cat === 'Bank' ? '#0369a1' :
+            b.dataset.cat === 'Mixed' ? '#7c3aed' :
+            b.dataset.cat === 'Cash' ? '#b45309' : '#4F46E5');
+          b.style.borderColor = isActive ? '#4F46E5' : (
+            b.dataset.cat === 'Bank' ? '#93c5fd' :
+            b.dataset.cat === 'Mixed' ? '#c4b5fd' :
+            b.dataset.cat === 'Cash' ? '#fcd34d' : '#4F46E5');
+        });
+        this.renderPickerCandidates();
+      },
       isPickerSelected(type, id) {
         return (this._pickerSelected || []).some(s => s.type === type && s.id === id);
       },
@@ -972,6 +1004,10 @@
             (c.reference || '').toLowerCase().includes(search) ||
             String(c.amount).includes(search));
         }
+        // Apply deposit-category filter chip
+        if (this._pickerDepFilter) {
+          filtered = filtered.filter(c => c.depositCategory === this._pickerDepFilter);
+        }
 
         const container = document.getElementById('rCandidateList');
         if (!filtered.length) {
@@ -994,6 +1030,22 @@
           const isSel = this.isPickerSelected(c.type, c.id);
           const borderColor = isSel ? '#10b981' : '#e2e8f0';
           const bg = isSel ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : '#fff';
+
+          // Deposit badge — shows where money was booked in the GL.
+          // Bank category gets a strong green ring (great for matching),
+          // Cash category gets a warning amber ring (rare match for bank txn — usually
+          // the user should match the "deposit cash to bank" JE instead).
+          let depBadge = '';
+          if (c.depositLabel) {
+            const depColor = c.depositCategory === 'Bank' ? '#0369a1'
+                           : c.depositCategory === 'Mixed' ? '#7c3aed'
+                           : '#b45309';
+            const depBg = c.depositCategory === 'Bank' ? '#dbeafe'
+                        : c.depositCategory === 'Mixed' ? '#ede9fe'
+                        : '#fef3c7';
+            depBadge = `<span style="background:${depBg};color:${depColor};padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap">${this.esc(c.depositLabel)}</span>`;
+          }
+
           return `<div style="border:2px solid ${borderColor};border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all 0.15s;background:${bg}"
             onclick="Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
             <div style="display:flex;align-items:start;gap:12px">
@@ -1002,9 +1054,12 @@
                 ${c.score}%
               </div>
               <div style="flex:1;min-width:0">
-                <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px">
-                  <strong style="color:#0f172a">${this.esc(c.number)}</strong>
-                  <strong style="color:#4F46E5;font-size:15px">฿${Layout.money(c.amount)}</strong>
+                <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;align-items:center">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0">
+                    <strong style="color:#0f172a">${this.esc(c.number)}</strong>
+                    ${depBadge}
+                  </div>
+                  <strong style="color:#4F46E5;font-size:15px;white-space:nowrap">฿${Layout.money(c.amount)}</strong>
                 </div>
                 <div style="font-size:12px;color:#64748b;display:flex;gap:12px;flex-wrap:wrap">
                   <span>📅 ${dateStr}</span>

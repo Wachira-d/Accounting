@@ -173,7 +173,12 @@ public record MatchCandidate(
     int DateDiffDays,              // |bankDate - candidateDate|
     decimal AmountDiff,            // |bankAmount - candidateAmount|
     int Score,                     // 0-100 confidence
-    string? ScoreReason);
+    string? ScoreReason,
+    // Cash/Bank booking: where the money was originally posted in the GL.
+    // Helps user see whether the candidate is a cash receipt (won't appear on
+    // bank statement) or a bank receipt/transfer (matches a bank txn directly).
+    string? DepositLabel = null,   // e.g. "💵 เงินสด" / "🏦 KBANK 064-1-70621-3" / "💵 → 🏦"
+    string? DepositCategory = null);  // "Cash" / "Bank" / "Mixed" / "Other"
 
 public record MatchCandidatesResponse(
     Guid BankTransactionId,
