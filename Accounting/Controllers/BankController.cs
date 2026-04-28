@@ -117,6 +117,19 @@ public class BankController : ControllerBase
         return Ok(new ApiResponse<BankTransactionResponse>(true, result, "ยกเลิกการจับคู่สำเร็จ"));
     }
 
+    /// <summary>
+    /// List ranked match candidates (Payments + JournalEntries) for a bank transaction.
+    /// Used by the manual reconciliation picker so the user can choose from a list
+    /// instead of typing UUIDs.
+    /// </summary>
+    [HttpGet("transactions/{transactionId:guid}/match-candidates")]
+    public async Task<ActionResult<ApiResponse<MatchCandidatesResponse>>> GetMatchCandidates(
+        Guid companyId, Guid transactionId)
+    {
+        var result = await _bankService.GetMatchCandidatesAsync(companyId, transactionId);
+        return Ok(new ApiResponse<MatchCandidatesResponse>(true, result));
+    }
+
     [HttpDelete("transactions/{transactionId:guid}")]
     public async Task<ActionResult<ApiResponse<int>>> DeleteTransaction(Guid companyId, Guid transactionId)
     {

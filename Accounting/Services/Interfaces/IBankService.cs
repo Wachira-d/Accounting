@@ -31,4 +31,7 @@ public interface IBankService
     // Delete Transactions (soft-delete via TenantEntity.IsDeleted)
     Task<int> DeleteTransactionAsync(Guid companyId, Guid transactionId);
     Task<int> DeleteTransactionsAsync(Guid companyId, DeleteTransactionsRequest request);
+
+    // Match candidate picker
+    Task<MatchCandidatesResponse> GetMatchCandidatesAsync(Guid companyId, Guid bankTransactionId);
 }

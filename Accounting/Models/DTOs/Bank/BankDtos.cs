@@ -157,6 +157,32 @@ public record DeleteTransactionsRequest(
     DateTime? DateTo = null,
     bool DeleteReconciled = false);
 
+/// <summary>
+/// A potential match candidate for a bank transaction (a Payment or a JournalEntry).
+/// Returned by the picker UI's "find candidates" endpoint, ranked by Score (0..100).
+/// </summary>
+public record MatchCandidate(
+    string Type,                   // "Payment" or "JournalEntry"
+    Guid Id,
+    string Number,                 // PaymentNumber or EntryNumber
+    DateTime Date,
+    decimal Amount,
+    string Description,
+    string? CounterpartyName,      // customer/supplier name
+    string? Reference,
+    int DateDiffDays,              // |bankDate - candidateDate|
+    decimal AmountDiff,            // |bankAmount - candidateAmount|
+    int Score,                     // 0-100 confidence
+    string? ScoreReason);
+
+public record MatchCandidatesResponse(
+    Guid BankTransactionId,
+    DateTime BankTransactionDate,
+    decimal BankTransactionAmount,
+    string BankTransactionDescription,
+    List<MatchCandidate> Payments,
+    List<MatchCandidate> JournalEntries);
+
 public record BankTransactionDetailResponse(
     Guid Id,
     Guid BankAccountId,
