@@ -586,6 +586,9 @@ const API = {
       // e-Tax extended
       etaxSignAndSubmit: (id) => API.post(`${base}/etax/${id}/sign-and-submit`),
       etaxQuickSubmit: (d) => API.post(`${base}/etax/quick-submit`, d),
+      etaxGeneratePdf: (id) => API.post(`${base}/etax/${id}/generate-pdf`, {}),
+      etaxDownloadPdfUrl: (id) => `${base}/etax/${id}/pdf`,
+      etaxDownloadXmlUrl: (id) => `${base}/etax/${id}/xml`,
       // POS - Terminal
       getPosTerminals: () => API.get(`${base}/pos/terminals`),
       createPosTerminal: (d) => API.post(`${base}/pos/terminals`, d),

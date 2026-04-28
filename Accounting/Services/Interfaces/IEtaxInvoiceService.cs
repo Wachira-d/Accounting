@@ -14,4 +14,10 @@ public interface IEtaxInvoiceService
     Task<EtaxInvoiceResponse> SubmitToRevenueAsync(Guid companyId, Guid etaxId);
     Task<string> GetXmlAsync(Guid companyId, Guid etaxId);
     Task VoidAsync(Guid companyId, Guid etaxId);
+
+    /// <summary>
+    /// Build PDF/A-3 with embedded ETDA XML for e-Tax by Email compliance.
+    /// Persists the PDF and XML files to disk and updates the EtaxInvoice record.
+    /// </summary>
+    Task<(byte[] pdfBytes, string fileName)> GeneratePdfA3Async(Guid companyId, Guid etaxId);
 }

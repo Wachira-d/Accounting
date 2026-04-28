@@ -570,6 +570,20 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchGroupId" text NULL;
             """,
 
+            // ===== EtaxInvoices: file path columns for PDF/A-3 + XML persistence (Thai e-Tax by Email compliance) =====
+            """
+            ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "PdfFilePath" varchar(1000) NULL;
+            """,
+            """
+            ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "XmlFilePath" varchar(1000) NULL;
+            """,
+            """
+            ALTER TABLE "DocumentEmailLogs" ADD COLUMN IF NOT EXISTS "PdfFilePath" varchar(1000) NULL;
+            """,
+            """
+            ALTER TABLE "DocumentEmailLogs" ADD COLUMN IF NOT EXISTS "XmlFilePath" varchar(1000) NULL;
+            """,
+
             """
             CREATE TABLE IF NOT EXISTS "SiteSettings" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
