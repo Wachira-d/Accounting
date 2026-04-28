@@ -326,7 +326,7 @@ public class OpenBankingService : IOpenBankingService
         var import = new BankFeedImport
         {
             CompanyId = companyId,
-            BankConnectionId = Guid.Empty, // File import - no connection
+            BankConnectionId = null, // File import — no connection (FK is nullable)
             ImportDate = DateTime.UtcNow,
             PeriodStart = periodStart,
             PeriodEnd = periodEnd,
