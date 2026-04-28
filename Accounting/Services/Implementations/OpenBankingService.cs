@@ -199,7 +199,6 @@ public class OpenBankingService : IOpenBankingService
 
         // Decode the file content
         var fileBytes = Convert.FromBase64String(base64Content);
-        var fileContent = System.Text.Encoding.UTF8.GetString(fileBytes);
 
         int totalTransactions = 0;
         int newTransactions = 0;
@@ -207,76 +206,94 @@ public class OpenBankingService : IOpenBankingService
         int autoMatched = 0;
         var periodStart = DateTime.UtcNow;
         var periodEnd = DateTime.UtcNow;
-
-        // Parse based on file format
-        var lines = fileContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var fileContent = ""; // for non-CSV formats
 
         if (fileFormat.Equals("CSV", StringComparison.OrdinalIgnoreCase))
         {
-            // Skip header row
-            var dataLines = lines.Skip(1).ToList();
-            totalTransactions = dataLines.Count;
+            // Use the robust BankCsvParser shared with BankService.ImportBankStatement
+            var (parsedRows, _) = Helpers.BankCsvParser.ParseStatement(fileBytes);
+            totalTransactions = parsedRows.Count;
 
-            foreach (var line in dataLines)
+            if (parsedRows.Count > 0)
             {
-                var fields = line.Split(',');
-                if (fields.Length < 4) continue;
+                periodStart = parsedRows.Min(r => r.Date);
+                periodEnd = parsedRows.Max(r => r.Date);
+            }
 
-                if (!DateTime.TryParse(fields[0].Trim().Trim('"'), out var txDate)) continue;
-                var description = fields[1].Trim().Trim('"');
-                if (!decimal.TryParse(fields[2].Trim().Trim('"'), out var amount)) continue;
-                var reference = fields.Length > 3 ? fields[3].Trim().Trim('"') : null;
+            // Get current running balance once (rather than re-querying for each row)
+            var runningBalance = await _db.BankTransactions
+                .Where(t => t.BankAccountId == bankAccountId)
+                .OrderByDescending(t => t.TransactionDate)
+                .ThenByDescending(t => t.CreatedAt)
+                .Select(t => t.BalanceAfter)
+                .FirstOrDefaultAsync();
 
-                // Check for duplicate by reference and date
-                var txDayStart = txDate.Date;
+            foreach (var r in parsedRows)
+            {
+                var isDeposit = r.Deposit > 0;
+                var amount = isDeposit ? r.Deposit : r.Withdrawal;
+                if (amount <= 0) continue;
+
+                var signedAmount = isDeposit ? amount : -amount;
+
+                // Duplicate detection: same reference + same date, OR same date + amount + description
+                var txDayStart = r.Date.Date;
                 var txDayEnd = txDayStart.AddDays(1);
-                var isDuplicate = !string.IsNullOrEmpty(reference) && await _db.BankTransactions
-                    .AnyAsync(t => t.BankAccountId == bankAccountId
-                                && t.Reference == reference
-                                && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd);
-
-                if (isDuplicate)
+                bool isDuplicate;
+                if (!string.IsNullOrEmpty(r.Reference))
                 {
-                    duplicateSkipped++;
-                    continue;
+                    isDuplicate = await _db.BankTransactions
+                        .AnyAsync(t => t.BankAccountId == bankAccountId
+                                    && t.Reference == r.Reference
+                                    && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd);
+                }
+                else
+                {
+                    isDuplicate = await _db.BankTransactions
+                        .AnyAsync(t => t.BankAccountId == bankAccountId
+                                    && t.Amount == amount
+                                    && t.TransactionType == (isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal)
+                                    && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd
+                                    && t.Description == r.Description);
                 }
 
-                var txType = amount >= 0 ? BankTransactionType.Deposit : BankTransactionType.Withdrawal;
+                if (isDuplicate) { duplicateSkipped++; continue; }
 
-                // Get running balance
-                var lastBalance = await _db.BankTransactions
-                    .Where(t => t.BankAccountId == bankAccountId)
-                    .OrderByDescending(t => t.TransactionDate)
-                    .ThenByDescending(t => t.CreatedAt)
-                    .Select(t => t.BalanceAfter)
-                    .FirstOrDefaultAsync();
+                // Use balance from CSV if available, else compute running
+                var balanceAfter = r.Balance != 0 ? r.Balance : (runningBalance + signedAmount);
+                runningBalance = balanceAfter;
 
-                var newBalance = lastBalance + amount;
+                var desc = r.Description;
+                if (!string.IsNullOrWhiteSpace(r.Channel)) desc = $"{desc} | {r.Channel}";
+                if (desc.Length > 500) desc = desc[..500];
 
                 _db.BankTransactions.Add(new BankTransaction
                 {
                     CompanyId = companyId,
                     BankAccountId = bankAccountId,
-                    TransactionDate = txDate,
-                    TransactionType = txType,
+                    TransactionDate = r.Date,
+                    TransactionType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal,
                     Amount = amount,
-                    BalanceAfter = newBalance,
-                    Description = description,
-                    Reference = reference,
+                    BalanceAfter = balanceAfter,
+                    Description = desc,
+                    Reference = r.Reference,
                     ReconciliationStatus = ReconciliationStatus.Unmatched
                 });
 
                 newTransactions++;
-
-                if (txDate < periodStart) periodStart = txDate;
-                if (txDate > periodEnd) periodEnd = txDate;
             }
         }
         else if (fileFormat.Equals("OFX", StringComparison.OrdinalIgnoreCase) || fileFormat.Equals("QIF", StringComparison.OrdinalIgnoreCase))
         {
+            fileContent = System.Text.Encoding.UTF8.GetString(fileBytes);
+            var ofxLines = fileContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             // Simplified OFX/QIF parsing: count transactions from content structure
-            totalTransactions = lines.Count(l => l.Contains("<STMTTRN>") || l.StartsWith("D", StringComparison.OrdinalIgnoreCase));
+            totalTransactions = ofxLines.Count(l => l.Contains("<STMTTRN>") || l.StartsWith("D", StringComparison.OrdinalIgnoreCase));
             newTransactions = totalTransactions; // Simplified: treat all as new
+        }
+        else
+        {
+            throw new InvalidOperationException($"รูปแบบไฟล์ '{fileFormat}' ยังไม่รองรับ");
         }
 
         // Try auto-matching new transactions with existing payments

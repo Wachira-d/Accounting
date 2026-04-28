@@ -254,6 +254,17 @@
           <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
             <input type="file" class="form-input" id="impFile" accept=".csv,.ofx,.qif,.mt940,.txt">
           </div>
+          <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
+            <strong>📌 รูปแบบ CSV ที่รองรับ:</strong><br>
+            ระบบจะตรวจหาคอลัมน์อัตโนมัติ — ไฟล์ต้องมีหัวคอลัมน์ที่มีคำว่า:<br>
+            • <strong>วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
+            • <strong>ฝากเงิน/ถอนเงิน</strong> หรือ Deposit/Withdrawal (หรือคอลัมน์ Amount เดียวที่มีเครื่องหมาย +/-)<br>
+            • <strong>ยอดคงเหลือ</strong> หรือ Balance<br>
+            • (option) เวลา, รายการ, ช่องทาง, รายละเอียด, เลขอ้างอิง<br>
+            ✅ รองรับ Statement จาก KBank, SCB, BBL, KTB, BAY, TTB และอื่นๆ<br>
+            ✅ รองรับตัวเลขที่มี comma (5,998.50) และยอดติดลบในวงเล็บ<br>
+            ⚠️ บันทึกไฟล์เป็น <strong>UTF-8</strong> เพื่อให้แสดงภาษาไทยถูกต้อง
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')">ยกเลิก</button>
@@ -770,12 +781,22 @@
           reader.onload = async (e) => {
             const base64 = e.target.result.split(',')[1];
             try {
-              await api.importBankFile(accountId, format, base64);
+              const res = await api.importBankFile(accountId, format, base64);
               Layout.closeModal('importModal');
-              Layout.toast('นำเข้า Statement สำเร็จ');
+              const stats = res?.data;
+              const msg = stats
+                ? `นำเข้าสำเร็จ: ${stats.newTransactions || 0} รายการใหม่` +
+                  (stats.duplicateSkipped ? `, ข้าม ${stats.duplicateSkipped} รายการซ้ำ` : '') +
+                  (stats.autoMatched ? `, จับคู่อัตโนมัติ ${stats.autoMatched} รายการ` : '')
+                : 'นำเข้า Statement สำเร็จ';
+              Layout.toast(msg, 'success');
               if (this.selectedAccount?.id === accountId) await this.loadTransactions();
               await this.loadAccounts();
-            } catch (err) { Layout.toast(err.message, 'error'); }
+            } catch (err) {
+              const errMsg = err?.response?.data?.message || err?.data?.message || err?.message || 'นำเข้าล้มเหลว';
+              Layout.toast(errMsg, 'error', 8000);
+              console.error('Import error details:', err);
+            }
           };
           reader.readAsDataURL(file);
         } catch (e) { Layout.toast(e.message, 'error'); }
