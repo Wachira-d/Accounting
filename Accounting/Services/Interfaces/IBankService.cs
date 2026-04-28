@@ -34,4 +34,5 @@ public interface IBankService
 
     // Match candidate picker
     Task<MatchCandidatesResponse> GetMatchCandidatesAsync(Guid companyId, Guid bankTransactionId);
+    Task<AiMatchSuggestionResponse> SuggestMatchAsync(Guid companyId, Guid bankTransactionId);
 }

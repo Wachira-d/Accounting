@@ -155,6 +155,97 @@ public partial class BankService
             JournalEntries: rankedJournals);
     }
 
+    /// <summary>
+    /// AI auto-suggest: pick a subset of match candidates whose amounts sum to
+    /// the bank transaction's amount. Tries single match first (1-to-1 exact),
+    /// then many-to-one (via subset-sum backtracking). Searches Payments first,
+    /// then JournalEntries.
+    /// </summary>
+    public async Task<AiMatchSuggestionResponse> SuggestMatchAsync(Guid companyId, Guid bankTransactionId)
+    {
+        var data = await GetMatchCandidatesAsync(companyId, bankTransactionId);
+        var target = data.BankTransactionAmount;
+        const decimal tolerance = 0.01m; // 1 satang tolerance
+
+        // Helper: try to find a subset whose amounts sum to `target`.
+        // Returns selected IDs + total + exact flag.
+        static (List<Guid> ids, decimal sum, bool exact) PickSubset(List<MatchCandidate> items, decimal target, decimal tol)
+        {
+            // 1) Single exact match wins
+            var single = items.FirstOrDefault(i => Math.Abs(i.Amount - target) <= tol);
+            if (single != null) return (new List<Guid> { single.Id }, single.Amount, true);
+
+            // 2) Many-to-one subset-sum (limit to 20 to keep backtracking tractable)
+            var pool = items.Where(i => i.Amount > 0 && i.Amount <= target + tol)
+                .OrderByDescending(i => i.Score) // bias toward high-score candidates first
+                .Take(20)
+                .ToList();
+
+            var picks = new List<MatchCandidate>();
+            if (BacktrackGeneric(pool, 0, target, tol, picks, new List<MatchCandidate>()))
+                return (picks.Select(p => p.Id).ToList(), picks.Sum(p => p.Amount), true);
+
+            return (new List<Guid>(), 0m, false);
+        }
+
+        // Try Payments first (most common case for bank deposits = customer payments)
+        var (payIds, paySum, payExact) = PickSubset(data.Payments, target, tolerance);
+        if (payExact)
+        {
+            return new AiMatchSuggestionResponse(
+                Found: true, Type: "Payment",
+                SuggestedIds: payIds, SuggestedTotal: paySum,
+                BankTransactionAmount: target,
+                Difference: Math.Abs(target - paySum),
+                Message: payIds.Count == 1
+                    ? $"พบการชำระเงินที่ตรงเป๊ะ 1 รายการ"
+                    : $"AI วิเคราะห์: รวม {payIds.Count} การชำระเงิน = ฿{paySum:N2} (ตรงกับยอดธนาคาร)");
+        }
+
+        // Try JournalEntries
+        var (jeIds, jeSum, jeExact) = PickSubset(data.JournalEntries, target, tolerance);
+        if (jeExact)
+        {
+            return new AiMatchSuggestionResponse(
+                Found: true, Type: "JournalEntry",
+                SuggestedIds: jeIds, SuggestedTotal: jeSum,
+                BankTransactionAmount: target,
+                Difference: Math.Abs(target - jeSum),
+                Message: jeIds.Count == 1
+                    ? $"พบ Journal Entry ที่ตรงเป๊ะ 1 รายการ"
+                    : $"AI วิเคราะห์: รวม {jeIds.Count} Journal Entry = ฿{jeSum:N2} (ตรงกับยอดธนาคาร)");
+        }
+
+        return new AiMatchSuggestionResponse(
+            Found: false, Type: null,
+            SuggestedIds: new List<Guid>(),
+            SuggestedTotal: 0m,
+            BankTransactionAmount: target,
+            Difference: target,
+            Message: "AI ไม่พบรายการเดี่ยวหรือชุดที่รวมแล้วได้ยอดตรงเป๊ะ — กรุณาเลือกด้วยตนเอง");
+    }
+
+    private static bool BacktrackGeneric(
+        List<MatchCandidate> items, int idx, decimal target, decimal tolerance,
+        List<MatchCandidate> result, List<MatchCandidate> current)
+    {
+        if (Math.Abs(target) <= tolerance && current.Count >= 1)
+        {
+            result.AddRange(current);
+            return true;
+        }
+        if (idx >= items.Count || target < -tolerance) return false;
+
+        // Include
+        current.Add(items[idx]);
+        if (BacktrackGeneric(items, idx + 1, target - items[idx].Amount, tolerance, result, current))
+            return true;
+        current.RemoveAt(current.Count - 1);
+
+        // Skip
+        return BacktrackGeneric(items, idx + 1, target, tolerance, result, current);
+    }
+
     private static (int score, string reason) ScoreCandidate(
         decimal candidateAmount, decimal bankAmount,
         DateTime candidateDate, DateTime bankDate,
