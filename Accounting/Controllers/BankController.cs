@@ -116,4 +116,23 @@ public class BankController : ControllerBase
         var result = await _bankService.UnmatchTransactionAsync(companyId, request);
         return Ok(new ApiResponse<BankTransactionResponse>(true, result, "ยกเลิกการจับคู่สำเร็จ"));
     }
+
+    [HttpDelete("transactions/{transactionId:guid}")]
+    public async Task<ActionResult<ApiResponse<int>>> DeleteTransaction(Guid companyId, Guid transactionId)
+    {
+        var count = await _bankService.DeleteTransactionAsync(companyId, transactionId);
+        return Ok(new ApiResponse<int>(true, count, "ลบรายการสำเร็จ"));
+    }
+
+    /// <summary>
+    /// Bulk delete transactions — by ID list, or by bank account + date range.
+    /// Reconciled transactions are skipped unless DeleteReconciled=true.
+    /// </summary>
+    [HttpPost("transactions/bulk-delete")]
+    public async Task<ActionResult<ApiResponse<int>>> BulkDeleteTransactions(
+        Guid companyId, [FromBody] DeleteTransactionsRequest request)
+    {
+        var count = await _bankService.DeleteTransactionsAsync(companyId, request);
+        return Ok(new ApiResponse<int>(true, count, $"ลบ {count} รายการสำเร็จ"));
+    }
 }

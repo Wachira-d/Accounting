@@ -144,6 +144,19 @@ public record BatchReconcileItem(
 
 public record UnmatchRequest(Guid BankTransactionId);
 
+/// <summary>
+/// Bulk delete bank transactions. Supply at least one filter:
+/// - TransactionIds: explicit list of transaction IDs to delete
+/// - BankAccountId + (DateFrom..DateTo): delete all transactions in range
+/// - DeleteReconciled: if false (default), reconciled transactions are skipped
+/// </summary>
+public record DeleteTransactionsRequest(
+    List<Guid>? TransactionIds = null,
+    Guid? BankAccountId = null,
+    DateTime? DateFrom = null,
+    DateTime? DateTo = null,
+    bool DeleteReconciled = false);
+
 public record BankTransactionDetailResponse(
     Guid Id,
     Guid BankAccountId,

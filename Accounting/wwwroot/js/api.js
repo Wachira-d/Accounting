@@ -232,6 +232,8 @@ const API = {
       getReconciliationSummary: (id) => API.get(`${base}/bank/accounts/${id}/reconciliation-summary`),
       batchReconcile: (d) => API.post(`${base}/bank/batch-reconcile`, d),
       unmatchTransaction: (d) => API.post(`${base}/bank/unmatch`, d),
+      deleteBankTransaction: (txnId) => API.del(`${base}/bank/transactions/${txnId}`),
+      bulkDeleteBankTransactions: (d) => API.post(`${base}/bank/transactions/bulk-delete`, d),
       // Open Banking
       getConnections: () => API.get(`${base}/open-banking/connections`),
       createConnection: (d) => API.post(`${base}/open-banking/connections`, d),

@@ -60,11 +60,20 @@
           <input type="date" class="form-input" id="transFrom" style="width:140px" onchange="Page.loadTransactions()">
           <span class="text-gray-400">ถึง</span>
           <input type="date" class="form-input" id="transTo" style="width:140px" onchange="Page.loadTransactions()">
+          <button class="btn btn-sm btn-outline" onclick="Page.openBulkDeleteModal()" style="margin-left:auto;color:var(--danger);border-color:var(--danger)">🗑️ ลบหลายรายการ / ตามช่วงวันที่</button>
+        </div>
+        <div id="bulkActionBar" style="display:none;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:8px;display:none;align-items:center;gap:12px">
+          <span class="font-medium" id="bulkSelectedCount">0 รายการที่เลือก</span>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteSelectedTransactions()">ลบที่เลือกทั้งหมด</button>
+          <button class="btn btn-sm btn-ghost" onclick="Page.clearTransSelection()">ยกเลิก</button>
         </div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th>คำอธิบาย</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-            <tbody id="transBody"><tr><td colspan="7" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
+            <thead><tr>
+              <th style="width:30px"><input type="checkbox" id="transSelectAll" onchange="Page.toggleSelectAllTrans(this.checked)"></th>
+              <th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th>คำอธิบาย</th><th>สถานะ</th><th>จัดการ</th>
+            </tr></thead>
+            <tbody id="transBody"><tr><td colspan="8" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
           </table>
         </div>
         <div id="transPagination" style="padding:12px 16px"></div>
@@ -273,6 +282,45 @@
       </div>
     </div>
 
+    <!-- Bulk Delete By Date Range Modal -->
+    <div class="modal-overlay" id="bulkDeleteModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 class="modal-title" style="color:var(--danger)">🗑️ ลบรายการธนาคารตามช่วงวันที่</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bulkDeleteModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;font-size:13px;color:#991b1b;margin-bottom:16px;line-height:1.5">
+            <strong>⚠️ คำเตือน:</strong> การลบรายการเป็นแบบถาวร (soft-delete) — รายการที่ลบจะหายจากรายงานและการกระทบยอด<br>
+            ใช้ฟีเจอร์นี้เมื่อ <strong>นำเข้าผิดปี</strong> หรือ <strong>ผิดช่วงวันที่</strong>
+          </div>
+          <div class="form-group">
+            <label class="form-label">บัญชีธนาคาร</label>
+            <input type="text" class="form-input" id="bdAccountName" disabled style="background:#f8fafc">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label class="form-label">ตั้งแต่วันที่</label>
+              <input type="date" class="form-input" id="bdFrom">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ถึงวันที่</label>
+              <input type="date" class="form-input" id="bdTo">
+            </div>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:12px">เว้นว่าง = ไม่จำกัดด้านนั้น (เช่น เว้นวันที่เริ่ม = ลบตั้งแต่รายการแรกสุด)</div>
+          <label class="form-checkbox" style="background:#fff7ed;padding:10px;border-radius:6px;border:1px solid #fed7aa">
+            <input type="checkbox" id="bdIncludeReconciled">
+            <span style="font-size:13px"><strong>รวมรายการที่กระทบยอดแล้ว</strong> — เลือกถ้าต้องการลบทั้งหมด รวมถึงรายการที่ match กับการชำระเงิน/journal</span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkDeleteModal')">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.confirmBulkDeleteByRange()">ลบรายการตามช่วง</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Create Connection Modal -->
     <div class="modal-overlay" id="connModal">
       <div class="modal">
@@ -408,18 +456,114 @@
         if (typeF) items = items.filter(t => t.transactionType === typeF);
         if (statusF) items = items.filter(t => (t.reconciliationStatus || 'Unmatched') === statusF);
         const tbody = document.getElementById('transBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีรายการ</td></tr>'; return; }
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400">ไม่มีรายการ</td></tr>'; this.updateBulkBar(); return; }
         const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
         const isCredit = t => t === 'Deposit' || t === 'Interest';
+        const sel = this.selectedTxnIds || new Set();
         tbody.innerHTML = items.map(t => `<tr>
+          <td><input type="checkbox" class="trans-check" data-id="${t.id}" ${sel.has(t.id) ? 'checked' : ''} onchange="Page.toggleTransSelection('${t.id}', this.checked)"></td>
           <td>${Layout.date(t.transactionDate)}</td>
           <td><span class="badge ${isCredit(t.transactionType) ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
           <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
-          <td>${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}</td>
+          <td>
+            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}
+            <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
+          </td>
         </tr>`).join('');
+        this.updateBulkBar();
+      },
+
+      // === DELETE: selection + bulk + by-date-range ===
+      selectedTxnIds: new Set(),
+      toggleTransSelection(id, checked) {
+        if (!this.selectedTxnIds) this.selectedTxnIds = new Set();
+        if (checked) this.selectedTxnIds.add(id); else this.selectedTxnIds.delete(id);
+        this.updateBulkBar();
+      },
+      toggleSelectAllTrans(checked) {
+        if (!this.selectedTxnIds) this.selectedTxnIds = new Set();
+        document.querySelectorAll('.trans-check').forEach(cb => {
+          cb.checked = checked;
+          const id = cb.dataset.id;
+          if (checked) this.selectedTxnIds.add(id); else this.selectedTxnIds.delete(id);
+        });
+        this.updateBulkBar();
+      },
+      clearTransSelection() {
+        this.selectedTxnIds = new Set();
+        document.querySelectorAll('.trans-check').forEach(cb => cb.checked = false);
+        const all = document.getElementById('transSelectAll');
+        if (all) all.checked = false;
+        this.updateBulkBar();
+      },
+      updateBulkBar() {
+        const bar = document.getElementById('bulkActionBar');
+        const cnt = (this.selectedTxnIds && this.selectedTxnIds.size) || 0;
+        if (bar) {
+          bar.style.display = cnt > 0 ? 'flex' : 'none';
+          const span = document.getElementById('bulkSelectedCount');
+          if (span) span.textContent = cnt + ' รายการที่เลือก';
+        }
+      },
+      async deleteOneTransaction(id) {
+        if (!(await Layout.confirmDanger({ title: 'ลบรายการ', message: 'ลบรายการธนาคารนี้? ถ้ารายการกระทบยอดแล้วจะถูกยกเลิกการจับคู่ด้วย', mode: 'simple', confirmText: 'ลบ' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteBankTransaction(id);
+          Layout.toast('ลบรายการสำเร็จ', 'success');
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteSelectedTransactions() {
+        const ids = Array.from(this.selectedTxnIds || []);
+        if (!ids.length) return;
+        if (!(await Layout.confirmDanger({ title: `ลบ ${ids.length} รายการ`, message: 'ลบรายการที่เลือกทั้งหมด? รายการที่กระทบยอดแล้วจะถูกข้าม', mode: 'type', confirmText: 'confirm' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.bulkDeleteBankTransactions({ transactionIds: ids, deleteReconciled: false });
+          Layout.toast(`ลบ ${res.data || 0} รายการสำเร็จ`, 'success');
+          this.clearTransSelection();
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      openBulkDeleteModal() {
+        if (!this.selectedAccount) { Layout.toast('กรุณาเลือกบัญชีก่อน', 'error'); return; }
+        document.getElementById('bdAccountName').textContent = this.selectedAccount.accountName + ' - ' + this.selectedAccount.bankName;
+        document.getElementById('bdFrom').value = '';
+        document.getElementById('bdTo').value = '';
+        document.getElementById('bdIncludeReconciled').checked = false;
+        Layout.openModal('bulkDeleteModal');
+      },
+      async confirmBulkDeleteByRange() {
+        const from = document.getElementById('bdFrom').value;
+        const to = document.getElementById('bdTo').value;
+        const includeReconciled = document.getElementById('bdIncludeReconciled').checked;
+        if (!from && !to) { Layout.toast('กรุณาระบุช่วงวันที่อย่างน้อย 1 ด้าน', 'error'); return; }
+        const range = (from || '–') + ' ถึง ' + (to || '–');
+        if (!(await Layout.confirmDanger({
+          title: 'ลบรายการทั้งหมดตามช่วงวันที่',
+          message: `ลบรายการในบัญชี "${this.selectedAccount.accountName}" ช่วง ${range}${includeReconciled ? ' (รวมที่กระทบยอดแล้ว)' : ' (ยกเว้นที่กระทบยอดแล้ว)'} ?`,
+          mode: 'type', confirmText: 'confirm'
+        }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.bulkDeleteBankTransactions({
+            bankAccountId: this.selectedAccount.id,
+            dateFrom: from || null,
+            dateTo: to || null,
+            deleteReconciled: includeReconciled
+          });
+          Layout.toast(`ลบ ${res.data || 0} รายการสำเร็จ`, 'success');
+          Layout.closeModal('bulkDeleteModal');
+          this.clearTransSelection();
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
       goTransPage(p) { Page.transPage = p; Page.loadTransactions(); },
       // === RECONCILIATION SUMMARY ===
@@ -790,8 +934,41 @@
                   (stats.autoMatched ? `, จับคู่อัตโนมัติ ${stats.autoMatched} รายการ` : '')
                 : 'นำเข้า Statement สำเร็จ';
               Layout.toast(msg, 'success');
-              if (this.selectedAccount?.id === accountId) await this.loadTransactions();
+
+              // 1) Refresh accounts (balance may have changed)
               await this.loadAccounts();
+
+              // 2) Auto-select the account that was imported into so the user
+              //    immediately sees the new rows on screen.
+              const target = (this.accounts || []).find(a => a.id === accountId);
+              if (target) {
+                this.selectedAccount = target;
+                const ts = document.getElementById('transSection');
+                if (ts) ts.style.display = 'block';
+                const tt = document.getElementById('transTitle');
+                if (tt) tt.textContent = `รายการเคลื่อนไหว - ${target.accountName}`;
+                const ra = document.getElementById('reconAccountName');
+                if (ra) ra.textContent = target.accountName;
+                this.transPage = 1;
+
+                // 3) Clear date/status/search filters — imported rows may be outside
+                //    whatever the user had filtered to (this is the actual reason
+                //    "ไม่ขึ้นข้อมูลอะไร" — old filter hides them).
+                const fromEl = document.getElementById('transFrom');
+                const toEl = document.getElementById('transTo');
+                const searchEl = document.getElementById('transSearch');
+                const typeEl = document.getElementById('transTypeFilter');
+                const statusEl = document.getElementById('transStatusFilter');
+                if (fromEl) fromEl.value = '';
+                if (toEl) toEl.value = '';
+                if (searchEl) searchEl.value = '';
+                if (typeEl) typeEl.value = '';
+                if (statusEl) statusEl.value = '';
+
+                // 4) Reload transactions and scroll into view
+                await this.loadTransactions();
+                ts?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
             } catch (err) {
               const errMsg = err?.response?.data?.message || err?.data?.message || err?.message || 'นำเข้าล้มเหลว';
               Layout.toast(errMsg, 'error', 8000);
