@@ -375,14 +375,22 @@ public class PayrollService : IPayrollService
                     otherDeductions += amount;
                 }
 
-                var grossIncome = emp.BaseSalary + overtimePay + allowances + commission + bonus + otherIncome;
+                // Deduct unpaid leave from base salary
+                var unpaidLeaveDays = approvedLeaves
+                    .Where(l => l.LeaveType == "UnpaidLeave" || l.LeaveType == "ลาไม่รับค่าจ้าง")
+                    .Sum(l => l.TotalDays);
+                var leaveDeduction = workDaysInMonth > 0
+                    ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2)
+                    : 0m;
 
-                // Social security calculation
+                var grossIncome = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+
+                // Social security: base on BaseSalary (not gross), capped at 15,000 THB/month per Thai SSO law
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
                 if (emp.IsSubjectToSocialSecurity)
                 {
-                    var ssoBase = Math.Min(grossIncome, SsoMaxBase);
+                    var ssoBase = Math.Min(emp.BaseSalary, SsoMaxBase);
                     ssoEmployee = Math.Min(ssoBase * SsoRate, SsoMaxContribution);
                     ssoEmployer = ssoEmployee;
                 }
@@ -396,8 +404,9 @@ public class PayrollService : IPayrollService
                     pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
                 }
 
-                // Thai withholding tax calculation (annualized method) on full gross income
-                var estimatedAnnualIncome = cumulativeIncome + grossIncome * (13 - run.Month);
+                // Thai withholding tax: TRD-standard annualization = (YTD including this month) * 12 / elapsed months
+                var ytdIncome = cumulativeIncome + grossIncome;
+                var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
                 var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedAnnualIncome);
                 var remainingMonths = 13 - run.Month;
                 var monthlyTax = remainingMonths > 0

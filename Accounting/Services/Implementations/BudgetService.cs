@@ -172,7 +172,12 @@ public class BudgetService : IBudgetService
         var lines = budget.Lines.Select(line =>
         {
             var budgetAmount = line.TotalBudget;
-            var actualAmount = actualDict.GetValueOrDefault(line.AccountId);
+            var rawActual = actualDict.GetValueOrDefault(line.AccountId);
+            // Revenue (4xxxx) and Liability (2xxxx) accounts are credit-normal: actual = Cr - Dr
+            var isRevOrLiab = line.Account?.AccountCode?.StartsWith("4") == true
+                || line.Account?.AccountCode?.StartsWith("2") == true
+                || line.Account?.AccountCode?.StartsWith("3") == true;
+            var actualAmount = isRevOrLiab ? -rawActual : rawActual;
             var variance = budgetAmount - actualAmount;
             var variancePercent = budgetAmount != 0 ? (variance / budgetAmount) * 100 : 0;
 

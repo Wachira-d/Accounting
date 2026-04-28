@@ -80,7 +80,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
 
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.3|{thaiYear}|{month:D2}|{certs.Count}|{totalIncome:F2}|{totalTax:F2}");
+        var totalDetailRows = certs.Sum(c => c.Lines.Count);
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.3|{thaiYear}|{month:D2}|{totalDetailRows}|{totalIncome:F2}|{totalTax:F2}");
 
         int seq = 1;
         foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
@@ -88,7 +89,6 @@ public class TaxFilingExportService : ITaxFilingExportService
             var contact = cert.PayeeContact;
             foreach (var line in cert.Lines.OrderBy(l => l.LineOrder))
             {
-                // D|Seq|TitleTh|Name|TaxId|PaymentDate|IncomeTypeCode|IncomeAmount|TaxRate|TaxAmount|Condition
                 sb.AppendLine($"D|{seq++}||{contact.Name}|{contact.TaxId}|{line.PaymentDate:dd/MM}/{thaiYear}|{MapIncomeTypeCode(line.IncomeTypeCode)}|{line.IncomeAmount:F2}|{line.TaxRate:F2}|{line.TaxAmount:F2}|{(int)cert.CertificateType}");
             }
         }
@@ -121,7 +121,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
 
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.53|{thaiYear}|{month:D2}|{certs.Count}|{totalIncome:F2}|{totalTax:F2}");
+        var totalDetailRows53 = certs.Sum(c => c.Lines.Count);
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.53|{thaiYear}|{month:D2}|{totalDetailRows53}|{totalIncome:F2}|{totalTax:F2}");
 
         int seq = 1;
         foreach (var cert in certs.OrderBy(c => c.CertificateNumber))

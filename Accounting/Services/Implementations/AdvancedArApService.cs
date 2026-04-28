@@ -176,9 +176,20 @@ public class AdvancedArApService : IAdvancedArApService
         if (!overdueInvoices.Any())
             throw new InvalidOperationException("ไม่มีใบแจ้งหนี้ค้างชำระที่เกินกำหนด");
 
-        var count = await _db.Set<DunningLetter>()
-            .CountAsync(d => d.CompanyId == companyId);
-        var letterNumber = $"DUN-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+        var dunYm = DateTime.UtcNow.ToString("yyyyMM");
+        var dunPrefix = $"DUN-{dunYm}-";
+        var maxDun = await _db.Set<DunningLetter>()
+            .IgnoreQueryFilters()
+            .Where(d => d.CompanyId == companyId && d.LetterNumber.StartsWith(dunPrefix))
+            .Select(d => d.LetterNumber)
+            .MaxAsync() as string;
+        var dunSeq = 1;
+        if (maxDun != null)
+        {
+            var lastPart = maxDun.Substring(dunPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) dunSeq = parsed + 1;
+        }
+        var letterNumber = $"{dunPrefix}{dunSeq:D4}";
 
         var totalOverdue = overdueInvoices.Sum(d => d.BalanceDue);
         var oldestDays = (int)(today - overdueInvoices.Min(d => d.DueDate!.Value)).TotalDays;

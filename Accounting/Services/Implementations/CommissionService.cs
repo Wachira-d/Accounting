@@ -191,11 +191,15 @@ public class CommissionService : ICommissionService
             }
             else if (assignment.Plan.CalculationBasis == "CollectedAmount")
             {
-                // Sum actual payments received
+                // Sum actual payments received, filtered by employee if assigned
                 var paymentQuery = _db.Payments
+                    .Include(p => p.Document)
                     .Where(p => p.CompanyId == companyId
                         && p.PaymentDate >= periodStart
                         && p.PaymentDate <= periodEnd);
+
+                if (assignment.EmployeeId.HasValue)
+                    paymentQuery = paymentQuery.Where(p => p.Document != null && p.Document.CreatedBy == assignment.EmployeeId.ToString());
 
                 basisAmount = await paymentQuery.SumAsync(p => p.Amount);
             }

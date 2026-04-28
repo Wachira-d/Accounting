@@ -166,9 +166,19 @@ public class WarehouseService : IWarehouseService
         if (request.FromWarehouseId == request.ToWarehouseId)
             throw new InvalidOperationException("คลังต้นทางและปลายทางต้องไม่เป็นคลังเดียวกัน");
 
-        // Generate transfer number
-        var count = await _db.StockTransfers.CountAsync(t => t.CompanyId == companyId);
-        var transferNumber = $"TRF-{count + 1:D6}";
+        var trfPrefix = "TRF-";
+        var maxTrf = await _db.StockTransfers
+            .IgnoreQueryFilters()
+            .Where(t => t.CompanyId == companyId && t.TransferNumber.StartsWith(trfPrefix))
+            .Select(t => t.TransferNumber)
+            .MaxAsync() as string;
+        var trfSeq = 1;
+        if (maxTrf != null)
+        {
+            var lastPart = maxTrf.Substring(trfPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) trfSeq = parsed + 1;
+        }
+        var transferNumber = $"{trfPrefix}{trfSeq:D6}";
 
         var transfer = new StockTransfer
         {
