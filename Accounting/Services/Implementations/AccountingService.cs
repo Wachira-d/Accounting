@@ -226,6 +226,9 @@ public class AccountingService : IAccountingService
             if (!companyAccountIds.Contains(line.AccountId))
                 throw new InvalidOperationException($"ไม่พบบัญชี {line.AccountId} ในผังบัญชีของบริษัท");
 
+            if (line.DebitAmount < 0 || line.CreditAmount < 0)
+                throw new InvalidOperationException("ยอดเดบิตและเครดิตต้องไม่ติดลบ");
+
             if (line.DebitAmount > 0 && line.CreditAmount > 0)
                 throw new InvalidOperationException("แต่ละรายการต้องมียอดเดบิตหรือเครดิตเพียงด้านเดียว");
         }
@@ -1337,7 +1340,7 @@ public class AccountingService : IAccountingService
         // Financing Activities: Long-term liabilities (221xxx) + Equity (31xxx)
         var financingItems = new List<CashFlowLineItem>();
         var longTermDebtChange = postedLines
-            .Where(l => l.Account.AccountCode.StartsWith("22"))
+            .Where(l => l.Account.AccountCode.StartsWith("221"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (longTermDebtChange != 0)
             financingItems.Add(new CashFlowLineItem("เงินกู้ยืมระยะยาว เพิ่มขึ้น/(ลดลง)", "221", longTermDebtChange));

@@ -221,16 +221,27 @@ public class ExpenseClaimService : IExpenseClaimService
         if (claim.Status != ExpenseClaimStatus.Approved)
             throw new InvalidOperationException("สามารถจ่ายเงินได้เฉพาะใบเบิกที่ Approved");
 
-        claim.Status = ExpenseClaimStatus.Paid;
-        claim.PaidAt = DateTime.UtcNow;
-        claim.PaidMethod = request.PaymentMethod;
-        claim.PaidReference = request.Reference;
-        await _db.SaveChangesAsync();
-
-        // Create PV journal entry: Dr Expense accounts, Cr Cash
-        if (_accountingService != null)
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            await CreateExpenseClaimJournalAsync(companyId, claim);
+            claim.Status = ExpenseClaimStatus.Paid;
+            claim.PaidAt = DateTime.UtcNow;
+            claim.PaidMethod = request.PaymentMethod;
+            claim.PaidReference = request.Reference;
+
+            // Create PV journal entry: Dr Expense accounts, Cr Cash
+            if (_accountingService != null)
+            {
+                await CreateExpenseClaimJournalAsync(companyId, claim);
+            }
+
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
         }
 
         return await GetByIdAsync(companyId, claim.Id);

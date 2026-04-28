@@ -514,17 +514,17 @@ public class PayrollService : IPayrollService
         if (alreadyPaid)
             throw new InvalidOperationException($"รอบจ่ายเงินเดือน {run.Year}/{run.Month:D2} ถูกจ่ายไปแล้ว");
 
-        run.Status = "Paid";
-        run.UpdatedBy = processedBy;
-        run.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        // Create journal entry for payroll
-        // Dr: เงินเดือนและค่าจ้าง (531xxx), Cr: เงินสด/ธนาคาร + ภาษีหัก ณ ที่จ่าย + ประกันสังคม
-        if (_accountingService != null && run.TotalGrossSalary > 0)
+        await using var payTransaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            try
+            run.Status = "Paid";
+            run.UpdatedBy = processedBy;
+            run.UpdatedAt = DateTime.UtcNow;
+
+            if (_accountingService != null && run.TotalGrossSalary > 0)
             {
+                try
+                {
                 var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
                 // Dr: เงินเดือนและค่าจ้าง (541 - ค่าใช้จ่ายบุคลากร)
@@ -637,6 +637,15 @@ public class PayrollService : IPayrollService
                 throw new InvalidOperationException(
                     $"Payroll journal creation failed: {ex.Message}", ex);
             }
+            }
+
+            await _db.SaveChangesAsync();
+            await payTransaction.CommitAsync();
+        }
+        catch
+        {
+            await payTransaction.RollbackAsync();
+            throw;
         }
 
         return MapToPayrollRunResponse(run);

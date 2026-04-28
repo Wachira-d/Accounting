@@ -250,6 +250,9 @@ public partial class PosService
         if (totalPaid < order.NetAmount)
             throw new InvalidOperationException($"ยอดชำระ ({totalPaid:N2}) ไม่ครบ ยอดที่ต้องจ่าย ({order.NetAmount:N2})");
 
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        try
+        {
         order.Status = PosOrderStatus.Completed;
         order.CompletedAt = DateTime.UtcNow;
 
@@ -279,6 +282,13 @@ public partial class PosService
         }
 
         await _db.SaveChangesAsync();
+        await txn.CommitAsync();
+        }
+        catch
+        {
+            await txn.RollbackAsync();
+            throw;
+        }
         return await GetOrderAsync(companyId, orderId);
     }
 
