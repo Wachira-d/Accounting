@@ -44,6 +44,8 @@ public record DocumentEmailLogResponse(
 public record EmailConfigResponse(
     EmailProvider Provider,
     string? FromAddress,
+    string? FromName,
+    string? ReplyTo,
     bool Configured,
     DateTime? LastTestedAt,
     string? LastTestStatus,
@@ -72,6 +74,8 @@ public record GmailConfigDto(
 public record UpdateEmailConfigRequest(
     EmailProvider Provider,
     string? FromAddress,
+    string? FromName,
+    string? ReplyTo,
     SmtpConfigInput? Smtp,
     MicrosoftGraphConfigInput? Microsoft,
     GmailConfigInput? Gmail);
