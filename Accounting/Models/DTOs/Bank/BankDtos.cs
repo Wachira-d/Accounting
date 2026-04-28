@@ -181,7 +181,10 @@ public record MatchCandidatesResponse(
     decimal BankTransactionAmount,
     string BankTransactionDescription,
     List<MatchCandidate> Payments,
-    List<MatchCandidate> JournalEntries);
+    List<MatchCandidate> JournalEntries,
+    // Diagnostics: how many candidates were excluded because they're already matched
+    // to a sibling bank transaction. Useful for the UI to show transparency.
+    int ExcludedAlreadyMatchedCount = 0);
 
 /// <summary>
 /// AI auto-suggestion for many-to-one match — finds the subset of candidates whose

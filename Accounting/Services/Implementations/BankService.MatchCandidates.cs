@@ -38,12 +38,23 @@ public partial class BankService
         var dateMin = bankDate.AddDays(-60);
         var dateMax = bankDate.AddDays(60);
 
+        // IMPORTANT: include EVERY sibling bank transaction that has ANY non-null
+        // match reference, regardless of ReconciliationStatus. This is intentionally
+        // more aggressive than just `Status == Matched` because:
+        //   • A txn may have stale match IDs after partial unmatch flows
+        //   • Legacy data from before the JSON column existed only stored the first
+        //     ID — we still want to exclude that first ID via direct columns
+        //   • Better to be over-cautious (hide a possibly-available candidate) than
+        //     show duplicates that lead to double-matching.
         var siblingMatched = await _db.Set<BankTransaction>()
             .AsNoTracking()
             .Where(t => t.CompanyId == companyId
                      && t.Id != bankTransactionId
-                     && t.ReconciliationStatus == ReconciliationStatus.Matched)
-            .Select(t => new { t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson })
+                     && (t.MatchedPaymentId != null
+                         || t.MatchedJournalEntryId != null
+                         || t.MatchedEntryIdsJson != null
+                         || t.MatchGroupId != null))
+            .Select(t => new { t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson, t.MatchGroupId })
             .ToListAsync();
 
         var usedPaymentIds = new HashSet<Guid>();
@@ -156,7 +167,8 @@ public partial class BankService
             BankTransactionAmount: bankTxn.Amount,
             BankTransactionDescription: bankTxn.Description ?? "",
             Payments: rankedPayments,
-            JournalEntries: rankedJournals);
+            JournalEntries: rankedJournals,
+            ExcludedAlreadyMatchedCount: usedPaymentIds.Count + usedJeIds.Count);
     }
 
     /// <summary>

@@ -887,6 +887,12 @@
           document.getElementById('rPaymentCount').textContent = (d.payments || []).length;
           document.getElementById('rJournalCount').textContent = (d.journalEntries || []).length;
           document.getElementById('rBankSumDisplay').textContent = '฿' + amtStr;
+          // Show transparency hint: how many candidates were filtered out
+          const excluded = d.excludedAlreadyMatchedCount || 0;
+          const aiHint = document.getElementById('rAiHint');
+          if (excluded > 0 && aiHint) {
+            aiHint.innerHTML = `<span style="color:#0369a1">🔒 ซ่อน ${excluded} รายการที่ถูกจับคู่กับธุรกรรมอื่นแล้ว</span> — ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว หรือกด "AI จับคู่อัตโนมัติ"`;
+          }
           this.renderPickerCandidates();
         } catch(e) {
           document.getElementById('rCandidateList').innerHTML =
