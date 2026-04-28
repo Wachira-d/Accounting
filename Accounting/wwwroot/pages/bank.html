@@ -73,22 +73,88 @@
 
     <!-- Reconciliation Tab -->
     <div id="tabReconcile" style="display:none">
-      <div class="grid grid-2 gap-4" style="margin-bottom:16px">
+      <!-- Summary Cards -->
+      <div class="grid grid-4 gap-4" style="margin-bottom:16px" id="reconSummaryCards">
         <div class="card"><div class="text-gray-500 text-xs">บัญชีที่เลือก</div><div class="text-lg font-bold" id="reconAccountName">ยังไม่ได้เลือก</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">รายการรอจับคู่</div><div class="text-2xl font-bold text-warning" id="reconCount">0</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">ยอดตาม Statement</div><div class="text-xl font-bold" id="reconBankBal">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">ยอดตามบัญชี (GL)</div><div class="text-xl font-bold" id="reconBookBal">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">ผลต่าง</div><div class="text-xl font-bold" id="reconDiff" style="color:var(--danger)">-</div></div>
       </div>
+      <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+        <div class="card text-center"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold" id="reconTotal">0</div></div>
+        <div class="card text-center"><div class="text-gray-500 text-xs">จับคู่แล้ว</div><div class="text-2xl font-bold text-success" id="reconMatched">0</div></div>
+        <div class="card text-center"><div class="text-gray-500 text-xs">รอจับคู่</div><div class="text-2xl font-bold text-warning" id="reconCount">0</div></div>
+        <div class="card text-center"><div class="text-gray-500 text-xs">ไม่รวม</div><div class="text-2xl font-bold text-gray-400" id="reconExcluded">0</div></div>
+      </div>
+
+      <!-- AI Match Controls -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <h3 class="card-title">AI กระทบยอดอัตโนมัติ</h3>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่พื้นฐาน</button>
+            <button class="btn btn-sm btn-primary" onclick="Page.runAiMatch()" id="btnAiMatch" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">AI วิเคราะห์และจับคู่</button>
+          </div>
+        </div>
+        <div id="aiMatchStatus" style="padding:0 16px 12px;display:none">
+          <div style="background:var(--bg-secondary);border-radius:8px;padding:12px 16px">
+            <div class="flex items-center gap-2" style="margin-bottom:8px">
+              <div style="width:8px;height:8px;border-radius:50%;background:var(--primary);animation:pulse 1.5s infinite" id="aiDot"></div>
+              <span class="font-medium" id="aiStatusText">กำลังวิเคราะห์...</span>
+            </div>
+            <div class="text-xs text-gray-500" id="aiStatusDetail"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Match Suggestions -->
+      <div class="card" id="aiSuggestionsCard" style="display:none;margin-bottom:16px">
+        <div class="card-header">
+          <h3 class="card-title">ผลการวิเคราะห์ AI</h3>
+          <div class="flex gap-2">
+            <span class="badge badge-primary" id="aiSugCount">0 คู่</span>
+            <button class="btn btn-sm btn-success" onclick="Page.acceptAllSuggestions()">ยืนยันทั้งหมด</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.dismissSuggestions()">ปิด</button>
+          </div>
+        </div>
+        <div id="aiSuggestionsList" style="max-height:500px;overflow-y:auto"></div>
+      </div>
+
+      <!-- Cash vs Bank Warnings -->
+      <div class="card" id="discrepancyCard" style="display:none;margin-bottom:16px;border-left:4px solid var(--warning)">
+        <div class="card-header">
+          <h3 class="card-title">ตรวจพบ: รายการเงินสดที่อาจเป็นรายการธนาคาร</h3>
+          <span class="badge badge-warning" id="discrepancyCount">0</span>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>วันที่</th><th>เลขที่บันทึก</th><th class="text-right">จำนวน</th><th>คำอธิบาย</th><th>ลงบัญชีเป็น</th><th>แนะนำ</th></tr></thead>
+            <tbody id="discrepancyBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Warnings -->
+      <div class="card" id="warningCard" style="display:none;margin-bottom:16px;border-left:4px solid var(--danger)">
+        <div class="card-header">
+          <h3 class="card-title">คำเตือน</h3>
+          <span class="badge badge-danger" id="warningCount">0</span>
+        </div>
+        <div id="warningList" style="padding:0 16px 12px"></div>
+      </div>
+
+      <!-- Unreconciled Transactions -->
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">รายการที่ยังไม่ได้กระทบยอด</h3>
           <div class="flex gap-2">
-            <button class="btn btn-sm btn-primary" onclick="Page.autoMatch()">จับคู่อัตโนมัติ</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.manualReconcile()">จับคู่ที่เลือก</button>
           </div>
         </div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th><input type="checkbox" onchange="Page.toggleAllRecon(this)"></th><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th>คำอธิบาย</th><th>จัดการ</th></tr></thead>
-            <tbody id="reconBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</td></tr></tbody>
+            <thead><tr><th><input type="checkbox" onchange="Page.toggleAllRecon(this)"></th><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th>คำอธิบาย</th><th>อ้างอิง</th><th>จัดการ</th></tr></thead>
+            <tbody id="reconBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -245,6 +311,7 @@
       allTransactions: [],
       transPage: 1,
       accounts: [],
+      aiResult: null,
       async load() {
         await this.loadAccounts();
       },
@@ -259,7 +326,7 @@
         document.getElementById('tabAccounts').style.display = tab === 'accounts' ? '' : 'none';
         document.getElementById('tabReconcile').style.display = tab === 'reconcile' ? '' : 'none';
         document.getElementById('tabConnections').style.display = tab === 'connections' ? '' : 'none';
-        if (tab === 'reconcile') this.loadUnreconciled();
+        if (tab === 'reconcile') { this.loadReconciliationSummary(); this.loadUnreconciled(); }
         if (tab === 'connections') this.loadConnections();
       },
       // === ACCOUNTS ===
@@ -340,30 +407,51 @@
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
           <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
-          <td>${t.reconciliationStatus !== 'Matched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>` : ''}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}</td>
         </tr>`).join('');
       },
       goTransPage(p) { Page.transPage = p; Page.loadTransactions(); },
+      // === RECONCILIATION SUMMARY ===
+      async loadReconciliationSummary() {
+        if (!this.selectedAccount) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getReconciliationSummary(this.selectedAccount.id);
+          const s = res.data;
+          if (!s) return;
+          document.getElementById('reconBankBal').textContent = Layout.money(s.bankBalance);
+          document.getElementById('reconBookBal').textContent = Layout.money(s.bookBalance);
+          const diff = s.difference;
+          const diffEl = document.getElementById('reconDiff');
+          diffEl.textContent = (diff >= 0 ? '+' : '') + Layout.money(diff);
+          diffEl.style.color = Math.abs(diff) < 0.01 ? 'var(--success)' : 'var(--danger)';
+          document.getElementById('reconTotal').textContent = s.totalTransactions;
+          document.getElementById('reconMatched').textContent = s.matchedCount;
+          document.getElementById('reconCount').textContent = s.unmatchedCount;
+          document.getElementById('reconExcluded').textContent = s.excludedCount;
+        } catch (e) { /* silent */ }
+      },
       // === RECONCILIATION ===
       async loadUnreconciled() {
         if (!this.selectedAccount) {
-          document.getElementById('reconBody').innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</td></tr>';
+          document.getElementById('reconBody').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</td></tr>';
           return;
         }
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getUnreconciled(this.selectedAccount.id);
           const items = res.data?.items || res.data || [];
-          document.getElementById('reconCount').textContent = items.length;
           const tbody = document.getElementById('reconBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรอจับคู่</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรอจับคู่ &#10003;</td></tr>'; return; }
           const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+          const isCredit = t => t === 'Deposit' || t === 'Interest';
           tbody.innerHTML = items.map(t => `<tr>
             <td><input type="checkbox" class="recon-check" value="${t.id}"></td>
             <td>${Layout.date(t.transactionDate)}</td>
-            <td><span class="badge ${t.transactionType === 'Deposit' || t.transactionType === 'Interest' ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
-            <td class="text-right font-medium">${Layout.money(t.amount)}</td>
+            <td><span class="badge ${isCredit(t.transactionType) ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
+            <td class="text-right font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
             <td>${t.description || t.payee || '-'}</td>
+            <td class="text-xs text-gray-400">${t.reference || '-'}</td>
             <td><button class="btn btn-sm btn-primary" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button></td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -380,6 +468,178 @@
           Layout.toast(`จับคู่อัตโนมัติสำเร็จ ${matched} รายการ`);
           await this.loadTransactions();
           await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === AI SMART MATCH ===
+      async runAiMatch() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        const btn = document.getElementById('btnAiMatch');
+        const status = document.getElementById('aiMatchStatus');
+        const dot = document.getElementById('aiDot');
+        btn.disabled = true; btn.textContent = 'กำลังวิเคราะห์...';
+        status.style.display = 'block';
+        document.getElementById('aiStatusText').textContent = 'AI กำลังวิเคราะห์รายการ...';
+        document.getElementById('aiStatusDetail').textContent = 'ตรวจสอบ 1-to-1, ยอดรวม, เงินสด/ธนาคาร, รายการซ้ำ';
+        try {
+          const res = await api.aiSmartMatch(this.selectedAccount.id, {
+            includeAggregated: true,
+            includeCashBankCheck: true,
+            minConfidence: 0.5
+          });
+          this.aiResult = res.data;
+          btn.disabled = false; btn.textContent = 'AI วิเคราะห์และจับคู่';
+          dot.style.background = 'var(--success)'; dot.style.animation = 'none';
+          document.getElementById('aiStatusText').textContent = `วิเคราะห์เสร็จ: พบ ${this.aiResult.suggestionsFound} คู่ที่แนะนำ`;
+          document.getElementById('aiStatusDetail').textContent =
+            `1-to-1: ${this.aiResult.oneToOneMatches} | ยอดรวม: ${this.aiResult.aggregatedMatches} | คำเตือน: ${this.aiResult.warnings?.length || 0} | เงินสด/ธนาคาร: ${this.aiResult.discrepancies?.length || 0}`;
+          this.renderAiSuggestions();
+          this.renderDiscrepancies();
+          this.renderWarnings();
+          await this.loadReconciliationSummary();
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'AI วิเคราะห์และจับคู่';
+          dot.style.background = 'var(--danger)'; dot.style.animation = 'none';
+          document.getElementById('aiStatusText').textContent = 'เกิดข้อผิดพลาด';
+          document.getElementById('aiStatusDetail').textContent = e.message;
+          Layout.toast(e.message, 'error');
+        }
+      },
+      renderAiSuggestions() {
+        const r = this.aiResult;
+        if (!r || !r.suggestions?.length) {
+          document.getElementById('aiSuggestionsCard').style.display = 'none';
+          return;
+        }
+        document.getElementById('aiSuggestionsCard').style.display = '';
+        document.getElementById('aiSugCount').textContent = `${r.suggestions.length} คู่`;
+        const list = document.getElementById('aiSuggestionsList');
+        const confColor = c => c >= 0.8 ? 'var(--success)' : c >= 0.6 ? 'var(--warning)' : 'var(--danger)';
+        const confLabel = c => c >= 0.8 ? 'สูง' : c >= 0.6 ? 'ปานกลาง' : 'ต่ำ';
+        const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+        const isCredit = t => t === 'Deposit' || t === 'Interest';
+        list.innerHTML = r.suggestions.map((s, idx) => {
+          const bt = s.bankTransaction;
+          const matchTypeLabel = s.matchType === 'ManyToOne' ? `ยอดรวม (${s.accountingEntries.length} รายการ)` : '1-to-1';
+          return `<div style="padding:12px 16px;border-bottom:1px solid var(--border);${idx % 2 ? 'background:var(--bg-secondary)' : ''}" id="sug_${s.matchId}">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <div class="flex items-center gap-2">
+                <span class="badge" style="background:${confColor(s.confidence)};color:white">${confLabel(s.confidence)} ${Math.round(s.confidence*100)}%</span>
+                <span class="badge badge-primary">${matchTypeLabel}</span>
+                <span class="text-xs text-gray-500">${s.reasoning}</span>
+              </div>
+              <div class="flex gap-1">
+                <button class="btn btn-sm btn-success" onclick="Page.acceptSuggestion(${idx})">ยืนยัน</button>
+                <button class="btn btn-sm btn-ghost" onclick="Page.dismissSuggestion('${s.matchId}')">ข้าม</button>
+              </div>
+            </div>
+            <div class="grid grid-2 gap-4">
+              <div style="border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+                <div class="text-xs text-gray-500" style="margin-bottom:4px">Bank Statement</div>
+                <div class="flex justify-between">
+                  <span>${Layout.date(bt.transactionDate)}</span>
+                  <span class="font-bold ${isCredit(bt.transactionType) ? 'text-success' : 'text-danger'}">${isCredit(bt.transactionType) ? '+' : '-'}${Layout.money(bt.amount)}</span>
+                </div>
+                <div class="text-xs text-gray-500">${bt.description || bt.payee || '-'}</div>
+              </div>
+              <div style="border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+                <div class="text-xs text-gray-500" style="margin-bottom:4px">รายการบัญชี${s.accountingEntries.length > 1 ? ` (${s.accountingEntries.length} รายการ)` : ''}</div>
+                ${s.accountingEntries.map(e => `<div class="flex justify-between" style="margin-bottom:2px">
+                  <span class="text-xs">${Layout.date(e.entryDate)} ${e.entryNumber || ''} ${e.contactName ? '- ' + e.contactName : ''}</span>
+                  <span class="font-medium text-xs">${Layout.money(e.amount)}</span>
+                </div>
+                <div class="text-xs text-gray-400">${e.description || '-'}</div>`).join('')}
+                ${s.difference > 0.01 ? `<div class="text-xs text-danger" style="margin-top:4px">ผลต่าง: ${Layout.money(s.difference)}</div>` : ''}
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      },
+      renderDiscrepancies() {
+        const d = this.aiResult?.discrepancies;
+        if (!d?.length) { document.getElementById('discrepancyCard').style.display = 'none'; return; }
+        document.getElementById('discrepancyCard').style.display = '';
+        document.getElementById('discrepancyCount').textContent = d.length;
+        document.getElementById('discrepancyBody').innerHTML = d.map(x => `<tr>
+          <td>${Layout.date(x.entryDate)}</td>
+          <td class="font-medium">${x.journalNumber || '-'}</td>
+          <td class="text-right">${Layout.money(x.amount)}</td>
+          <td class="text-xs">${x.description || '-'}</td>
+          <td><span class="badge badge-warning">${x.bookedTo}</span></td>
+          <td class="text-xs">${x.suggestedFix}${x.suggestedAccountName ? ' (' + x.suggestedAccountName + ')' : ''}</td>
+        </tr>`).join('');
+      },
+      renderWarnings() {
+        const w = this.aiResult?.warnings;
+        if (!w?.length) { document.getElementById('warningCard').style.display = 'none'; return; }
+        document.getElementById('warningCard').style.display = '';
+        document.getElementById('warningCount').textContent = w.length;
+        const typeIcon = { Duplicate: '&#9888;', AmountMismatch: '&#9888;', DateGap: '&#128197;', MissingEntry: '&#10060;' };
+        document.getElementById('warningList').innerHTML = w.map(x =>
+          `<div style="padding:6px 0;border-bottom:1px solid var(--border)" class="text-sm">
+            <span>${typeIcon[x.warningType] || '&#9888;'}</span>
+            <span class="badge badge-danger" style="font-size:10px">${x.warningType}</span>
+            ${x.message}
+          </div>`).join('');
+      },
+      async acceptSuggestion(idx) {
+        if (!this.aiResult?.suggestions?.[idx]) return;
+        const api = Layout.api(); if (!api) return;
+        const s = this.aiResult.suggestions[idx];
+        const bt = s.bankTransaction;
+        try {
+          if (s.matchType === 'OneToOne' && s.accountingEntries.length === 1) {
+            const e = s.accountingEntries[0];
+            const req = { bankTransactionId: bt.id };
+            if (e.entryType === 'Payment') req.matchedPaymentId = e.entryId;
+            else req.matchedJournalEntryId = e.entryId;
+            await api.reconcile(req);
+          } else {
+            await api.batchReconcile({
+              items: [{ bankTransactionId: bt.id, matchType: 'Multiple',
+                matchedEntryIds: s.accountingEntries.map(e => e.entryId) }]
+            });
+          }
+          const el = document.getElementById(`sug_${s.matchId}`);
+          if (el) { el.style.opacity = '0.4'; el.style.pointerEvents = 'none';
+            el.querySelector('.flex.gap-1').innerHTML = '<span class="badge badge-success">&#10003; ยืนยันแล้ว</span>'; }
+          Layout.toast('จับคู่สำเร็จ');
+          await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
+          await this.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async acceptAllSuggestions() {
+        if (!this.aiResult?.suggestions?.length) return;
+        if (!confirm(`ยืนยันจับคู่ทั้ง ${this.aiResult.suggestions.length} คู่?`)) return;
+        const api = Layout.api(); if (!api) return;
+        let ok = 0, fail = 0;
+        for (let i = 0; i < this.aiResult.suggestions.length; i++) {
+          try { await this.acceptSuggestion(i); ok++; } catch { fail++; }
+        }
+        Layout.toast(`ยืนยันสำเร็จ ${ok} คู่${fail ? `, ล้มเหลว ${fail} คู่` : ''}`);
+      },
+      dismissSuggestion(matchId) {
+        const el = document.getElementById(`sug_${matchId}`);
+        if (el) el.remove();
+      },
+      dismissSuggestions() {
+        document.getElementById('aiSuggestionsCard').style.display = 'none';
+        document.getElementById('discrepancyCard').style.display = 'none';
+        document.getElementById('warningCard').style.display = 'none';
+        document.getElementById('aiMatchStatus').style.display = 'none';
+        this.aiResult = null;
+      },
+      async unmatchTxn(txnId) {
+        if (!confirm('ต้องการยกเลิกการจับคู่?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.unmatchTransaction({ bankTransactionId: txnId });
+          Layout.toast('ยกเลิกการจับคู่สำเร็จ');
+          await this.loadTransactions();
+          await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openReconcileOne(transId) {
@@ -393,24 +653,25 @@
         const journalId = document.getElementById('rJournalId').value;
         if (!journalId) { Layout.toast('กรุณาระบุรหัสรายการบัญชี', 'error'); return; }
         try {
-          await api.reconcile({ bankTransactionId: transId, journalEntryId: journalId });
+          await api.reconcile({ bankTransactionId: transId, matchedJournalEntryId: journalId });
           Layout.closeModal('reconcileModal');
           Layout.toast('จับคู่สำเร็จ');
           await this.loadTransactions();
           await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async manualReconcile() {
         const checked = [...document.querySelectorAll('.recon-check:checked')];
         if (!checked.length) { Layout.toast('เลือกรายการที่ต้องการจับคู่', 'error'); return; }
         if (checked.length === 1) { this.openReconcileOne(checked[0].value); return; }
-        // For multiple items, use auto-match on the selected account
         if (!this.selectedAccount) { Layout.toast('กรุณาเลือกบัญชีธนาคาร', 'error'); return; }
         const api = Layout.api(); if (!api) return;
         try {
           await api.autoMatch(this.selectedAccount.id);
           Layout.toast('จับคู่อัตโนมัติสำเร็จ');
           await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // === CREATE/EDIT ACCOUNT ===

@@ -565,6 +565,11 @@ public static class DatabaseMigrationHelper
             """,
 
             // ===== SiteSettings: global site configuration (singleton) =====
+            // ===== BankTransactions: AI Reconciliation MatchGroupId =====
+            """
+            ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchGroupId" text NULL;
+            """,
+
             """
             CREATE TABLE IF NOT EXISTS "SiteSettings" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),

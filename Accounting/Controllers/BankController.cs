@@ -82,4 +82,38 @@ public class BankController : ControllerBase
         var count = await _bankService.ImportBankStatementAsync(companyId, request);
         return Ok(new ApiResponse<int>(true, count, $"นำเข้า {count} รายการสำเร็จ"));
     }
+
+    [HttpPost("accounts/{accountId:guid}/ai-match")]
+    public async Task<ActionResult<ApiResponse<AiReconciliationResult>>> AiSmartMatch(
+        Guid companyId, Guid accountId, [FromBody] AiReconciliationRequest? request)
+    {
+        var result = await _bankService.AiSmartMatchAsync(companyId, accountId, request ?? new());
+        return Ok(new ApiResponse<AiReconciliationResult>(true, result,
+            $"AI วิเคราะห์เสร็จ: พบ {result.SuggestionsFound} คู่ที่แนะนำ"));
+    }
+
+    [HttpGet("accounts/{accountId:guid}/reconciliation-summary")]
+    public async Task<ActionResult<ApiResponse<ReconciliationSummaryDto>>> GetReconciliationSummary(
+        Guid companyId, Guid accountId)
+    {
+        var result = await _bankService.GetReconciliationSummaryAsync(companyId, accountId);
+        return Ok(new ApiResponse<ReconciliationSummaryDto>(true, result));
+    }
+
+    [HttpPost("batch-reconcile")]
+    public async Task<ActionResult<ApiResponse<List<BankTransactionResponse>>>> BatchReconcile(
+        Guid companyId, [FromBody] BatchReconcileRequest request)
+    {
+        var result = await _bankService.BatchReconcileAsync(companyId, request);
+        return Ok(new ApiResponse<List<BankTransactionResponse>>(true, result,
+            $"จับคู่สำเร็จ {result.Count} รายการ"));
+    }
+
+    [HttpPost("unmatch")]
+    public async Task<ActionResult<ApiResponse<BankTransactionResponse>>> UnmatchTransaction(
+        Guid companyId, [FromBody] UnmatchRequest request)
+    {
+        var result = await _bankService.UnmatchTransactionAsync(companyId, request);
+        return Ok(new ApiResponse<BankTransactionResponse>(true, result, "ยกเลิกการจับคู่สำเร็จ"));
+    }
 }

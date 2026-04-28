@@ -228,6 +228,10 @@ const API = {
       autoMatch: (id) => API.post(`${base}/bank/accounts/${id}/auto-match`),
       getUnreconciled: (id) => API.get(`${base}/bank/accounts/${id}/unreconciled`),
       importBankStatement: (d) => API.post(`${base}/bank/import-statement`, d),
+      aiSmartMatch: (id, d) => API.post(`${base}/bank/accounts/${id}/ai-match`, d || {}),
+      getReconciliationSummary: (id) => API.get(`${base}/bank/accounts/${id}/reconciliation-summary`),
+      batchReconcile: (d) => API.post(`${base}/bank/batch-reconcile`, d),
+      unmatchTransaction: (d) => API.post(`${base}/bank/unmatch`, d),
       // Open Banking
       getConnections: () => API.get(`${base}/open-banking/connections`),
       createConnection: (d) => API.post(`${base}/open-banking/connections`, d),

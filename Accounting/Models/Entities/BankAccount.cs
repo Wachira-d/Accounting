@@ -44,4 +44,7 @@ public class BankTransaction : TenantEntity
     public Guid? MatchedJournalEntryId { get; set; }
     public DateTime? ReconciledAt { get; set; }
     public string? ReconciledBy { get; set; }
+
+    // AI Reconciliation — group ID for aggregated (many-to-one) matches
+    public string? MatchGroupId { get; set; }
 }

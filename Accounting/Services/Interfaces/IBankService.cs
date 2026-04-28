@@ -19,6 +19,12 @@ public interface IBankService
     Task<List<BankTransactionResponse>> GetUnreconciledAsync(Guid companyId, Guid bankAccountId);
     Task<List<BankTransactionResponse>> AutoMatchAsync(Guid companyId, Guid bankAccountId);
 
+    // AI Reconciliation
+    Task<AiReconciliationResult> AiSmartMatchAsync(Guid companyId, Guid bankAccountId, AiReconciliationRequest request);
+    Task<ReconciliationSummaryDto> GetReconciliationSummaryAsync(Guid companyId, Guid bankAccountId);
+    Task<List<BankTransactionResponse>> BatchReconcileAsync(Guid companyId, BatchReconcileRequest request);
+    Task<BankTransactionResponse> UnmatchTransactionAsync(Guid companyId, UnmatchRequest request);
+
     // Bank Statement Import
     Task<int> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request);
 }

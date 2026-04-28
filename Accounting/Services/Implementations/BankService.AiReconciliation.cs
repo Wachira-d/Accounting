@@ -1,0 +1,735 @@
+using Accounting.Models.DTOs.Bank;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+public partial class BankService
+{
+    public async Task<AiReconciliationResult> AiSmartMatchAsync(
+        Guid companyId, Guid bankAccountId, AiReconciliationRequest request)
+    {
+        var account = await _db.Set<BankAccount>()
+            .Include(a => a.LinkedAccount)
+            .FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId && !a.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+
+        var txnQuery = _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId
+                && t.BankAccountId == bankAccountId
+                && t.ReconciliationStatus == ReconciliationStatus.Unmatched);
+
+        if (request.FromDate.HasValue)
+            txnQuery = txnQuery.Where(t => t.TransactionDate >= request.FromDate.Value);
+        if (request.ToDate.HasValue)
+            txnQuery = txnQuery.Where(t => t.TransactionDate <= request.ToDate.Value);
+
+        var unmatched = await txnQuery.OrderBy(t => t.TransactionDate).ToListAsync();
+
+        var allTxns = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
+            .ToListAsync();
+
+        // Load candidate accounting entries
+        var dateMin = unmatched.Any() ? unmatched.Min(t => t.TransactionDate).AddDays(-14) : DateTime.MinValue;
+        var dateMax = unmatched.Any() ? unmatched.Max(t => t.TransactionDate).AddDays(14) : DateTime.MaxValue;
+
+        var payments = await _db.Payments
+            .Include(p => p.Document).ThenInclude(d => d.Contact)
+            .Where(p => p.CompanyId == companyId
+                && (p.PaymentMethod == PaymentMethod.BankTransfer
+                    || p.PaymentMethod == PaymentMethod.PromptPay
+                    || p.PaymentMethod == PaymentMethod.DirectDebit)
+                && p.PaymentDate >= dateMin && p.PaymentDate <= dateMax)
+            .ToListAsync();
+
+        var journalEntries = await _db.JournalEntries
+            .Include(j => j.Lines)
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= dateMin && j.EntryDate <= dateMax)
+            .ToListAsync();
+
+        // Already-matched IDs
+        var matchedPaymentIds = new HashSet<Guid>(
+            await _db.Set<BankTransaction>()
+                .Where(t => t.CompanyId == companyId && t.MatchedPaymentId.HasValue)
+                .Select(t => t.MatchedPaymentId!.Value).ToListAsync());
+
+        var matchedJeIds = new HashSet<Guid>(
+            await _db.Set<BankTransaction>()
+                .Where(t => t.CompanyId == companyId && t.MatchedJournalEntryId.HasValue)
+                .Select(t => t.MatchedJournalEntryId!.Value).ToListAsync());
+
+        // Filter candidates to available only
+        var availablePayments = payments.Where(p => !matchedPaymentIds.Contains(p.Id)).ToList();
+        var availableJes = journalEntries.Where(j => !matchedJeIds.Contains(j.Id)).ToList();
+
+        // Bank account's linked COA — used for journal line matching
+        var bankCoaId = account.LinkedAccountId;
+
+        var suggestions = new List<AiMatchSuggestion>();
+        var warnings = new List<ReconciliationWarning>();
+        var usedPaymentIds = new HashSet<Guid>();
+        var usedJeIds = new HashSet<Guid>();
+        var matchedTxnIds = new HashSet<Guid>();
+        int oneToOne = 0, aggregated = 0;
+
+        // ── Pass 1: exact 1-to-1 Payment matching ──
+        foreach (var txn in unmatched)
+        {
+            if (matchedTxnIds.Contains(txn.Id)) continue;
+
+            var best = FindBestPaymentMatch(txn, availablePayments, usedPaymentIds, bankCoaId);
+            if (best.match != null && best.confidence >= request.MinConfidence)
+            {
+                var entry = PaymentToEntry(best.match);
+                suggestions.Add(new AiMatchSuggestion(
+                    Guid.NewGuid().ToString("N"),
+                    "OneToOne",
+                    best.confidence,
+                    best.reasoning,
+                    MapTransactionToResponse(txn),
+                    new List<MatchedAccountingEntry> { entry },
+                    txn.Amount,
+                    best.match.Amount,
+                    Math.Abs(txn.Amount - best.match.Amount)));
+                usedPaymentIds.Add(best.match.Id);
+                matchedTxnIds.Add(txn.Id);
+                oneToOne++;
+            }
+        }
+
+        // ── Pass 2: exact 1-to-1 JournalEntry matching (entries touching the bank COA) ──
+        foreach (var txn in unmatched)
+        {
+            if (matchedTxnIds.Contains(txn.Id)) continue;
+
+            var best = FindBestJournalMatch(txn, availableJes, usedJeIds, bankCoaId);
+            if (best.match != null && best.confidence >= request.MinConfidence)
+            {
+                var entry = JournalToEntry(best.match);
+                suggestions.Add(new AiMatchSuggestion(
+                    Guid.NewGuid().ToString("N"),
+                    "OneToOne",
+                    best.confidence,
+                    best.reasoning,
+                    MapTransactionToResponse(txn),
+                    new List<MatchedAccountingEntry> { entry },
+                    txn.Amount,
+                    best.matchAmount,
+                    Math.Abs(txn.Amount - best.matchAmount)));
+                usedJeIds.Add(best.match.Id);
+                matchedTxnIds.Add(txn.Id);
+                oneToOne++;
+            }
+        }
+
+        // ── Pass 3: Many-to-One aggregated matching (KShop-type batches) ──
+        if (request.IncludeAggregated)
+        {
+            var remainingTxns = unmatched.Where(t => !matchedTxnIds.Contains(t.Id)).ToList();
+            foreach (var txn in remainingTxns)
+            {
+                if (matchedTxnIds.Contains(txn.Id)) continue;
+
+                // Try finding multiple payments that sum to bank amount
+                var combo = FindPaymentCombination(txn, availablePayments, usedPaymentIds);
+                if (combo.payments.Count >= 2 && combo.confidence >= request.MinConfidence)
+                {
+                    var entries = combo.payments.Select(PaymentToEntry).ToList();
+                    var total = combo.payments.Sum(p => p.Amount);
+                    suggestions.Add(new AiMatchSuggestion(
+                        Guid.NewGuid().ToString("N"),
+                        "ManyToOne",
+                        combo.confidence,
+                        combo.reasoning,
+                        MapTransactionToResponse(txn),
+                        entries,
+                        txn.Amount,
+                        total,
+                        Math.Abs(txn.Amount - total)));
+                    foreach (var p in combo.payments) usedPaymentIds.Add(p.Id);
+                    matchedTxnIds.Add(txn.Id);
+                    aggregated++;
+                    continue;
+                }
+
+                // Try finding multiple JournalEntries that sum to bank amount
+                var jeCombo = FindJournalCombination(txn, availableJes, usedJeIds, bankCoaId);
+                if (jeCombo.entries.Count >= 2 && jeCombo.confidence >= request.MinConfidence)
+                {
+                    var matchEntries = jeCombo.entries.Select(JournalToEntry).ToList();
+                    suggestions.Add(new AiMatchSuggestion(
+                        Guid.NewGuid().ToString("N"),
+                        "ManyToOne",
+                        jeCombo.confidence,
+                        jeCombo.reasoning,
+                        MapTransactionToResponse(txn),
+                        matchEntries,
+                        txn.Amount,
+                        jeCombo.total,
+                        Math.Abs(txn.Amount - jeCombo.total)));
+                    foreach (var je in jeCombo.entries) usedJeIds.Add(je.Id);
+                    matchedTxnIds.Add(txn.Id);
+                    aggregated++;
+                }
+            }
+        }
+
+        // ── Detect duplicates ──
+        DetectDuplicates(unmatched, warnings);
+
+        // ── Cash vs Bank discrepancies ──
+        var discrepancies = new List<CashBankDiscrepancy>();
+        if (request.IncludeCashBankCheck && bankCoaId.HasValue)
+        {
+            discrepancies = await DetectCashBankDiscrepanciesAsync(companyId, bankCoaId.Value, dateMin, dateMax);
+        }
+
+        // ── Summary ──
+        var summary = BuildSummary(account, allTxns, bankCoaId, companyId);
+
+        return new AiReconciliationResult(
+            allTxns.Count,
+            unmatched.Count,
+            suggestions.Count,
+            oneToOne,
+            aggregated,
+            suggestions.OrderByDescending(s => s.Confidence).ToList(),
+            discrepancies,
+            warnings,
+            await summary);
+    }
+
+    // ── 1-to-1 Payment scoring ──
+    private (Payment? match, decimal confidence, string reasoning) FindBestPaymentMatch(
+        BankTransaction txn, List<Payment> payments, HashSet<Guid> used, Guid? bankCoaId)
+    {
+        Payment? best = null;
+        decimal bestScore = 0;
+        string reason = "";
+
+        foreach (var p in payments)
+        {
+            if (used.Contains(p.Id)) continue;
+
+            decimal score = 0;
+            var reasons = new List<string>();
+
+            // Amount match
+            if (p.Amount == txn.Amount)
+            {
+                score += 0.40m;
+                reasons.Add("ยอดเงินตรงกัน");
+            }
+            else if (txn.Amount > 0 && Math.Abs(p.Amount - txn.Amount) / txn.Amount < 0.005m)
+            {
+                score += 0.25m;
+                reasons.Add("ยอดเงินใกล้เคียง");
+            }
+            else continue;
+
+            // Date
+            var daysDiff = Math.Abs((p.PaymentDate - txn.TransactionDate).TotalDays);
+            if (daysDiff <= 0) { score += 0.25m; reasons.Add("วันที่ตรงกัน"); }
+            else if (daysDiff <= 1) { score += 0.20m; reasons.Add("ห่าง 1 วัน"); }
+            else if (daysDiff <= 3) { score += 0.15m; reasons.Add("ห่าง 2-3 วัน"); }
+            else if (daysDiff <= 7) { score += 0.05m; reasons.Add($"ห่าง {(int)daysDiff} วัน"); }
+            else continue;
+
+            // Reference
+            if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(p.Reference))
+            {
+                if (txn.Reference.Equals(p.Reference, StringComparison.OrdinalIgnoreCase))
+                { score += 0.20m; reasons.Add("เลขอ้างอิงตรงกัน"); }
+                else if (txn.Reference.Contains(p.Reference, StringComparison.OrdinalIgnoreCase)
+                    || p.Reference.Contains(txn.Reference, StringComparison.OrdinalIgnoreCase))
+                { score += 0.10m; reasons.Add("เลขอ้างอิงใกล้เคียง"); }
+            }
+
+            // Description / Payee match
+            if (!string.IsNullOrEmpty(txn.Description) && !string.IsNullOrEmpty(txn.Payee))
+            {
+                var docContact = p.Document?.Contact?.Name ?? "";
+                if (!string.IsNullOrEmpty(docContact) &&
+                    (txn.Payee.Contains(docContact, StringComparison.OrdinalIgnoreCase)
+                    || txn.Description.Contains(docContact, StringComparison.OrdinalIgnoreCase)))
+                { score += 0.10m; reasons.Add("ชื่อผู้รับ/จ่ายตรงกัน"); }
+            }
+
+            // Document number in description
+            var docNum = p.Document?.DocumentNumber ?? "";
+            if (!string.IsNullOrEmpty(docNum) && !string.IsNullOrEmpty(txn.Description)
+                && txn.Description.Contains(docNum, StringComparison.OrdinalIgnoreCase))
+            { score += 0.05m; reasons.Add("เลขที่เอกสารปรากฏในรายละเอียด"); }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = p;
+                reason = string.Join(", ", reasons);
+            }
+        }
+
+        return (best, bestScore, reason);
+    }
+
+    // ── 1-to-1 Journal Entry scoring ──
+    private (JournalEntry? match, decimal confidence, string reasoning, decimal matchAmount)
+        FindBestJournalMatch(BankTransaction txn, List<JournalEntry> entries,
+            HashSet<Guid> used, Guid? bankCoaId)
+    {
+        JournalEntry? best = null;
+        decimal bestScore = 0;
+        string reason = "";
+        decimal bestAmount = 0;
+
+        foreach (var je in entries)
+        {
+            if (used.Contains(je.Id)) continue;
+
+            // Find the amount touching the bank COA
+            decimal jeAmount = 0;
+            if (bankCoaId.HasValue && je.Lines != null)
+            {
+                var bankLines = je.Lines.Where(l => l.AccountId == bankCoaId.Value).ToList();
+                if (bankLines.Any())
+                {
+                    var debitSum = bankLines.Sum(l => l.DebitAmount);
+                    var creditSum = bankLines.Sum(l => l.CreditAmount);
+                    // Deposit = debit to bank, Withdrawal = credit from bank
+                    jeAmount = txn.TransactionType == BankTransactionType.Deposit
+                        || txn.TransactionType == BankTransactionType.Interest
+                        ? debitSum : creditSum;
+                }
+            }
+            if (jeAmount == 0) jeAmount = Math.Max(je.TotalDebit, je.TotalCredit);
+
+            decimal score = 0;
+            var reasons = new List<string>();
+
+            // Amount
+            if (jeAmount == txn.Amount) { score += 0.40m; reasons.Add("ยอดเงินตรงกัน"); }
+            else if (txn.Amount > 0 && Math.Abs(jeAmount - txn.Amount) / txn.Amount < 0.005m)
+            { score += 0.25m; reasons.Add("ยอดเงินใกล้เคียง"); }
+            else continue;
+
+            // Date
+            var daysDiff = Math.Abs((je.EntryDate - txn.TransactionDate).TotalDays);
+            if (daysDiff <= 0) { score += 0.25m; reasons.Add("วันที่ตรงกัน"); }
+            else if (daysDiff <= 1) { score += 0.20m; reasons.Add("ห่าง 1 วัน"); }
+            else if (daysDiff <= 3) { score += 0.15m; reasons.Add("ห่าง 2-3 วัน"); }
+            else if (daysDiff <= 7) { score += 0.05m; reasons.Add($"ห่าง {(int)daysDiff} วัน"); }
+            else continue;
+
+            // Reference
+            if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(je.Reference))
+            {
+                if (txn.Reference.Equals(je.Reference, StringComparison.OrdinalIgnoreCase))
+                { score += 0.20m; reasons.Add("เลขอ้างอิงตรงกัน"); }
+                else if (txn.Reference.Contains(je.Reference, StringComparison.OrdinalIgnoreCase)
+                    || je.Reference.Contains(txn.Reference, StringComparison.OrdinalIgnoreCase))
+                { score += 0.10m; reasons.Add("เลขอ้างอิงใกล้เคียง"); }
+            }
+
+            // Description
+            if (!string.IsNullOrEmpty(txn.Description) && !string.IsNullOrEmpty(je.Description))
+            {
+                if (txn.Description.Contains(je.Description, StringComparison.OrdinalIgnoreCase)
+                    || je.Description.Contains(txn.Description, StringComparison.OrdinalIgnoreCase))
+                { score += 0.05m; reasons.Add("คำอธิบายใกล้เคียง"); }
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = je;
+                reason = string.Join(", ", reasons);
+                bestAmount = jeAmount;
+            }
+        }
+
+        return (best, bestScore, reason, bestAmount);
+    }
+
+    // ── Aggregated payment matching (KShop daily batch) ──
+    private (List<Payment> payments, decimal confidence, string reasoning)
+        FindPaymentCombination(BankTransaction txn, List<Payment> allPayments, HashSet<Guid> used)
+    {
+        var targetAmount = txn.Amount;
+
+        // Filter to same-day or close-date payments with same flow direction
+        var candidates = allPayments
+            .Where(p => !used.Contains(p.Id)
+                && Math.Abs((p.PaymentDate - txn.TransactionDate).TotalDays) <= 3)
+            .OrderBy(p => p.Amount)
+            .ToList();
+
+        if (candidates.Count < 2) return (new(), 0, "");
+
+        // Greedy: find subsets that sum to target (±0.5% tolerance)
+        var tolerance = targetAmount * 0.005m;
+        var result = FindSubsetSum(candidates, targetAmount, tolerance);
+
+        if (result.Count >= 2)
+        {
+            var total = result.Sum(p => p.Amount);
+            var diff = Math.Abs(total - targetAmount);
+            var confidence = diff == 0 ? 0.85m : 0.70m;
+
+            var contactNames = result
+                .Where(p => p.Document?.Contact?.Name != null)
+                .Select(p => p.Document!.Contact!.Name)
+                .Distinct().Take(3).ToList();
+
+            var reasoning = $"รวม {result.Count} รายการ ยอดรวม {total:N2} = ยอด Statement {targetAmount:N2}";
+            if (contactNames.Any())
+                reasoning += $" (จาก: {string.Join(", ", contactNames)})";
+
+            return (result, confidence, reasoning);
+        }
+
+        return (new(), 0, "");
+    }
+
+    private static List<Payment> FindSubsetSum(List<Payment> candidates, decimal target, decimal tolerance)
+    {
+        // For small sets (≤20), try exact subset-sum via backtracking
+        if (candidates.Count <= 20)
+        {
+            var result = new List<Payment>();
+            if (BacktrackSubsetSum(candidates, 0, target, tolerance, result, new List<Payment>()))
+                return result;
+        }
+
+        // Greedy fallback: sort descending, keep adding until sum matches
+        var sorted = candidates.OrderByDescending(p => p.Amount).ToList();
+        var selected = new List<Payment>();
+        decimal remaining = target;
+
+        foreach (var p in sorted)
+        {
+            if (p.Amount <= remaining + tolerance)
+            {
+                selected.Add(p);
+                remaining -= p.Amount;
+                if (Math.Abs(remaining) <= tolerance)
+                    return selected;
+            }
+        }
+
+        return new List<Payment>();
+    }
+
+    private static bool BacktrackSubsetSum(List<Payment> items, int idx, decimal target,
+        decimal tolerance, List<Payment> result, List<Payment> current)
+    {
+        if (Math.Abs(target) <= tolerance && current.Count >= 2)
+        {
+            result.AddRange(current);
+            return true;
+        }
+        if (idx >= items.Count || target < -tolerance) return false;
+
+        // Include item
+        current.Add(items[idx]);
+        if (BacktrackSubsetSum(items, idx + 1, target - items[idx].Amount, tolerance, result, current))
+            return true;
+        current.RemoveAt(current.Count - 1);
+
+        // Skip item
+        return BacktrackSubsetSum(items, idx + 1, target, tolerance, result, current);
+    }
+
+    // ── Aggregated journal entry matching ──
+    private (List<JournalEntry> entries, decimal confidence, string reasoning, decimal total)
+        FindJournalCombination(BankTransaction txn, List<JournalEntry> allEntries,
+            HashSet<Guid> used, Guid? bankCoaId)
+    {
+        var targetAmount = txn.Amount;
+        bool isDeposit = txn.TransactionType == BankTransactionType.Deposit
+            || txn.TransactionType == BankTransactionType.Interest;
+
+        var candidates = allEntries
+            .Where(j => !used.Contains(j.Id)
+                && Math.Abs((j.EntryDate - txn.TransactionDate).TotalDays) <= 3)
+            .ToList();
+
+        if (candidates.Count < 2) return (new(), 0, "", 0);
+
+        // Extract the bank-touching amount from each JE
+        var jeAmounts = new List<(JournalEntry je, decimal amount)>();
+        foreach (var je in candidates)
+        {
+            decimal amt = 0;
+            if (bankCoaId.HasValue && je.Lines != null)
+            {
+                var bankLines = je.Lines.Where(l => l.AccountId == bankCoaId.Value).ToList();
+                if (bankLines.Any())
+                    amt = isDeposit ? bankLines.Sum(l => l.DebitAmount) : bankLines.Sum(l => l.CreditAmount);
+            }
+            if (amt == 0) amt = Math.Max(je.TotalDebit, je.TotalCredit);
+            if (amt > 0) jeAmounts.Add((je, amt));
+        }
+
+        var tolerance = targetAmount * 0.005m;
+
+        // Simple greedy
+        var sorted = jeAmounts.OrderByDescending(x => x.amount).ToList();
+        var selected = new List<(JournalEntry je, decimal amount)>();
+        decimal remaining = targetAmount;
+
+        foreach (var item in sorted)
+        {
+            if (item.amount <= remaining + tolerance)
+            {
+                selected.Add(item);
+                remaining -= item.amount;
+                if (Math.Abs(remaining) <= tolerance && selected.Count >= 2)
+                {
+                    var total = selected.Sum(x => x.amount);
+                    var diff = Math.Abs(total - targetAmount);
+                    var confidence = diff == 0 ? 0.80m : 0.65m;
+                    var reasoning = $"รวม {selected.Count} รายการบันทึกบัญชี ยอดรวม {total:N2} = ยอด Statement {targetAmount:N2}";
+                    return (selected.Select(x => x.je).ToList(), confidence, reasoning, total);
+                }
+            }
+        }
+
+        return (new(), 0, "", 0);
+    }
+
+    // ── Cash vs Bank discrepancy detection ──
+    private async Task<List<CashBankDiscrepancy>> DetectCashBankDiscrepanciesAsync(
+        Guid companyId, Guid bankCoaId, DateTime from, DateTime to)
+    {
+        // Find cash accounts (code starts with 111)
+        var cashAccounts = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive)
+            .ToListAsync();
+
+        if (!cashAccounts.Any()) return new();
+
+        var cashAccountIds = cashAccounts.Select(a => a.Id).ToHashSet();
+
+        // Find posted journal entries in date range that touch cash accounts
+        // but look like bank transactions (amount patterns, descriptions)
+        var cashEntries = await _db.JournalEntries
+            .Include(j => j.Lines)
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= from && j.EntryDate <= to
+                && j.Lines.Any(l => cashAccountIds.Contains(l.AccountId)))
+            .ToListAsync();
+
+        var bankAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.Id == bankCoaId);
+
+        var discrepancies = new List<CashBankDiscrepancy>();
+
+        foreach (var je in cashEntries)
+        {
+            var cashLines = je.Lines.Where(l => cashAccountIds.Contains(l.AccountId)).ToList();
+            var amount = cashLines.Sum(l => l.DebitAmount) + cashLines.Sum(l => l.CreditAmount);
+            if (amount == 0) continue;
+
+            var desc = (je.Description ?? "").ToLower();
+            var reference = (je.Reference ?? "").ToLower();
+
+            // Heuristics: likely should be bank, not cash
+            bool looksLikeBank = false;
+            if (desc.Contains("โอน") || desc.Contains("transfer") || desc.Contains("bank")
+                || desc.Contains("ธนาคาร") || desc.Contains("promptpay") || desc.Contains("พร้อมเพย์"))
+                looksLikeBank = true;
+            if (reference.Contains("ref") || reference.Contains("slip"))
+                looksLikeBank = true;
+            // Large amounts booked to cash are suspicious
+            if (amount >= 50000 && !looksLikeBank)
+                looksLikeBank = true;
+
+            if (looksLikeBank)
+            {
+                var cashAccount = cashAccounts.FirstOrDefault(a =>
+                    cashLines.Any(l => l.AccountId == a.Id));
+                discrepancies.Add(new CashBankDiscrepancy(
+                    je.Id,
+                    je.EntryNumber,
+                    je.EntryDate,
+                    amount,
+                    je.Description,
+                    cashAccount?.AccountName ?? "เงินสด",
+                    "ควรเป็นบัญชีธนาคาร",
+                    bankCoaId,
+                    bankAccount?.AccountName));
+            }
+        }
+
+        return discrepancies;
+    }
+
+    // ── Duplicate detection ──
+    private static void DetectDuplicates(List<BankTransaction> transactions, List<ReconciliationWarning> warnings)
+    {
+        var groups = transactions
+            .GroupBy(t => $"{t.Amount}|{t.TransactionDate:yyyyMMdd}|{t.TransactionType}")
+            .Where(g => g.Count() > 1);
+
+        foreach (var group in groups)
+        {
+            var items = group.ToList();
+            // Only warn if descriptions are similar too
+            for (int i = 0; i < items.Count - 1; i++)
+            {
+                for (int j = i + 1; j < items.Count; j++)
+                {
+                    var descA = items[i].Description ?? "";
+                    var descB = items[j].Description ?? "";
+                    if (descA == descB || (descA.Length > 5 && descB.Length > 5 &&
+                        descA.Contains(descB, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        warnings.Add(new ReconciliationWarning(
+                            "Duplicate",
+                            $"อาจเป็นรายการซ้ำ: {items[i].Amount:N2} บาท วันที่ {items[i].TransactionDate:d} - {descA}",
+                            items[i].Id,
+                            items[j].Id));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Summary builder ──
+    private async Task<ReconciliationSummaryDto> BuildSummary(
+        BankAccount account, List<BankTransaction> allTxns, Guid? bankCoaId, Guid companyId)
+    {
+        decimal bankBalance = account.CurrentBalance;
+
+        // Compute book balance from GL
+        decimal bookBalance = 0;
+        if (bankCoaId.HasValue)
+        {
+            var sums = await _db.JournalEntryLines
+                .Where(l => l.AccountId == bankCoaId.Value
+                    && _db.JournalEntries.Any(j => j.Id == l.JournalEntryId
+                        && j.CompanyId == companyId
+                        && j.Status == JournalEntryStatus.Posted))
+                .GroupBy(l => 1)
+                .Select(g => new { Debit = g.Sum(l => l.DebitAmount), Credit = g.Sum(l => l.CreditAmount) })
+                .FirstOrDefaultAsync();
+            if (sums != null) bookBalance = sums.Debit - sums.Credit;
+        }
+
+        var matched = allTxns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Matched);
+        var excluded = allTxns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Excluded);
+        var unmatchedList = allTxns.Where(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched).ToList();
+
+        return new ReconciliationSummaryDto(
+            bankBalance,
+            bookBalance,
+            bankBalance - bookBalance,
+            allTxns.Count,
+            matched,
+            unmatchedList.Count,
+            excluded,
+            unmatchedList.Where(t => t.TransactionType == BankTransactionType.Deposit
+                || t.TransactionType == BankTransactionType.Interest).Sum(t => t.Amount),
+            unmatchedList.Where(t => t.TransactionType == BankTransactionType.Withdrawal
+                || t.TransactionType == BankTransactionType.Fee).Sum(t => t.Amount));
+    }
+
+    public async Task<ReconciliationSummaryDto> GetReconciliationSummaryAsync(Guid companyId, Guid bankAccountId)
+    {
+        var account = await _db.Set<BankAccount>()
+            .Include(a => a.LinkedAccount)
+            .FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId && !a.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+
+        var allTxns = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
+            .ToListAsync();
+
+        return await BuildSummary(account, allTxns, account.LinkedAccountId, companyId);
+    }
+
+    public async Task<List<BankTransactionResponse>> BatchReconcileAsync(
+        Guid companyId, BatchReconcileRequest request)
+    {
+        await using var dbTransaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var results = new List<BankTransactionResponse>();
+            var groupId = Guid.NewGuid().ToString("N");
+
+            foreach (var item in request.Items)
+            {
+                var txn = await _db.Set<BankTransaction>()
+                    .FirstOrDefaultAsync(t => t.Id == item.BankTransactionId && t.CompanyId == companyId)
+                    ?? throw new KeyNotFoundException($"ไม่พบรายการธนาคาร {item.BankTransactionId}");
+
+                txn.ReconciliationStatus = ReconciliationStatus.Matched;
+                txn.ReconciledAt = DateTime.UtcNow;
+                txn.ReconciledBy = "AI-Batch";
+
+                if (item.MatchType == "Payment" && item.MatchedPaymentId.HasValue)
+                    txn.MatchedPaymentId = item.MatchedPaymentId;
+                else if (item.MatchType == "JournalEntry" && item.MatchedJournalEntryId.HasValue)
+                    txn.MatchedJournalEntryId = item.MatchedJournalEntryId;
+                else if (item.MatchType == "Multiple" && item.MatchedEntryIds?.Any() == true)
+                {
+                    // For aggregated matches, store first entry and group
+                    txn.MatchedJournalEntryId = item.MatchedEntryIds.First();
+                    txn.MatchGroupId = groupId;
+                }
+
+                results.Add(MapTransactionToResponse(txn));
+            }
+
+            await _db.SaveChangesAsync();
+            await dbTransaction.CommitAsync();
+            return results;
+        }
+        catch
+        {
+            await dbTransaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<BankTransactionResponse> UnmatchTransactionAsync(Guid companyId, UnmatchRequest request)
+    {
+        var txn = await _db.Set<BankTransaction>()
+            .FirstOrDefaultAsync(t => t.Id == request.BankTransactionId && t.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการธนาคาร");
+
+        txn.ReconciliationStatus = ReconciliationStatus.Unmatched;
+        txn.MatchedPaymentId = null;
+        txn.MatchedJournalEntryId = null;
+        txn.ReconciledAt = null;
+        txn.ReconciledBy = null;
+        txn.MatchGroupId = null;
+
+        await _db.SaveChangesAsync();
+        return MapTransactionToResponse(txn);
+    }
+
+    // ── Helpers ──
+    private static MatchedAccountingEntry PaymentToEntry(Payment p) => new(
+        "Payment",
+        p.Id,
+        p.PaymentNumber,
+        p.PaymentDate,
+        p.Amount,
+        p.Document?.DocumentNumber ?? p.Notes,
+        p.Document?.Contact?.Name);
+
+    private static MatchedAccountingEntry JournalToEntry(JournalEntry je) => new(
+        "JournalEntry",
+        je.Id,
+        je.EntryNumber,
+        je.EntryDate,
+        Math.Max(je.TotalDebit, je.TotalCredit),
+        je.Description,
+        null);
+}

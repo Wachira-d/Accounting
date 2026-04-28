@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class BankService : IBankService
+public partial class BankService : IBankService
 {
     private readonly AccountingDbContext _db;
 
