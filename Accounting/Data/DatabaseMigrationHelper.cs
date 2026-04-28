@@ -578,6 +578,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchGroupId" text NULL;
             """,
+            // ===== BankTransactions: many-to-one matched entry IDs (JSON array) =====
+            """
+            ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchedEntryIdsJson" text NULL;
+            """,
 
             // ===== CompanySettings: e-Tax mode + by-email registration columns =====
             """

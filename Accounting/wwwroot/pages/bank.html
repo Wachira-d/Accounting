@@ -348,7 +348,7 @@
 
     <!-- Manual Reconcile Picker Modal -->
     <div class="modal-overlay" id="reconcileModal">
-      <div class="modal" style="max-width:900px">
+      <div class="modal" style="max-width:960px">
         <div class="modal-header">
           <h3 class="modal-title">🔗 จับคู่รายการธนาคารกับเอกสารบัญชี</h3>
           <button class="modal-close" onclick="Layout.closeModal('reconcileModal')">&times;</button>
@@ -380,17 +380,33 @@
               placeholder="🔍 ค้นหาด้วย ชื่อลูกค้า, เลขเอกสาร, จำนวนเงิน, รายละเอียด..."
               oninput="Page.filterPickerCandidates()" style="font-size:13px">
             <div style="font-size:11px;color:#64748b;margin-top:6px">
-              💡 แนะนำให้เลือกรายการที่มี <strong style="color:#10b981">เปอร์เซ็นต์สูงสุด</strong> — ระบบคำนวณจากยอดตรง+วันที่ใกล้+ชื่อตรงกัน
+              💡 ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว (Many-to-one) — เช่น ยอดโอนเข้าก้อนเดียวที่ครอบคลุมหลาย invoice
             </div>
           </div>
 
           <!-- Candidate list -->
-          <div id="rCandidateList" style="max-height:400px;overflow-y:auto;padding:8px">
+          <div id="rCandidateList" style="max-height:380px;overflow-y:auto;padding:8px">
             <div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>
           </div>
+
+          <!-- Selection summary bar -->
+          <div id="rSelectionBar" style="display:none;padding:12px 18px;background:#fff7ed;border-top:2px solid #fed7aa">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="font-size:13px;color:#9a3412">
+                <strong id="rSelectionCount">0</strong> รายการที่เลือก —
+                รวม <strong id="rSelectionSum" style="color:#0f172a">฿0.00</strong>
+                / ยอดธนาคาร <strong id="rBankSumDisplay" style="color:#0f172a">฿0.00</strong>
+              </div>
+              <div id="rSelectionDiff" style="margin-left:auto;font-size:13px;font-weight:700"></div>
+            </div>
+          </div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" style="justify-content:space-between">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reconcileModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="rConfirmBtn" onclick="Page.confirmMultiMatch()" disabled
+            style="background:linear-gradient(135deg,#10b981,#059669);border:none">
+            ✓ จับคู่ <span id="rConfirmCountText">(เลือกรายการก่อน)</span>
+          </button>
         </div>
       </div>
     </div>
@@ -831,18 +847,21 @@
           await this.loadReconciliationSummary();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      // === MANUAL RECONCILE PICKER ===
+      // === MANUAL RECONCILE PICKER (multi-select capable) ===
       _pickerData: null,    // { bankTransactionId, bankTransactionDate, ..., payments:[], journalEntries:[] }
       _pickerTab: 'payment',
+      _pickerSelected: [],  // [{ type, id, number, amount }]  — accumulates across tabs
       async openReconcileOne(transId) {
         document.getElementById('rTransId').value = transId;
         document.getElementById('rPickerSearch').value = '';
         this._pickerTab = 'payment';
+        this._pickerSelected = [];
         document.getElementById('rBankInfo').textContent = 'กำลังโหลด...';
         document.getElementById('rCandidateList').innerHTML =
           '<div style="text-align:center;color:#94a3b8;padding:40px">⏳ กำลังค้นหารายการที่อาจตรงกัน...</div>';
         document.getElementById('rPaymentCount').textContent = '0';
         document.getElementById('rJournalCount').textContent = '0';
+        this.updateSelectionBar();
         Layout.openModal('reconcileModal');
 
         const api = Layout.api(); if (!api) return;
@@ -850,7 +869,6 @@
           const res = await api.getMatchCandidates(transId);
           this._pickerData = res.data;
           const d = res.data;
-          // Bank summary
           const dateStr = Layout.date(d.bankTransactionDate);
           const amtStr = Layout.money(d.bankTransactionAmount);
           document.getElementById('rBankInfo').innerHTML =
@@ -861,6 +879,7 @@
             </div>`;
           document.getElementById('rPaymentCount').textContent = (d.payments || []).length;
           document.getElementById('rJournalCount').textContent = (d.journalEntries || []).length;
+          document.getElementById('rBankSumDisplay').textContent = '฿' + amtStr;
           this.renderPickerCandidates();
         } catch(e) {
           document.getElementById('rCandidateList').innerHTML =
@@ -869,7 +888,6 @@
       },
       switchPickerTab(tab) {
         this._pickerTab = tab;
-        // Visual: highlight active tab
         document.querySelectorAll('.rcn-tab').forEach(b => {
           const isActive = b.dataset.tab === tab;
           b.style.borderBottomColor = isActive ? '#4F46E5' : 'transparent';
@@ -878,6 +896,55 @@
         this.renderPickerCandidates();
       },
       filterPickerCandidates() { this.renderPickerCandidates(); },
+      isPickerSelected(type, id) {
+        return (this._pickerSelected || []).some(s => s.type === type && s.id === id);
+      },
+      togglePickerSelect(type, id, number, amount) {
+        if (!this._pickerSelected) this._pickerSelected = [];
+        const ix = this._pickerSelected.findIndex(s => s.type === type && s.id === id);
+        if (ix >= 0) {
+          this._pickerSelected.splice(ix, 1);
+        } else {
+          // Cannot mix Payment and JournalEntry types — backend stores them on different columns
+          if (this._pickerSelected.length > 0 && this._pickerSelected[0].type !== type) {
+            Layout.toast('เลือกได้แค่ประเภทเดียวต่อการจับคู่ (Payment หรือ Journal Entry — ไม่ผสมกัน)', 'error');
+            return;
+          }
+          this._pickerSelected.push({ type, id, number, amount: Number(amount) || 0 });
+        }
+        this.renderPickerCandidates();
+        this.updateSelectionBar();
+      },
+      updateSelectionBar() {
+        const sel = this._pickerSelected || [];
+        const bar = document.getElementById('rSelectionBar');
+        const btn = document.getElementById('rConfirmBtn');
+        const cntText = document.getElementById('rConfirmCountText');
+        if (!sel.length) {
+          if (bar) bar.style.display = 'none';
+          if (btn) btn.disabled = true;
+          if (cntText) cntText.textContent = '(เลือกรายการก่อน)';
+          return;
+        }
+        const sum = sel.reduce((s, x) => s + (x.amount || 0), 0);
+        const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const diff = bankAmt - sum;
+        document.getElementById('rSelectionCount').textContent = sel.length;
+        document.getElementById('rSelectionSum').textContent = '฿' + Layout.money(sum);
+        const diffEl = document.getElementById('rSelectionDiff');
+        if (Math.abs(diff) < 0.01) {
+          diffEl.innerHTML = '<span style="color:#10b981">✓ ยอดตรงเป๊ะ</span>';
+        } else if (diff > 0) {
+          diffEl.innerHTML = `<span style="color:#dc2626">ต่าง ฿${Layout.money(Math.abs(diff))} (เลือกขาด)</span>`;
+        } else {
+          diffEl.innerHTML = `<span style="color:#dc2626">ต่าง ฿${Layout.money(Math.abs(diff))} (เลือกเกิน)</span>`;
+        }
+        bar.style.display = 'block';
+        btn.disabled = false;
+        cntText.textContent = sel.length === 1
+          ? `1 รายการ (฿${Layout.money(sum)})`
+          : `รวม ${sel.length} รายการ (฿${Layout.money(sum)})`;
+      },
       renderPickerCandidates() {
         const d = this._pickerData; if (!d) return;
         const list = this._pickerTab === 'payment' ? (d.payments || []) : (d.journalEntries || []);
@@ -897,7 +964,7 @@
         if (!filtered.length) {
           container.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:40px">
             ${search ? '🔍 ไม่พบรายการที่ตรงกับการค้นหา' : (this._pickerTab === 'payment' ? '💳 ไม่มีรายการชำระเงินที่ใกล้เคียง' : '📒 ไม่มี Journal Entry ที่ใกล้เคียง')}
-            <div style="margin-top:8px;font-size:12px">ลองเปลี่ยนแท็บ หรือสร้างรายการชำระเงิน/Journal Entry ใหม่ก่อน</div>
+            <div style="margin-top:8px;font-size:12px">รายการที่ถูกจับคู่กับธุรกรรมอื่นแล้วจะไม่ถูกแสดงที่นี่</div>
           </div>`;
           return;
         }
@@ -906,11 +973,13 @@
           const scoreColor = c.score >= 80 ? '#10b981' : c.score >= 50 ? '#f59e0b' : '#94a3b8';
           const scoreBg = c.score >= 80 ? '#d1fae5' : c.score >= 50 ? '#fef3c7' : '#f1f5f9';
           const dateStr = Layout.date(c.date);
-          return `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all 0.15s;background:#fff"
-            onmouseover="this.style.borderColor='#4F46E5';this.style.background='#f8faff'"
-            onmouseout="this.style.borderColor='#e2e8f0';this.style.background='#fff'"
-            onclick="Page.confirmPickerSelect('${c.type}','${c.id}','${this.esc(c.number)}',${c.amount})">
+          const isSel = this.isPickerSelected(c.type, c.id);
+          const borderColor = isSel ? '#10b981' : '#e2e8f0';
+          const bg = isSel ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : '#fff';
+          return `<div style="border:2px solid ${borderColor};border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all 0.15s;background:${bg}"
+            onclick="Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
             <div style="display:flex;align-items:start;gap:12px">
+              <input type="checkbox" ${isSel ? 'checked' : ''} style="margin-top:8px;width:18px;height:18px;cursor:pointer" onclick="event.stopPropagation();Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
               <div style="background:${scoreBg};color:${scoreColor};padding:6px 10px;border-radius:8px;font-weight:700;font-size:14px;min-width:54px;text-align:center">
                 ${c.score}%
               </div>
@@ -922,7 +991,7 @@
                 <div style="font-size:12px;color:#64748b;display:flex;gap:12px;flex-wrap:wrap">
                   <span>📅 ${dateStr}</span>
                   ${c.dateDiffDays === 0 ? '<span style="color:#10b981">✓ วันเดียวกัน</span>' : `<span>ห่าง ${c.dateDiffDays} วัน</span>`}
-                  ${c.amountDiff < 0.01 ? '<span style="color:#10b981">✓ ยอดตรงเป๊ะ</span>' : `<span>ต่าง ฿${Layout.money(c.amountDiff)}</span>`}
+                  ${c.amountDiff < 0.01 ? '<span style="color:#10b981">✓ ยอดตรงเป๊ะ</span>' : ''}
                 </div>
                 ${c.counterpartyName ? `<div style="font-size:13px;color:#334155;margin-top:4px">👤 ${this.esc(c.counterpartyName)}</div>` : ''}
                 ${c.description && c.description !== c.counterpartyName ? `<div style="font-size:12px;color:#64748b;margin-top:2px">${this.esc(c.description)}</div>` : ''}
@@ -933,19 +1002,43 @@
           </div>`;
         }).join('');
       },
-      async confirmPickerSelect(type, id, number, amount) {
+      async confirmMultiMatch() {
+        const sel = this._pickerSelected || [];
+        if (!sel.length) return;
         const transId = document.getElementById('rTransId').value;
+        const type = sel[0].type;
+        const sum = sel.reduce((s, x) => s + x.amount, 0);
         const bankAmt = this._pickerData?.bankTransactionAmount || 0;
-        const diff = Math.abs(bankAmt - amount);
-        const warn = diff >= 0.01 ? `\n\n⚠️ ยอดต่างกัน ฿${diff.toFixed(2)}` : '';
-        if (!confirm(`จับคู่กับ ${type === 'Payment' ? 'การชำระเงิน' : 'Journal Entry'} ${number}\nยอด ฿${amount.toLocaleString('en-US', {minimumFractionDigits:2})}${warn}?`)) return;
+        const diff = Math.abs(bankAmt - sum);
+
+        let msg;
+        if (sel.length === 1) {
+          msg = `จับคู่กับ ${type === 'Payment' ? 'การชำระเงิน' : 'Journal Entry'} ${sel[0].number}\nยอด ฿${Layout.money(sel[0].amount)}`;
+        } else {
+          msg = `รวม ${sel.length} รายการเป็นการจับคู่เดียว\nรวมยอด ฿${Layout.money(sum)} / ยอดธนาคาร ฿${Layout.money(bankAmt)}`;
+        }
+        if (diff >= 0.01) msg += `\n\n⚠️ ยอดต่างกัน ฿${diff.toFixed(2)}`;
+        msg += '\n\nยืนยันการจับคู่?';
+        if (!confirm(msg)) return;
 
         const api = Layout.api(); if (!api) return;
         try {
-          const payload = { bankTransactionId: transId };
-          if (type === 'Payment') payload.matchedPaymentId = id;
-          else payload.matchedJournalEntryId = id;
-          await api.reconcile(payload);
+          if (sel.length === 1) {
+            // Use the simple single-match endpoint
+            const payload = { bankTransactionId: transId };
+            if (type === 'Payment') payload.matchedPaymentId = sel[0].id;
+            else payload.matchedJournalEntryId = sel[0].id;
+            await api.reconcile(payload);
+          } else {
+            // Use batch endpoint with MatchType="Multiple"
+            await api.batchReconcile({
+              items: [{
+                bankTransactionId: transId,
+                matchType: 'Multiple',
+                matchedEntryIds: sel.map(s => s.id)
+              }]
+            });
+          }
           Layout.closeModal('reconcileModal');
           Layout.toast('จับคู่สำเร็จ', 'success');
           await this.loadTransactions();
