@@ -119,5 +119,6 @@ public partial class BankService
         txn.ReconciledAt = null;
         txn.ReconciledBy = null;
         txn.MatchGroupId = null;
+        txn.MatchedEntryIdsJson = null;
     }
 }

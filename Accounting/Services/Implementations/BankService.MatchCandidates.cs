@@ -35,18 +35,46 @@ public partial class BankService
         // Match-direction filter: deposit txn → likely receiving customer payment;
         // withdrawal txn → likely supplier payment / refund.
         // We don't enforce direction strictly because it can vary.
-        var matchedPaymentIds = await _db.Set<BankTransaction>()
-            .Where(t => t.CompanyId == companyId
-                     && t.MatchedPaymentId.HasValue
-                     && t.Id != bankTransactionId)
-            .Select(t => t.MatchedPaymentId!.Value)
+        // Collect all "already matched" IDs from sibling bank transactions:
+        //   1. Single matches (MatchedPaymentId / MatchedJournalEntryId)
+        //   2. Multi-matches (MatchedEntryIdsJson contains a list of IDs)
+        // We must exclude both so users don't see candidates that were already used
+        // as part of an aggregated match on another bank transaction.
+        var siblingTxns = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.Id != bankTransactionId)
+            .Select(t => new { t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson })
             .ToListAsync();
 
+        var matchedPaymentIds = new HashSet<Guid>(
+            siblingTxns.Where(t => t.MatchedPaymentId.HasValue).Select(t => t.MatchedPaymentId!.Value));
+        var matchedJeIdsHash = new HashSet<Guid>(
+            siblingTxns.Where(t => t.MatchedJournalEntryId.HasValue).Select(t => t.MatchedJournalEntryId!.Value));
+
+        // Pull IDs from all multi-match JSON arrays. Each is either a payment or JE ID;
+        // we don't know which type without checking, so add to both sets — the candidate
+        // queries below will only filter the relevant set.
+        foreach (var t in siblingTxns)
+        {
+            if (string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson)) continue;
+            try
+            {
+                var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson);
+                if (ids == null) continue;
+                foreach (var id in ids)
+                {
+                    matchedPaymentIds.Add(id);
+                    matchedJeIdsHash.Add(id);
+                }
+            }
+            catch { /* malformed JSON — ignore */ }
+        }
+
+        var paymentIdSet = matchedPaymentIds.ToList();
         var paymentCandidates = await _db.Set<Payment>()
             .Include(p => p.Document).ThenInclude(d => d.Contact)
             .Where(p => p.CompanyId == companyId
                      && p.PaymentDate >= dateMin && p.PaymentDate <= dateMax
-                     && !matchedPaymentIds.Contains(p.Id))
+                     && !paymentIdSet.Contains(p.Id))
             .ToListAsync();
 
         var rankedPayments = paymentCandidates
@@ -78,18 +106,14 @@ public partial class BankService
             .ToList();
 
         // ===== Candidate Journal Entries =====
-        var matchedJeIds = await _db.Set<BankTransaction>()
-            .Where(t => t.CompanyId == companyId
-                     && t.MatchedJournalEntryId.HasValue
-                     && t.Id != bankTransactionId)
-            .Select(t => t.MatchedJournalEntryId!.Value)
-            .ToListAsync();
-
+        // Use the same matchedJeIdsHash assembled above (includes single-matched IDs +
+        // every ID in any sibling transaction's MatchedEntryIdsJson list).
+        var jeIdSet = matchedJeIdsHash.ToList();
         var jeCandidates = await _db.Set<JournalEntry>()
             .Where(j => j.CompanyId == companyId
                      && j.EntryDate >= dateMin && j.EntryDate <= dateMax
                      && j.Status != JournalEntryStatus.Voided
-                     && !matchedJeIds.Contains(j.Id))
+                     && !jeIdSet.Contains(j.Id))
             .ToListAsync();
 
         var rankedJournals = jeCandidates

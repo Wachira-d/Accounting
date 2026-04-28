@@ -673,14 +673,23 @@ public partial class BankService
                 txn.ReconciledBy = "AI-Batch";
 
                 if (item.MatchType == "Payment" && item.MatchedPaymentId.HasValue)
+                {
                     txn.MatchedPaymentId = item.MatchedPaymentId;
+                    txn.MatchedEntryIdsJson = null;
+                }
                 else if (item.MatchType == "JournalEntry" && item.MatchedJournalEntryId.HasValue)
+                {
                     txn.MatchedJournalEntryId = item.MatchedJournalEntryId;
+                    txn.MatchedEntryIdsJson = null;
+                }
                 else if (item.MatchType == "Multiple" && item.MatchedEntryIds?.Any() == true)
                 {
-                    // For aggregated matches, store first entry and group
+                    // Many-to-one match. Store the full ID list as JSON so subsequent
+                    // candidate queries can exclude all of them, plus keep first ID
+                    // in MatchedJournalEntryId for backwards compatibility / quick lookup.
                     txn.MatchedJournalEntryId = item.MatchedEntryIds.First();
                     txn.MatchGroupId = groupId;
+                    txn.MatchedEntryIdsJson = System.Text.Json.JsonSerializer.Serialize(item.MatchedEntryIds);
                 }
 
                 results.Add(MapTransactionToResponse(txn));
@@ -709,6 +718,7 @@ public partial class BankService
         txn.ReconciledAt = null;
         txn.ReconciledBy = null;
         txn.MatchGroupId = null;
+        txn.MatchedEntryIdsJson = null;
 
         await _db.SaveChangesAsync();
         return MapTransactionToResponse(txn);

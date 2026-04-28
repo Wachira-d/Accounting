@@ -13,13 +13,13 @@
       <div>
         <a href="/" style="font-size:24px;font-weight:800;margin-bottom:48px;display:block">Next Acc</a>
         <h2>เริ่มต้นใช้งานฟรี!</h2>
-        <p>ทดลองใช้งานเต็มรูปแบบ 14 วัน ไม่ต้องใช้บัตรเครดิต</p>
+        <p>Free Edition ใช้ฟรีตลอดชีพ — อัปเกรดเมื่อธุรกิจของคุณพร้อม</p>
         <ul class="features-list">
-          <li>✓ ทดลองใช้ฟรี 14 วัน</li>
+          <li>✓ Free Edition ฟรีตลอดชีพ ไม่หมดอายุ</li>
           <li>✓ ไม่ต้องผูกบัตรเครดิต</li>
-          <li>✓ เข้าถึงทุกฟีเจอร์</li>
-          <li>✓ ข้อมูลตัวอย่างพร้อมใช้</li>
-          <li>✓ ยกเลิกได้ทุกเมื่อ</li>
+          <li>✓ ออกเอกสาร + บันทึกบัญชีได้ครบ</li>
+          <li>✓ ทดลอง Pro 14 วันก็ได้</li>
+          <li>✓ อัปเกรด/ยกเลิกได้ตลอด</li>
         </ul>
       </div>
     </div>
@@ -60,32 +60,40 @@
 
           <!-- Plan Selection -->
           <div class="form-group" style="margin-bottom:20px">
-            <label class="form-label" style="font-weight:600;margin-bottom:10px">เลือกแพ็กเกจที่ต้องการทดลองใช้ (ฟรี 14 วัน)</label>
-            <div id="planGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <label class="form-label" style="font-weight:600;margin-bottom:10px">เลือกแพ็กเกจที่ต้องการ</label>
+            <div id="planGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+              <label class="plan-card" data-plan="FreeTrial" style="cursor:pointer;padding:12px;border:2px solid #10B981;border-radius:10px;text-align:center;transition:all 0.15s;background:linear-gradient(135deg,#ecfdf5,#ffffff);position:relative">
+                <input type="radio" name="plan" value="FreeTrial" checked style="display:none">
+                <div style="position:absolute;top:-8px;right:8px;background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">ฟรีตลอดชีพ</div>
+                <div style="font-size:20px">🎁</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px;color:#059669">Free</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ฟรีตลอดชีพ</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">30 เอกสาร/เดือน</div>
+              </label>
               <label class="plan-card" data-plan="Basic" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
                 <input type="radio" name="plan" value="Basic" style="display:none">
                 <div style="font-size:20px">📦</div>
-                <div style="font-weight:700;font-size:13px;margin-top:4px">Basic</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">เริ่มต้น</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">บันทึกบัญชี + ใบเสร็จ</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Starter</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 14 วัน</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">100 เอกสาร/เดือน</div>
               </label>
-              <label class="plan-card" data-plan="Pro" style="cursor:pointer;padding:12px;border:2px solid #4F46E5;border-radius:10px;text-align:center;transition:all 0.15s;background:linear-gradient(135deg,#eef2ff,#ffffff);position:relative">
-                <input type="radio" name="plan" value="Pro" checked style="display:none">
+              <label class="plan-card" data-plan="Pro" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff;position:relative">
+                <input type="radio" name="plan" value="Pro" style="display:none">
                 <div style="position:absolute;top:-8px;right:8px;background:#4F46E5;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">แนะนำ</div>
                 <div style="font-size:20px">⚡</div>
-                <div style="font-weight:700;font-size:13px;margin-top:4px;color:#4F46E5">Pro</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">ครบทุกฟีเจอร์</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">+ e-Tax, AI, รายงาน</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Pro</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 14 วัน</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">+ e-Tax, AI</div>
               </label>
               <label class="plan-card" data-plan="Enterprise" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
                 <input type="radio" name="plan" value="Enterprise" style="display:none">
                 <div style="font-size:20px">🏢</div>
                 <div style="font-weight:700;font-size:13px;margin-top:4px">Enterprise</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">หลายบริษัท</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">ไม่จำกัดผู้ใช้ + API</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 30 วัน</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">หลายบริษัท + API</div>
               </label>
             </div>
-            <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">เปลี่ยนแพ็กเกจหรืออัปเกรดได้ตลอดเวลา</div>
+            <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">💡 เริ่มฟรีตลอดชีพ หรือทดลอง Pro/Enterprise ก่อนตัดสินใจซื้อ — เปลี่ยนแพ็กเกจได้ตลอดเวลา</div>
           </div>
 
           <div style="margin-bottom:24px">
@@ -239,17 +247,18 @@
     document.querySelectorAll('.plan-card').forEach(card => {
       card.addEventListener('click', function() {
         document.querySelectorAll('.plan-card').forEach(c => {
-          const isPro = c.dataset.plan === 'Pro';
           c.style.borderColor = '#e2e8f0';
           c.style.background = '#fff';
-          if (isPro) {
-            c.querySelector('div:nth-child(3)').style.color = '';
-          }
+          const nameEl = c.querySelector('div:nth-child(3)');
+          if (nameEl) nameEl.style.color = '';
         });
-        this.style.borderColor = '#4F46E5';
-        this.style.background = 'linear-gradient(135deg,#eef2ff,#ffffff)';
+        const isFree = this.dataset.plan === 'FreeTrial';
+        const accent = isFree ? '#10B981' : '#4F46E5';
+        const bg = isFree ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : 'linear-gradient(135deg,#eef2ff,#ffffff)';
+        this.style.borderColor = accent;
+        this.style.background = bg;
         const nameEl = this.querySelector('div:nth-child(3)');
-        if (nameEl) nameEl.style.color = '#4F46E5';
+        if (nameEl) nameEl.style.color = isFree ? '#059669' : '#4F46E5';
         this.querySelector('input[type="radio"]').checked = true;
       });
     });

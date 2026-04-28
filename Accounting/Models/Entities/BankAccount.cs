@@ -47,4 +47,10 @@ public class BankTransaction : TenantEntity
 
     // AI Reconciliation — group ID for aggregated (many-to-one) matches
     public string? MatchGroupId { get; set; }
+
+    // For many-to-one matches: JSON array of all Payment/JournalEntry IDs
+    // matched to this single bank transaction. Format: ["guid1","guid2",...]
+    // (MatchedPaymentId / MatchedJournalEntryId still hold the first ID for
+    // backwards compatibility / single-match queries.)
+    public string? MatchedEntryIdsJson { get; set; }
 }

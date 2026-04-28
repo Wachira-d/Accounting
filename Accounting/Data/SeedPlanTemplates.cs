@@ -137,24 +137,25 @@ public static class SeedPlanTemplates
                 CreatedAt = DateTime.UtcNow,
             },
 
-            // ===== 4. Free Trial (เฉพาะทดลองใช้) =====
+            // ===== 4. Free Edition (ฟรีตลอดชีพ) =====
             new PlanTemplate
             {
                 Id = Guid.NewGuid(),
-                Name = "ทดลองใช้ฟรี",
-                Description = "ทดลองใช้งานระบบบัญชี Next Acc ฟรี 14 วัน ไม่ต้องผูกบัตรเครดิต ใช้งานฟีเจอร์พื้นฐานครบถ้วน ออกเอกสาร ดูรายงาน จัดการภาษี ยกเลิกได้ตลอดเวลา",
+                Name = "Free Edition",
+                Description = "เริ่มต้นใช้งาน Next Acc ฟรีตลอดชีพ ไม่ต้องผูกบัตรเครดิต ออกเอกสารพื้นฐาน บันทึกบัญชี ดูรายงานเบื้องต้น เหมาะสำหรับฟรีแลนซ์และธุรกิจขนาดเล็กที่เพิ่งเริ่มต้น อัปเกรดเป็นแพ็กเกจอื่นได้ตลอดเวลาเพื่อปลดล็อกฟีเจอร์เพิ่มเติม",
                 Plan = SubscriptionPlan.FreeTrial,
                 IsActive = true,
+                IsPermanentFree = true,
                 Currency = "THB",
 
-                // ราคา (ฟรี)
+                // ราคา (ฟรีตลอดชีพ)
                 MonthlyPrice = 0m,
                 QuarterlyPrice = 0m,
                 SemiAnnualPrice = 0m,
                 AnnualPrice = 0m,
 
-                // ลิมิต
-                MaxUsers = 2,
+                // ลิมิต (Free Edition — เพียงพอสำหรับธุรกิจเล็ก)
+                MaxUsers = 1,
                 MaxCompanies = 1,
                 MaxDocumentsPerMonth = 30,
                 MaxJournalEntriesPerMonth = 50,
@@ -163,16 +164,16 @@ public static class SeedPlanTemplates
                 // ฟีเจอร์
                 EnabledFeatures = FeatureFlags.TrialFeatures,
 
-                // ตั้งค่าทดลองใช้
-                TrialDurationDays = 14,
-                TrialMaxExtensions = 1,
-                TrialExtensionDays = 7,
+                // ตั้งค่าทดลองใช้ (ไม่หมดอายุ — IsPermanentFree=true จะใช้ EndDate=+100 ปี)
+                TrialDurationDays = 36500,           // ~100 ปี (ตลอดชีพ)
+                TrialMaxExtensions = 0,
+                TrialExtensionDays = 0,
                 TrialFeatures = FeatureFlags.TrialFeatures,
-                TrialMaxUsers = 2,
+                TrialMaxUsers = 1,
                 TrialMaxDocumentsPerMonth = 30,
                 TrialMaxJournalEntriesPerMonth = 50,
                 TrialBlockOnExpiry = false,
-                TrialGracePeriodDays = 7,
+                TrialGracePeriodDays = 0,
 
                 CreatedAt = DateTime.UtcNow,
             },

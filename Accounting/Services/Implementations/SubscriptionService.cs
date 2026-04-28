@@ -290,14 +290,15 @@ public class SubscriptionService : ISubscriptionService
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
-        // Auto-create a default Pro trial if missing (e.g. legacy company created before
-        // signup auto-trial was added). Avoids 404 cascading errors on settings/dashboard.
+        // Auto-create a default Free Edition (permanent free) if missing (e.g. legacy
+        // company created before signup auto-subscription was added). Avoids 404 cascading
+        // errors on settings/dashboard.
         if (sub == null)
         {
             try
             {
                 await StartTrialAsync(
-                    new Models.DTOs.Subscription.StartTrialRequest(companyId, SubscriptionPlan.Pro),
+                    new Models.DTOs.Subscription.StartTrialRequest(companyId, SubscriptionPlan.FreeTrial),
                     "auto");
                 sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
             }
