@@ -81,7 +81,45 @@ const Layout = {
   _refreshNavMenu() {
     const nav = document.querySelector('.sidebar-nav');
     if (!nav) return;
-    nav.innerHTML = this.navItems.map(item => this._renderNavItem(item)).join('');
+    const hidden = this.getHiddenMenuItems();
+    // Filter out hidden items, then drop sections that have no remaining items underneath
+    const items = this.navItems.filter(item => !item.id || !hidden.includes(item.id));
+    const visible = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.section) {
+        // include the section header only if the next non-section item exists in this run
+        let hasFollowing = false;
+        for (let j = i + 1; j < items.length; j++) {
+          if (items[j].section) break;
+          hasFollowing = true; break;
+        }
+        if (hasFollowing) visible.push(it);
+      } else {
+        visible.push(it);
+      }
+    }
+    nav.innerHTML = visible.map(item => this._renderNavItem(item)).join('');
+  },
+
+  // ===== Per-user menu visibility (stored in localStorage, scoped by company) =====
+  _menuKey() {
+    const cid = (this.subscription && this.subscription.companyId) ||
+                (this.user && this.user.companyId) || 'default';
+    return `nextacc_hiddenMenu_${cid}`;
+  },
+  getHiddenMenuItems() {
+    try { return JSON.parse(localStorage.getItem(this._menuKey()) || '[]'); }
+    catch { return []; }
+  },
+  setHiddenMenuItems(ids) {
+    localStorage.setItem(this._menuKey(), JSON.stringify(ids || []));
+    this._refreshNavMenu();
+  },
+  toggleMenuItem(id, hidden) {
+    const set = new Set(this.getHiddenMenuItems());
+    if (hidden) set.add(id); else set.delete(id);
+    this.setHiddenMenuItems(Array.from(set));
   },
 
   _enforcePageAccess() {

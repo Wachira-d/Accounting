@@ -80,6 +80,34 @@ public class EtaxController : ControllerBase
         return Content(xml, "application/xml");
     }
 
+    /// <summary>
+    /// Download PDF/A-3 with embedded ETDA XML (per Thai RD e-Tax by Email spec).
+    /// Generates the PDF if not yet generated, persists it to disk, returns the bytes.
+    /// </summary>
+    [HttpGet("{etaxId:guid}/pdf")]
+    public async Task<ActionResult> GetPdf(Guid companyId, Guid etaxId)
+    {
+        var (pdf, fileName) = await _etaxService.GeneratePdfA3Async(companyId, etaxId);
+        return File(pdf, "application/pdf", fileName);
+    }
+
+    /// <summary>
+    /// Generate (or re-generate) the PDF/A-3 for an eTax invoice.
+    /// Useful after configuration changes or as a preparation step before sending email.
+    /// </summary>
+    [HttpPost("{etaxId:guid}/generate-pdf")]
+    public async Task<ActionResult<ApiResponse<object>>> GeneratePdf(Guid companyId, Guid etaxId)
+    {
+        var (pdf, fileName) = await _etaxService.GeneratePdfA3Async(companyId, etaxId);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            FileName = fileName,
+            SizeBytes = pdf.Length,
+            Format = "PDF/A-3 conformance level U",
+            EmbeddedXml = true
+        }, "สร้าง PDF/A-3 พร้อมฝัง XML สำเร็จ"));
+    }
+
     [HttpPost("{etaxId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid etaxId)
     {

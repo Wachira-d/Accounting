@@ -266,6 +266,7 @@
           <td>
             <div style="display:flex;gap:4px;flex-wrap:wrap">
               <button class="btn btn-xs btn-outline" onclick="Page.viewXml('${e.id}')">XML</button>
+              <button class="btn btn-xs btn-outline" onclick="Page.downloadPdfA3('${e.id}')" title="ดาวน์โหลด PDF/A-3 พร้อมฝัง XML (ตามมาตรฐาน e-Tax by Email)">📄 PDF/A-3</button>
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-primary" onclick="Page.sign('${e.id}')">ลงนาม</button>` : ''}
               ${e.status === 'Signed' ? `<button class="btn btn-xs btn-success" onclick="Page.submit('${e.id}')">ส่ง RD</button>` : ''}
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-success" onclick="Page.signAndSubmit('${e.id}')">ลงนาม+ส่ง</button>` : ''}
@@ -380,6 +381,21 @@
       a.href = URL.createObjectURL(blob);
       a.download = `etax-${this.currentXmlId}.xml`;
       a.click();
+    },
+
+    async downloadPdfA3(etaxId) {
+      try {
+        Layout.toast?.('กำลังสร้าง PDF/A-3 พร้อมฝัง XML...', 'info');
+        const url = `/api/companies/${this.companyId}/etax/${etaxId}/pdf`;
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) throw new Error('Failed: ' + resp.status);
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `etax-${etaxId}.pdf`;
+        a.click();
+        Layout.toast?.('ดาวน์โหลด PDF/A-3 สำเร็จ', 'success');
+      } catch(e) { alert(e.message || 'ดาวน์โหลด PDF ล้มเหลว'); }
     },
 
     async void(id) {

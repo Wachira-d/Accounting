@@ -157,16 +157,38 @@ public class DocumentEmailService : IDocumentEmailService
             });
         }
 
-        // Attach PDF if file exists on disk (PDF/A-3 generation should already include embedded XML
-        // per settings.EtaxByEmailEmbedXml — handled by EtaxInvoiceService when generating)
-        if (req.IncludePdf && !string.IsNullOrWhiteSpace(etax.PdfFilePath) && File.Exists(etax.PdfFilePath))
+        // Attach PDF/A-3 with embedded XML (the legally compliant artifact for e-Tax by Email).
+        // If PDF doesn't exist on disk yet, generate it on-demand.
+        if (req.IncludePdf)
         {
-            msg.Attachments.Add(new EmailAttachment
+            byte[]? pdfBytes = null;
+            if (!string.IsNullOrWhiteSpace(etax.PdfFilePath) && File.Exists(etax.PdfFilePath))
             {
-                FileName = $"{etax.EtaxRefNumber}.pdf",
-                ContentType = "application/pdf",
-                Content = await File.ReadAllBytesAsync(etax.PdfFilePath)
-            });
+                pdfBytes = await File.ReadAllBytesAsync(etax.PdfFilePath);
+            }
+            else
+            {
+                try
+                {
+                    var (generatedPdf, _) = await _etaxService.GeneratePdfA3Async(companyId, etaxInvoiceId);
+                    pdfBytes = generatedPdf;
+                    log.PdfFilePath = etax.PdfFilePath;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate PDF/A-3 for e-Tax {Ref}; sending without PDF", etax.EtaxRefNumber);
+                }
+            }
+
+            if (pdfBytes != null)
+            {
+                msg.Attachments.Add(new EmailAttachment
+                {
+                    FileName = $"{etax.EtaxRefNumber}.pdf",
+                    ContentType = "application/pdf",
+                    Content = pdfBytes
+                });
+            }
         }
 
         var result = await sender.SendAsync(msg);

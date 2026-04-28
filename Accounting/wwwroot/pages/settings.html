@@ -184,6 +184,14 @@
         <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose"><label for="sAutoClose">ปิดงวดอัตโนมัติ</label></div>
         <div class="form-group"><label class="form-label">วันปิดงวด</label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28"></div>
       </div>
+
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ปรับเมนูที่แสดง</h4>
+      <p style="color:#64748b;margin-bottom:12px;font-size:13px">ติ๊กเมนูที่ไม่ได้ใช้งานเพื่อซ่อนจาก sidebar (เก็บเป็นการตั้งค่าส่วนตัวของบริษัทนี้บนเครื่องนี้)</p>
+      <div id="menuVisibilityList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;max-height:400px;overflow-y:auto;padding:12px;background:#f8fafc;border-radius:8px"></div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn btn-sm btn-secondary" onclick="Page.menuShowAll()">แสดงทั้งหมด</button>
+        <button class="btn btn-sm btn-secondary" onclick="Page.menuHideAll()">ซ่อนทั้งหมด</button>
+      </div>
     </div>
 
     <!-- ===== Document Settings Tab ===== -->
@@ -482,6 +490,7 @@
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
+        if (tab === 'general') this.renderMenuVisibility();
         if (tab === 'numbering') this.loadNumberSeries();
         if (tab === 'email') this.loadEmailConfig();
         if (tab === 'etax') this.loadEtaxConfig();
@@ -991,6 +1000,35 @@
           }
           Layout.toast('บันทึกการตั้งค่าสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderMenuVisibility() {
+        const list = document.getElementById('menuVisibilityList');
+        if (!list) return;
+        const hidden = new Set(Layout.getHiddenMenuItems());
+        const items = (Layout.navItems || []).filter(i => i.id);
+        list.innerHTML = items.map(item => {
+          const checked = !hidden.has(item.id);
+          return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer">
+            <input type="checkbox" ${checked ? 'checked' : ''} onchange="Page.menuToggle('${item.id}', !this.checked)">
+            <span style="font-size:18px">${item.icon || '•'}</span>
+            <span style="font-size:13px;color:#334155">${item.label}</span>
+          </label>`;
+        }).join('');
+      },
+      menuToggle(id, hide) {
+        Layout.toggleMenuItem(id, hide);
+      },
+      menuShowAll() {
+        Layout.setHiddenMenuItems([]);
+        this.renderMenuVisibility();
+        Layout.toast('แสดงทุกเมนู');
+      },
+      menuHideAll() {
+        const ids = (Layout.navItems || []).filter(i => i.id).map(i => i.id);
+        Layout.setHiddenMenuItems(ids);
+        this.renderMenuVisibility();
+        Layout.toast('ซ่อนเมนูทั้งหมด (ยกเว้นแถบหัวข้อ)');
       }
     };
     Page.init();

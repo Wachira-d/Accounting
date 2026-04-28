@@ -16,7 +16,7 @@ namespace Accounting.Services.Implementations;
 /// ใช้ HTML → PDF conversion (รองรับ library เช่น QuestPDF, wkhtmltopdf, Puppeteer, etc.)
 /// Service นี้สร้าง HTML content ตาม template settings แล้วส่งต่อให้ PDF renderer
 /// </summary>
-public class PdfGenerationService : IPdfGenerationService
+public partial class PdfGenerationService : IPdfGenerationService
 {
     private readonly AccountingDbContext _db;
     private readonly IDocumentTemplateService _templateService;

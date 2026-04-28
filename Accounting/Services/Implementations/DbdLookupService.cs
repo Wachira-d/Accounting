@@ -72,7 +72,21 @@ public class DbdLookupService : IDbdLookupService
             // We accept "found ID with no name" only as a last resort.
             DbdCompanyResult? bestPartial = null;
 
-            // 1) DBD Open API (often empty without API key, but try anyway)
+            // 1) Revenue Department VAT lookup — most reliable free source for Thai businesses
+            //    (works for VAT-registered companies — covers nearly all juristic persons)
+            try
+            {
+                var rdResult = await LookupRdVatAsync(client, juristicId);
+                if (rdResult != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(rdResult.NameTh) || !string.IsNullOrWhiteSpace(rdResult.NameEn))
+                        return rdResult;
+                    bestPartial ??= rdResult;
+                }
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "RD VAT lookup failed for {Id}", juristicId); }
+
+            // 2) DBD Open API (often empty without API key, but try anyway)
             try
             {
                 var url = $"https://openapi.dbd.go.th/api/v1/juristic_person/{Uri.EscapeDataString(juristicId)}";
@@ -225,6 +239,113 @@ public class DbdLookupService : IDbdLookupService
             _logger.LogError(ex, "TIN verification failed for: {Tin}", tin);
             return new TinCheckResult(false, false, tin);
         }
+    }
+
+    /// <summary>
+    /// Revenue Department VAT lookup — public SOAP service, no API key needed.
+    /// Returns full company name + branch + address for VAT-registered juristic persons.
+    /// </summary>
+    private async Task<DbdCompanyResult?> LookupRdVatAsync(HttpClient client, string tin)
+    {
+        var soapBody = $"""
+        <?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <Service xmlns="https://rdws.rd.go.th/serviceRD3/vatserviceRD3">
+              <username>anonymous</username>
+              <password>anonymous</password>
+              <TIN>{tin}</TIN>
+              <ProvinceCode>0</ProvinceCode>
+              <BranchNumber>0</BranchNumber>
+              <AmphurCode>0</AmphurCode>
+            </Service>
+          </soap:Body>
+        </soap:Envelope>
+        """;
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "https://rdws.rd.go.th/serviceRD3/vatserviceRD3.asmx")
+        {
+            Content = new StringContent(soapBody, System.Text.Encoding.UTF8, "text/xml")
+        };
+        req.Headers.Add("SOAPAction", "https://rdws.rd.go.th/serviceRD3/vatserviceRD3/Service");
+
+        var response = await client.SendAsync(req);
+        var body = await response.Content.ReadAsStringAsync();
+        _logger.LogInformation("RD VAT ({Status}): {Len} chars", response.StatusCode, body.Length);
+        if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body)) return null;
+
+        // Lightweight XML parsing — extract values without bringing in System.Xml.Linq overhead
+        string PickFirst(string tag)
+        {
+            // Match <tag>...<anyValue>VAL</anyValue>...</tag> or direct text
+            var m = System.Text.RegularExpressions.Regex.Match(body,
+                $"<{tag}>(.*?)</{tag}>",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            if (!m.Success) return "";
+            var inner = m.Groups[1].Value;
+            // RD wraps results inside <anyType xsi:type="xsd:string">VAL</anyType>
+            var anyMatches = System.Text.RegularExpressions.Regex.Matches(inner,
+                @"<anyType[^>]*>([^<]*)</anyType>");
+            if (anyMatches.Count == 0) return inner.Trim();
+            foreach (System.Text.RegularExpressions.Match am in anyMatches)
+            {
+                var v = am.Groups[1].Value.Trim();
+                if (!string.IsNullOrEmpty(v) && v != "-") return v;
+            }
+            return "";
+        }
+
+        var titleTh = PickFirst("vtitleName");
+        var nameTh = PickFirst("vName");
+        var surnameTh = PickFirst("vSurname");
+        var fullNameTh = string.Join(" ", new[] { titleTh, nameTh, surnameTh }.Where(s => !string.IsNullOrEmpty(s)));
+
+        if (string.IsNullOrWhiteSpace(fullNameTh)) return null;
+
+        var building = PickFirst("vBuildingName");
+        var floor = PickFirst("vFloorNumber");
+        var village = PickFirst("vVillageName");
+        var room = PickFirst("vRoomNumber");
+        var house = PickFirst("vHouseNumber");
+        var moo = PickFirst("vMooNumber");
+        var soi = PickFirst("vSoiName");
+        var street = PickFirst("vStreetName");
+        var thambol = PickFirst("vThambol");
+        var amphur = PickFirst("vAmphur");
+        var province = PickFirst("vProvince");
+        var postcode = PickFirst("vPostCode");
+
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(house)) parts.Add(house);
+        if (!string.IsNullOrEmpty(room)) parts.Add($"ห้อง {room}");
+        if (!string.IsNullOrEmpty(floor)) parts.Add($"ชั้น {floor}");
+        if (!string.IsNullOrEmpty(building)) parts.Add($"อาคาร {building}");
+        if (!string.IsNullOrEmpty(village)) parts.Add($"หมู่บ้าน {village}");
+        if (!string.IsNullOrEmpty(moo)) parts.Add($"หมู่ {moo}");
+        if (!string.IsNullOrEmpty(soi)) parts.Add($"ซอย {soi}");
+        if (!string.IsNullOrEmpty(street)) parts.Add($"ถนน {street}");
+        if (!string.IsNullOrEmpty(thambol)) parts.Add($"ตำบล {thambol}");
+        if (!string.IsNullOrEmpty(amphur)) parts.Add($"อำเภอ {amphur}");
+        if (!string.IsNullOrEmpty(province)) parts.Add($"จังหวัด {province}");
+        if (!string.IsNullOrEmpty(postcode)) parts.Add(postcode);
+
+        var address = string.Join(" ", parts);
+
+        var branchTitle = PickFirst("vBranchTitleName");
+        var branchName = PickFirst("vBranchName");
+        var branch = string.Join(" ", new[] { branchTitle, branchName }.Where(s => !string.IsNullOrEmpty(s)));
+
+        return new DbdCompanyResult(
+            JuristicId: tin,
+            NameTh: fullNameTh,
+            NameEn: null,
+            JuristicType: titleTh,
+            Status: "Active",
+            RegisteredCapital: null,
+            Address: address,
+            RegisterDate: null,
+            Objective: string.IsNullOrEmpty(branch) ? null : $"สาขา: {branch}"
+        );
     }
 
     private static DbdCompanyResult MapDbdApiResponse(JsonElement json, string juristicId)

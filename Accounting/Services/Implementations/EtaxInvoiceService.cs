@@ -20,23 +20,29 @@ namespace Accounting.Services.Implementations;
 /// e-Tax Invoice Service - สร้าง XML ตามมาตรฐาน ETDA / กรมสรรพากร
 /// รองรับ e-Tax Invoice / e-Receipt พร้อม X.509 Digital Signing + RD API Submission
 /// </summary>
-public class EtaxInvoiceService : IEtaxInvoiceService
+public partial class EtaxInvoiceService : IEtaxInvoiceService
 {
     private readonly AccountingDbContext _db;
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<EtaxInvoiceService> _logger;
+    private readonly IPdfGenerationService _pdfService;
+    private readonly IWebHostEnvironment _env;
 
     public EtaxInvoiceService(
         AccountingDbContext db,
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
-        ILogger<EtaxInvoiceService> logger)
+        ILogger<EtaxInvoiceService> logger,
+        IPdfGenerationService pdfService,
+        IWebHostEnvironment env)
     {
         _db = db;
         _config = config;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _pdfService = pdfService;
+        _env = env;
     }
 
     /// <summary>Get e-Tax config for a company: per-company settings override global config</summary>
@@ -109,7 +115,16 @@ public class EtaxInvoiceService : IEtaxInvoiceService
             var count = await _db.EtaxInvoices.CountAsync(e => e.CompanyId == companyId);
             var etaxRef = $"ETAX-{company.TaxId}-{DateTime.UtcNow:yyyyMMdd}-{(count + 1):D6}";
 
-            var xml = BuildEtaxXml(document, company, etaxRef);
+            // For CN/DN, load original document for OriginalDocumentReference per ETDA spec
+            Document? originalDoc = null;
+            if ((document.DocumentType == DocumentType.CreditNote || document.DocumentType == DocumentType.DebitNote)
+                && document.RelatedDocumentId.HasValue)
+            {
+                originalDoc = await _db.Documents.FirstOrDefaultAsync(d =>
+                    d.Id == document.RelatedDocumentId.Value && d.CompanyId == companyId);
+            }
+
+            var xml = BuildEtaxXml(document, company, etaxRef, originalDoc);
 
             var etax = new EtaxInvoice
             {
@@ -498,18 +513,31 @@ public class EtaxInvoiceService : IEtaxInvoiceService
 
     // ===== XML Builder - ตามมาตรฐาน ETDA v2.0 / กรมสรรพากร =====
 
-    private static string BuildEtaxXml(Document doc, Company company, string etaxRef)
+    private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null)
     {
-        var ns = XNamespace.Get("urn:etda:uncefact:data:standard:TaxInvoice_CrossIndustryInvoice:2");
-        var ram = XNamespace.Get("urn:etda:uncefact:data:standard:TaxInvoice_ReusableAggregateBusinessInformationEntity:2");
+        // Use document-type-specific root namespace per ETDA Recommendation 3-2560 v2.0
+        var rootElementName = doc.DocumentType switch
+        {
+            DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
+            DocumentType.Receipt => "Receipt_CrossIndustryInvoice",
+            DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
+            DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
+            _ => "TaxInvoice_CrossIndustryInvoice"
+        };
+        var ns = XNamespace.Get($"urn:etda:uncefact:data:standard:{rootElementName}:2");
+        var ram = XNamespace.Get("urn:etda:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:2");
 
+        // ETDA TypeCodes (UN/EDIFACT 1001):
+        // 388 = Tax Invoice, 389 = Self-billed invoice, 380 = Commercial Invoice
+        // 383 = Debit Note (T04 was internal), 381 = Credit Note (T05 was internal)
+        // T02-T05 are simplified internal codes; ETDA also supports them
         var docTypeCode = doc.DocumentType switch
         {
-            DocumentType.TaxInvoice => "T02",    // ใบกำกับภาษี
-            DocumentType.Receipt => "T03",        // ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ
-            DocumentType.DebitNote => "T04",      // ใบเพิ่มหนี้
-            DocumentType.CreditNote => "T05",     // ใบลดหนี้
-            _ => "T02"
+            DocumentType.TaxInvoice => "388",   // ใบกำกับภาษี
+            DocumentType.Receipt => "T03",      // ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ (internal code)
+            DocumentType.DebitNote => "383",    // ใบเพิ่มหนี้
+            DocumentType.CreditNote => "381",   // ใบลดหนี้
+            _ => "388"
         };
 
         var docTypeName = doc.DocumentType switch
@@ -604,7 +632,19 @@ public class EtaxInvoiceService : IEtaxInvoiceService
                                 new XElement(ram + "TelephoneUniversalCommunication",
                                     new XElement(ram + "CompleteNumber", doc.Contact.Phone)),
                                 doc.Contact.Email != null ? new XElement(ram + "EmailURIUniversalCommunication",
-                                    new XElement(ram + "URIID", doc.Contact.Email)) : null) : null)),
+                                    new XElement(ram + "URIID", doc.Contact.Email)) : null) : null),
+
+                        // Original Document Reference (required for CN/DN per ETDA spec)
+                        originalDoc != null ? new XElement(ram + "AdditionalReferencedDocument",
+                            new XElement(ram + "IssuerAssignedID", originalDoc.DocumentNumber),
+                            new XElement(ram + "TypeCode", "388"),
+                            new XElement(ram + "Name", "Original Tax Invoice"),
+                            new XElement(ram + "FormattedIssueDateTime",
+                                new XElement(ram + "DateTimeString",
+                                    new XAttribute("format", "102"),
+                                    originalDoc.DocumentDate.ToString("yyyyMMdd")))) : null),
+
+                    // (close ApplicableHeaderTradeAgreement)
 
                     // Line Items
                     doc.Lines.OrderBy(l => l.LineOrder).Select((line, idx) =>
