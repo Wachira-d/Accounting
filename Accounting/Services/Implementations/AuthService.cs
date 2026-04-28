@@ -86,8 +86,10 @@ public class AuthService : IAuthService
 
             await _db.SaveChangesAsync();
 
-            // Auto-start trial subscription with the chosen plan (default: Pro 14 days)
-            var plan = request.Plan ?? Models.Enums.SubscriptionPlan.Pro;
+            // Auto-start subscription with the chosen plan (default: Free Edition — permanent free).
+            // FreeTrial plan template has IsPermanentFree=true so users get a perpetually-free
+            // entry-level subscription. Pro/Enterprise get a 14/30-day trial.
+            var plan = request.Plan ?? Models.Enums.SubscriptionPlan.FreeTrial;
             try
             {
                 await _subscriptionService.StartTrialAsync(
@@ -269,11 +271,11 @@ public class AuthService : IAuthService
                     });
                     await _db.SaveChangesAsync();
 
-                    // Auto-start trial subscription (default plan: Pro 14-day trial)
+                    // Auto-start Free Edition subscription (permanent free)
                     try
                     {
                         await _subscriptionService.StartTrialAsync(
-                            new Models.DTOs.Subscription.StartTrialRequest(company.Id, Models.Enums.SubscriptionPlan.Pro),
+                            new Models.DTOs.Subscription.StartTrialRequest(company.Id, Models.Enums.SubscriptionPlan.FreeTrial),
                             user.Id.ToString());
                     }
                     catch (Exception ex)

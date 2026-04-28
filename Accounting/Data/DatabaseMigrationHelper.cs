@@ -666,6 +666,26 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "BankFeedImports" ALTER COLUMN "BankConnectionId" DROP NOT NULL;
             """,
 
+            // ===== PlanTemplates: convert legacy "FreeTrial" template to permanent-free Free Edition =====
+            // The Free plan was originally a 14-day trial; we now offer it as ฟรีตลอดชีพ.
+            """
+            UPDATE "PlanTemplates"
+            SET "IsPermanentFree" = true,
+                "Name" = 'Free Edition',
+                "TrialDurationDays" = 36500,
+                "TrialMaxExtensions" = 0
+            WHERE "Plan" = 0  -- SubscriptionPlan.FreeTrial
+              AND ("IsPermanentFree" IS NULL OR "IsPermanentFree" = false);
+            """,
+            """
+            UPDATE "Subscriptions"
+            SET "IsPermanentFree" = true,
+                "Status" = 1,                            -- Active
+                "EndDate" = "StartDate" + INTERVAL '100 years'
+            WHERE "Plan" = 0                              -- SubscriptionPlan.FreeTrial
+              AND ("IsPermanentFree" IS NULL OR "IsPermanentFree" = false);
+            """,
+
             // ===== EtaxInvoices: file path columns for PDF/A-3 + XML persistence (Thai e-Tax by Email compliance) =====
             """
             ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "PdfFilePath" varchar(1000) NULL;
