@@ -1,14 +1,11 @@
 // Reusable export module: CSV / Excel / PDF
 // Dependencies loaded lazily from CDN:
 //   - SheetJS (xlsx) for Excel
-//   - jsPDF + jspdf-autotable for PDF
+//   - PDF: uses native browser print-to-PDF (renders Thai correctly; no fragile font setup)
 
 window.ExportUtil = (function () {
   const CDN = {
-    xlsx: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
-    jspdf: 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
-    autotable: 'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js',
-    thaiFont: 'https://cdn.jsdelivr.net/gh/phamfoo/Sarabun-jsPDF@master/Sarabun-Regular-normal.js'
+    xlsx: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
   };
   const loaded = {};
 
@@ -65,55 +62,90 @@ window.ExportUtil = (function () {
   }
 
   // ========== PDF ==========
+  // Browser-native print-to-PDF approach. Generates an HTML page in a new window
+  // with Google Fonts' Noto Sans Thai, then triggers window.print(). The user picks
+  // "Save as PDF" in the print dialog to download. This is the only reliable way
+  // to get correctly-rendered Thai glyphs without bundling a font into jsPDF
+  // (the previous CDN-based Sarabun font path failed silently and produced garbled
+  // boxes when the font URL or registration was unavailable).
   async function exportPdf(rows, columns, filename, opts = {}) {
-    await loadScript(CDN.jspdf);
-    await loadScript(CDN.autotable);
-    // Thai font (optional — fallback to default if fails)
-    try { await loadScript(CDN.thaiFont); } catch { }
+    const escapeHtml = (s) => String(s ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: opts.landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
-    try { doc.setFont('Sarabun-Regular'); } catch { }
+    const headerCells = columns.map(c =>
+      `<th style="text-align:${c.align || 'left'}">${escapeHtml(c.label)}</th>`).join('');
 
-    if (opts.title) {
-      doc.setFontSize(14);
-      doc.text(opts.title, 14, 15);
-    }
-    if (opts.subtitle) {
-      doc.setFontSize(10);
-      doc.text(opts.subtitle, 14, 22);
-    }
-
-    const head = [columns.map(c => c.label)];
-    const body = rows.map(r => columns.map(c => {
+    const bodyRows = rows.map(r => '<tr>' + columns.map(c => {
       const v = c.key.split('.').reduce((acc, k) => acc?.[k], r);
       const val = c.format ? c.format(v, r) : (v == null ? '' : v);
-      return String(val);
-    }));
+      return `<td style="text-align:${c.align || 'left'}">${escapeHtml(val)}</td>`;
+    }).join('') + '</tr>').join('');
 
-    doc.autoTable({
-      head, body,
-      startY: opts.subtitle ? 26 : (opts.title ? 20 : 14),
-      styles: { font: 'Sarabun-Regular', fontSize: 8, cellPadding: 1.5 },
-      headStyles: { fillColor: [52, 73, 94], textColor: 255 },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
-      didParseCell: (data) => {
-        const col = columns[data.column.index];
-        if (col?.align) data.cell.styles.halign = col.align;
-      }
-    });
+    const totalsBlock = opts.totals
+      ? '<div class="totals">' + Object.entries(opts.totals).map(
+          ([label, value]) => `<div><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</div>`
+        ).join('') + '</div>'
+      : '';
 
-    if (opts.totals) {
-      const finalY = doc.lastAutoTable.finalY || 20;
-      doc.setFontSize(10);
-      let y = finalY + 8;
-      Object.entries(opts.totals).forEach(([label, value]) => {
-        doc.text(`${label}: ${value}`, 14, y);
-        y += 6;
-      });
+    const orientation = opts.landscape ? 'landscape' : 'portrait';
+    const safeFn = safeFilename(filename) + '.pdf';
+    const titleText = opts.title || filename || '';
+    const subtitleText = opts.subtitle || '';
+
+    const html = `<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(safeFn)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4 ${orientation}; margin: 12mm 10mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px 20px; font-family: 'Noto Sans Thai', 'Sarabun', sans-serif; color: #111; font-size: 11px; }
+  h1 { margin: 0 0 4px 0; font-size: 16px; font-weight: 700; }
+  .subtitle { margin: 0 0 12px 0; color: #555; font-size: 11px; }
+  .meta { color: #888; font-size: 10px; margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  thead th { background: #34495e; color: #fff; padding: 6px 8px; font-weight: 600; border: 1px solid #2c3e50; }
+  tbody td { padding: 5px 8px; border: 1px solid #ddd; word-break: break-word; }
+  tbody tr:nth-child(even) td { background: #f5f5f5; }
+  .totals { margin-top: 16px; font-size: 11px; line-height: 1.6; }
+  .totals div { display: inline-block; margin-right: 24px; }
+  .print-btn { position: fixed; top: 12px; right: 12px; z-index: 9999; padding: 10px 16px; background: #4F46E5; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .print-btn:hover { background: #4338ca; }
+  @media print { .print-btn { display: none; } body { padding: 0; } }
+</style>
+</head>
+<body>
+  <button class="print-btn" onclick="window.print()">📥 บันทึกเป็น PDF / พิมพ์</button>
+  ${titleText ? `<h1>${escapeHtml(titleText)}</h1>` : ''}
+  ${subtitleText ? `<div class="subtitle">${escapeHtml(subtitleText)}</div>` : ''}
+  <div class="meta">สร้างเมื่อ ${new Date().toLocaleString('th-TH')}</div>
+  <table>
+    <thead><tr>${headerCells}</tr></thead>
+    <tbody>${bodyRows}</tbody>
+  </table>
+  ${totalsBlock}
+  <script>
+    // Wait for the Thai font to actually load before triggering print, otherwise the
+    // PDF bakes in a fallback font and Thai text will look misaligned in some viewers.
+    (async () => {
+      try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (e) {}
+      // Auto-trigger so the user goes straight to the OS print dialog and chooses "Save as PDF".
+      setTimeout(() => { try { window.print(); } catch (e) {} }, 300);
+    })();
+  <\/script>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank', 'width=1024,height=768');
+    if (!win) {
+      throw new Error('เบราว์เซอร์ปิดกั้น popup — โปรดอนุญาต popup สำหรับเว็บไซต์นี้แล้วลองอีกครั้ง');
     }
-
-    doc.save(safeFilename(filename) + '.pdf');
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   }
 
   function downloadBlob(blob, filename) {

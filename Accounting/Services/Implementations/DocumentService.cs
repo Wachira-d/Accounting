@@ -165,7 +165,8 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        return MapDocumentToResponse(doc);
+        var etax = await GetLatestEtaxAsync(companyId, new[] { documentId });
+        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request)
@@ -192,10 +193,41 @@ public class DocumentService : IDocumentService
             .Take(request.PageSize)
             .ToListAsync();
 
+        var etaxByDoc = await GetLatestEtaxAsync(companyId, items.Select(i => i.Id));
+
         return new PagedResponse<DocumentResponse>(
-            items.Select(MapDocumentToResponse).ToList(),
+            items.Select(d => MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id))).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
+    }
+
+    /// <summary>
+    /// Batch-load the latest e-Tax invoice per document. Picks the highest-status
+    /// (Accepted &gt; Submitted &gt; Signed &gt; Generated) so the UI shows the most
+    /// "advanced" eTax record that exists. Used to surface the download button on
+    /// docs whose XML has been embedded in a PDF/A-3.
+    /// </summary>
+    private async Task<Dictionary<Guid, (Guid EtaxId, EtaxStatus Status)>> GetLatestEtaxAsync(
+        Guid companyId, IEnumerable<Guid> docIds)
+    {
+        var ids = docIds.Distinct().ToList();
+        if (ids.Count == 0) return new();
+
+        var rows = await _db.EtaxInvoices
+            .AsNoTracking()
+            .Where(e => e.CompanyId == companyId && ids.Contains(e.DocumentId))
+            .Select(e => new { e.Id, e.DocumentId, e.Status, e.CreatedAt })
+            .ToListAsync();
+
+        return rows
+            .GroupBy(r => r.DocumentId)
+            .ToDictionary(
+                g => g.Key,
+                g => g
+                    .OrderByDescending(r => (int)r.Status)
+                    .ThenByDescending(r => r.CreatedAt)
+                    .Select(r => (r.Id, r.Status))
+                    .First());
     }
 
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request)
@@ -715,7 +747,7 @@ public class DocumentService : IDocumentService
         }
     }
 
-    private static DocumentResponse MapDocumentToResponse(Document d) => new(
+    private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null) => new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
@@ -725,7 +757,9 @@ public class DocumentService : IDocumentService
             l.Id, l.LineOrder, l.Description, l.Quantity, l.Unit,
             l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
             l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList(),
-        d.CreatedAt);
+        d.CreatedAt,
+        EtaxInvoiceId: etax?.EtaxId,
+        EtaxStatus: etax?.Status);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
