@@ -605,6 +605,12 @@ public class PayrollService : IPayrollService
 
                 if (lines.Count >= 2)
                 {
+                    var totalDebit = lines.Sum(l => l.DebitAmount);
+                    var totalCredit = lines.Sum(l => l.CreditAmount);
+                    if (totalDebit != totalCredit)
+                        throw new InvalidOperationException(
+                            $"Payroll journal unbalanced: Dr={totalDebit:N2} Cr={totalCredit:N2}");
+
                     var entry = await _accountingService.CreateJournalEntryAsync(companyId,
                         new Models.DTOs.Accounting.CreateJournalEntryRequest(
                             run.PayDate,
@@ -617,7 +623,11 @@ public class PayrollService : IPayrollService
                     await _db.SaveChangesAsync();
                 }
             }
-            catch { /* Journal creation failure should not block payroll payment */ }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Payroll journal creation failed: {ex.Message}", ex);
+            }
         }
 
         return MapToPayrollRunResponse(run);

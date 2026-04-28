@@ -28,8 +28,20 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             taxFormType = DetermineTaxFormType(contact);
         }
 
-        var count = await _db.WithholdingTaxCerts.CountAsync(w => w.CompanyId == companyId);
-        var certNumber = $"WHT-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+        var whtYearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        var whtPrefix = $"WHT-{whtYearMonth}-";
+        var maxWht = await _db.WithholdingTaxCerts
+            .IgnoreQueryFilters()
+            .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(whtPrefix))
+            .Select(w => w.CertificateNumber)
+            .MaxAsync() as string;
+        var whtSeq = 1;
+        if (maxWht != null)
+        {
+            var lastPart = maxWht.Substring(whtPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) whtSeq = parsed + 1;
+        }
+        var certNumber = $"{whtPrefix}{whtSeq:D4}";
 
         var cert = new WithholdingTaxCert
         {
@@ -191,8 +203,20 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // Determine tax form type: ภ.ง.ด.53 for juristic persons, ภ.ง.ด.3 for individuals
         var taxFormType = DetermineTaxFormType(doc.Contact);
 
-        var count = await _db.WithholdingTaxCerts.CountAsync(w => w.CompanyId == companyId);
-        var certNumber = $"WHT-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+        var autoYm = DateTime.UtcNow.ToString("yyyyMM");
+        var autoPrefix = $"WHT-{autoYm}-";
+        var maxAutoWht = await _db.WithholdingTaxCerts
+            .IgnoreQueryFilters()
+            .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(autoPrefix))
+            .Select(w => w.CertificateNumber)
+            .MaxAsync() as string;
+        var autoSeq = 1;
+        if (maxAutoWht != null)
+        {
+            var lastPart = maxAutoWht.Substring(autoPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) autoSeq = parsed + 1;
+        }
+        var certNumber = $"{autoPrefix}{autoSeq:D4}";
 
         var cert = new WithholdingTaxCert
         {

@@ -132,6 +132,9 @@ public class ProductService : IProductService
             ?? throw new KeyNotFoundException("ไม่พบสินค้า");
 
         var qty = request.MovementType == "OUT" ? -Math.Abs(request.Quantity) : Math.Abs(request.Quantity);
+        if (request.MovementType == "OUT" && product.CurrentStock + qty < 0)
+            throw new InvalidOperationException(
+                $"สต็อกไม่เพียงพอ: คงเหลือ {product.CurrentStock} ต้องการเบิก {Math.Abs(qty)}");
         product.CurrentStock += qty;
 
         var movement = new StockMovement

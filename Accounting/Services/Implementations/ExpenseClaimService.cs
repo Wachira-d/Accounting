@@ -22,8 +22,20 @@ public class ExpenseClaimService : IExpenseClaimService
 
     public async Task<ExpenseClaimResponse> CreateAsync(Guid companyId, CreateExpenseClaimRequest request, Guid submittedByUserId)
     {
-        var count = await _db.ExpenseClaims.CountAsync(e => e.CompanyId == companyId);
-        var claimNumber = $"EXP-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+        var expYearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        var expPrefix = $"EXP-{expYearMonth}-";
+        var maxExp = await _db.ExpenseClaims
+            .IgnoreQueryFilters()
+            .Where(e => e.CompanyId == companyId && e.ClaimNumber.StartsWith(expPrefix))
+            .Select(e => e.ClaimNumber)
+            .MaxAsync() as string;
+        var expSeq = 1;
+        if (maxExp != null)
+        {
+            var lastPart = maxExp.Substring(expPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) expSeq = parsed + 1;
+        }
+        var claimNumber = $"{expPrefix}{expSeq:D4}";
 
         var claim = new ExpenseClaim
         {
@@ -218,11 +230,7 @@ public class ExpenseClaimService : IExpenseClaimService
         // Create PV journal entry: Dr Expense accounts, Cr Cash
         if (_accountingService != null)
         {
-            try
-            {
-                await CreateExpenseClaimJournalAsync(companyId, claim);
-            }
-            catch { /* ไม่ block การจ่ายเงินหาก journal ผิดพลาด */ }
+            await CreateExpenseClaimJournalAsync(companyId, claim);
         }
 
         return await GetByIdAsync(companyId, claim.Id);
@@ -336,7 +344,8 @@ public class ExpenseClaimService : IExpenseClaimService
         // Cr: WHT ค้างจ่าย (ถ้ามี)
         if (claim.WithholdingTaxAmount > 0)
         {
-            var whtAccount = await FindAccountAsync(companyId, "219");
+            var whtAccount = await FindAccountAsync(companyId, "21916")
+                ?? await FindAccountAsync(companyId, "21917");
             if (whtAccount != null)
                 lines.Add(new JournalLineRequest(
                     whtAccount.Id, 0, claim.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
@@ -351,7 +360,13 @@ public class ExpenseClaimService : IExpenseClaimService
                 $"จ่ายเงินเบิกค่าใช้จ่าย - {claim.ClaimNumber}"));
         }
 
-        if (lines.Count < 2) return; // ต้องมีอย่างน้อย Dr+Cr
+        if (lines.Count < 2) return;
+
+        var totalDebit = lines.Sum(l => l.DebitAmount);
+        var totalCredit = lines.Sum(l => l.CreditAmount);
+        if (totalDebit != totalCredit)
+            throw new InvalidOperationException(
+                $"Journal entry unbalanced: Dr={totalDebit:N2} Cr={totalCredit:N2}");
 
         var journalRequest = new CreateJournalEntryRequest(
             DateTime.UtcNow,

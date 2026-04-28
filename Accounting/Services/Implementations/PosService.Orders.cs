@@ -15,8 +15,20 @@ public partial class PosService
         var session = await _db.PosSessions.FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId && s.Status == PosSessionStatus.Open)
             ?? throw new KeyNotFoundException("ไม่พบกะการขายที่เปิดอยู่");
 
-        var count = await _db.PosOrders.CountAsync(o => o.CompanyId == companyId);
-        var orderNumber = $"POS-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posPrefix = $"POS-{posYm}-";
+        var maxPos = await _db.PosOrders
+            .IgnoreQueryFilters()
+            .Where(o => o.CompanyId == companyId && o.OrderNumber.StartsWith(posPrefix))
+            .Select(o => o.OrderNumber)
+            .MaxAsync() as string;
+        var posSeq = 1;
+        if (maxPos != null)
+        {
+            var lastPart = maxPos.Substring(posPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) posSeq = parsed + 1;
+        }
+        var orderNumber = $"{posPrefix}{posSeq:D4}";
 
         var order = new PosOrder
         {
@@ -125,9 +137,37 @@ public partial class PosService
 
     public async Task VoidOrderAsync(Guid companyId, Guid orderId, string userId)
     {
-        var order = await _db.PosOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
+        var order = await _db.PosOrders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
         if (order.Status == PosOrderStatus.Voided) throw new InvalidOperationException("ออเดอร์นี้ถูกยกเลิกไปแล้ว");
+
+        if (order.Status == PosOrderStatus.Completed)
+        {
+            foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
+            {
+                var product = await _db.Products.FindAsync(item.ProductId);
+                if (product?.TrackStock == true)
+                {
+                    product.CurrentStock += item.Quantity;
+                    _db.StockMovements.Add(new StockMovement
+                    {
+                        CompanyId = companyId,
+                        ProductId = product.Id,
+                        MovementDate = DateTime.UtcNow,
+                        MovementType = "IN",
+                        Quantity = item.Quantity,
+                        UnitCost = product.CostPrice,
+                        BalanceAfter = product.CurrentStock,
+                        Reference = $"VOID-{order.OrderNumber}",
+                        Notes = "คืนสต็อกจากการยกเลิกออเดอร์",
+                        CreatedBy = userId
+                    });
+                }
+            }
+        }
+
         order.Status = PosOrderStatus.Voided;
         await _db.SaveChangesAsync();
     }
@@ -401,8 +441,8 @@ public partial class PosService
         order.DiscountAmount = order.SubTotal * order.DiscountPercent / 100;
         var afterDiscount = order.SubTotal - order.DiscountAmount;
         order.ServiceChargeAmount = Math.Round(afterDiscount * order.ServiceChargePercent / 100, 2);
-        order.VatAmount = activeItems.Sum(i => i.VatAmount);
         order.TotalAmount = afterDiscount + order.ServiceChargeAmount;
+        order.VatAmount = Math.Round(order.TotalAmount * 7 / 107, 2);
         order.RoundingAmount = Math.Round(order.TotalAmount) - order.TotalAmount;
         order.NetAmount = order.TotalAmount + order.RoundingAmount;
     }

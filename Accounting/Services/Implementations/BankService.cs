@@ -341,6 +341,12 @@ public partial class BankService : IBankService
 
             var matched = new List<BankTransactionResponse>();
 
+            var alreadyMatchedJeIds = new HashSet<Guid>(
+                await _db.Set<BankTransaction>()
+                    .Where(t => t.CompanyId == companyId && t.MatchedJournalEntryId.HasValue)
+                    .Select(t => t.MatchedJournalEntryId!.Value)
+                    .ToListAsync());
+
             foreach (var txn in unmatched)
             {
                 // Duplicate detection: skip if same amount+date+reference already processed
@@ -409,11 +415,6 @@ public partial class BankService : IBankService
                     .Where(j => Math.Abs((j.EntryDate - txn.TransactionDate).TotalDays) <= 7)
                     .ToListAsync();
 
-                var alreadyMatchedJeIds = await _db.Set<BankTransaction>()
-                    .Where(t => t.CompanyId == companyId && t.MatchedJournalEntryId.HasValue)
-                    .Select(t => t.MatchedJournalEntryId!.Value)
-                    .ToListAsync();
-
                 JournalEntry? bestJeMatch = null;
                 decimal bestJeScore = 0;
 
@@ -448,6 +449,7 @@ public partial class BankService : IBankService
                     txn.ReconciledAt = DateTime.UtcNow;
                     txn.ReconciledBy = "AutoMatch";
                     matched.Add(MapTransactionToResponse(txn));
+                    alreadyMatchedJeIds.Add(bestJeMatch.Id);
                     processedKeySet.Add(txnKey);
                 }
             }
