@@ -971,7 +971,12 @@
         if (!filtered.length) {
           container.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:40px">
             ${search ? '🔍 ไม่พบรายการที่ตรงกับการค้นหา' : (this._pickerTab === 'payment' ? '💳 ไม่มีรายการชำระเงินที่ใกล้เคียง' : '📒 ไม่มี Journal Entry ที่ใกล้เคียง')}
-            <div style="margin-top:8px;font-size:12px">รายการที่ถูกจับคู่กับธุรกรรมอื่นแล้วจะไม่ถูกแสดงที่นี่</div>
+            <div style="margin-top:8px;font-size:12px;line-height:1.6">
+              รายการที่ถูกซ่อนจากที่นี่:<br>
+              ✓ จับคู่กับธุรกรรมธนาคารอื่นแล้ว (รวมถึง many-to-one batch)<br>
+              ✓ เอกสารต้นทางถูกยกเลิก (Voided)<br>
+              ✓ ถูกลบ (Soft-deleted)
+            </div>
           </div>`;
           return;
         }
