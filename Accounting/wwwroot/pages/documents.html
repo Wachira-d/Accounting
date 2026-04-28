@@ -149,11 +149,17 @@
                 <div class="form-group" style="flex:1"><label class="form-label">ถึง <span style="color:red">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
                 <div class="form-group" style="flex:1"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
               </div>
-              <div class="form-group"><label class="form-label">หัวข้อ</label><input type="text" class="form-input" id="fEmailSubject"></div>
+              <div class="form-group">
+                <label class="form-label">หัวข้อ <span id="fEmailSubjLockBadge" style="display:none;background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
+                <input type="text" class="form-input" id="fEmailSubject">
+                <div id="fEmailSubjLockHint" style="display:none;font-size:11px;color:#dc2626;margin-top:4px;line-height:1.5">
+                  ⚠️ ในโหมด e-Tax by Email หัวข้อจะถูกแทนที่อัตโนมัติด้วย <code>{เลขผู้เสียภาษี}.{เลขที่เอกสาร}</code> ตามที่สรรพากรกำหนด — ค่าที่กรอกไว้จะถูก<u>ละเลย</u>
+                </div>
+              </div>
               <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
               <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint" style="display:none">
-                <input type="checkbox" id="fEmailAsEtax">
-                <span>ส่งในรูปแบบ <strong>e-Tax by Email</strong> (CC สรรพากร + แนบ XML)</span>
+                <input type="checkbox" id="fEmailAsEtax" onchange="Page.toggleEtaxByEmail()">
+                <span>ส่งในรูปแบบ <strong>e-Tax by Email</strong> (CC สรรพากร + แนบ XML, หัวข้อตามรูปแบบ RD)</span>
               </label>
             </div>
           </div>
@@ -312,6 +318,22 @@
       toggleSendEmail() {
         const on = document.getElementById('fSendEmail').checked;
         document.getElementById('sendEmailFields').style.display = on ? 'block' : 'none';
+      },
+      toggleEtaxByEmail() {
+        // When e-Tax mode is on, the subject is dictated by RD (TaxId.RefNumber).
+        // Show the lock indicator and dim the subject field so users know it'll be overridden.
+        const on = document.getElementById('fEmailAsEtax')?.checked;
+        const subj = document.getElementById('fEmailSubject');
+        const badge = document.getElementById('fEmailSubjLockBadge');
+        const hint = document.getElementById('fEmailSubjLockHint');
+        if (subj) {
+          subj.readOnly = !!on;
+          subj.style.background = on ? '#f1f5f9' : '';
+          subj.style.cursor = on ? 'not-allowed' : '';
+          subj.placeholder = on ? '(สรรพากรกำหนดอัตโนมัติเมื่อบันทึก)' : '';
+        }
+        if (badge) badge.style.display = on ? 'inline-block' : 'none';
+        if (hint) hint.style.display = on ? 'block' : 'none';
       },
       _populateEmailDefaults(contactId) {
         const c = this.contacts.find(x => x.id === contactId);

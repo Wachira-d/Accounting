@@ -101,9 +101,18 @@ public class DocumentEmailService : IDocumentEmailService
             throw new InvalidOperationException("บริษัทยังไม่ได้ลงทะเบียน e-Tax by Email กับสรรพากร (รสภ.01-1)");
         if (string.IsNullOrWhiteSpace(settings.EtaxByEmailSenderEmail))
             throw new InvalidOperationException("ยังไม่ได้ตั้งค่า 'อีเมลผู้ส่งที่ลงทะเบียนกับสรรพากร'");
+        if (string.IsNullOrWhiteSpace(etax.SellerTaxId))
+            throw new InvalidOperationException("ไม่พบเลขประจำตัวผู้เสียภาษีของผู้ออก — ไม่สามารถสร้าง subject ตามรูปแบบ RD ได้");
+        if (string.IsNullOrWhiteSpace(etax.EtaxRefNumber))
+            throw new InvalidOperationException("ไม่พบเลขที่เอกสาร e-Tax — ไม่สามารถสร้าง subject ตามรูปแบบ RD ได้");
 
         var template = BuildDefaultTemplate(etax.Document, settings, isEtaxByEmail: true);
-        var subject = string.IsNullOrWhiteSpace(req.Subject) ? template.Subject : req.Subject!;
+        // RD spec: Subject MUST be exactly "{SellerTaxId}.{EtaxRefNumber}" for the ETDA
+        // time-stamp service to parse and apply the time stamp. Any other format means
+        // the document will not be recognized and the time stamp will not be applied,
+        // making it legally invalid as e-Tax by Email. We OVERRIDE any user-provided
+        // subject to guarantee compliance — this is non-negotiable per RD requirements.
+        var subject = BuildEtaxByEmailSubject(etax);
         var body = string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : req.Body!;
 
         // Build CC list — always include RD timestamp address per spec (unless explicitly opted out)
@@ -323,4 +332,21 @@ public class DocumentEmailService : IDocumentEmailService
 
     private static IEnumerable<string> SplitAddresses(string list) =>
         list.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// Build the RD-mandated subject line for e-Tax by Email.
+    /// Per RD specification (e-Tax Invoice & e-Receipt by Email), the subject MUST be
+    /// exactly "{SellerTaxId}.{EtaxRefNumber}" — e.g. "0105561000000.INV2024-0001".
+    /// The ETDA time-stamp service parses this exact format; any deviation (extra prefix,
+    /// Thai characters, brackets, spaces) causes the time stamp to fail silently, which
+    /// renders the document legally invalid as e-Tax. We strip whitespace defensively
+    /// but do NOT alter the underlying values.
+    /// Reference: https://etax.rd.go.th — "การจัดทำและนำส่งข้อมูล e-Tax Invoice by Email"
+    /// </summary>
+    public static string BuildEtaxByEmailSubject(EtaxInvoice etax)
+    {
+        var taxId = (etax.SellerTaxId ?? "").Trim();
+        var refNum = (etax.EtaxRefNumber ?? "").Trim();
+        return $"{taxId}.{refNum}";
+    }
 }

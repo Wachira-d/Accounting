@@ -113,7 +113,13 @@
           <div id="sendEmailWarning" style="display:none;padding:12px;background:#fef3c7;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
           <div class="form-group"><label class="form-label">ถึง <span style="color:red">*</span></label><input type="email" class="form-input" id="seTo" placeholder="customer@example.com"></div>
           <div class="form-group"><label class="form-label">CC (อื่นๆ)</label><input type="text" class="form-input" id="seCc" placeholder="cc1@example.com, cc2@example.com"></div>
-          <div class="form-group"><label class="form-label">หัวข้อ</label><input type="text" class="form-input" id="seSubject"></div>
+          <div class="form-group">
+            <label class="form-label">หัวข้อ <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
+            <input type="text" class="form-input" id="seSubject" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
+            <div style="font-size:11px;color:#dc2626;margin-top:4px;line-height:1.5">
+              ⚠️ สรรพากรกำหนดรูปแบบ <code>{เลขผู้เสียภาษี}.{เลขที่เอกสาร}</code> เพื่อให้ ETDA ลงเวลาประทับได้ — ห้ามแก้ไข มิฉะนั้น Time Stamp จะไม่ทำงานและเอกสารจะไม่ถูกต้องตามกฎหมาย
+            </div>
+          </div>
           <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="seBody" rows="8"></textarea></div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludePdf" checked> แนบ PDF</label>
@@ -439,7 +445,11 @@
 
       document.getElementById('seTo').value = etax.buyerEmail || '';
       document.getElementById('seCc').value = '';
-      document.getElementById('seSubject').value = `[e-Tax] ${etax.documentType || ''} เลขที่ ${etax.etaxRefNumber || ''}`;
+      // RD spec: Subject MUST be exactly "{SellerTaxId}.{EtaxRefNumber}" — auto-generated and locked.
+      // Backend re-builds and overrides this anyway, but we display the exact value users will see in their inbox.
+      const taxId = (etax.sellerTaxId || '').trim();
+      const refNum = (etax.etaxRefNumber || '').trim();
+      document.getElementById('seSubject').value = (taxId && refNum) ? `${taxId}.${refNum}` : '⚠️ ขาดข้อมูล';
       document.getElementById('seBody').value = `<p>เรียน คุณ${etax.buyerName || 'ลูกค้า'}</p>
 <p>โปรดตรวจสอบ e-Tax Invoice เลขที่ <strong>${etax.etaxRefNumber}</strong> ตามไฟล์แนบ</p>
 <p style="background:#fef3c7;padding:10px;border-radius:6px;font-size:13px">ℹ️ อีเมลฉบับนี้เป็น e-Tax Invoice & Receipt by Email ซึ่งกรมสรรพากรจะลงเวลาประทับอัตโนมัติ — โปรดเก็บอีเมลและไฟล์แนบไว้เป็นหลักฐาน</p>`;
@@ -453,14 +463,27 @@
       const to = document.getElementById('seTo').value.trim();
       if (!to) { Layout.toast('กรุณากรอกอีเมลผู้รับ', 'error'); return; }
 
+      const subj = document.getElementById('seSubject').value.trim();
+      if (!subj || subj.startsWith('⚠️')) {
+        Layout.toast('ไม่สามารถสร้างหัวข้อตามรูปแบบ RD ได้ — ตรวจสอบเลขผู้เสียภาษีและเลขเอกสาร', 'error');
+        return;
+      }
+
+      const includeRd = document.getElementById('seIncludeRd').checked;
+      if (!includeRd) {
+        if (!confirm('⚠️ คุณยังไม่ได้ติ๊ก "CC สรรพากร"\n\nหาก CC ไม่ครบ ETDA จะไม่ลงเวลาประทับ (Time Stamp) ทำให้เอกสารนี้ไม่ถูกต้องตามกฎหมายในรูปแบบ e-Tax by Email\n\nต้องการส่งต่อทั้งที่ทราบความเสี่ยงนี้?')) {
+          return;
+        }
+      }
+
       const req = {
         to,
         cc: document.getElementById('seCc').value || null,
-        subject: document.getElementById('seSubject').value || null,
+        subject: subj,  // backend will override anyway, but send the locked value for log accuracy
         body: document.getElementById('seBody').value || null,
         includePdf: document.getElementById('seIncludePdf').checked,
         includeXml: document.getElementById('seIncludeXml').checked,
-        includeRdTimestamp: document.getElementById('seIncludeRd').checked
+        includeRdTimestamp: includeRd
       };
 
       try {
