@@ -27,4 +27,8 @@ public interface IBankService
 
     // Bank Statement Import
     Task<int> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request);
+
+    // Delete Transactions (soft-delete via TenantEntity.IsDeleted)
+    Task<int> DeleteTransactionAsync(Guid companyId, Guid transactionId);
+    Task<int> DeleteTransactionsAsync(Guid companyId, DeleteTransactionsRequest request);
 }
