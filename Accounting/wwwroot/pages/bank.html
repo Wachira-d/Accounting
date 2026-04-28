@@ -934,8 +934,41 @@
                   (stats.autoMatched ? `, จับคู่อัตโนมัติ ${stats.autoMatched} รายการ` : '')
                 : 'นำเข้า Statement สำเร็จ';
               Layout.toast(msg, 'success');
-              if (this.selectedAccount?.id === accountId) await this.loadTransactions();
+
+              // 1) Refresh accounts (balance may have changed)
               await this.loadAccounts();
+
+              // 2) Auto-select the account that was imported into so the user
+              //    immediately sees the new rows on screen.
+              const target = (this.accounts || []).find(a => a.id === accountId);
+              if (target) {
+                this.selectedAccount = target;
+                const ts = document.getElementById('transSection');
+                if (ts) ts.style.display = 'block';
+                const tt = document.getElementById('transTitle');
+                if (tt) tt.textContent = `รายการเคลื่อนไหว - ${target.accountName}`;
+                const ra = document.getElementById('reconAccountName');
+                if (ra) ra.textContent = target.accountName;
+                this.transPage = 1;
+
+                // 3) Clear date/status/search filters — imported rows may be outside
+                //    whatever the user had filtered to (this is the actual reason
+                //    "ไม่ขึ้นข้อมูลอะไร" — old filter hides them).
+                const fromEl = document.getElementById('transFrom');
+                const toEl = document.getElementById('transTo');
+                const searchEl = document.getElementById('transSearch');
+                const typeEl = document.getElementById('transTypeFilter');
+                const statusEl = document.getElementById('transStatusFilter');
+                if (fromEl) fromEl.value = '';
+                if (toEl) toEl.value = '';
+                if (searchEl) searchEl.value = '';
+                if (typeEl) typeEl.value = '';
+                if (statusEl) statusEl.value = '';
+
+                // 4) Reload transactions and scroll into view
+                await this.loadTransactions();
+                ts?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
             } catch (err) {
               const errMsg = err?.response?.data?.message || err?.data?.message || err?.message || 'นำเข้าล้มเหลว';
               Layout.toast(errMsg, 'error', 8000);
