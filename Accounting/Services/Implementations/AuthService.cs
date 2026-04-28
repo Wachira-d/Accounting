@@ -15,16 +15,28 @@ public class AuthService : IAuthService
     private readonly AccountingDbContext _db;
     private readonly IConfiguration _config;
     private readonly IEmailService _emailService;
+    private readonly ISubscriptionService _subscriptionService;
+    private readonly IAccountingService _accountingService;
+    private readonly ILogger<AuthService> _logger;
 
     // Account lockout settings (configurable via appsettings Security section)
     private readonly int _maxFailedAttempts;
     private readonly int _lockoutMinutes;
 
-    public AuthService(AccountingDbContext db, IConfiguration config, IEmailService emailService)
+    public AuthService(
+        AccountingDbContext db,
+        IConfiguration config,
+        IEmailService emailService,
+        ISubscriptionService subscriptionService,
+        IAccountingService accountingService,
+        ILogger<AuthService> logger)
     {
         _db = db;
         _config = config;
         _emailService = emailService;
+        _subscriptionService = subscriptionService;
+        _accountingService = accountingService;
+        _logger = logger;
         _maxFailedAttempts = int.Parse(config["Security:MaxLoginAttemptsBeforeLockout"] ?? "5");
         _lockoutMinutes = int.Parse(config["Security:_lockoutMinutes"] ?? "15");
     }
@@ -73,6 +85,30 @@ public class AuthService : IAuthService
             });
 
             await _db.SaveChangesAsync();
+
+            // Auto-start trial subscription with the chosen plan (default: Pro 14 days)
+            var plan = request.Plan ?? Models.Enums.SubscriptionPlan.Pro;
+            try
+            {
+                await _subscriptionService.StartTrialAsync(
+                    new Models.DTOs.Subscription.StartTrialRequest(company.Id, plan),
+                    user.Id.ToString());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to auto-start trial for company {CompanyId}", company.Id);
+                // Continue — user can start trial manually from settings
+            }
+
+            // Auto-seed default chart of accounts so the user can immediately start using the system
+            try
+            {
+                await _accountingService.SeedDefaultAccountsAsync(company.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to seed accounts for company {CompanyId}", company.Id);
+            }
         }
 
         return await GenerateLoginResponse(user);
@@ -232,6 +268,21 @@ public class AuthService : IAuthService
                         Role = Models.Enums.UserRole.Owner
                     });
                     await _db.SaveChangesAsync();
+
+                    // Auto-start trial subscription (default plan: Pro 14-day trial)
+                    try
+                    {
+                        await _subscriptionService.StartTrialAsync(
+                            new Models.DTOs.Subscription.StartTrialRequest(company.Id, Models.Enums.SubscriptionPlan.Pro),
+                            user.Id.ToString());
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "SSO: failed to auto-start trial for company {CompanyId}", company.Id);
+                    }
+
+                    try { await _accountingService.SeedDefaultAccountsAsync(company.Id); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "SSO: failed to seed accounts for company {CompanyId}", company.Id); }
                 }
             }
         }
