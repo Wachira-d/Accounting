@@ -397,6 +397,10 @@
                 style="padding:3px 10px;border:1px solid #c4b5fd;background:#fff;color:#7c3aed;border-radius:14px;font-size:11px;cursor:pointer">🔄 โอนข้ามบัญชี</button>
               <button class="dep-chip" data-cat="Cash" onclick="Page.setDepositFilter('Cash')"
                 style="padding:3px 10px;border:1px solid #fcd34d;background:#fff;color:#b45309;border-radius:14px;font-size:11px;cursor:pointer">💵 เงินสด</button>
+              <span style="margin-left:8px;font-size:11px;color:#64748b">|  ยอด:</span>
+              <button id="rAmtFilterChip" onclick="Page.toggleAmountFilter()"
+                style="padding:3px 10px;border:1px solid #fbbf24;background:#fef3c7;color:#92400e;border-radius:14px;font-size:11px;cursor:pointer;font-weight:600"
+                title="แสดงเฉพาะรายการที่ยอดต่างจากธนาคารไม่เกิน 5%">🎯 ใกล้เคียงยอด (±5%)</button>
             </div>
             <div id="rAiHint" style="font-size:11px;color:#64748b;margin-top:6px">
               💡 ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว (Many-to-one) — หรือกด "AI จับคู่อัตโนมัติ" ให้ระบบวิเคราะห์ยอดและติ๊กให้
@@ -867,18 +871,20 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // === MANUAL RECONCILE PICKER (multi-select capable) ===
-      _pickerData: null,    // { bankTransactionId, bankTransactionDate, ..., payments:[], journalEntries:[] }
+      _pickerData: null,    // { bankTransactionId, bankTransactionDate, ..., payments:[], journalEntries:[], totalPaymentsInWindow, totalJournalEntriesInWindow }
       _pickerTab: 'payment',
       _pickerSelected: [],  // [{ type, id, number, amount }]  — accumulates across tabs
       _pickerDepFilter: '', // '' | 'Bank' | 'Mixed' | 'Cash'
+      _pickerAmtFilter: false, // when true, only show candidates within ±5% of bank txn amount
       async openReconcileOne(transId) {
         document.getElementById('rTransId').value = transId;
         document.getElementById('rPickerSearch').value = '';
         this._pickerTab = 'payment';
         this._pickerSelected = [];
         this._pickerDepFilter = '';
+        this._pickerAmtFilter = false;
         // Reset chip styles
-        setTimeout(() => this.setDepositFilter(''), 10);
+        setTimeout(() => { this.setDepositFilter(''); this.applyAmtChipStyle(); }, 10);
         document.getElementById('rBankInfo').textContent = 'กำลังโหลด...';
         document.getElementById('rCandidateList').innerHTML =
           '<div style="text-align:center;color:#94a3b8;padding:40px">⏳ กำลังค้นหารายการที่อาจตรงกัน...</div>';
@@ -900,14 +906,30 @@
               <div style="font-size:18px;font-weight:700;color:#4F46E5">฿${amtStr}</div>
               <div style="color:#475569;flex:1;min-width:200px">${this.esc(d.bankTransactionDescription || '-')}</div>
             </div>`;
-          document.getElementById('rPaymentCount').textContent = (d.payments || []).length;
-          document.getElementById('rJournalCount').textContent = (d.journalEntries || []).length;
+          // Show "X / Y" when the displayed list is capped vs total in window.
+          // After server-side exclusion, totalPaymentsInWindow is the real unmatched count;
+          // if it's larger than the displayed length, the list is capped (DisplayCap=200).
+          const pShown = (d.payments || []).length;
+          const jShown = (d.journalEntries || []).length;
+          const pTotal = d.totalPaymentsInWindow || pShown;
+          const jTotal = d.totalJournalEntriesInWindow || jShown;
+          document.getElementById('rPaymentCount').textContent = pShown < pTotal ? `${pShown} / ${pTotal}` : `${pShown}`;
+          document.getElementById('rJournalCount').textContent = jShown < jTotal ? `${jShown} / ${jTotal}` : `${jShown}`;
           document.getElementById('rBankSumDisplay').textContent = '฿' + amtStr;
           // Show transparency hint: how many candidates were filtered out
           const excluded = d.excludedAlreadyMatchedCount || 0;
           const aiHint = document.getElementById('rAiHint');
-          if (excluded > 0 && aiHint) {
-            aiHint.innerHTML = `<span style="color:#0369a1">🔒 ซ่อน ${excluded} รายการที่ถูกจับคู่กับธุรกรรมอื่นแล้ว</span> — ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว หรือกด "AI จับคู่อัตโนมัติ"`;
+          if (aiHint) {
+            const parts = [];
+            if (excluded > 0) parts.push(`<span style="color:#0369a1">🔒 ซ่อน ${excluded} รายการที่จับคู่กับธุรกรรมอื่นแล้ว</span>`);
+            if (pShown < pTotal || jShown < jTotal) {
+              const cap = [];
+              if (pShown < pTotal) cap.push(`💳 ${pShown}/${pTotal}`);
+              if (jShown < jTotal) cap.push(`📒 ${jShown}/${jTotal}`);
+              parts.push(`<span style="color:#92400e">⚠️ แสดง top ${cap.join(' · ')} — ใช้ค้นหาหรือ "ใกล้เคียงยอด" เพื่อกรอง</span>`);
+            }
+            parts.push('ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว หรือกด "AI จับคู่อัตโนมัติ"');
+            aiHint.innerHTML = parts.join(' — ');
           }
           this.renderPickerCandidates();
         } catch(e) {
@@ -925,6 +947,26 @@
         this.renderPickerCandidates();
       },
       filterPickerCandidates() { this.renderPickerCandidates(); },
+      toggleAmountFilter() {
+        this._pickerAmtFilter = !this._pickerAmtFilter;
+        this.applyAmtChipStyle();
+        this.renderPickerCandidates();
+      },
+      applyAmtChipStyle() {
+        const chip = document.getElementById('rAmtFilterChip');
+        if (!chip) return;
+        if (this._pickerAmtFilter) {
+          chip.style.background = '#10b981';
+          chip.style.color = '#fff';
+          chip.style.borderColor = '#10b981';
+          chip.innerHTML = '✓ ใกล้เคียงยอด (±5%)';
+        } else {
+          chip.style.background = '#fef3c7';
+          chip.style.color = '#92400e';
+          chip.style.borderColor = '#fbbf24';
+          chip.innerHTML = '🎯 ใกล้เคียงยอด (±5%)';
+        }
+      },
       setDepositFilter(cat) {
         this._pickerDepFilter = cat || '';
         document.querySelectorAll('.dep-chip').forEach(b => {
@@ -1008,16 +1050,27 @@
         if (this._pickerDepFilter) {
           filtered = filtered.filter(c => c.depositCategory === this._pickerDepFilter);
         }
+        // Apply close-amount filter — keep only candidates within ±5% of bank amount
+        if (this._pickerAmtFilter) {
+          const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+          if (bankAmt > 0) {
+            const tolerance = Math.max(bankAmt * 0.05, 1);
+            filtered = filtered.filter(c => Math.abs((c.amount || 0) - bankAmt) <= tolerance);
+          }
+        }
 
         const container = document.getElementById('rCandidateList');
         if (!filtered.length) {
+          const reasons = ['✓ จับคู่กับธุรกรรมธนาคารอื่นแล้ว (รวมถึง many-to-one batch)',
+                           '✓ JE ที่เป็น "ฝาแฝด" ของ Payment ที่จับคู่ไปแล้ว (และในทางกลับกัน)',
+                           '✓ เอกสารต้นทางถูกยกเลิก (Voided) หรือถูกลบ'];
+          if (this._pickerAmtFilter) reasons.unshift('🎯 อยู่นอกช่วง ±5% ของยอดธนาคาร — ปิด "ใกล้เคียงยอด" เพื่อดูทั้งหมด');
+          if (this._pickerDepFilter) reasons.unshift(`📌 ที่ลงบัญชีไม่ตรงกับตัวกรอง "${this._pickerDepFilter}"`);
           container.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:40px">
             ${search ? '🔍 ไม่พบรายการที่ตรงกับการค้นหา' : (this._pickerTab === 'payment' ? '💳 ไม่มีรายการชำระเงินที่ใกล้เคียง' : '📒 ไม่มี Journal Entry ที่ใกล้เคียง')}
-            <div style="margin-top:8px;font-size:12px;line-height:1.6">
+            <div style="margin-top:8px;font-size:12px;line-height:1.6;text-align:left;display:inline-block">
               รายการที่ถูกซ่อนจากที่นี่:<br>
-              ✓ จับคู่กับธุรกรรมธนาคารอื่นแล้ว (รวมถึง many-to-one batch)<br>
-              ✓ เอกสารต้นทางถูกยกเลิก (Voided)<br>
-              ✓ ถูกลบ (Soft-deleted)
+              ${reasons.join('<br>')}
             </div>
           </div>`;
           return;
@@ -1143,6 +1196,13 @@
           // Switch tab to the suggested type
           const targetTab = r.type === 'Payment' ? 'payment' : 'journal';
           if (this._pickerTab !== targetTab) this.switchPickerTab(targetTab);
+
+          // Many-to-one matches contain items whose individual amounts are below the
+          // bank amount — turn off the close-amount filter so AI's selections are visible.
+          if (this._pickerAmtFilter) {
+            this._pickerAmtFilter = false;
+            this.applyAmtChipStyle();
+          }
 
           // Look up the candidate objects so we have number+amount for selection state
           const list = r.type === 'Payment'
