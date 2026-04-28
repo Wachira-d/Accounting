@@ -99,8 +99,8 @@ public class BankConnection : TenantEntity
 /// </summary>
 public class BankFeedImport : TenantEntity
 {
-    public Guid BankConnectionId { get; set; }
-    public BankConnection Connection { get; set; } = null!;
+    public Guid? BankConnectionId { get; set; }       // null for manual file imports
+    public BankConnection? Connection { get; set; }
     public DateTime ImportDate { get; set; }
     public DateTime PeriodStart { get; set; }
     public DateTime PeriodEnd { get; set; }
