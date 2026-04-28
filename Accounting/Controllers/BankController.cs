@@ -130,6 +130,18 @@ public class BankController : ControllerBase
         return Ok(new ApiResponse<MatchCandidatesResponse>(true, result));
     }
 
+    /// <summary>
+    /// AI auto-suggest a single or many-to-one match. Picks the subset of payments or
+    /// journal entries whose amounts sum exactly to the bank transaction's amount.
+    /// </summary>
+    [HttpGet("transactions/{transactionId:guid}/ai-suggest-match")]
+    public async Task<ActionResult<ApiResponse<AiMatchSuggestionResponse>>> AiSuggestMatch(
+        Guid companyId, Guid transactionId)
+    {
+        var result = await _bankService.SuggestMatchAsync(companyId, transactionId);
+        return Ok(new ApiResponse<AiMatchSuggestionResponse>(true, result, result.Message));
+    }
+
     [HttpDelete("transactions/{transactionId:guid}")]
     public async Task<ActionResult<ApiResponse<int>>> DeleteTransaction(Guid companyId, Guid transactionId)
     {

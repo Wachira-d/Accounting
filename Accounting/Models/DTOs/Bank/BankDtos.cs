@@ -183,6 +183,19 @@ public record MatchCandidatesResponse(
     List<MatchCandidate> Payments,
     List<MatchCandidate> JournalEntries);
 
+/// <summary>
+/// AI auto-suggestion for many-to-one match — finds the subset of candidates whose
+/// amounts sum to the bank transaction's amount.
+/// </summary>
+public record AiMatchSuggestionResponse(
+    bool Found,                  // true if a sum-matching subset was found
+    string? Type,                // "Payment" or "JournalEntry" — null if Found=false
+    List<Guid> SuggestedIds,
+    decimal SuggestedTotal,
+    decimal BankTransactionAmount,
+    decimal Difference,
+    string Message);             // Thai-language explanation
+
 public record BankTransactionDetailResponse(
     Guid Id,
     Guid BankAccountId,

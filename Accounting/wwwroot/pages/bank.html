@@ -374,13 +374,20 @@
             </button>
           </div>
 
-          <!-- Search bar -->
+          <!-- Search + AI bar -->
           <div style="padding:10px 18px;background:#f8fafc;border-bottom:1px solid #e2e8f0">
-            <input type="text" id="rPickerSearch" class="form-input"
-              placeholder="🔍 ค้นหาด้วย ชื่อลูกค้า, เลขเอกสาร, จำนวนเงิน, รายละเอียด..."
-              oninput="Page.filterPickerCandidates()" style="font-size:13px">
-            <div style="font-size:11px;color:#64748b;margin-top:6px">
-              💡 ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว (Many-to-one) — เช่น ยอดโอนเข้าก้อนเดียวที่ครอบคลุมหลาย invoice
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="rPickerSearch" class="form-input"
+                placeholder="🔍 ค้นหาด้วย ชื่อลูกค้า, เลขเอกสาร, จำนวนเงิน, รายละเอียด..."
+                oninput="Page.filterPickerCandidates()" style="font-size:13px;flex:1">
+              <button class="btn btn-sm" id="rAiBtn" onclick="Page.runAiSuggestForTxn()" type="button"
+                style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;font-weight:600;white-space:nowrap;padding:8px 14px"
+                title="ให้ AI ตรวจสอบยอดและติ๊กให้อัตโนมัติ">
+                ✨ AI จับคู่อัตโนมัติ
+              </button>
+            </div>
+            <div id="rAiHint" style="font-size:11px;color:#64748b;margin-top:6px">
+              💡 ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว (Many-to-one) — หรือกด "AI จับคู่อัตโนมัติ" ให้ระบบวิเคราะห์ยอดและติ๊กให้
             </div>
           </div>
 
@@ -1045,6 +1052,62 @@
           if (this.loadUnreconciled) await this.loadUnreconciled();
           if (this.loadReconciliationSummary) await this.loadReconciliationSummary();
         } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async runAiSuggestForTxn() {
+        const transId = document.getElementById('rTransId').value;
+        if (!transId) return;
+        const btn = document.getElementById('rAiBtn');
+        const hint = document.getElementById('rAiHint');
+        const orig = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '⏳ กำลังวิเคราะห์...';
+        hint.innerHTML = '<span style="color:#6366f1">🔬 AI กำลังตรวจสอบยอดทุกรายการและหาชุดที่รวมแล้วได้ยอดตรงกับธนาคาร...</span>';
+
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.aiSuggestMatch(transId);
+          const r = res.data || {};
+          if (!r.found || !r.suggestedIds?.length) {
+            hint.innerHTML = `<span style="color:#dc2626">❌ ${this.esc(r.message || 'AI ไม่พบชุดที่ตรง — กรุณาเลือกด้วยตนเอง')}</span>`;
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            return;
+          }
+
+          // Switch tab to the suggested type
+          const targetTab = r.type === 'Payment' ? 'payment' : 'journal';
+          if (this._pickerTab !== targetTab) this.switchPickerTab(targetTab);
+
+          // Look up the candidate objects so we have number+amount for selection state
+          const list = r.type === 'Payment'
+            ? (this._pickerData?.payments || [])
+            : (this._pickerData?.journalEntries || []);
+
+          this._pickerSelected = [];
+          for (const id of r.suggestedIds) {
+            const c = list.find(x => x.id === id);
+            if (c) {
+              this._pickerSelected.push({
+                type: r.type, id: c.id, number: c.number, amount: Number(c.amount) || 0
+              });
+            }
+          }
+          this.renderPickerCandidates();
+          this.updateSelectionBar();
+
+          // Scroll first selected card into view
+          setTimeout(() => {
+            const firstChecked = document.querySelector('#rCandidateList input[type="checkbox"]:checked');
+            firstChecked?.closest('div[style*="border"]')?.scrollIntoView({ behavior:'smooth', block:'center' });
+          }, 100);
+
+          hint.innerHTML = `<span style="color:#10b981;font-weight:600">✓ ${this.esc(r.message)} — กด "จับคู่" เพื่อยืนยัน</span>`;
+        } catch(e) {
+          hint.innerHTML = `<span style="color:#dc2626">❌ ${this.esc(e.message || 'วิเคราะห์ไม่สำเร็จ')}</span>`;
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        }
       },
       esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); },
       async manualReconcile() {
