@@ -288,8 +288,25 @@ public class SubscriptionService : ISubscriptionService
 
     public async Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId)
     {
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+
+        // Auto-create a default Pro trial if missing (e.g. legacy company created before
+        // signup auto-trial was added). Avoids 404 cascading errors on settings/dashboard.
+        if (sub == null)
+        {
+            try
+            {
+                await StartTrialAsync(
+                    new Models.DTOs.Subscription.StartTrialRequest(companyId, SubscriptionPlan.Pro),
+                    "auto");
+                sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+            }
+            catch
+            {
+                // If auto-start fails (e.g. plan templates missing), throw the original 404
+            }
+            if (sub == null) throw new KeyNotFoundException("ไม่พบ subscription");
+        }
 
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, sub.Plan, sub.Status, sub.BillingCycle,

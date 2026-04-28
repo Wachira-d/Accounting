@@ -5,18 +5,22 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Bank;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Helpers;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
 public partial class BankService : IBankService
 {
     private readonly AccountingDbContext _db;
+    private readonly ILogger<BankService>? _logger;
 
-    public BankService(AccountingDbContext db)
+    public BankService(AccountingDbContext db, ILogger<BankService>? logger = null)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task<BankAccountResponse> CreateBankAccountAsync(Guid companyId, CreateBankAccountRequest request)
@@ -473,76 +477,54 @@ public partial class BankService : IBankService
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
         var csvBytes = Convert.FromBase64String(request.Base64Content);
-        var csvContent = Encoding.UTF8.GetString(csvBytes);
-        var lines = csvContent.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var (parsedRows, skippedRows) = BankCsvParser.ParseStatement(csvBytes);
 
-        if (lines.Length < 2)
-            throw new ArgumentException("ไฟล์ CSV ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 รายการ");
-
-        // Expected columns: Date, Description, Deposit, Withdrawal, Balance
-        var importedCount = 0;
+        if (parsedRows.Count == 0)
+        {
+            var hint = skippedRows.Count > 0
+                ? $" (ตัวอย่างปัญหา: {string.Join("; ", skippedRows.Take(3))})"
+                : "";
+            throw new ArgumentException($"ไม่พบรายการที่นำเข้าได้จาก CSV{hint}");
+        }
 
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            for (var i = 1; i < lines.Length; i++)
+            decimal? lastBalance = null;
+            foreach (var r in parsedRows)
             {
-                var columns = lines[i].Split(',');
-                if (columns.Length < 5)
-                    continue;
+                var isDeposit = r.Deposit > 0;
+                var amount = isDeposit ? r.Deposit : r.Withdrawal;
+                if (amount <= 0) continue;
 
-                var dateStr = columns[0].Trim().Trim('"');
-                var description = columns[1].Trim().Trim('"');
-                var depositStr = columns[2].Trim().Trim('"');
-                var withdrawalStr = columns[3].Trim().Trim('"');
-                var balanceStr = columns[4].Trim().Trim('"');
+                var desc = r.Description;
+                if (!string.IsNullOrWhiteSpace(r.Channel)) desc = $"{desc} | {r.Channel}";
+                if (desc.Length > 500) desc = desc[..500];
 
-                if (!DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var transactionDate))
-                    continue;
-
-                var deposit = decimal.TryParse(depositStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var dep) ? dep : 0;
-                var withdrawal = decimal.TryParse(withdrawalStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var wth) ? wth : 0;
-                var balance = decimal.TryParse(balanceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var bal) ? bal : 0;
-
-                var isDeposit = deposit > 0;
-                var amount = isDeposit ? deposit : withdrawal;
-
-                if (amount <= 0)
-                    continue;
-
-                var bankTxn = new BankTransaction
+                _db.Set<BankTransaction>().Add(new BankTransaction
                 {
                     CompanyId = companyId,
                     BankAccountId = request.BankAccountId,
-                    TransactionDate = transactionDate,
+                    TransactionDate = r.Date,
                     TransactionType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal,
                     Amount = amount,
-                    BalanceAfter = balance,
-                    Description = description
-                };
-
-                _db.Set<BankTransaction>().Add(bankTxn);
-                importedCount++;
+                    BalanceAfter = r.Balance,
+                    Description = desc,
+                    Reference = r.Reference
+                });
+                lastBalance = r.Balance;
             }
 
-            // Update account balance to the last row's balance
-            if (importedCount > 0)
-            {
-                var lastBalanceStr = lines[^1].Split(',');
-                if (lastBalanceStr.Length >= 5)
-                {
-                    var lastBal = lastBalanceStr[4].Trim().Trim('"');
-                    if (decimal.TryParse(lastBal, NumberStyles.Any, CultureInfo.InvariantCulture, out var finalBalance))
-                    {
-                        account.CurrentBalance = finalBalance;
-                    }
-                }
-            }
+            if (lastBalance.HasValue && lastBalance.Value != 0)
+                account.CurrentBalance = lastBalance.Value;
 
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
 
-            return importedCount;
+            _logger?.LogInformation("Bank CSV import: {Count} transactions imported, {Skipped} skipped",
+                parsedRows.Count, skippedRows.Count);
+
+            return parsedRows.Count;
         }
         catch
         {

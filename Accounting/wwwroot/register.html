@@ -57,6 +57,37 @@
             <label class="form-label">ยืนยันรหัสผ่าน</label>
             <input type="password" id="confirmPassword" class="form-input" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8">
           </div>
+
+          <!-- Plan Selection -->
+          <div class="form-group" style="margin-bottom:20px">
+            <label class="form-label" style="font-weight:600;margin-bottom:10px">เลือกแพ็กเกจที่ต้องการทดลองใช้ (ฟรี 14 วัน)</label>
+            <div id="planGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <label class="plan-card" data-plan="Basic" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
+                <input type="radio" name="plan" value="Basic" style="display:none">
+                <div style="font-size:20px">📦</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Basic</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">เริ่มต้น</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">บันทึกบัญชี + ใบเสร็จ</div>
+              </label>
+              <label class="plan-card" data-plan="Pro" style="cursor:pointer;padding:12px;border:2px solid #4F46E5;border-radius:10px;text-align:center;transition:all 0.15s;background:linear-gradient(135deg,#eef2ff,#ffffff);position:relative">
+                <input type="radio" name="plan" value="Pro" checked style="display:none">
+                <div style="position:absolute;top:-8px;right:8px;background:#4F46E5;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">แนะนำ</div>
+                <div style="font-size:20px">⚡</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px;color:#4F46E5">Pro</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ครบทุกฟีเจอร์</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">+ e-Tax, AI, รายงาน</div>
+              </label>
+              <label class="plan-card" data-plan="Enterprise" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
+                <input type="radio" name="plan" value="Enterprise" style="display:none">
+                <div style="font-size:20px">🏢</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Enterprise</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">หลายบริษัท</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">ไม่จำกัดผู้ใช้ + API</div>
+              </label>
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">เปลี่ยนแพ็กเกจหรืออัปเกรดได้ตลอดเวลา</div>
+          </div>
+
           <div style="margin-bottom:24px">
             <label class="form-checkbox">
               <input type="checkbox" id="agreeTerms" required>
@@ -172,12 +203,14 @@
       btn.textContent = 'กำลังสมัครสมาชิก...';
 
       try {
+        const selectedPlan = document.querySelector('input[name="plan"]:checked')?.value || 'Pro';
         const res = await API.register({
           firstName: document.getElementById('firstName').value,
           lastName: document.getElementById('lastName').value,
           email: document.getElementById('email').value,
           password: password,
-          companyName: document.getElementById('companyName').value
+          companyName: document.getElementById('companyName').value,
+          plan: selectedPlan
         });
 
         if (res.success && res.data) {
@@ -201,6 +234,25 @@
     if (localStorage.getItem('token')) {
       window.location.href = '/app.html';
     }
+
+    // Plan card visual selection
+    document.querySelectorAll('.plan-card').forEach(card => {
+      card.addEventListener('click', function() {
+        document.querySelectorAll('.plan-card').forEach(c => {
+          const isPro = c.dataset.plan === 'Pro';
+          c.style.borderColor = '#e2e8f0';
+          c.style.background = '#fff';
+          if (isPro) {
+            c.querySelector('div:nth-child(3)').style.color = '';
+          }
+        });
+        this.style.borderColor = '#4F46E5';
+        this.style.background = 'linear-gradient(135deg,#eef2ff,#ffffff)';
+        const nameEl = this.querySelector('div:nth-child(3)');
+        if (nameEl) nameEl.style.color = '#4F46E5';
+        this.querySelector('input[type="radio"]').checked = true;
+      });
+    });
   </script>
 </body>
 </html>

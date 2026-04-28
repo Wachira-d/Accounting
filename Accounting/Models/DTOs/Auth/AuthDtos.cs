@@ -15,7 +15,8 @@ public record RegisterRequest(
     string? Phone,
     string? FirstName,
     string? LastName,
-    string? CompanyName);
+    string? CompanyName,
+    Models.Enums.SubscriptionPlan? Plan = null);  // Plan to start trial with (defaults to Pro if null)
 
 public record LoginRequest(
     [Required(ErrorMessage = "กรุณากรอกอีเมล")]
