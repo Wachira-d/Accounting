@@ -27,54 +27,58 @@ public partial class BankService
         var bankDescLower = (bankTxn.Description ?? "").ToLowerInvariant();
         var bankRefLower = (bankTxn.Reference ?? "").ToLowerInvariant();
 
-        // ===== Candidate Payments =====
-        // Pull unmatched payments within ±60 days, sorted by best amount match first.
+        // ===== Build "already matched" exclusion sets =====
+        // Walk every Matched bank transaction (other than the current one) and collect
+        // every Payment / JournalEntry ID it references — via the direct columns
+        // (MatchedPaymentId / MatchedJournalEntryId) AND the JSON array column for
+        // many-to-one matches (MatchedEntryIdsJson). Bulletproof against:
+        //   • single matches
+        //   • multi-matches (JSON array)
+        //   • stale match IDs on Unmatched/Excluded txns (we filter Status=Matched)
         var dateMin = bankDate.AddDays(-60);
         var dateMax = bankDate.AddDays(60);
 
-        // Match-direction filter: deposit txn → likely receiving customer payment;
-        // withdrawal txn → likely supplier payment / refund.
-        // We don't enforce direction strictly because it can vary.
-        // Collect all "already matched" IDs from sibling bank transactions:
-        //   1. Single matches (MatchedPaymentId / MatchedJournalEntryId)
-        //   2. Multi-matches (MatchedEntryIdsJson contains a list of IDs)
-        // We must exclude both so users don't see candidates that were already used
-        // as part of an aggregated match on another bank transaction.
-        var siblingTxns = await _db.Set<BankTransaction>()
-            .Where(t => t.CompanyId == companyId && t.Id != bankTransactionId)
+        var siblingMatched = await _db.Set<BankTransaction>()
+            .AsNoTracking()
+            .Where(t => t.CompanyId == companyId
+                     && t.Id != bankTransactionId
+                     && t.ReconciliationStatus == ReconciliationStatus.Matched)
             .Select(t => new { t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson })
             .ToListAsync();
 
-        var matchedPaymentIds = new HashSet<Guid>(
-            siblingTxns.Where(t => t.MatchedPaymentId.HasValue).Select(t => t.MatchedPaymentId!.Value));
-        var matchedJeIdsHash = new HashSet<Guid>(
-            siblingTxns.Where(t => t.MatchedJournalEntryId.HasValue).Select(t => t.MatchedJournalEntryId!.Value));
+        var usedPaymentIds = new HashSet<Guid>();
+        var usedJeIds = new HashSet<Guid>();
 
-        // Pull IDs from all multi-match JSON arrays. Each is either a payment or JE ID;
-        // we don't know which type without checking, so add to both sets — the candidate
-        // queries below will only filter the relevant set.
-        foreach (var t in siblingTxns)
+        foreach (var t in siblingMatched)
         {
+            if (t.MatchedPaymentId.HasValue) usedPaymentIds.Add(t.MatchedPaymentId.Value);
+            if (t.MatchedJournalEntryId.HasValue) usedJeIds.Add(t.MatchedJournalEntryId.Value);
+
             if (string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson)) continue;
             try
             {
-                var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson);
+                var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!);
                 if (ids == null) continue;
-                foreach (var id in ids)
-                {
-                    matchedPaymentIds.Add(id);
-                    matchedJeIdsHash.Add(id);
-                }
+                // The JSON list is type-agnostic (could be Payment or JE IDs from a multi-match).
+                // Adding to both sets is safe because Payment IDs and JE IDs come from different
+                // tables and never collide.
+                foreach (var id in ids) { usedPaymentIds.Add(id); usedJeIds.Add(id); }
             }
             catch { /* malformed JSON — ignore */ }
         }
 
-        var paymentIdSet = matchedPaymentIds.ToList();
+        // ===== Candidate Payments =====
+        // Filter: same company + date window + not soft-deleted + parent document not voided +
+        // not already matched on another bank transaction.
+        var paymentExclude = usedPaymentIds.ToList();
         var paymentCandidates = await _db.Set<Payment>()
+            .AsNoTracking()
             .Include(p => p.Document).ThenInclude(d => d.Contact)
             .Where(p => p.CompanyId == companyId
+                     && !p.IsDeleted
                      && p.PaymentDate >= dateMin && p.PaymentDate <= dateMax
-                     && !paymentIdSet.Contains(p.Id))
+                     && p.Document.Status != DocumentStatus.Voided
+                     && !paymentExclude.Contains(p.Id))
             .ToListAsync();
 
         var rankedPayments = paymentCandidates
@@ -106,14 +110,14 @@ public partial class BankService
             .ToList();
 
         // ===== Candidate Journal Entries =====
-        // Use the same matchedJeIdsHash assembled above (includes single-matched IDs +
-        // every ID in any sibling transaction's MatchedEntryIdsJson list).
-        var jeIdSet = matchedJeIdsHash.ToList();
+        var jeExclude = usedJeIds.ToList();
         var jeCandidates = await _db.Set<JournalEntry>()
+            .AsNoTracking()
             .Where(j => j.CompanyId == companyId
+                     && !j.IsDeleted
                      && j.EntryDate >= dateMin && j.EntryDate <= dateMax
                      && j.Status != JournalEntryStatus.Voided
-                     && !jeIdSet.Contains(j.Id))
+                     && !jeExclude.Contains(j.Id))
             .ToListAsync();
 
         var rankedJournals = jeCandidates
