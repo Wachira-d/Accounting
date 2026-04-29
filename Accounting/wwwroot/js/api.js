@@ -153,6 +153,8 @@ const API = {
       updateDocument: (id, d) => API.put(`${base}/document/${id}`, d),
       approveDocument: (id) => API.post(`${base}/document/${id}/approve`),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
+      deleteDocument: (id) => API.del(`${base}/document/${id}`),
+      voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),

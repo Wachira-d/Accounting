@@ -499,27 +499,52 @@ public class AccountingService : IAccountingService
         return MapJournalEntryToResponse(entry);
     }
 
+    /// <summary>
+    /// ยกเลิกใบสำคัญ — สำหรับ Draft จะตั้ง Status=Voided เฉยๆ
+    /// สำหรับ Posted จะสร้าง reversal entry อัตโนมัติ (Dr↔Cr) แล้ว set Status=Reversed
+    /// ตามมาตรฐานบัญชีไทย — ห้ามแก้ไข/ลบรายการที่ผ่านเข้าบัญชีแล้ว ต้องสร้าง counter-entry
+    /// </summary>
     public async Task VoidJournalEntryAsync(Guid companyId, Guid entryId)
     {
         var entry = await _db.JournalEntries.FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
 
-        if (entry.Status == JournalEntryStatus.Voided)
-            throw new InvalidOperationException("รายการนี้ถูกยกเลิกไปแล้ว");
+        if (entry.Status == JournalEntryStatus.Voided || entry.Status == JournalEntryStatus.Reversed)
+            throw new InvalidOperationException("รายการนี้ถูกยกเลิก/กลับรายการไปแล้ว");
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
 
+        if (entry.Status == JournalEntryStatus.Posted)
+        {
+            // Posted JE → must create reversal entry (proper double-entry accounting)
+            await ReverseJournalEntryAsync(companyId, entryId,
+                reversalDate: DateTime.UtcNow.Date,
+                description: $"ยกเลิกใบสำคัญ {entry.EntryNumber}");
+            // ReverseJournalEntryAsync sets the original to Reversed; nothing more to do here.
+            return;
+        }
+
+        // Draft / unposted → simple status flip is fine; no GL impact yet
         entry.Status = JournalEntryStatus.Voided;
         entry.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// ลบใบสำคัญ — เฉพาะ Draft ที่ยังไม่ Posted เท่านั้น (audit-safe)
+    /// Posted/Reversed ใช้ "ยกเลิก" (VoidJournalEntryAsync) ซึ่งจะสร้าง reversal ให้
+    /// </summary>
     public async Task DeleteJournalEntryAsync(Guid companyId, Guid entryId)
     {
         var entry = await _db.JournalEntries
             .Include(j => j.Lines)
             .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+
+        if (entry.Status == JournalEntryStatus.Posted)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบใบสำคัญที่ Posted แล้วได้ — กรุณาใช้คำสั่ง 'ยกเลิก' " +
+                "เพื่อสร้างรายการกลับบัญชีตามมาตรฐาน (รักษา audit trail)");
 
         if (entry.Status == JournalEntryStatus.Reversed)
             throw new InvalidOperationException("ไม่สามารถลบรายการที่ถูกกลับรายการแล้ว");

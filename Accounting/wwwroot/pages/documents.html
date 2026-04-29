@@ -815,7 +815,7 @@
           if (d.status === 'Draft') {
             actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
@@ -922,11 +922,42 @@
           : '';
         if (!(await Layout.confirmDanger({
           title: 'ยกเลิกเอกสาร',
-          message: 'เอกสารที่ถูกยกเลิกจะไม่นับในยอดขาย/รายได้และ GL' + extra,
+          message: 'ระบบจะสร้างรายการกลับบัญชี (Reversal JE) อัตโนมัติ เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
           mode: 'math'
         }))) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteDoc(id) {
+        // Hard-delete — only for Draft documents that have not affected the books.
+        // Different from voidDoc: this removes the record entirely instead of reversing.
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ลบเอกสารถาวร',
+          message: 'เอกสารจะถูกลบออกจากระบบอย่างถาวร — ใช้ได้เฉพาะเอกสารฉบับร่าง (Draft) ที่ยังไม่กระทบบัญชี<br>' +
+                   '<strong style="color:#dc2626">ไม่สามารถกู้คืนได้</strong>',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.deleteDocument(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบเอกสารสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      async voidPayment(paymentId) {
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ยกเลิกการชำระเงิน',
+          message: 'ระบบจะกลับรายการ JE ของการชำระและคืนยอดให้เอกสารต้นทาง (audit-safe)',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.voidPayment(paymentId);
+          Layout.toast('ยกเลิกการชำระเงินสำเร็จ');
+          if (this._currentDoc?.id) await this.openDetail(this._currentDoc.id);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },
       openConvert(id) {
         document.getElementById('convertDocId').value = id;

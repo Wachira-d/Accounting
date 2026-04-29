@@ -457,6 +457,12 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>
+    /// ยกเลิกเอกสาร — เก็บเอกสารต้นฉบับไว้ + สร้าง reversal JE ตามมาตรฐานบัญชีไทย
+    /// (กลับรายการ Dr↔Cr, link OriginalEntryId↔ReversedByEntryId).
+    /// Cascade: void linked Payments (with their JE reversals) + void linked EtaxInvoice.
+    /// ไม่ลบข้อมูลออกจากฐานข้อมูล — เพื่อรักษา audit trail และตรวจสอบทางภาษี.
+    /// </summary>
     public async Task VoidDocumentAsync(Guid companyId, Guid documentId)
     {
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -464,56 +470,118 @@ public class DocumentService : IDocumentService
 
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");
-        if (doc.Status == DocumentStatus.Paid || doc.Status == DocumentStatus.PartiallyPaid)
-            throw new InvalidOperationException("ไม่สามารถยกเลิกเอกสารที่มีการชำระเงินแล้ว กรุณายกเลิกการชำระเงินก่อน");
+
+        // Block void if eTax has been submitted/accepted by RD — must contact RD to revoke first
+        var lockedEtax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.DocumentId == documentId
+            && e.CompanyId == companyId
+            && (e.Status == EtaxStatus.Submitted || e.Status == EtaxStatus.Accepted));
+        if (lockedEtax != null)
+            throw new InvalidOperationException(
+                $"ไม่สามารถยกเลิกเอกสารนี้ได้ เนื่องจาก e-Tax เลขที่ {lockedEtax.EtaxRefNumber} " +
+                "ถูกส่งหรืออนุมัติโดยกรมสรรพากรแล้ว ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // 1) Void linked Payments first — each reverses its own JE + restores doc balance
+                //    (We void *all* payments inside this transaction; the document gets voided
+                //    after, so payment-balance recalculation here is intermediate only.)
+                var payments = await _db.Payments
+                    .Where(p => p.DocumentId == documentId && p.CompanyId == companyId && !p.IsDeleted)
+                    .ToListAsync();
+                foreach (var payment in payments)
+                {
+                    await ReversePaymentInternalAsync(companyId, payment, doc,
+                        $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
+                }
+
+                // 2) Reverse linked Posted JEs via AccountingService (proper linkage:
+                //    OriginalEntryId/ReversedByEntryId, fiscal period validation, dimensions).
+                var postedJournalIds = await _db.JournalEntries
+                    .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
+                        && j.Status == JournalEntryStatus.Posted)
+                    .Select(j => j.Id)
+                    .ToListAsync();
+                foreach (var jeId in postedJournalIds)
+                {
+                    await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                        reversalDate: DateTime.UtcNow.Date,
+                        description: $"ยกเลิกเอกสาร {doc.DocumentNumber}");
+                }
+
+                // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status)
+                var etaxes = await _db.EtaxInvoices
+                    .Where(e => e.DocumentId == documentId && e.CompanyId == companyId
+                        && e.Status != EtaxStatus.Voided && e.Status != EtaxStatus.Submitted
+                        && e.Status != EtaxStatus.Accepted)
+                    .ToListAsync();
+                foreach (var etax in etaxes)
+                {
+                    etax.Status = EtaxStatus.Voided;
+                    etax.VoidedAt = DateTime.UtcNow;
+                    etax.VoidReason = $"ยกเลิกพร้อมเอกสาร {doc.DocumentNumber}";
+                    etax.UpdatedAt = DateTime.UtcNow;
+                }
+
+                // 4) Finally void the document itself
+                doc.Status = DocumentStatus.Voided;
+                doc.UpdatedAt = DateTime.UtcNow;
+
+                await _db.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// ลบเอกสารถาวร — เฉพาะเอกสารฉบับร่าง (Draft) ที่ยังไม่กระทบบัญชีและไม่มีการชำระเงินเท่านั้น
+    /// เอกสารที่อนุมัติแล้วต้องใช้ "ยกเลิก" (VoidDocumentAsync) เพื่อรักษา audit trail.
+    /// </summary>
+    public async Task DeleteDocumentAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (doc.Status != DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่อนุมัติแล้วได้ — กรุณาใช้คำสั่ง 'ยกเลิก' " +
+                "เพื่อสร้างรายการกลับบัญชีตามมาตรฐาน (รักษา audit trail)");
+
+        var hasJournal = await _db.JournalEntries.AnyAsync(j => j.SourceDocumentId == documentId
+            && j.CompanyId == companyId);
+        if (hasJournal)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่มีรายการบัญชีเชื่อมอยู่ได้ — กรุณาใช้ 'ยกเลิก' แทน");
+
+        var hasPayment = await _db.Payments.AnyAsync(p => p.DocumentId == documentId
+            && p.CompanyId == companyId && !p.IsDeleted);
+        if (hasPayment)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่มีการชำระเงินแล้วได้ — กรุณายกเลิกการชำระเงินก่อน");
+
+        var hasEtax = await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == documentId
+            && e.CompanyId == companyId && e.Status != EtaxStatus.Voided);
+        if (hasEtax)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่มีใบกำกับภาษีอิเล็กทรอนิกส์ (e-Tax) เชื่อมอยู่ได้");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            doc.Status = DocumentStatus.Voided;
-            doc.UpdatedAt = DateTime.UtcNow;
-
-            // Create reversal journal entries for linked journals (Thai standard: reversal, not deletion)
-            var linkedJournals = await _db.JournalEntries
-                .Include(j => j.Lines)
-                .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
-                    && j.Status == JournalEntryStatus.Posted)
-                .ToListAsync();
-            foreach (var je in linkedJournals)
-            {
-                je.Status = JournalEntryStatus.Voided;
-                je.UpdatedAt = DateTime.UtcNow;
-
-                // Create reversal entry (swap Dr↔Cr)
-                var reversalEntry = new JournalEntry
-                {
-                    CompanyId = companyId,
-                    EntryNumber = $"{je.EntryNumber}-REV",
-                    EntryDate = DateTime.UtcNow,
-                    Description = $"กลับรายการ - {je.Description}",
-                    Reference = je.Reference,
-                    JournalType = je.JournalType,
-                    TotalDebit = je.TotalCredit,
-                    TotalCredit = je.TotalDebit,
-                    Status = JournalEntryStatus.Posted,
-                    IsAutoGenerated = true,
-                    SourceDocumentId = documentId,
-                    FiscalPeriodId = je.FiscalPeriodId
-                };
-                foreach (var line in je.Lines)
-                {
-                    reversalEntry.Lines.Add(new JournalEntryLine
-                    {
-                        AccountId = line.AccountId,
-                        DebitAmount = line.CreditAmount,
-                        CreditAmount = line.DebitAmount,
-                        Description = $"กลับรายการ - {line.Description}",
-                        LineOrder = line.LineOrder
-                    });
-                }
-                _db.JournalEntries.Add(reversalEntry);
-            }
-
+            // Hard-delete lines first (FK), then header. Use Remove (not soft-delete)
+            // because Draft never reached the books — no audit obligation.
+            _db.DocumentLines.RemoveRange(doc.Lines);
+            _db.Documents.Remove(doc);
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
         }
@@ -522,6 +590,80 @@ public class DocumentService : IDocumentService
             await transaction.RollbackAsync();
             throw;
         }
+    }
+
+    /// <summary>
+    /// ยกเลิกการชำระเงิน — กลับรายการ JE ของการชำระ + คืนยอดให้เอกสารต้นทาง.
+    /// ใช้ทั้งจาก endpoint โดยตรง และจาก VoidDocumentAsync (cascade).
+    /// </summary>
+    public async Task VoidPaymentAsync(Guid companyId, Guid paymentId)
+    {
+        var payment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == paymentId
+            && p.CompanyId == companyId && !p.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == payment.DocumentId
+            && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทาง");
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                await ReversePaymentInternalAsync(companyId, payment, doc, "ยกเลิกการชำระเงิน");
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Internal: reverses a single payment within an existing transaction.
+    /// - Creates JE reversal (via AccountingService) for the payment's posted JE
+    /// - Soft-deletes the payment (IsDeleted=true) — keeps record for audit
+    /// - Restores doc.PaidAmount and doc.BalanceDue
+    /// - Recalculates doc.Status (Paid → PartiallyPaid → Approved)
+    /// Caller is responsible for transaction + final SaveChangesAsync.
+    /// </summary>
+    private async Task ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason)
+    {
+        // Reverse linked JEs created from this payment.
+        // Payment JEs are linked via SourceDocumentId = doc.Id with a Reference matching payment.PaymentNumber.
+        var paymentJournals = await _db.JournalEntries
+            .Where(j => j.SourceDocumentId == doc.Id
+                && j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.Reference == payment.PaymentNumber)
+            .Select(j => j.Id)
+            .ToListAsync();
+        foreach (var jeId in paymentJournals)
+        {
+            await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                reversalDate: DateTime.UtcNow.Date,
+                description: $"{reason} - {payment.PaymentNumber}");
+        }
+
+        // Soft-delete the payment record (keep for audit; mirrors how Reverse keeps original JE)
+        payment.IsDeleted = true;
+        payment.UpdatedAt = DateTime.UtcNow;
+
+        // Restore document balance
+        doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount);
+        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+        if (doc.Status != DocumentStatus.Voided)
+        {
+            doc.Status = doc.PaidAmount <= 0 ? DocumentStatus.Approved
+                : doc.BalanceDue <= 0 ? DocumentStatus.Paid
+                : DocumentStatus.PartiallyPaid;
+        }
+        doc.UpdatedAt = DateTime.UtcNow;
     }
 
     public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)

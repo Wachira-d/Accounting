@@ -12,7 +12,10 @@ public interface IDocumentService
     Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null);
     Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
+    /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     Task VoidDocumentAsync(Guid companyId, Guid documentId);
+    /// <summary>ลบเอกสารถาวร: เฉพาะ Draft ที่ยังไม่กระทบบัญชี</summary>
+    Task DeleteDocumentAsync(Guid companyId, Guid documentId);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
 
     // Contacts
@@ -24,4 +27,6 @@ public interface IDocumentService
     // Payments
     Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy);
     Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null);
+    /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร</summary>
+    Task VoidPaymentAsync(Guid companyId, Guid paymentId);
 }

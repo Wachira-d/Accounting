@@ -562,7 +562,8 @@ public enum EtaxStatus
     Submitted = 2,
     Accepted = 3,
     Rejected = 4,
-    Error = 5
+    Error = 5,
+    Voided = 6      // ยกเลิก: เก็บ XML ไว้เพื่อ audit trail (ไม่ลบจริง)
 }
 
 // e-Tax delivery mode chosen by the company

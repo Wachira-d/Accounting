@@ -112,6 +112,17 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกเอกสารสำเร็จ"));
     }
 
+    /// <summary>
+    /// ลบเอกสารถาวร — เฉพาะ Draft ที่ยังไม่กระทบบัญชีและไม่มีการชำระเงิน
+    /// เอกสารที่อนุมัติแล้วต้องใช้ POST /void แทน (รักษา audit trail)
+    /// </summary>
+    [HttpDelete("{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> DeleteDocument(Guid companyId, Guid documentId)
+    {
+        await _documentService.DeleteDocumentAsync(companyId, documentId);
+        return Ok(new ApiResponse<string>(true, null, "ลบเอกสารสำเร็จ"));
+    }
+
     [HttpPost("{documentId:guid}/convert/{targetType}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> ConvertDocument(Guid companyId, Guid documentId, DocumentType targetType)
     {
@@ -170,5 +181,15 @@ public class DocumentController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _documentService.CreatePaymentAsync(companyId, request, userId);
         return StatusCode(201, new ApiResponse<PaymentResponse>(true, result, "บันทึกการชำระเงินสำเร็จ"));
+    }
+
+    /// <summary>
+    /// ยกเลิกการชำระเงิน — กลับรายการ JE + คืนยอดเอกสาร (audit-safe)
+    /// </summary>
+    [HttpPost("payments/{paymentId:guid}/void")]
+    public async Task<ActionResult<ApiResponse<string>>> VoidPayment(Guid companyId, Guid paymentId)
+    {
+        await _documentService.VoidPaymentAsync(companyId, paymentId);
+        return Ok(new ApiResponse<string>(true, null, "ยกเลิกการชำระเงินสำเร็จ"));
     }
 }
