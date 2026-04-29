@@ -15,6 +15,6 @@ public interface ICurrencyService
     Task<CurrencyRateResponse?> GetLatestRateAsync(Guid companyId, string fromCurrency, string toCurrency);
 
     // Conversion & Gain/Loss
-    Task<decimal> ConvertAsync(Guid companyId, string fromCurrency, string toCurrency, decimal amount, DateTime? asOfDate = null);
+    Task<decimal> ConvertAsync(Guid companyId, string fromCurrency, string toCurrency, decimal amount, DateTime? asOfDate = null, string? direction = null);
     Task<List<UnrealizedGainLossItem>> CalculateUnrealizedGainLossAsync(Guid companyId, string baseCurrency, DateTime asOfDate);
 }
