@@ -815,7 +815,7 @@
           if (d.status === 'Draft') {
             actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
@@ -833,6 +833,15 @@
           }
           if (hasEtaxId) {
             actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
+          }
+          // Bad debt write-off: only for AR docs that are still outstanding
+          const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
+          const outstandingStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
+          const balanceDue = Number(d.balanceDue || 0);
+          if (arTypes.includes(d.documentType)
+              && outstandingStatuses.includes(d.status)
+              && balanceDue > 0.01) {
+            actions += ` <button class="btn btn-warning" onclick="Page.writeOffBadDebt('${d.id}')" title="ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้">💸 ตัดหนี้สูญ</button>`;
           }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
@@ -922,26 +931,94 @@
           : '';
         if (!(await Layout.confirmDanger({
           title: 'ยกเลิกเอกสาร',
-          message: 'เอกสารที่ถูกยกเลิกจะไม่นับในยอดขาย/รายได้และ GL' + extra,
+          message: 'ระบบจะสร้างรายการกลับบัญชี (Reversal JE) อัตโนมัติ เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
           mode: 'math'
         }))) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }
       },
+      async deleteDoc(id) {
+        // Hard-delete — only for Draft documents that have not affected the books.
+        // Different from voidDoc: this removes the record entirely instead of reversing.
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ลบเอกสารถาวร',
+          message: 'เอกสารจะถูกลบออกจากระบบอย่างถาวร — ใช้ได้เฉพาะเอกสารฉบับร่าง (Draft) ที่ยังไม่กระทบบัญชี<br>' +
+                   '<strong style="color:#dc2626">ไม่สามารถกู้คืนได้</strong>',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.deleteDocument(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบเอกสารสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      async writeOffBadDebt(id) {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผลการตัดหนี้สูญ (ไม่บังคับ):', '');
+        if (reason === null) return; // user cancelled
+        if (!(await Layout.confirmDanger({
+          title: 'ตัดหนี้สูญ (Bad Debt Write-off)',
+          message: 'ระบบจะสร้างใบสำคัญ JE: <strong>Dr หนี้สูญ, Cr ลูกหนี้การค้า</strong> ' +
+                   'และเคลียร์ยอดคงค้างของเอกสารนี้<br>' +
+                   '<strong style="color:#dc2626">การตัดหนี้สูญต้องเป็นไปตามเงื่อนไขประมวลรัษฎากร ม.65 ทวิ (9)</strong>',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.writeOffBadDebt(id, reason);
+          Layout.closeModal('detailModal');
+          Layout.toast('ตัดหนี้สูญสำเร็จ — สร้าง JE และเคลียร์เอกสารแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ตัดหนี้สูญไม่สำเร็จ', 'error'); }
+      },
+      async voidPayment(paymentId) {
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ยกเลิกการชำระเงิน',
+          message: 'ระบบจะกลับรายการ JE ของการชำระและคืนยอดให้เอกสารต้นทาง (audit-safe)',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.voidPayment(paymentId);
+          Layout.toast('ยกเลิกการชำระเงินสำเร็จ');
+          if (this._currentDoc?.id) await this.openDetail(this._currentDoc.id);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
+      },
+      // Mirror of server-side ValidConversions in DocumentService.cs.
+      // Keep these in sync — server is source of truth and will reject invalid
+      // conversions, but pre-filtering improves UX.
+      _validConversions: {
+        Quotation:        ['Invoice','TaxInvoice','BillingNote','DeliveryNote','Receipt'],
+        BillingNote:      ['Invoice','TaxInvoice','Receipt'],
+        DeliveryNote:     ['Invoice','TaxInvoice'],
+        Invoice:          ['TaxInvoice','Receipt','ReceiptVoucher'],
+        TaxInvoice:       ['Receipt','ReceiptVoucher','CreditNote','DebitNote'],
+        DebitNote:        ['Receipt','ReceiptVoucher'],
+        PurchaseRequisition: ['PurchaseOrder'],
+        PurchaseOrder:    ['PurchaseInvoice','Expense'],
+        PurchaseInvoice:  ['PaymentVoucher'],
+        Expense:          ['PaymentVoucher']
+        // Terminal: Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
+      },
       openConvert(id) {
         document.getElementById('convertDocId').value = id;
-        // Filter conversion options based on source document type
         const doc = this._currentDoc;
         const select = document.getElementById('convertTarget');
         if (doc && select) {
-          const revenueTypes = ['Quotation','Invoice','TaxInvoice','Receipt','DebitNote','CreditNote','BillingNote','ReceiptVoucher'];
-          const expenseTypes = ['PurchaseOrder','PurchaseInvoice','PaymentVoucher','ExpenseNote'];
-          const isRevenue = revenueTypes.includes(doc.documentType);
+          const allowed = this._validConversions[doc.documentType] || [];
+          let firstVisible = null;
           Array.from(select.options).forEach(opt => {
-            const isRevenueTarget = revenueTypes.includes(opt.value);
-            const isExpenseTarget = expenseTypes.includes(opt.value);
-            opt.hidden = (isRevenue && isExpenseTarget) || (!isRevenue && isRevenueTarget);
+            // Hide if not in allowed list, or matches source (no-op convert)
+            opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
+            if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
           });
+          if (firstVisible) select.value = firstVisible;
+          if (!allowed.length) {
+            Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
+            return;
+          }
         }
         Layout.openModal('convertModal');
       },

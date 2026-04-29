@@ -499,15 +499,27 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         return etax.XmlContent;
     }
 
+    /// <summary>
+    /// ยกเลิก e-Tax Invoice — set Status=Voided + บันทึกวันที่ยกเลิก
+    /// เก็บ XML/PDF ไว้เพื่อ audit trail (ห้ามลบเอกสารที่ส่งกรมสรรพากรแล้ว)
+    /// </summary>
     public async Task VoidAsync(Guid companyId, Guid etaxId)
     {
         var etax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
 
-        if (etax.Status == EtaxStatus.Accepted)
-            throw new InvalidOperationException("ไม่สามารถยกเลิก e-Tax ที่กรมสรรพากรตอบรับแล้ว");
+        if (etax.Status == EtaxStatus.Accepted || etax.Status == EtaxStatus.Submitted)
+            throw new InvalidOperationException(
+                "ไม่สามารถยกเลิก e-Tax ที่ส่ง/อนุมัติโดยกรมสรรพากรแล้ว " +
+                "ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
 
-        etax.IsDeleted = true;
+        if (etax.Status == EtaxStatus.Voided)
+            throw new InvalidOperationException("e-Tax นี้ถูกยกเลิกไปแล้ว");
+
+        etax.Status = EtaxStatus.Voided;
+        etax.VoidedAt = DateTime.UtcNow;
+        etax.VoidReason ??= "ยกเลิกโดยผู้ใช้";
+        etax.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
 

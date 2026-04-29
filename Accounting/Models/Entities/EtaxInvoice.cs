@@ -39,4 +39,8 @@ public class EtaxInvoice : TenantEntity
     public string? BuyerTaxId { get; set; }
     public string? BuyerBranch { get; set; }
     public string? BuyerAddress { get; set; }
+
+    // Void tracking — เก็บไว้เพื่อ audit trail (ไม่ลบ XML)
+    public DateTime? VoidedAt { get; set; }
+    public string? VoidReason { get; set; }
 }

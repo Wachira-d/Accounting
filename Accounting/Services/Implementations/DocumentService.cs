@@ -396,6 +396,11 @@ public class DocumentService : IDocumentService
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
+                // Apply cross-document linkage: when a Receipt/CN/PaymentVoucher is
+                // approved with a RelatedDocumentId, the source document's balance
+                // must be updated so AR/AP aging and payment-status reports are correct.
+                await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
@@ -457,6 +462,12 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>
+    /// ยกเลิกเอกสาร — เก็บเอกสารต้นฉบับไว้ + สร้าง reversal JE ตามมาตรฐานบัญชีไทย
+    /// (กลับรายการ Dr↔Cr, link OriginalEntryId↔ReversedByEntryId).
+    /// Cascade: void linked Payments (with their JE reversals) + void linked EtaxInvoice.
+    /// ไม่ลบข้อมูลออกจากฐานข้อมูล — เพื่อรักษา audit trail และตรวจสอบทางภาษี.
+    /// </summary>
     public async Task VoidDocumentAsync(Guid companyId, Guid documentId)
     {
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -464,56 +475,123 @@ public class DocumentService : IDocumentService
 
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");
-        if (doc.Status == DocumentStatus.Paid || doc.Status == DocumentStatus.PartiallyPaid)
-            throw new InvalidOperationException("ไม่สามารถยกเลิกเอกสารที่มีการชำระเงินแล้ว กรุณายกเลิกการชำระเงินก่อน");
+
+        // Block void if eTax has been submitted/accepted by RD — must contact RD to revoke first
+        var lockedEtax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.DocumentId == documentId
+            && e.CompanyId == companyId
+            && (e.Status == EtaxStatus.Submitted || e.Status == EtaxStatus.Accepted));
+        if (lockedEtax != null)
+            throw new InvalidOperationException(
+                $"ไม่สามารถยกเลิกเอกสารนี้ได้ เนื่องจาก e-Tax เลขที่ {lockedEtax.EtaxRefNumber} " +
+                "ถูกส่งหรืออนุมัติโดยกรมสรรพากรแล้ว ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // 1) Void linked Payments first — each reverses its own JE + restores doc balance
+                //    (We void *all* payments inside this transaction; the document gets voided
+                //    after, so payment-balance recalculation here is intermediate only.)
+                var payments = await _db.Payments
+                    .Where(p => p.DocumentId == documentId && p.CompanyId == companyId && !p.IsDeleted)
+                    .ToListAsync();
+                foreach (var payment in payments)
+                {
+                    await ReversePaymentInternalAsync(companyId, payment, doc,
+                        $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
+                }
+
+                // 2) Reverse linked Posted JEs via AccountingService (proper linkage:
+                //    OriginalEntryId/ReversedByEntryId, fiscal period validation, dimensions).
+                var postedJournalIds = await _db.JournalEntries
+                    .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
+                        && j.Status == JournalEntryStatus.Posted)
+                    .Select(j => j.Id)
+                    .ToListAsync();
+                foreach (var jeId in postedJournalIds)
+                {
+                    await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                        reversalDate: DateTime.UtcNow.Date,
+                        description: $"ยกเลิกเอกสาร {doc.DocumentNumber}");
+                }
+
+                // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status)
+                var etaxes = await _db.EtaxInvoices
+                    .Where(e => e.DocumentId == documentId && e.CompanyId == companyId
+                        && e.Status != EtaxStatus.Voided && e.Status != EtaxStatus.Submitted
+                        && e.Status != EtaxStatus.Accepted)
+                    .ToListAsync();
+                foreach (var etax in etaxes)
+                {
+                    etax.Status = EtaxStatus.Voided;
+                    etax.VoidedAt = DateTime.UtcNow;
+                    etax.VoidReason = $"ยกเลิกพร้อมเอกสาร {doc.DocumentNumber}";
+                    etax.UpdatedAt = DateTime.UtcNow;
+                }
+
+                // 4) Restore source document's balance if this was a derivative
+                //    (Receipt/CN/PaymentVoucher referencing another doc). Mirrors
+                //    the adjustment applied during ApproveDocumentAsync.
+                await RevertSourceDocumentAdjustmentsAsync(companyId, doc);
+
+                // 5) Finally void the document itself
+                doc.Status = DocumentStatus.Voided;
+                doc.UpdatedAt = DateTime.UtcNow;
+
+                await _db.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// ลบเอกสารถาวร — เฉพาะเอกสารฉบับร่าง (Draft) ที่ยังไม่กระทบบัญชีและไม่มีการชำระเงินเท่านั้น
+    /// เอกสารที่อนุมัติแล้วต้องใช้ "ยกเลิก" (VoidDocumentAsync) เพื่อรักษา audit trail.
+    /// </summary>
+    public async Task DeleteDocumentAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (doc.Status != DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่อนุมัติแล้วได้ — กรุณาใช้คำสั่ง 'ยกเลิก' " +
+                "เพื่อสร้างรายการกลับบัญชีตามมาตรฐาน (รักษา audit trail)");
+
+        var hasJournal = await _db.JournalEntries.AnyAsync(j => j.SourceDocumentId == documentId
+            && j.CompanyId == companyId);
+        if (hasJournal)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่มีรายการบัญชีเชื่อมอยู่ได้ — กรุณาใช้ 'ยกเลิก' แทน");
+
+        var hasPayment = await _db.Payments.AnyAsync(p => p.DocumentId == documentId
+            && p.CompanyId == companyId && !p.IsDeleted);
+        if (hasPayment)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่มีการชำระเงินแล้วได้ — กรุณายกเลิกการชำระเงินก่อน");
+
+        var hasEtax = await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == documentId
+            && e.CompanyId == companyId && e.Status != EtaxStatus.Voided);
+        if (hasEtax)
+            throw new InvalidOperationException(
+                "ไม่สามารถลบเอกสารที่มีใบกำกับภาษีอิเล็กทรอนิกส์ (e-Tax) เชื่อมอยู่ได้");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            doc.Status = DocumentStatus.Voided;
-            doc.UpdatedAt = DateTime.UtcNow;
-
-            // Create reversal journal entries for linked journals (Thai standard: reversal, not deletion)
-            var linkedJournals = await _db.JournalEntries
-                .Include(j => j.Lines)
-                .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
-                    && j.Status == JournalEntryStatus.Posted)
-                .ToListAsync();
-            foreach (var je in linkedJournals)
-            {
-                je.Status = JournalEntryStatus.Voided;
-                je.UpdatedAt = DateTime.UtcNow;
-
-                // Create reversal entry (swap Dr↔Cr)
-                var reversalEntry = new JournalEntry
-                {
-                    CompanyId = companyId,
-                    EntryNumber = $"{je.EntryNumber}-REV",
-                    EntryDate = DateTime.UtcNow,
-                    Description = $"กลับรายการ - {je.Description}",
-                    Reference = je.Reference,
-                    JournalType = je.JournalType,
-                    TotalDebit = je.TotalCredit,
-                    TotalCredit = je.TotalDebit,
-                    Status = JournalEntryStatus.Posted,
-                    IsAutoGenerated = true,
-                    SourceDocumentId = documentId,
-                    FiscalPeriodId = je.FiscalPeriodId
-                };
-                foreach (var line in je.Lines)
-                {
-                    reversalEntry.Lines.Add(new JournalEntryLine
-                    {
-                        AccountId = line.AccountId,
-                        DebitAmount = line.CreditAmount,
-                        CreditAmount = line.DebitAmount,
-                        Description = $"กลับรายการ - {line.Description}",
-                        LineOrder = line.LineOrder
-                    });
-                }
-                _db.JournalEntries.Add(reversalEntry);
-            }
-
+            // Hard-delete lines first (FK), then header. Use Remove (not soft-delete)
+            // because Draft never reached the books — no audit obligation.
+            _db.DocumentLines.RemoveRange(doc.Lines);
+            _db.Documents.Remove(doc);
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
         }
@@ -524,12 +602,437 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>
+    /// ยกเลิกการชำระเงิน — กลับรายการ JE ของการชำระ + คืนยอดให้เอกสารต้นทาง.
+    /// ใช้ทั้งจาก endpoint โดยตรง และจาก VoidDocumentAsync (cascade).
+    /// </summary>
+    public async Task VoidPaymentAsync(Guid companyId, Guid paymentId)
+    {
+        var payment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == paymentId
+            && p.CompanyId == companyId && !p.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == payment.DocumentId
+            && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทาง");
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                await ReversePaymentInternalAsync(companyId, payment, doc, "ยกเลิกการชำระเงิน");
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// ตัดหนี้สูญ — เมื่อลูกหนี้ผิดนัดและมั่นใจว่าจะไม่ได้รับเงิน
+    /// JE: Dr หนี้สูญ (64xxx), Cr ลูกหนี้การค้า (113)
+    /// อัพเดต source.PaidAmount = TotalAmount, BalanceDue = 0, Status = Paid (เคลียร์)
+    /// </summary>
+    public async Task<DocumentResponse> WriteOffBadDebtAsync(Guid companyId, Guid documentId, string writtenOffBy, string? reason = null)
+    {
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // Only AR documents with outstanding balance can be written off
+        var arTypes = new[] {
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote
+        };
+        if (!arTypes.Contains(doc.DocumentType))
+            throw new InvalidOperationException(
+                "ตัดหนี้สูญได้เฉพาะใบแจ้งหนี้ / ใบกำกับภาษี / ใบเพิ่มหนี้ ที่ยังคงค้างเท่านั้น");
+
+        if (doc.Status != DocumentStatus.Approved
+            && doc.Status != DocumentStatus.PartiallyPaid
+            && doc.Status != DocumentStatus.Sent
+            && doc.Status != DocumentStatus.Overdue)
+            throw new InvalidOperationException(
+                "ตัดหนี้สูญได้เฉพาะเอกสารที่อนุมัติแล้วและยังคงค้าง");
+
+        if (doc.BalanceDue <= 0.01m)
+            throw new InvalidOperationException("เอกสารนี้ไม่มียอดคงค้าง — ไม่ต้องตัดหนี้สูญ");
+
+        // Find or fall back to bad-debt expense account
+        var badDebtAcc = await FindAccountAsync(companyId, "64000")
+            ?? await FindAccountAsync(companyId, "55000")
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId
+                    && a.AccountType == AccountType.Expense
+                    && a.AccountName!.Contains("หนี้สูญ")
+                    && a.IsActive)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync();
+        if (badDebtAcc == null)
+            throw new InvalidOperationException(
+                "ไม่พบบัญชี 'หนี้สูญ' (64000) ในผังบัญชี กรุณาเพิ่มบัญชีก่อน");
+
+        var arAcc = await FindAccountAsync(companyId, "113")
+            ?? throw new InvalidOperationException("ไม่พบบัญชี 'ลูกหนี้การค้า' (113) ในผังบัญชี");
+
+        var writeOffAmount = doc.BalanceDue;
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // Resolve fiscal period
+                var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+                    f.CompanyId == companyId &&
+                    f.StartDate <= DateTime.UtcNow.Date &&
+                    f.EndDate >= DateTime.UtcNow.Date);
+                if (period != null && period.Status != FiscalPeriodStatus.Open)
+                    throw new InvalidOperationException(
+                        $"ไม่สามารถตัดหนี้สูญในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว");
+
+                var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+                var je = new JournalEntry
+                {
+                    CompanyId = companyId,
+                    EntryNumber = entryNumber,
+                    EntryDate = DateTime.UtcNow.Date,
+                    JournalType = JournalType.General,
+                    Description = $"ตัดหนี้สูญ - {doc.DocumentNumber}" + (reason != null ? $" ({reason})" : ""),
+                    Reference = doc.DocumentNumber,
+                    Status = JournalEntryStatus.Posted,
+                    TotalDebit = writeOffAmount,
+                    TotalCredit = writeOffAmount,
+                    CreatedBy = writtenOffBy,
+                    IsAutoGenerated = true,
+                    SourceDocumentId = doc.Id,
+                    FiscalPeriodId = period?.Id,
+                    ProjectId = doc.ProjectId
+                };
+                _db.JournalEntries.Add(je);
+                _db.JournalEntryLines.Add(new JournalEntryLine
+                {
+                    JournalEntryId = je.Id,
+                    AccountId = badDebtAcc.Id,
+                    DebitAmount = writeOffAmount,
+                    CreditAmount = 0,
+                    Description = $"หนี้สูญ - {doc.DocumentNumber}",
+                    LineOrder = 1,
+                    ProjectId = doc.ProjectId
+                });
+                _db.JournalEntryLines.Add(new JournalEntryLine
+                {
+                    JournalEntryId = je.Id,
+                    AccountId = arAcc.Id,
+                    DebitAmount = 0,
+                    CreditAmount = writeOffAmount,
+                    Description = $"ตัดลูกหนี้ - {doc.DocumentNumber}",
+                    LineOrder = 2,
+                    ProjectId = doc.ProjectId
+                });
+
+                // Clear the source document
+                doc.PaidAmount = doc.TotalAmount;
+                doc.BalanceDue = 0;
+                doc.Status = DocumentStatus.Paid;
+                doc.UpdatedBy = writtenOffBy;
+                doc.UpdatedAt = DateTime.UtcNow;
+                doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
+                    ? $"ตัดหนี้สูญ {DateTime.UtcNow:yyyy-MM-dd}: {reason ?? ""}"
+                    : doc.InternalNotes + $"\nตัดหนี้สูญ {DateTime.UtcNow:yyyy-MM-dd}: {reason ?? ""}";
+
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
+    /// <summary>
+    /// Internal: reverses a single payment within an existing transaction.
+    /// - Creates JE reversal (via AccountingService) for the payment's posted JE
+    /// - Soft-deletes the payment (IsDeleted=true) — keeps record for audit
+    /// - Restores doc.PaidAmount and doc.BalanceDue
+    /// - Recalculates doc.Status (Paid → PartiallyPaid → Approved)
+    /// Caller is responsible for transaction + final SaveChangesAsync.
+    /// </summary>
+    private async Task ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason)
+    {
+        // Reverse linked JEs created from this payment.
+        // Payment JEs are linked via SourceDocumentId = doc.Id with a Reference matching payment.PaymentNumber.
+        var paymentJournals = await _db.JournalEntries
+            .Where(j => j.SourceDocumentId == doc.Id
+                && j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.Reference == payment.PaymentNumber)
+            .Select(j => j.Id)
+            .ToListAsync();
+        foreach (var jeId in paymentJournals)
+        {
+            await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                reversalDate: DateTime.UtcNow.Date,
+                description: $"{reason} - {payment.PaymentNumber}");
+        }
+
+        // Soft-delete the payment record (keep for audit; mirrors how Reverse keeps original JE)
+        payment.IsDeleted = true;
+        payment.UpdatedAt = DateTime.UtcNow;
+
+        // Restore document balance
+        doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount);
+        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+        if (doc.Status != DocumentStatus.Voided)
+        {
+            doc.Status = doc.PaidAmount <= 0 ? DocumentStatus.Approved
+                : doc.BalanceDue <= 0 ? DocumentStatus.Paid
+                : DocumentStatus.PartiallyPaid;
+        }
+        doc.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Updates a source document's balance/status when a derivative (Receipt, CN, DN,
+    /// PaymentVoucher) referencing it is approved. This keeps AR/AP aging and per-document
+    /// status consistent with the GL.
+    ///
+    /// Rules (Thai accounting practice):
+    /// - Receipt/ReceiptVoucher with ref → settlement: source.PaidAmount += amount
+    /// - PaymentVoucher with ref → AP settlement: source.PaidAmount += amount
+    /// - CreditNote with ref → AR offset: source.PaidAmount += amount (treats as offset)
+    /// - DebitNote with ref → no source mutation (DN is a NEW AR, not adjustment)
+    ///
+    /// Validation: refuses if cumulative adjustments would exceed the source's TotalAmount
+    /// (i.e. you cannot refund/credit more than the customer owes).
+    ///
+    /// Caller is responsible for transaction + SaveChangesAsync.
+    /// </summary>
+    private async Task ApplySourceDocumentAdjustmentsAsync(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue) return;
+
+        var isSettlement = doc.DocumentType == DocumentType.Receipt
+            || doc.DocumentType == DocumentType.ReceiptVoucher
+            || doc.DocumentType == DocumentType.PaymentVoucher;
+        var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
+        var isDebitNote = doc.DocumentType == DocumentType.DebitNote;
+        if (!isSettlement && !isCreditNote && !isDebitNote) return;
+
+        var source = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
+        if (source == null) return;
+
+        if (isSettlement)
+        {
+            // Settlement (Receipt/ReceiptVoucher/PaymentVoucher): strict cap.
+            // Cannot collect/pay more than the outstanding balance.
+            if (doc.TotalAmount > source.BalanceDue + 0.01m)
+                throw new InvalidOperationException(
+                    $"จำนวนเงินรับ/จ่าย ({doc.TotalAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
+                    $"{source.DocumentNumber} (คงค้าง {source.BalanceDue:N2})");
+
+            source.PaidAmount += doc.TotalAmount;
+        }
+        else if (isCreditNote)
+        {
+            // CN: validation depends on source state.
+            // - If source still has BalanceDue > 0: CN reduces AR/AP, capped by BalanceDue
+            // - If source fully paid (BalanceDue = 0): CN becomes cash refund — JE
+            //   handles the cash flow. Source state stays at Paid (PaidAmount unchanged).
+            if (source.BalanceDue > 0.01m)
+            {
+                if (doc.TotalAmount > source.BalanceDue + 0.01m)
+                    throw new InvalidOperationException(
+                        $"จำนวนใบลดหนี้ ({doc.TotalAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
+                        $"{source.DocumentNumber} (คงค้าง {source.BalanceDue:N2}) " +
+                        $"— หากต้องการคืนเงินเกินกว่ายอดคงค้าง กรุณาแยกเป็นใบลดหนี้หลายใบ");
+
+                source.PaidAmount += doc.TotalAmount;
+            }
+            // else: cash refund mode — source.PaidAmount stays at TotalAmount,
+            // BalanceDue stays at 0, Status stays at Paid. JE Cr Cash handles it.
+        }
+        else if (isDebitNote)
+        {
+            // DN: increases the obligation (customer owes more / we owe more)
+            // - If source has BalanceDue > 0: DN adds to BalanceDue (effectively
+            //   reduces source.PaidAmount accumulation; we model it as TotalAmount += DN)
+            //   Actually simpler: leave source untouched — DN is a separate AR/AP doc itself.
+            // - If source fully paid: DN creates a new debt that needs to be collected
+            //   separately. The DN itself acts as the new AR.
+            //
+            // For both cases: do NOT mutate source. The DN is a separate document
+            // and shows up in AR/AP aging on its own merit.
+            //
+            // (User can still link via RelatedDocumentId for traceability.)
+            return;
+        }
+
+        source.BalanceDue = source.TotalAmount - source.PaidAmount;
+        if (source.Status != DocumentStatus.Voided)
+        {
+            source.Status = source.BalanceDue <= 0.01m
+                ? DocumentStatus.Paid
+                : DocumentStatus.PartiallyPaid;
+        }
+        source.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Reverse of ApplySourceDocumentAdjustmentsAsync — called from VoidDocumentAsync
+    /// when a derivative document is voided, to restore the source's balance.
+    /// </summary>
+    private async Task RevertSourceDocumentAdjustmentsAsync(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue) return;
+
+        var typeAffectsSource = doc.DocumentType == DocumentType.Receipt
+            || doc.DocumentType == DocumentType.ReceiptVoucher
+            || doc.DocumentType == DocumentType.PaymentVoucher
+            || doc.DocumentType == DocumentType.CreditNote;
+        if (!typeAffectsSource) return;
+
+        var source = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
+        if (source == null) return;
+
+        source.PaidAmount = Math.Max(0m, source.PaidAmount - doc.TotalAmount);
+        source.BalanceDue = source.TotalAmount - source.PaidAmount;
+        if (source.Status != DocumentStatus.Voided)
+        {
+            source.Status = source.PaidAmount <= 0.01m
+                ? DocumentStatus.Approved
+                : source.BalanceDue <= 0.01m
+                    ? DocumentStatus.Paid
+                    : DocumentStatus.PartiallyPaid;
+        }
+        source.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Valid document conversions per Thai accounting workflow.
+    /// Each entry: source type → list of allowed target types.
+    /// Anything not listed is rejected to prevent illogical flows like
+    /// Quotation→CreditNote (CN must reference Invoice/TaxInvoice/sale).
+    /// </summary>
+    private static readonly Dictionary<DocumentType, DocumentType[]> ValidConversions = new()
+    {
+        // Sales side
+        [DocumentType.Quotation] = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.BillingNote, DocumentType.DeliveryNote,
+            DocumentType.Receipt
+        },
+        [DocumentType.BillingNote] = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt
+        },
+        [DocumentType.DeliveryNote] = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice
+        },
+        [DocumentType.Invoice] = new[]
+        {
+            DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher
+        },
+        [DocumentType.TaxInvoice] = new[]
+        {
+            DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.CreditNote, DocumentType.DebitNote
+        },
+        [DocumentType.DebitNote] = new[]
+        {
+            DocumentType.Receipt, DocumentType.ReceiptVoucher
+        },
+        // Purchase side
+        [DocumentType.PurchaseRequisition] = new[] { DocumentType.PurchaseOrder },
+        [DocumentType.PurchaseOrder] = new[]
+        {
+            DocumentType.PurchaseInvoice, DocumentType.Expense
+        },
+        [DocumentType.PurchaseInvoice] = new[]
+        {
+            DocumentType.PaymentVoucher,
+            // Adjustments from supplier — supplier issues us CN/DN.
+            // Posting auto-detects purchase-side via RelatedDocumentId.
+            DocumentType.CreditNote, DocumentType.DebitNote
+        },
+        [DocumentType.Expense] = new[]
+        {
+            DocumentType.PaymentVoucher,
+            DocumentType.CreditNote, DocumentType.DebitNote
+        }
+        // Terminal types (no further conversion):
+        // Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
+    };
+
+    /// <summary>Public accessor used by API endpoint to surface valid targets to UI.</summary>
+    public static IReadOnlyList<DocumentType> GetValidConversionTargets(DocumentType source) =>
+        ValidConversions.TryGetValue(source, out var targets) ? targets : Array.Empty<DocumentType>();
+
     public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)
     {
         var source = await _db.Documents
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // ===== Validation per Thai accounting workflow =====
+
+        // Block converting from Voided/Rejected source — they no longer reflect
+        // the customer's true position; new derivative would carry stale data.
+        if (source.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException(
+                $"เอกสาร {source.DocumentNumber} ถูกยกเลิกแล้ว ไม่สามารถแปลงเป็นเอกสารใหม่ได้");
+        if (source.Status == DocumentStatus.Rejected)
+            throw new InvalidOperationException(
+                $"เอกสาร {source.DocumentNumber} ถูกปฏิเสธ ไม่สามารถแปลงเป็นเอกสารใหม่ได้");
+
+        // Block converting to self (no-op)
+        if (source.DocumentType == targetType)
+            throw new InvalidOperationException(
+                $"ไม่สามารถแปลงเป็นเอกสารประเภทเดิม ({targetType})");
+
+        // Block invalid type-to-type conversion (e.g. Quotation→CreditNote)
+        var allowedTargets = GetValidConversionTargets(source.DocumentType);
+        if (!allowedTargets.Contains(targetType))
+        {
+            var allowedNames = string.Join(", ", allowedTargets);
+            throw new InvalidOperationException(
+                $"ไม่สามารถแปลง {source.DocumentType} → {targetType} ได้ตามมาตรฐานบัญชี " +
+                $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
+        }
+
+        // For derivative types that adjust source's balance, source must be approved
+        // and have outstanding balance. (CN/DN/Receipt validation happens at approval
+        // via ApplySourceDocumentAdjustmentsAsync, but warn earlier for better UX.)
+        var derivativeTypes = new[] {
+            DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.CreditNote, DocumentType.PaymentVoucher
+        };
+        if (derivativeTypes.Contains(targetType))
+        {
+            if (source.Status == DocumentStatus.Draft)
+                throw new InvalidOperationException(
+                    $"เอกสารต้นทาง {source.DocumentNumber} ยังเป็นฉบับร่าง — กรุณาอนุมัติก่อนแปลง");
+            if (source.BalanceDue <= 0.01m && targetType != DocumentType.CreditNote
+                && targetType != DocumentType.DebitNote)
+                throw new InvalidOperationException(
+                    $"เอกสาร {source.DocumentNumber} ไม่มียอดคงค้าง — ไม่สามารถแปลงเป็น {targetType}");
+        }
+
+        // ===== Build conversion =====
 
         var lines = source.Lines.Select(l => new DocumentLineRequest(
             l.Description, l.Quantity, l.Unit, l.UnitPrice,
@@ -795,19 +1298,17 @@ public class DocumentService : IDocumentService
         }
 
         // ============================================================
-        // SALES SIDE: Invoice / TaxInvoice / DebitNote (full sale entry)
+        // SALES SIDE: Invoice / TaxInvoice (full sale on credit)
         // ============================================================
         if (doc.DocumentType == DocumentType.Invoice
-            || doc.DocumentType == DocumentType.TaxInvoice
-            || doc.DocumentType == DocumentType.DebitNote)
+            || doc.DocumentType == DocumentType.TaxInvoice)
         {
             journalType = JournalType.Sales;
-            var typeLabel = doc.DocumentType == DocumentType.DebitNote ? "ใบเพิ่มหนี้" : "ลูกหนี้การค้า";
 
             // Dr: ลูกหนี้การค้า (113) — TotalAmount is net of WHT (Gross - WHT)
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                AddLine(arAccount.Id, doc.TotalAmount, 0, $"{typeLabel} - {doc.DocumentNumber}");
+                AddLine(arAccount.Id, doc.TotalAmount, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}");
 
             // Dr: ภาษีถูกหัก ณ ที่จ่าย (สินทรัพย์ 11910) — claim from Revenue Dept
             if (doc.WithholdingTaxAmount > 0)
@@ -834,40 +1335,142 @@ public class DocumentService : IDocumentService
             }
         }
         // ============================================================
-        // SALES REVERSAL: CreditNote (ใบลดหนี้ §82/10)
-        // Reverses signs of the original sale — reduces AR, revenue, VAT
+        // ADJUSTMENT NOTES: CreditNote / DebitNote (polymorphic by source)
+        //
+        // Determines whether this is a sales-side adjustment (we issue to customer)
+        // or a purchase-side adjustment (supplier issues to us, we return goods)
+        // by inspecting the source document's type via RelatedDocumentId.
+        //
+        // Also detects "cash refund" mode: when source is fully paid (BalanceDue=0),
+        // the counter-account is Cash instead of AR/AP — money actually moves.
+        //
+        // Standard cases per Revenue Code §82/10 (sales) and equivalent purchase
+        // return treatment:
+        //   Sales CN  AR-mode:    Cr AR,    Dr Revenue, Dr Output VAT, Cr WHT-Asset
+        //   Sales CN  Cash-mode:  Cr Cash,  Dr Revenue, Dr Output VAT, Cr WHT-Asset
+        //   Sales DN  AR-mode:    Dr AR,    Cr Revenue, Cr Output VAT, Dr WHT-Asset
+        //   Sales DN  Cash-mode:  Dr Cash,  Cr Revenue, Cr Output VAT, Dr WHT-Asset
+        //   Purch CN  AP-mode:    Dr AP,    Cr Expense, Cr Input VAT,  Dr WHT-Payable
+        //   Purch CN  Cash-mode:  Dr Cash,  Cr Expense, Cr Input VAT,  Dr WHT-Payable
+        //   Purch DN  AP-mode:    Cr AP,    Dr Expense, Dr Input VAT,  Cr WHT-Payable
+        //   Purch DN  Cash-mode:  Cr Cash,  Dr Expense, Dr Input VAT,  Cr WHT-Payable
         // ============================================================
-        else if (doc.DocumentType == DocumentType.CreditNote)
+        else if (doc.DocumentType == DocumentType.CreditNote
+                 || doc.DocumentType == DocumentType.DebitNote)
         {
-            journalType = JournalType.Sales;
-
-            // Cr: ลูกหนี้การค้า (113) — reverse direction
-            var arAccount = await FindAccountAsync(companyId, "113");
-            if (arAccount != null)
-                AddLine(arAccount.Id, 0, doc.TotalAmount, $"ใบลดหนี้ - {doc.DocumentNumber}");
-
-            // Cr: ภาษีถูกหัก ณ ที่จ่าย — reverse if WHT was claimed on original sale
-            if (doc.WithholdingTaxAmount > 0)
+            // Resolve the source side by inspecting RelatedDocumentId. Default is
+            // sales-side (most common case + back-compat with previous behavior).
+            Document? source = null;
+            if (doc.RelatedDocumentId.HasValue)
             {
-                var whtAccount = await FindAccountAsync(companyId, "11910");
-                if (whtAccount != null)
-                    AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "กลับรายการ ภาษีถูกหัก ณ ที่จ่าย");
+                source = await _db.Documents
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value
+                        && d.CompanyId == companyId);
             }
 
-            // Dr: รายได้ — reverse direction
+            var isPurchaseSide = source != null && (
+                source.DocumentType == DocumentType.PurchaseInvoice
+                || source.DocumentType == DocumentType.Expense);
+            var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
+            var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
+
+            journalType = isPurchaseSide ? JournalType.Purchase : JournalType.Sales;
+            var typeLabel = isCreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้";
+
+            // === Counter-account: AR/AP/Cash depending on mode ===
+            // For CN: counter-account is on the credit side (sales) / debit side (purchase)
+            // For DN: counter-account is on the debit side (sales) / credit side (purchase)
+            string counterAccCode;
+            if (isPurchaseSide)
+                counterAccCode = isCashSettlement ? "111" : "212"; // Cash or AP
+            else
+                counterAccCode = isCashSettlement ? "111" : "113"; // Cash or AR
+
+            var counterAcc = await FindAccountAsync(companyId, counterAccCode);
+            var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
+                (isCashSettlement ? " (เงินสด)" : "");
+
+            // CN reduces the receivable/increases payable for purchase return; DN opposite.
+            // Sales side:    CN→Cr counter, DN→Dr counter
+            // Purchase side: CN→Dr counter, DN→Cr counter
+            var counterIsDebit = isPurchaseSide ? isCreditNote : !isCreditNote;
+            if (counterAcc != null)
+            {
+                AddLine(counterAcc.Id,
+                    counterIsDebit ? doc.TotalAmount : 0,
+                    counterIsDebit ? 0 : doc.TotalAmount,
+                    counterDesc);
+            }
+
+            // === Revenue / Expense lines ===
+            // Sales CN reverses revenue (Dr); Sales DN adds revenue (Cr)
+            // Purchase CN reverses expense (Cr); Purchase DN adds expense (Dr)
             foreach (var docLine in doc.Lines)
             {
-                var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
-                if (revenueAccountId.HasValue)
-                    AddLine(revenueAccountId.Value, docLine.Amount, 0, $"กลับรายการ - {docLine.Description}", docLine.ProjectId);
+                Guid? lineAccId;
+                if (isPurchaseSide)
+                    lineAccId = docLine.AccountId ?? defaultExpense?.Id;
+                else
+                    lineAccId = docLine.AccountId ?? defaultRevenue?.Id;
+
+                if (!lineAccId.HasValue) continue;
+
+                // Determine Dr or Cr direction:
+                //   Sales CN  → Dr revenue (reverse)
+                //   Sales DN  → Cr revenue (add)
+                //   Purch CN  → Cr expense (reverse)
+                //   Purch DN  → Dr expense (add)
+                var lineIsDebit = isPurchaseSide ? !isCreditNote : isCreditNote;
+                AddLine(lineAccId.Value,
+                    lineIsDebit ? docLine.Amount : 0,
+                    lineIsDebit ? 0 : docLine.Amount,
+                    $"{typeLabel} - {docLine.Description}",
+                    docLine.ProjectId);
             }
 
-            // Dr: ภาษีขาย — reverse direction (reduces VAT payable)
+            // === VAT line ===
             if (doc.VatAmount > 0)
             {
-                var vatAccount = await FindAccountAsync(companyId, "21911");
-                if (vatAccount != null)
-                    AddLine(vatAccount.Id, doc.VatAmount, 0, "กลับรายการ ภาษีขาย");
+                // Sales: Output VAT 21911 (liability), Purchase: Input VAT 116 (asset)
+                var vatCode = isPurchaseSide ? "116" : "21911";
+                var vatAcc = await FindAccountAsync(companyId, vatCode);
+                if (vatAcc != null)
+                {
+                    // Same direction rule as revenue/expense lines
+                    var vatIsDebit = isPurchaseSide ? !isCreditNote : isCreditNote;
+                    AddLine(vatAcc.Id,
+                        vatIsDebit ? doc.VatAmount : 0,
+                        vatIsDebit ? 0 : doc.VatAmount,
+                        $"{typeLabel} ภาษี{(isPurchaseSide ? "ซื้อ" : "ขาย")}");
+                }
+            }
+
+            // === WHT line ===
+            if (doc.WithholdingTaxAmount > 0)
+            {
+                // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable 21916/17
+                string whtCode;
+                if (isPurchaseSide)
+                {
+                    whtCode = await FindAccountAsync(companyId, "21916") != null ? "21916" : "21917";
+                }
+                else
+                {
+                    whtCode = "11910";
+                }
+                var whtAcc = await FindAccountAsync(companyId, whtCode);
+                if (whtAcc != null)
+                {
+                    // WHT-Asset behaves like revenue (sales) — opposite for purchase
+                    // Sales CN→Cr WHT (reverse claim), DN→Dr WHT (add claim)
+                    // Purch CN→Dr WHT-Payable (reverse), DN→Cr WHT-Payable (add)
+                    var whtIsDebit = isPurchaseSide ? isCreditNote : !isCreditNote;
+                    AddLine(whtAcc.Id,
+                        whtIsDebit ? doc.WithholdingTaxAmount : 0,
+                        whtIsDebit ? 0 : doc.WithholdingTaxAmount,
+                        $"{typeLabel} ภาษีหัก ณ ที่จ่าย");
+                }
             }
         }
         // ============================================================
@@ -1028,12 +1631,20 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
-        // Resolve fiscal period
+        // Resolve fiscal period — block posting to closed/locked periods per
+        // Thai accounting standard (TAS 1: closed period is immutable). If the
+        // document falls within a closed period, the user must reopen it first
+        // or re-date the document.
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId &&
             f.StartDate <= doc.DocumentDate &&
-            f.EndDate >= doc.DocumentDate &&
-            f.Status == FiscalPeriodStatus.Open);
+            f.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+        {
+            throw new InvalidOperationException(
+                $"ไม่สามารถบันทึกบัญชีในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว " +
+                $"กรุณาเปลี่ยนวันที่เอกสารเป็นงวดที่เปิดอยู่ หรือขอเปิดงวดก่อน");
+        }
 
         // Generate entry number
         var prefix = journalType switch
