@@ -1,18 +1,45 @@
 namespace Accounting.Models.DTOs.Etax;
 
-/// <summary>
-/// Metadata required for embedding in a PDF/A-3 XMP block for Thai eTax compliance.
-/// </summary>
 public record EtaxPdfMetadata(
     string DocumentNumber,
-    string DocumentType,       // ETDA root element name e.g. "TaxInvoice_CrossIndustryInvoice"
-    string DocumentTypeNameTh, // Thai-language label e.g. "ใบกำกับภาษี"
-    string XmlVersion,         // ETDA standard version e.g. "v2.0"
+    string DocumentType,
+    string DocumentTypeNameTh,
+    string XmlVersion,
     string SellerName,
     string SellerTaxId,
+    string? SellerBranch,
+    string? SellerAddress,
+    string? SellerPhone,
+    string? SellerEmail,
     string BuyerName,
     string? BuyerTaxId,
+    string? BuyerBranch,
+    string? BuyerAddress,
     string EtaxRefNumber,
     DateTime DocumentDate,
+    decimal SubTotal,
+    decimal DiscountAmount,
+    decimal VatAmount,
+    decimal WithholdingTaxAmount,
     decimal TotalAmount,
-    string Currency = "THB");
+    string Currency = "THB",
+    List<EtaxPdfLineItem>? LineItems = null,
+    string? CreatedByName = null,
+    string? CreatedBySignatureBase64 = null,
+    DateTime? CreatedAt = null,
+    string? ApprovedByName = null,
+    string? ApprovedBySignatureBase64 = null,
+    DateTime? ApprovedAt = null,
+    string? Notes = null);
+
+public record EtaxPdfLineItem(
+    int LineNo,
+    string Description,
+    string? ProductCode,
+    decimal Quantity,
+    string Unit,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal Amount,
+    decimal VatRate,
+    decimal VatAmount);

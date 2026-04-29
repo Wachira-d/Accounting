@@ -231,6 +231,58 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
     }
 
+    public async Task<UserProfileResponse> GetProfileAsync(Guid userId)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId)
+            ?? throw new KeyNotFoundException("ไม่พบบัญชีผู้ใช้");
+        return MapProfile(user);
+    }
+
+    public async Task<UserProfileResponse> UpdateProfileAsync(Guid userId, UpdateProfileRequest request)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId)
+            ?? throw new KeyNotFoundException("ไม่พบบัญชีผู้ใช้");
+
+        if (!string.IsNullOrWhiteSpace(request.FullName))
+            user.FullName = request.FullName.Trim();
+        if (request.Phone != null)
+            user.Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+
+        // Signature image: support data URL or raw base64. Cap at ~2 MB to protect DB.
+        if (request.SignatureImageBase64 != null)
+        {
+            var sig = request.SignatureImageBase64.Trim();
+            if (sig.Length == 0)
+            {
+                user.SignatureImageBase64 = null;
+            }
+            else
+            {
+                if (sig.Length > 2_800_000)
+                    throw new InvalidOperationException("ลายเซ็นมีขนาดใหญ่เกินไป (สูงสุด ~2 MB)");
+                if (!sig.StartsWith("data:") && !IsLikelyBase64(sig))
+                    throw new InvalidOperationException("รูปแบบลายเซ็นไม่ถูกต้อง");
+                user.SignatureImageBase64 = sig;
+            }
+        }
+        if (request.SignatureName != null)
+            user.SignatureName = string.IsNullOrWhiteSpace(request.SignatureName) ? null : request.SignatureName.Trim();
+        if (request.SignatureTitle != null)
+            user.SignatureTitle = string.IsNullOrWhiteSpace(request.SignatureTitle) ? null : request.SignatureTitle.Trim();
+
+        await _db.SaveChangesAsync();
+        return MapProfile(user);
+    }
+
+    private static bool IsLikelyBase64(string s)
+    {
+        try { _ = Convert.FromBase64String(s); return true; } catch { return false; }
+    }
+
+    private static UserProfileResponse MapProfile(Models.Entities.User u) => new(
+        u.Id, u.Email, u.FullName, u.Phone,
+        u.SignatureImageBase64, u.SignatureName, u.SignatureTitle);
+
     public async Task<LoginResponse> SsoLoginAsync(SsoLoginRequest request)
     {
         var provider = request.Provider?.Trim();

@@ -80,4 +80,22 @@ public class AuthController : ControllerBase
         await _authService.ResetPasswordAsync(request.Token, request.NewPassword);
         return Ok(new ApiResponse<string>(true, null, "รีเซ็ตรหัสผ่านสำเร็จ"));
     }
+
+    [Authorize]
+    [HttpGet("profile")]
+    public async Task<ActionResult<ApiResponse<UserProfileResponse>>> GetProfile()
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _authService.GetProfileAsync(userId);
+        return Ok(new ApiResponse<UserProfileResponse>(true, result));
+    }
+
+    [Authorize]
+    [HttpPut("profile")]
+    public async Task<ActionResult<ApiResponse<UserProfileResponse>>> UpdateProfile([FromBody] UpdateProfileRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _authService.UpdateProfileAsync(userId, request);
+        return Ok(new ApiResponse<UserProfileResponse>(true, result, "บันทึกโปรไฟล์สำเร็จ"));
+    }
 }

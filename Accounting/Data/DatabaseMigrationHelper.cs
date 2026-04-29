@@ -49,6 +49,17 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "PasswordWeakDetectedAt" timestamp NULL;
             """,
 
+            // ===== Users: Signature fields (auto-stamped on documents) =====
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "SignatureImageBase64" text NULL;
+            """,
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "SignatureName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "SignatureTitle" varchar(200) NULL;
+            """,
+
             // ===== Documents: currency field =====
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Currency" varchar(3) NOT NULL DEFAULT 'THB';
