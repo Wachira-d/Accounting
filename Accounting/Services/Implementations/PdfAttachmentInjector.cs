@@ -5,19 +5,20 @@ namespace Accounting.Services.Implementations;
 
 /// <summary>
 /// Post-processes a QuestPDF-generated PDF to add an embedded XML attachment as
-/// Associated File (/AFRelationship /Source) — required for ETDA Thai e-Tax PDF/A-3.
+/// Associated File (/AFRelationship /Alternative) — required for ETDA Thai e-Tax PDF/A-3.
+///
+/// Per ETDA reference implementation (github.com/ETDA/e-TaxInvoice-PDFgen,
+/// PDFA3Invoice.cs.EmbeddedAttachment) the relationship MUST be /Alternative
+/// (the embedded XML is an alternative representation of the visual content).
 ///
 /// QuestPDF generates a valid PDF (with PDF/A=true also adds OutputIntent + XMP),
 /// but does not natively expose Associated Files / EmbeddedFiles. We append new
 /// PDF objects via incremental update, then point the Catalog at them.
-///
-/// The approach uses an incremental update (append-only) so the original document
-/// (and its xref/trailer) stays intact — a new xref + updated trailer is appended
-/// at the end, referencing the original /Root catalog with our additions overlaid.
 /// </summary>
 internal static class PdfAttachmentInjector
 {
-    public static byte[] AttachXml(byte[] pdfBytes, string xmlFileName, byte[] xmlBytes, string description)
+    public static byte[] AttachXml(byte[] pdfBytes, string xmlFileName, byte[] xmlBytes, string description,
+        string? etdaXmpMetadata = null)
     {
         var pdf = pdfBytes;
         var pdfText = Encoding.Latin1.GetString(pdf);
@@ -33,6 +34,7 @@ internal static class PdfAttachmentInjector
         var efObj = maxObj + 1;       // EmbeddedFile stream
         var fsObj = maxObj + 2;       // Filespec dict
         var nameTreeObj = maxObj + 3; // Names tree (EmbeddedFiles)
+        var xmpObj = etdaXmpMetadata != null ? maxObj + 4 : 0; // XMP metadata (optional)
         var newCatalogObj = rootObj;  // We re-emit the catalog with same number (override)
 
         // Read original catalog dict
@@ -71,7 +73,10 @@ internal static class PdfAttachmentInjector
         WriteAscii("<< /Type /Filespec ");
         WriteAscii($"/F ({EscapeLiteral(xmlFileName)}) ");
         WriteAscii($"/UF ({EscapeLiteral(xmlFileName)}) ");
-        WriteAscii("/AFRelationship /Source ");
+        // Per ETDA reference: relationship is /Alternative, not /Source.
+        // The XML is the legally authoritative version; PDF visual is the alternate
+        // representation. PDF/A-3 spec defines /Alternative for this exact case.
+        WriteAscii("/AFRelationship /Alternative ");
         WriteAscii($"/Desc ({EscapeLiteral(description)}) ");
         WriteAscii($"/EF << /F {efObj} 0 R /UF {efObj} 0 R >> >>\n");
         WriteAscii("endobj\n");
@@ -82,9 +87,22 @@ internal static class PdfAttachmentInjector
         WriteAscii($"<< /Names [({EscapeLiteral(xmlFileName)}) {fsObj} 0 R] >>\n");
         WriteAscii("endobj\n");
 
+        // Object: ETDA XMP metadata stream (overrides QuestPDF's default XMP)
+        // Per ETDA Resources/EDocument_PDFAExtensionSchema.xml — declares the
+        // rsm: extension schema with DocumentFileName/DocumentType/Version properties.
+        if (xmpObj > 0)
+        {
+            var xmpBytes = Encoding.UTF8.GetBytes(etdaXmpMetadata!);
+            newOffsets[xmpObj] = ms.Position;
+            WriteAscii($"{xmpObj} 0 obj\n");
+            WriteAscii($"<< /Type /Metadata /Subtype /XML /Length {xmpBytes.Length} >>\nstream\n");
+            WriteBytes(xmpBytes);
+            WriteAscii("\nendstream\nendobj\n");
+        }
+
         // New Catalog (same object number, overrides original)
-        // Merge original catalog body with our additions: /AF, /Names, /MarkInfo
-        var mergedCatalog = MergeCatalog(originalCatalog, fsObj, nameTreeObj);
+        // Merge original catalog body with our additions: /AF, /Names, /Metadata, /MarkInfo
+        var mergedCatalog = MergeCatalog(originalCatalog, fsObj, nameTreeObj, xmpObj);
         newOffsets[newCatalogObj] = ms.Position;
         WriteAscii($"{newCatalogObj} 0 obj\n{mergedCatalog}\nendobj\n");
 
@@ -179,7 +197,7 @@ internal static class PdfAttachmentInjector
         return pdf.Substring(start, end - start).Trim();
     }
 
-    private static string MergeCatalog(string originalCatalog, int fsObj, int nameTreeObj)
+    private static string MergeCatalog(string originalCatalog, int fsObj, int nameTreeObj, int xmpObj)
     {
         // Strip leading << and trailing >>
         var body = originalCatalog.Trim();
@@ -187,10 +205,12 @@ internal static class PdfAttachmentInjector
         if (body.EndsWith(">>")) body = body.Substring(0, body.Length - 2);
         body = body.Trim();
 
-        // Remove any existing /AF or /Names entries (we replace them)
+        // Remove existing entries we will replace
         body = StripDictKey(body, "/AF");
         body = StripDictKey(body, "/Names");
         body = StripDictKey(body, "/AFRelationship");
+        if (xmpObj > 0)
+            body = StripDictKey(body, "/Metadata");
 
         var sb = new StringBuilder();
         sb.Append("<< ");
@@ -198,6 +218,8 @@ internal static class PdfAttachmentInjector
         sb.Append(' ');
         sb.Append($"/AF [{fsObj} 0 R] ");
         sb.Append($"/Names << /EmbeddedFiles {nameTreeObj} 0 R >> ");
+        if (xmpObj > 0)
+            sb.Append($"/Metadata {xmpObj} 0 R ");
         sb.Append(">>");
         return sb.ToString();
     }
