@@ -87,9 +87,102 @@ public partial class PdfGenerationService
         document.WithSettings(new DocumentSettings { PdfA = true });
 
         var pdfBytes = document.GeneratePdf();
+        var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName);
         return PdfAttachmentInjector.AttachXml(pdfBytes, xmlFileName, xmlBytes,
-            "e-Tax XML data per ETDA Recommendation 3-2560 v2.0");
+            "e-Tax XML data per ETDA Recommendation 3-2560 v2.0",
+            etdaXmpMetadata: etdaXmp);
     }
+
+    /// <summary>
+    /// Build XMP metadata stream conformant with ETDA's PDF/A Extension Schema
+    /// (Resources/EDocument_PDFAExtensionSchema.xml in github.com/ETDA/e-TaxInvoice-PDFgen).
+    /// Declares the rsm: extension schema with DocumentFileName, DocumentType, Version
+    /// properties — required for ETDA validator to recognize the embedded XML payload.
+    /// PDF/A part=3, conformance=U (Unicode level for Thai text).
+    /// </summary>
+    private static string BuildEtdaXmpMetadata(EtaxPdfMetadata m, string xmlFileName)
+    {
+        // Per ETDA template: namespace URI is fixed regardless of doc type
+        // (xmlns:rsm = "urn:etda:uncefact:data:standard:Invoice_CrossIndustryInvoice:2#")
+        const string rsmNs = "urn:etda:uncefact:data:standard:Invoice_CrossIndustryInvoice:2#";
+
+        // ETDA uses TypeCode here (388/T03/80/81 etc.), pulled from metadata.DocumentType
+        // For our DTO, DocumentType holds the root element name (e.g. "TaxInvoice_CrossIndustryInvoice")
+        // — translate to ETDA TypeCode for compatibility with ETDA validator.
+        var typeCode = m.DocumentType switch
+        {
+            "TaxInvoice_CrossIndustryInvoice" => "388",
+            "Receipt_CrossIndustryInvoice" => "T03",
+            "DebitCreditNote_CrossIndustryInvoice" =>
+                m.DocumentTypeNameTh.Contains("เพิ่ม") ? "80" : "81",
+            _ => "388"
+        };
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<?xpacket begin=\"﻿\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>");
+        sb.Append("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"NextAcc e-Tax\">");
+        sb.Append("<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">");
+
+        // Core PDF/A-3 identification
+        sb.Append("<rdf:Description rdf:about=\"\"");
+        sb.Append(" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"");
+        sb.Append(" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"");
+        sb.Append(" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\"");
+        sb.Append(" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">");
+        sb.Append("<dc:format>application/pdf</dc:format>");
+        sb.Append("<pdfaid:part>3</pdfaid:part>");
+        sb.Append("<pdfaid:conformance>U</pdfaid:conformance>");
+        sb.Append("</rdf:Description>");
+
+        // ETDA PDF/A Extension Schema declaration
+        sb.Append("<rdf:Description rdf:about=\"\"");
+        sb.Append(" xmlns:pdfaExtension=\"http://www.aiim.org/pdfa/ns/extension/\"");
+        sb.Append(" xmlns:pdfaProperty=\"http://www.aiim.org/pdfa/ns/property#\"");
+        sb.Append(" xmlns:pdfaSchema=\"http://www.aiim.org/pdfa/ns/schema#\">");
+        sb.Append("<pdfaExtension:schemas><rdf:Bag><rdf:li rdf:parseType=\"Resource\">");
+        sb.Append("<pdfaSchema:schema>Electronic Tax Invoice PDFA Extension Schema</pdfaSchema:schema>");
+        sb.Append($"<pdfaSchema:namespaceURI>{rsmNs}</pdfaSchema:namespaceURI>");
+        sb.Append("<pdfaSchema:prefix>rsm</pdfaSchema:prefix>");
+        sb.Append("<pdfaSchema:property><rdf:Seq>");
+        sb.Append("<rdf:li rdf:parseType=\"Resource\">");
+        sb.Append("<pdfaProperty:name>DocumentFileName</pdfaProperty:name>");
+        sb.Append("<pdfaProperty:valueType>Text</pdfaProperty:valueType>");
+        sb.Append("<pdfaProperty:category>external</pdfaProperty:category>");
+        sb.Append("<pdfaProperty:description>Name of the embedded XML invoice file</pdfaProperty:description>");
+        sb.Append("</rdf:li>");
+        sb.Append("<rdf:li rdf:parseType=\"Resource\">");
+        sb.Append("<pdfaProperty:name>DocumentType</pdfaProperty:name>");
+        sb.Append("<pdfaProperty:valueType>Text</pdfaProperty:valueType>");
+        sb.Append("<pdfaProperty:category>external</pdfaProperty:category>");
+        sb.Append("<pdfaProperty:description>Type of the document</pdfaProperty:description>");
+        sb.Append("</rdf:li>");
+        sb.Append("<rdf:li rdf:parseType=\"Resource\">");
+        sb.Append("<pdfaProperty:name>Version</pdfaProperty:name>");
+        sb.Append("<pdfaProperty:valueType>Text</pdfaProperty:valueType>");
+        sb.Append("<pdfaProperty:category>external</pdfaProperty:category>");
+        sb.Append("<pdfaProperty:description>Version of the ETDA XML data</pdfaProperty:description>");
+        sb.Append("</rdf:li>");
+        sb.Append("</rdf:Seq></pdfaSchema:property>");
+        sb.Append("</rdf:li></rdf:Bag></pdfaExtension:schemas>");
+        sb.Append("</rdf:Description>");
+
+        // ETDA extension data values
+        sb.Append("<rdf:Description rdf:about=\"\"");
+        sb.Append($" xmlns:rsm=\"{rsmNs}\">");
+        sb.Append($"<rsm:DocumentFileName>{XmlEscape(xmlFileName)}</rsm:DocumentFileName>");
+        sb.Append($"<rsm:DocumentType>{typeCode}</rsm:DocumentType>");
+        // Normalize: ETDA template uses "2.0", strip leading "v" prefix if present
+        var version = (m.XmlVersion ?? "2.0").TrimStart('v', 'V');
+        sb.Append($"<rsm:Version>{XmlEscape(version)}</rsm:Version>");
+        sb.Append("</rdf:Description>");
+
+        sb.Append("</rdf:RDF></x:xmpmeta><?xpacket end=\"r\"?>");
+        return sb.ToString();
+    }
+
+    private static string XmlEscape(string s) =>
+        s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
+         .Replace("\"", "&quot;").Replace("'", "&apos;");
 
     private static string[] GetFontFamilyChain() =>
         new[] { "Loma", "Sarabun", "Noto Sans Thai", "TH Sarabun New", Fonts.Calibri, Fonts.Arial };

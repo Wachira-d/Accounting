@@ -549,11 +549,8 @@
       _signatureBase64: null,
       async loadSignature() {
         try {
-          const res = await fetch('/api/auth/profile', {
-            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('access_token') || '') }
-          });
-          const j = await res.json();
-          if (!j.success) throw new Error(j.message || 'โหลดข้อมูลไม่สำเร็จ');
+          const j = await API.getProfile();
+          if (!j || !j.success) throw new Error((j && j.message) || 'โหลดข้อมูลไม่สำเร็จ');
           const p = j.data || {};
           document.getElementById('sigName').value = p.signatureName || p.fullName || '';
           document.getElementById('sigTitle').value = p.signatureTitle || '';
@@ -602,16 +599,8 @@
           signatureImageBase64: this._signatureBase64
         };
         try {
-          const res = await fetch('/api/auth/profile', {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ' + (localStorage.getItem('access_token') || '')
-            },
-            body: JSON.stringify(body)
-          });
-          const j = await res.json();
-          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          const j = await API.updateProfile(body);
+          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
           Layout.toast('บันทึกลายเซ็นสำเร็จ');
         } catch (e) {
           Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');

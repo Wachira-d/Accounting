@@ -94,7 +94,17 @@ public record CreateContactRequest(
     string? Address,
     string? Phone,
     string? Email,
-    string? ContactPerson);
+    string? ContactPerson,
+    // Structured address (optional — recommended for e-Tax compliance)
+    string? BranchName = null,
+    string? BuildingNumber = null,
+    string? BuildingName = null,
+    string? StreetName = null,
+    string? SubDistrict = null,
+    string? District = null,
+    string? Province = null,
+    string? PostalCode = null,
+    string? CountryCode = null);
 
 public record UpdateContactRequest(
     string? Name,
@@ -107,7 +117,16 @@ public record UpdateContactRequest(
     string? Phone,
     string? Email,
     string? ContactPerson,
-    bool? IsActive);
+    bool? IsActive,
+    string? BranchName = null,
+    string? BuildingNumber = null,
+    string? BuildingName = null,
+    string? StreetName = null,
+    string? SubDistrict = null,
+    string? District = null,
+    string? Province = null,
+    string? PostalCode = null,
+    string? CountryCode = null);
 
 public record ContactResponse(
     Guid Id,
@@ -121,7 +140,28 @@ public record ContactResponse(
     string? Phone,
     string? Email,
     string? ContactPerson,
-    bool IsActive);
+    bool IsActive,
+    string? BranchName = null,
+    string? BuildingNumber = null,
+    string? BuildingName = null,
+    string? StreetName = null,
+    string? SubDistrict = null,
+    string? District = null,
+    string? Province = null,
+    string? PostalCode = null,
+    string? CountryCode = "TH");
+
+/// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
+public record ParseAddressRequest(string Address);
+
+public record ParsedAddressResponse(
+    string? BuildingNumber,
+    string? BuildingName,
+    string? StreetName,
+    string? SubDistrict,
+    string? District,
+    string? Province,
+    string? PostalCode);
 
 /// <summary>ค่าเริ่มต้นอัตโนมัติ ระบบวิเคราะห์จากข้อมูลผู้ติดต่อ</summary>
 public record ContactSmartDefaults(

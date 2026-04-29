@@ -162,6 +162,7 @@ const API = {
       createContact: (d) => API.post(`${base}/document/contacts`, d),
       updateContact: (id, d) => API.put(`${base}/document/contacts/${id}`, d),
       getContactSmartDefaults: (id) => API.get(`${base}/document/contacts/${id}/smart-defaults`),
+      parseAddress: (text) => API.post(`${base}/document/contacts/parse-address`, { address: text }),
       // Payments
       getPayments: (q = '') => API.get(`${base}/document/payments${q}`),
       createPayment: (d) => API.post(`${base}/document/payments`, d),
@@ -696,6 +697,10 @@ const API = {
   deleteSignature: (id) => API.del(`/api/signatures/${id}`),
 
   // Company management
+  // User profile (incl. signature)
+  getProfile: () => API.get('/api/auth/profile'),
+  updateProfile: (data) => API.put('/api/auth/profile', data),
+
   getCompanies: () => API.get('/api/company'),
   createCompany: (d) => API.post('/api/company', d),
   getCompany: (id) => API.get(`/api/company/${id}`),
