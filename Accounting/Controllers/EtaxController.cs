@@ -87,6 +87,11 @@ public class EtaxController : ControllerBase
     [HttpGet("{etaxId:guid}/pdf")]
     public async Task<ActionResult> GetPdf(Guid companyId, Guid etaxId)
     {
+        // Guard against empty/zero Guid (frontend bug or stale data) — return clean 404
+        if (etaxId == Guid.Empty)
+            return NotFound(new ApiResponse<object>(false, null,
+                "เอกสารนี้ยังไม่มี e-Tax Invoice — กรุณาสร้าง e-Tax ก่อน (กดปุ่ม 'สร้าง e-Tax' ที่หน้าเอกสาร)"));
+
         var (pdf, fileName) = await _etaxService.GeneratePdfA3Async(companyId, etaxId);
         return File(pdf, "application/pdf", fileName);
     }

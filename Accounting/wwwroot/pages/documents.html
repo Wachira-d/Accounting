@@ -449,8 +449,10 @@
           const tbody = document.getElementById('tableBody');
           const sideLabel = this.side === 'revenue' ? 'รายรับ' : this.side === 'expense' ? 'รายจ่าย' : '';
           if (!items.length) { tbody.innerHTML = `<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีเอกสาร${sideLabel ? 'ฝั่ง' + sideLabel : ''}</td></tr>`; return; }
+          // Guard: empty-Guid string ("0000...") and null both mean "no e-Tax record exists"
+          const hasEtaxId = (id) => !!id && id !== '00000000-0000-0000-0000-000000000000';
           tbody.innerHTML = items.map(d => {
-            const etaxBadge = d.etaxInvoiceId
+            const etaxBadge = hasEtaxId(d.etaxInvoiceId)
               ? `<span title="มี e-Tax (PDF/A-3 + XML) — กดปุ่ม PDF เพื่อดาวน์โหลด" style="margin-left:6px;padding:1px 6px;background:#10b981;color:#fff;border-radius:6px;font-size:10px;font-weight:600">e-Tax</span>`
               : '';
             return `<tr>
@@ -464,7 +466,7 @@
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')">ดู</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${d.etaxInvoiceId ? ' 📥' : ''}</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
             </td>
           </tr>`;
           }).join('');
@@ -762,9 +764,10 @@
           document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo);
           // Toggle etax-only UI: download button + green banner appear only when this
           // document has an associated EtaxInvoice (i.e. its XML has been generated).
+          // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.
           const etaxBtn = document.getElementById('pdfDownloadEtaxBtn');
           const etaxBanner = document.getElementById('pdfEtaxBanner');
-          const hasEtax = !!d.etaxInvoiceId;
+          const hasEtax = !!d.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
           if (etaxBtn) etaxBtn.style.display = hasEtax ? 'inline-block' : 'none';
           if (etaxBanner) etaxBanner.style.display = hasEtax ? 'block' : 'none';
           Layout.openModal('pdfModal');
@@ -778,15 +781,24 @@
        */
       async downloadEtaxPdf() {
         const d = this._currentPdfDoc;
-        if (!d?.etaxInvoiceId) { Layout.toast('เอกสารนี้ยังไม่มี e-Tax — สร้าง e-Tax ก่อนจึงดาวน์โหลดได้', 'error'); return; }
+        const eid = d?.etaxInvoiceId;
+        if (!eid || eid === '00000000-0000-0000-0000-000000000000') {
+          Layout.toast('เอกสารนี้ยังไม่มี e-Tax — สร้าง e-Tax ก่อนจึงดาวน์โหลดได้', 'error');
+          return;
+        }
         const api = Layout.api(); if (!api) return;
         try {
           Layout.toast('กำลังเตรียม PDF/A-3 ...', 'info');
           // Use API helper for auth headers + base URL, then trigger blob download.
-          const url = api.etaxDownloadPdfUrl(d.etaxInvoiceId);
+          const url = api.etaxDownloadPdfUrl(eid);
           const token = localStorage.getItem('token');
           const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-          if (!resp.ok) throw new Error(`โหลดไม่สำเร็จ (${resp.status})`);
+          if (!resp.ok) {
+            // Try to surface the server's localized message body (JSON ApiResponse) for clarity
+            let serverMsg = '';
+            try { const j = await resp.json(); serverMsg = j?.message || ''; } catch(_) {}
+            throw new Error(serverMsg || `โหลดไม่สำเร็จ (${resp.status})`);
+          }
           const blob = await resp.blob();
           const filename = `${Layout.docTypeLabel(d.documentType)}_${d.documentNumber}_etax.pdf`;
           const a = document.createElement('a');
