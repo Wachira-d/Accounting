@@ -87,7 +87,7 @@
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
-              <select class="form-select" id="fDocType">
+              <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation">ใบเสนอราคา</option>
                   <option value="Invoice">ใบแจ้งหนี้</option>
@@ -109,11 +109,11 @@
               </select>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
-              <select class="form-select" id="fContact"><option value="">เลือกผู้ติดต่อ</option></select>
+              <select class="form-select" id="fContact" onchange="Page.onContactChange()"><option value="">เลือกผู้ติดต่อ</option></select>
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate"></div>
+            <div class="form-group"><label class="form-label">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
             <div class="form-group"><label class="form-label">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
           <div class="form-row">
@@ -336,6 +336,9 @@
       toggleSendEmail() {
         const on = document.getElementById('fSendEmail').checked;
         document.getElementById('sendEmailFields').style.display = on ? 'block' : 'none';
+        // Auto-populate template on first activation so the user sees a sensible
+        // preview without manually selecting the contact again.
+        if (on) this.refreshEmailTemplate();
       },
       toggleEtaxByEmail() {
         // When e-Tax mode is on, the subject is dictated by RD (TaxId.RefNumber).
@@ -353,13 +356,36 @@
         if (badge) badge.style.display = on ? 'inline-block' : 'none';
         if (hint) hint.style.display = on ? 'block' : 'none';
       },
-      _populateEmailDefaults(contactId) {
+      /**
+       * Triggered when the user picks a contact in the create-document form.
+       * Fills email recipient, then regenerates the subject/body templates so the
+       * preview reflects the chosen customer's name. The user can still edit
+       * either field; we only overwrite when the field is empty or matches the
+       * previously generated template (so editing isn't clobbered).
+       */
+      onContactChange() {
+        const contactId = document.getElementById('fContact').value;
         const c = this.contacts.find(x => x.id === contactId);
-        if (c?.email && !document.getElementById('fEmailTo').value) {
-          document.getElementById('fEmailTo').value = c.email;
+        // Fill recipient email if empty (don't clobber user-entered address)
+        if (c?.email) {
+          const toEl = document.getElementById('fEmailTo');
+          if (toEl && !toEl.value) toEl.value = c.email;
         }
-        // Show e-Tax option if mode is ByEmail or Both AND document type qualifies
-        const docType = document.getElementById('fType')?.value;
+        this.refreshEmailTemplate();
+        this._refreshEtaxByEmailVisibility();
+      },
+      onDocTypeChange() {
+        this.refreshEmailTemplate();
+        this._refreshEtaxByEmailVisibility();
+      },
+      /**
+       * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
+       * Per RD spec, only TaxInvoice/Receipt/CreditNote/DebitNote qualify for
+       * e-Tax by Email; the company must also have ByEmail or Both mode and be
+       * RD-registered.
+       */
+      _refreshEtaxByEmailVisibility() {
+        const docType = document.getElementById('fDocType')?.value;
         const eligibleTypes = ['TaxInvoice', 'Receipt', 'CreditNote', 'DebitNote'];
         const mode = this._etaxConfig?.mode;
         const modeStr = (typeof mode === 'number') ? ['None','ByEmail','Direct','Both'][mode] : mode;
@@ -368,6 +394,54 @@
                       && eligibleTypes.includes(docType);
         const hint = document.getElementById('etaxByEmailHint');
         if (hint) hint.style.display = showEtax ? 'flex' : 'none';
+      },
+      /**
+       * Build a Thai-language subject + HTML body from the current form state.
+       * Mirrors DocumentEmailService.BuildDefaultTemplate so the preview matches
+       * what the server would generate if the fields are left blank.
+       *
+       * Only overwrites fEmailSubject / fEmailBody if they're empty or still
+       * contain the auto-generated text — preserves any manual edits.
+       */
+      refreshEmailTemplate() {
+        const contactId = document.getElementById('fContact').value;
+        const docType = document.getElementById('fDocType').value;
+        const dateStr = document.getElementById('fDate').value;
+        const c = this.contacts.find(x => x.id === contactId);
+        const docTypeLabel = Layout.docTypeLabel(docType) || 'เอกสาร';
+        const customerName = c?.name || 'ลูกค้า';
+        const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        const companyName = company.name || '';
+        const total = parseFloat(document.getElementById('sumTotal')?.textContent?.replace(/,/g, '')) || 0;
+        const dateLabel = dateStr
+          ? new Date(dateStr).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          : '—';
+
+        const subject = `${docTypeLabel} - ${customerName}`;
+        // Use simple HTML so it renders in plain mail clients too. Doc number is
+        // unknown until the document is saved, so we leave it as a placeholder
+        // the server fills in from BuildDefaultTemplate when it arrives.
+        const body =
+`<div style="font-family:'Noto Sans Thai',sans-serif;max-width:600px;color:#1e293b">
+  <h2 style="color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px">${docTypeLabel}</h2>
+  <p>เรียน คุณ${customerName}</p>
+  <p>${companyName ? companyName + ' ' : ''}ขอส่ง${docTypeLabel}ลงวันที่ <strong>${dateLabel}</strong>${total > 0 ? ` ยอดสุทธิ <strong>${total.toLocaleString('en-US',{minimumFractionDigits:2})} บาท</strong>` : ''} ถึงท่าน ตามไฟล์แนบ</p>
+  <p>หากท่านมีข้อสงสัย หรือต้องการสอบถามรายละเอียดเพิ่มเติม กรุณาติดต่อกลับมายังอีเมลนี้</p>
+  <p style="margin-top:24px">ขอแสดงความนับถือ<br>${companyName || '(ระบบบัญชี Next Acc)'}</p>
+</div>`;
+
+        // Only fill subject/body if empty OR currently contains the previous
+        // auto-template (so user edits are preserved across contact/type changes).
+        const subjEl = document.getElementById('fEmailSubject');
+        if (subjEl && (!subjEl.value || subjEl.value === this._lastAutoSubject)) {
+          subjEl.value = subject;
+          this._lastAutoSubject = subject;
+        }
+        const bodyEl = document.getElementById('fEmailBody');
+        if (bodyEl && (!bodyEl.value || bodyEl.value === this._lastAutoBody)) {
+          bodyEl.value = body;
+          this._lastAutoBody = body;
+        }
       },
       async exportAll(format) {
         const api = Layout.api(); if (!api) return;
@@ -545,6 +619,9 @@
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
         document.getElementById('sumTotal').textContent = Layout.money(sub + vat - wht);
+        // Keep email template's amount in sync — only when email is enabled to
+        // avoid wasted DOM work on every keystroke during line editing.
+        if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
       },
       editingId: null,
       openCreate(side) {
@@ -576,6 +653,10 @@
         document.getElementById('fSendEmail').checked = false;
         document.getElementById('sendEmailFields').style.display = 'none';
         ['fEmailTo','fEmailCc','fEmailSubject','fEmailBody'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        // Reset auto-template watermarks so refreshEmailTemplate() can re-fill
+        // the cleared subject/body when the user picks a contact.
+        this._lastAutoSubject = '';
+        this._lastAutoBody = '';
         Layout.openModal('formModal');
       },
       async openEdit(id) {
@@ -609,6 +690,10 @@
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
+          // Reset email-template watermarks so the auto-template re-applies if
+          // the user enables "send email" on this Edit session.
+          this._lastAutoSubject = '';
+          this._lastAutoBody = '';
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -735,6 +820,20 @@
           if (d.status === 'Approved' || d.status === 'Sent') {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
           }
+          // e-Tax generation: shown for VAT-eligible types (TaxInvoice / Receipt /
+          // DebitNote / CreditNote) once approved, when no e-Tax record exists yet.
+          // Per Revenue Code §86 these are the only document types that can carry
+          // an e-Tax XML payload.
+          const etaxEligibleTypes = ['TaxInvoice', 'Receipt', 'DebitNote', 'CreditNote'];
+          const hasEtaxId = !!d.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
+          if (etaxEligibleTypes.includes(d.documentType)
+              && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')
+              && !hasEtaxId) {
+            actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
+          }
+          if (hasEtaxId) {
+            actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
+          }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
           }
@@ -744,8 +843,71 @@
       },
       async approve(id) {
         const api = Layout.api(); if (!api) return;
-        try { await api.approveDocument(id); Layout.closeModal('detailModal'); Layout.toast('อนุมัติเอกสารสำเร็จ'); await this.load(); }
-        catch (e) { Layout.toast(e.message, 'error'); }
+        try {
+          await api.approveDocument(id);
+          Layout.closeModal('detailModal');
+          // After approve the backend may auto-generate the e-Tax record (when
+          // the company has e-Tax enabled). Reload so the list shows the new
+          // e-Tax badge and download button.
+          Layout.toast('อนุมัติเอกสารสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /**
+       * Manually create the e-Tax Invoice XML record for an approved document.
+       * After success, the "Download PDF/A-3" action becomes available.
+       * Useful when company-level auto-generation is off, or when the auto-run
+       * failed (e.g. cert misconfigured) and the user fixed the issue.
+       */
+      async generateEtax(id) {
+        if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
+        try {
+          Layout.toast('กำลังสร้าง e-Tax Invoice ...', 'info');
+          const companyId = Layout.getCompanyId();
+          const res = await API.post(`/api/companies/${companyId}/etax/generate`, {
+            documentId: id,
+            signDigitally: false   // user can sign separately in the e-Tax page
+          });
+          if (res?.success === false) throw new Error(res.message || 'สร้างไม่สำเร็จ');
+          Layout.toast('สร้าง e-Tax Invoice สำเร็จ — ดาวน์โหลด PDF/A-3 ได้แล้ว');
+          // Re-open detail to refresh actions (now shows download button)
+          await this.detail(id);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'สร้าง e-Tax ไม่สำเร็จ', 'error'); }
+      },
+      /**
+       * Download the embedded-XML PDF/A-3 directly from the detail modal,
+       * without going through the PDF preview screen. Mirrors downloadEtaxPdf
+       * but takes etaxInvoiceId/documentId as args (the preview-screen flow
+       * relies on _currentPdfDoc which isn't set when triggered from detail).
+       */
+      async downloadEtaxPdfFromDetail(etaxInvoiceId, docId) {
+        if (!etaxInvoiceId || etaxInvoiceId === '00000000-0000-0000-0000-000000000000') {
+          Layout.toast('เอกสารนี้ยังไม่มี e-Tax — กรุณากดสร้าง e-Tax ก่อน', 'error');
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังเตรียม PDF/A-3 ...', 'info');
+          const url = api.etaxDownloadPdfUrl(etaxInvoiceId);
+          const token = localStorage.getItem('token');
+          const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) {
+            let serverMsg = '';
+            try { const j = await resp.json(); serverMsg = j?.message || ''; } catch(_) {}
+            throw new Error(serverMsg || `โหลดไม่สำเร็จ (${resp.status})`);
+          }
+          const blob = await resp.blob();
+          const docNum = (this._currentDoc?.documentNumber) || docId;
+          const filename = `etax_${docNum}.pdf`;
+          const a = document.createElement('a');
+          const u = URL.createObjectURL(blob);
+          a.href = u; a.download = filename;
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(u), 1000);
+          Layout.toast('ดาวน์โหลด PDF/A-3 สำเร็จ — ไฟล์มี XML ฝังในตัว');
+        } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error'); }
       },
       async voidDoc(id) {
         const api = Layout.api(); if (!api) return;

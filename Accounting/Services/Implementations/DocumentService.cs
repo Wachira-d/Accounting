@@ -1,10 +1,12 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
+using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
@@ -14,13 +16,19 @@ public class DocumentService : IDocumentService
     private readonly IAccountingService _accountingService;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IWithholdingTaxCertService _whtService;
+    private readonly IEtaxInvoiceService _etaxService;
+    private readonly ILogger<DocumentService> _logger;
 
-    public DocumentService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService)
+    public DocumentService(AccountingDbContext db, IAccountingService accountingService,
+        ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
+        IEtaxInvoiceService etaxService, ILogger<DocumentService> logger)
     {
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
         _whtService = whtService;
+        _etaxService = etaxService;
+        _logger = logger;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -398,7 +406,55 @@ public class DocumentService : IDocumentService
             }
         });
 
+        // Best-effort auto-generate e-Tax record for eligible types when the
+        // company has e-Tax enabled. Runs OUTSIDE the approval transaction so
+        // an e-Tax failure (cert not configured, RD API down, etc.) doesn't
+        // roll back the approval. Failures are logged; the user can still
+        // generate the e-Tax manually from the detail modal.
+        await TryAutoGenerateEtaxAsync(companyId, doc);
+
         return await GetDocumentAsync(companyId, documentId);
+    }
+
+    /// <summary>
+    /// Auto-generate the e-Tax invoice record for eligible doc types when the
+    /// company has e-Tax enabled. Only runs after the document has reached
+    /// Approved status. Silently skips if the company isn't VAT-registered
+    /// (TaxId missing), the contact's TaxId is missing, or e-Tax is disabled.
+    /// </summary>
+    private async Task TryAutoGenerateEtaxAsync(Guid companyId, Document doc)
+    {
+        var eligibleTypes = new[] {
+            DocumentType.TaxInvoice, DocumentType.Receipt,
+            DocumentType.DebitNote, DocumentType.CreditNote
+        };
+        if (!eligibleTypes.Contains(doc.DocumentType)) return;
+
+        try
+        {
+            var settings = await _db.CompanySettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+            if (settings?.EtaxEnabled != true) return;
+
+            // Skip if a (non-Error) e-Tax already exists — GenerateAsync will
+            // throw "เอกสารนี้มี e-Tax Invoice แล้ว" and we'd rather no-op silently.
+            var alreadyExists = await _db.EtaxInvoices
+                .AnyAsync(e => e.DocumentId == doc.Id && e.CompanyId == companyId
+                            && e.Status != EtaxStatus.Error);
+            if (alreadyExists) return;
+
+            await _etaxService.GenerateAsync(companyId,
+                new GenerateEtaxRequest(doc.Id, SignDigitally: settings.EtaxAutoSign));
+        }
+        catch (Exception ex)
+        {
+            // Don't surface the error — approval already succeeded. The user can
+            // retry manually from the detail modal's "สร้าง e-Tax" button.
+            _logger.LogWarning(ex,
+                "Auto e-Tax generation failed for document {DocId} ({DocNumber})",
+                doc.Id, doc.DocumentNumber);
+        }
     }
 
     public async Task VoidDocumentAsync(Guid companyId, Guid documentId)
