@@ -338,13 +338,14 @@ public class DocumentService : IDocumentService
                 doc.UpdatedAt = DateTime.UtcNow;
 
                 // Auto-post to journal for document types that affect accounting.
-                // Always attempt — fall back to default revenue/expense accounts when
-                // line-level AccountId is unset (the create-document UI may not expose it).
+                // Operational-only docs (Quotation, DeliveryNote, BillingNote, PR, PO)
+                // are intentionally excluded — they don't create accounting entries.
                 var autoPostTypes = new[] {
-                    DocumentType.Invoice, DocumentType.TaxInvoice,          // สมุดรายวันขาย (SV)
-                    DocumentType.PurchaseInvoice, DocumentType.Expense,     // สมุดรายวันซื้อ (UV)
-                    DocumentType.Receipt, DocumentType.ReceiptVoucher,      // สมุดรายวันรับ (RV)
-                    DocumentType.PaymentVoucher,                            // สมุดรายวันจ่าย (PV)
+                    DocumentType.Invoice, DocumentType.TaxInvoice,          // ใบแจ้งหนี้/ใบกำกับภาษี → SV
+                    DocumentType.DebitNote, DocumentType.CreditNote,        // ใบเพิ่มหนี้/ใบลดหนี้ → SV (adjustment)
+                    DocumentType.PurchaseInvoice, DocumentType.Expense,     // ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย → UV
+                    DocumentType.Receipt, DocumentType.ReceiptVoucher,      // ใบเสร็จ/ใบสำคัญรับ → RV
+                    DocumentType.PaymentVoucher,                            // ใบสำคัญจ่าย → PV
                 };
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
                 {
@@ -649,39 +650,71 @@ public class DocumentService : IDocumentService
     /// <summary>
     /// บันทึกบัญชีอัตโนมัติเมื่ออนุมัติเอกสาร — สร้าง JournalEntry + Lines โดยตรงผ่าน DbContext
     /// (อยู่ภายใน transaction เดียวกับ ApproveDocumentAsync เพื่อความ atomic ตามหลักบัญชี)
-    /// ถ้า line.AccountId ว่าง จะ fallback เป็นบัญชีรายได้/ค่าใช้จ่ายมาตรฐาน
+    ///
+    /// กฎการ post ตามมาตรฐาน TFRS / ประมวลรัษฎากร §86, §82/10:
+    ///
+    /// ฝั่งขาย (SV - สมุดรายวันขาย):
+    ///   Invoice/TaxInvoice/DebitNote: Dr ลูกหนี้ + Dr ภาษีถูกหัก, Cr รายได้ + Cr ภาษีขาย
+    ///   CreditNote (ใบลดหนี้): กลับด้าน — Cr ลูกหนี้ + Cr ภาษีถูกหัก, Dr รายได้ + Dr ภาษีขาย
+    ///
+    /// ฝั่งซื้อ (UV - สมุดรายวันซื้อ):
+    ///   PurchaseInvoice/Expense: Dr ค่าใช้จ่าย + Dr ภาษีซื้อ, Cr เจ้าหนี้ + Cr ภาษีหัก ณ ที่จ่ายค้างจ่าย
+    ///
+    /// รับเงิน (RV - สมุดรายวันรับ):
+    ///   Receipt/ReceiptVoucher (link to Invoice): Dr เงินสด + Dr WHT Asset, Cr ลูกหนี้
+    ///   Receipt/ReceiptVoucher (cash sale, ไม่ link): Dr เงินสด + Dr WHT Asset, Cr รายได้ + Cr ภาษีขาย
+    ///
+    /// จ่ายเงิน (PV - สมุดรายวันจ่าย):
+    ///   PaymentVoucher (link to PurchaseInvoice): Dr เจ้าหนี้, Cr เงินสด + Cr WHT Payable
+    ///   PaymentVoucher (direct cash purchase): Dr ค่าใช้จ่าย + Dr ภาษีซื้อ, Cr เงินสด + Cr WHT Payable
     /// </summary>
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
-        // Determine journal type based on document type
-        var journalType = doc.DocumentType switch
-        {
-            DocumentType.Invoice or DocumentType.TaxInvoice => JournalType.Sales,
-            DocumentType.PurchaseInvoice or DocumentType.Expense => JournalType.Purchase,
-            DocumentType.Receipt or DocumentType.ReceiptVoucher => JournalType.CashReceipts,
-            DocumentType.PaymentVoucher => JournalType.CashPayments,
-            _ => JournalType.General
-        };
-
         // Resolve default fallback accounts up front — used when document lines
         // have no explicit AccountId (the UI doesn't expose per-line account selection yet).
-        var defaultRevenue = await FindAccountAsync(companyId, "411")
-            ?? await FindAccountAsync(companyId, "41")
-            ?? await FindAccountAsync(companyId, "4");
-        var defaultExpense = await FindAccountAsync(companyId, "511")
-            ?? await FindAccountAsync(companyId, "51")
-            ?? await FindAccountAsync(companyId, "5");
+        // The default Thai chart uses 41000 (sales) / 42000 (service) at level 4;
+        // industry templates may override (e.g. hospitality uses 411xx). Pick the first
+        // posting-level (Level >= 4) Revenue/Expense account by code as a safe default.
+        var defaultRevenue = await FindAccountAsync(companyId, "41000")
+            ?? await FindAccountAsync(companyId, "42000")
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.Level >= 4 && a.IsActive)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync();
+        var defaultExpense = await FindAccountAsync(companyId, "51110")
+            ?? await FindAccountAsync(companyId, "52110")
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.Level >= 4 && a.IsActive)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync();
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
+        JournalType journalType;
 
-        // ===== Sales documents (SV): Dr AR, Cr Revenue + VAT Output =====
-        if (journalType == JournalType.Sales)
+        // ============================================================
+        // SALES SIDE: Invoice / TaxInvoice / DebitNote (full sale entry)
+        // ============================================================
+        if (doc.DocumentType == DocumentType.Invoice
+            || doc.DocumentType == DocumentType.TaxInvoice
+            || doc.DocumentType == DocumentType.DebitNote)
         {
+            journalType = JournalType.Sales;
+            var typeLabel = doc.DocumentType == DocumentType.DebitNote ? "ใบเพิ่มหนี้" : "ลูกหนี้การค้า";
+
+            // Dr: ลูกหนี้การค้า (113) — TotalAmount is net of WHT (Gross - WHT)
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                pendingLines.Add((arAccount.Id, doc.TotalAmount, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}"));
+                pendingLines.Add((arAccount.Id, doc.TotalAmount, 0, $"{typeLabel} - {doc.DocumentNumber}"));
 
-            // Cr: บัญชีรายได้ตามรายการ — fallback เป็นรายได้มาตรฐานถ้าไม่ได้เลือก
+            // Dr: ภาษีถูกหัก ณ ที่จ่าย (สินทรัพย์ 11910) — claim from Revenue Dept
+            if (doc.WithholdingTaxAmount > 0)
+            {
+                var whtAccount = await FindAccountAsync(companyId, "11910");
+                if (whtAccount != null)
+                    pendingLines.Add((whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
+            }
+
+            // Cr: บัญชีรายได้ตามแต่ละบรรทัด (default = 411)
             foreach (var docLine in doc.Lines)
             {
                 var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
@@ -689,23 +722,60 @@ public class DocumentService : IDocumentService
                     pendingLines.Add((revenueAccountId.Value, 0, docLine.Amount, docLine.Description));
             }
 
+            // Cr: ภาษีขาย (Output VAT 21911) per ภ.พ.30
             if (doc.VatAmount > 0)
             {
                 var vatAccount = await FindAccountAsync(companyId, "21911");
                 if (vatAccount != null)
                     pendingLines.Add((vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
             }
+        }
+        // ============================================================
+        // SALES REVERSAL: CreditNote (ใบลดหนี้ §82/10)
+        // Reverses signs of the original sale — reduces AR, revenue, VAT
+        // ============================================================
+        else if (doc.DocumentType == DocumentType.CreditNote)
+        {
+            journalType = JournalType.Sales;
 
+            // Cr: ลูกหนี้การค้า (113) — reverse direction
+            var arAccount = await FindAccountAsync(companyId, "113");
+            if (arAccount != null)
+                pendingLines.Add((arAccount.Id, 0, doc.TotalAmount, $"ใบลดหนี้ - {doc.DocumentNumber}"));
+
+            // Cr: ภาษีถูกหัก ณ ที่จ่าย — reverse if WHT was claimed on original sale
             if (doc.WithholdingTaxAmount > 0)
             {
                 var whtAccount = await FindAccountAsync(companyId, "11910");
                 if (whtAccount != null)
-                    pendingLines.Add((whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
+                    pendingLines.Add((whtAccount.Id, 0, doc.WithholdingTaxAmount, "กลับรายการ ภาษีถูกหัก ณ ที่จ่าย"));
+            }
+
+            // Dr: รายได้ — reverse direction
+            foreach (var docLine in doc.Lines)
+            {
+                var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
+                if (revenueAccountId.HasValue)
+                    pendingLines.Add((revenueAccountId.Value, docLine.Amount, 0, $"กลับรายการ - {docLine.Description}"));
+            }
+
+            // Dr: ภาษีขาย — reverse direction (reduces VAT payable)
+            if (doc.VatAmount > 0)
+            {
+                var vatAccount = await FindAccountAsync(companyId, "21911");
+                if (vatAccount != null)
+                    pendingLines.Add((vatAccount.Id, doc.VatAmount, 0, "กลับรายการ ภาษีขาย"));
             }
         }
-        else if (journalType == JournalType.Purchase)
+        // ============================================================
+        // PURCHASE SIDE: PurchaseInvoice / Expense (on credit)
+        // ============================================================
+        else if (doc.DocumentType == DocumentType.PurchaseInvoice
+                 || doc.DocumentType == DocumentType.Expense)
         {
-            // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ — fallback เป็นค่าใช้จ่ายมาตรฐานถ้าไม่ได้เลือก
+            journalType = JournalType.Purchase;
+
+            // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ
             foreach (var docLine in doc.Lines)
             {
                 var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
@@ -713,6 +783,7 @@ public class DocumentService : IDocumentService
                     pendingLines.Add((expenseAccountId.Value, docLine.Amount, 0, docLine.Description));
             }
 
+            // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30
             if (doc.VatAmount > 0)
             {
                 var vatInputAccount = await FindAccountAsync(companyId, "116");
@@ -720,10 +791,12 @@ public class DocumentService : IDocumentService
                     pendingLines.Add((vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ"));
             }
 
+            // Cr: เจ้าหนี้การค้า (212) — net of WHT
             var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
                 pendingLines.Add((apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}"));
 
+            // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53)
             if (doc.WithholdingTaxAmount > 0)
             {
                 var whtAccount = await FindAccountAsync(companyId, "21916")
@@ -732,25 +805,114 @@ public class DocumentService : IDocumentService
                     pendingLines.Add((whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
             }
         }
-        else if (journalType == JournalType.CashReceipts)
+        // ============================================================
+        // CASH RECEIPTS: Receipt / ReceiptVoucher
+        // - Linked to existing Invoice (RelatedDocumentId): collection
+        // - Standalone (no link): direct cash sale
+        // ============================================================
+        else if (doc.DocumentType == DocumentType.Receipt
+                 || doc.DocumentType == DocumentType.ReceiptVoucher)
         {
+            journalType = JournalType.CashReceipts;
             var cashAccount = await FindAccountAsync(companyId, "111");
-            if (cashAccount != null)
-                pendingLines.Add((cashAccount.Id, doc.TotalAmount, 0, $"รับเงิน - {doc.DocumentNumber}"));
 
-            var arAccount = await FindAccountAsync(companyId, "113");
-            if (arAccount != null)
-                pendingLines.Add((arAccount.Id, 0, doc.TotalAmount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+            if (doc.RelatedDocumentId.HasValue)
+            {
+                // Collection against an existing Invoice's AR.
+                // The original Invoice already booked Dr WHT-Asset (Policy A: WHT
+                // claimed at issuance). Don't book WHT again here — just clear AR.
+                if (cashAccount != null)
+                    pendingLines.Add((cashAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}"));
+
+                var arAccount = await FindAccountAsync(companyId, "113");
+                if (arAccount != null)
+                    pendingLines.Add((arAccount.Id, 0, doc.TotalAmount,
+                        $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+            }
+            else
+            {
+                // Direct cash sale (ใบเสร็จรับเงิน/ใบกำกับภาษี): no prior AR
+                if (cashAccount != null)
+                    pendingLines.Add((cashAccount.Id, doc.TotalAmount, 0, $"รับเงินสด - {doc.DocumentNumber}"));
+
+                if (doc.WithholdingTaxAmount > 0)
+                {
+                    var whtAccount = await FindAccountAsync(companyId, "11910");
+                    if (whtAccount != null)
+                        pendingLines.Add((whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
+                }
+
+                foreach (var docLine in doc.Lines)
+                {
+                    var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
+                    if (revenueAccountId.HasValue)
+                        pendingLines.Add((revenueAccountId.Value, 0, docLine.Amount, docLine.Description));
+                }
+
+                if (doc.VatAmount > 0)
+                {
+                    var vatAccount = await FindAccountAsync(companyId, "21911");
+                    if (vatAccount != null)
+                        pendingLines.Add((vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
+                }
+            }
         }
-        else if (journalType == JournalType.CashPayments)
+        // ============================================================
+        // CASH PAYMENTS: PaymentVoucher
+        // - Linked to existing PurchaseInvoice: settlement
+        // - Standalone: direct cash purchase
+        // ============================================================
+        else if (doc.DocumentType == DocumentType.PaymentVoucher)
         {
-            var apAccount = await FindAccountAsync(companyId, "212");
-            if (apAccount != null)
-                pendingLines.Add((apAccount.Id, doc.TotalAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
-
+            journalType = JournalType.CashPayments;
             var cashAccount = await FindAccountAsync(companyId, "111");
-            if (cashAccount != null)
-                pendingLines.Add((cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}"));
+
+            if (doc.RelatedDocumentId.HasValue)
+            {
+                // Settlement of existing AP. The original PurchaseInvoice already
+                // credited WHT-Payable; settling it is a separate event (when filing
+                // ภ.ง.ด.3/53 with Revenue Dept). Just clear AP and pay cash here.
+                var apAccount = await FindAccountAsync(companyId, "212");
+                if (apAccount != null)
+                    pendingLines.Add((apAccount.Id, doc.TotalAmount, 0,
+                        $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+
+                if (cashAccount != null)
+                    pendingLines.Add((cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}"));
+            }
+            else
+            {
+                // Direct cash purchase (no prior AP)
+                foreach (var docLine in doc.Lines)
+                {
+                    var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                    if (expenseAccountId.HasValue)
+                        pendingLines.Add((expenseAccountId.Value, docLine.Amount, 0, docLine.Description));
+                }
+
+                if (doc.VatAmount > 0)
+                {
+                    var vatInputAccount = await FindAccountAsync(companyId, "116");
+                    if (vatInputAccount != null)
+                        pendingLines.Add((vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ"));
+                }
+
+                if (cashAccount != null)
+                    pendingLines.Add((cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงินสด - {doc.DocumentNumber}"));
+
+                if (doc.WithholdingTaxAmount > 0)
+                {
+                    var whtAccount = await FindAccountAsync(companyId, "21916")
+                        ?? await FindAccountAsync(companyId, "21917");
+                    if (whtAccount != null)
+                        pendingLines.Add((whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
+                }
+            }
+        }
+        else
+        {
+            // Operational documents (Quotation, DeliveryNote, BillingNote, PR, PO) → no JE
+            return;
         }
 
         if (pendingLines.Count < 2)
