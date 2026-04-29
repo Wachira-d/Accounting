@@ -6,6 +6,7 @@
   <title>สมัครสมาชิก - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/inapp-browser-guard.js"></script>
 </head>
 <body>
   <div class="auth-page">
@@ -28,7 +29,7 @@
         <h1>สมัครสมาชิก</h1>
         <p class="subtitle">กรอกข้อมูลเพื่อเริ่มต้นใช้งาน</p>
 
-        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px"></div>
+        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
 
         <form onsubmit="handleRegister(event)">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -51,11 +52,21 @@
           </div>
           <div class="form-group">
             <label class="form-label">รหัสผ่าน</label>
-            <input type="password" id="password" class="form-input" placeholder="อย่างน้อย 8 ตัวอักษร" required minlength="8">
+            <input type="password" id="password" class="form-input" placeholder="อย่างน้อย 8 ตัวอักษร" required minlength="8" autocomplete="new-password">
+            <div id="pwHelp" style="margin-top:8px;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#374151">
+              <div style="font-weight:600;margin-bottom:4px">เกณฑ์รหัสผ่าน:</div>
+              <div id="pwLen" class="pw-rule">⚪ ความยาวอย่างน้อย 8 ตัวอักษร</div>
+              <div style="margin-top:6px;font-weight:500">ใช้ตัวอักษรอย่างน้อย <b>2 ประเภท</b> จาก:</div>
+              <div id="pwUpper" class="pw-rule">⚪ ตัวพิมพ์ใหญ่ (A-Z)</div>
+              <div id="pwLower" class="pw-rule">⚪ ตัวพิมพ์เล็ก (a-z)</div>
+              <div id="pwDigit" class="pw-rule">⚪ ตัวเลข (0-9)</div>
+              <div id="pwSpecial" class="pw-rule">⚪ อักขระพิเศษ (!@#$%^&amp;*)</div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">ยืนยันรหัสผ่าน</label>
-            <input type="password" id="confirmPassword" class="form-input" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8">
+            <input type="password" id="confirmPassword" class="form-input" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8" autocomplete="new-password">
+            <div id="pwMatch" style="margin-top:6px;font-size:12px;color:#6b7280;display:none"></div>
           </div>
 
           <!-- Plan Selection -->
@@ -192,6 +203,44 @@
       }, { scope: 'email,public_profile' });
     }
 
+    // ===== Live password validation =====
+    function evalPassword(pw) {
+      const checks = {
+        len: pw.length >= 8,
+        upper: /[A-Z]/.test(pw),
+        lower: /[a-z]/.test(pw),
+        digit: /[0-9]/.test(pw),
+        special: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pw),
+      };
+      const cats = (checks.upper?1:0) + (checks.lower?1:0) + (checks.digit?1:0) + (checks.special?1:0);
+      return { ...checks, categories: cats, valid: checks.len && cats >= 2 };
+    }
+    function setRule(id, ok) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.firstChild.nodeValue = ok ? '✅ ' : '⚪ ';
+      el.style.color = ok ? '#059669' : '#6b7280';
+    }
+    document.getElementById('password').addEventListener('input', function() {
+      const r = evalPassword(this.value);
+      setRule('pwLen', r.len);
+      setRule('pwUpper', r.upper);
+      setRule('pwLower', r.lower);
+      setRule('pwDigit', r.digit);
+      setRule('pwSpecial', r.special);
+      checkMatch();
+    });
+    function checkMatch() {
+      const pw = document.getElementById('password').value;
+      const cf = document.getElementById('confirmPassword').value;
+      const el = document.getElementById('pwMatch');
+      if (!cf) { el.style.display = 'none'; return; }
+      if (pw === cf) { el.textContent = '✅ รหัสผ่านตรงกัน'; el.style.color = '#059669'; }
+      else { el.textContent = '✗ รหัสผ่านไม่ตรงกัน'; el.style.color = '#dc2626'; }
+      el.style.display = 'block';
+    }
+    document.getElementById('confirmPassword').addEventListener('input', checkMatch);
+
     async function handleRegister(e) {
       e.preventDefault();
       const btn = document.getElementById('registerBtn');
@@ -200,6 +249,17 @@
 
       const password = document.getElementById('password').value;
       const confirmPassword = document.getElementById('confirmPassword').value;
+
+      // Client-side password rules (mirror backend)
+      const r = evalPassword(password);
+      if (!r.valid) {
+        const reasons = [];
+        if (!r.len) reasons.push('ต้องยาวอย่างน้อย 8 ตัวอักษร');
+        if (r.categories < 2) reasons.push('ผสมอย่างน้อย 2 ประเภทจาก: พิมพ์ใหญ่/พิมพ์เล็ก/ตัวเลข/อักขระพิเศษ');
+        errEl.textContent = 'รหัสผ่านไม่ปลอดภัย — ' + reasons.join(' และ ');
+        errEl.classList.remove('hidden');
+        return;
+      }
 
       if (password !== confirmPassword) {
         errEl.textContent = 'รหัสผ่านไม่ตรงกัน';

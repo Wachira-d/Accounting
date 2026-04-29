@@ -75,7 +75,17 @@ const API = {
       }
       return json;
     } catch (err) {
-      if (err.message === 'Failed to fetch') throw new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
+      // TypeError or specific message strings indicate network failure (varies by browser/IAB)
+      const msg = (err && err.message) || '';
+      const isNetworkErr =
+        err instanceof TypeError ||
+        msg === 'Failed to fetch' ||
+        /NetworkError|Network request failed|Load failed|connection|net::|Failed to load/i.test(msg);
+      if (isNetworkErr) {
+        const e = new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่');
+        e.cause = err;
+        throw e;
+      }
       throw err;
     }
   },

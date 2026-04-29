@@ -341,24 +341,30 @@ public class AuthService : IAuthService
     }
 
     /// <summary>
-    /// Password validation: min 8 chars, at least 1 uppercase, 1 lowercase, 1 digit, 1 special char
+    /// Password validation:
+    /// - Minimum 8 characters
+    /// - Must satisfy at least 2 of 4 complexity categories: uppercase, lowercase, digit, special
+    /// All failing rules are reported in a single message so the user can fix them in one go.
     /// </summary>
     private static void ValidatePassword(string password)
     {
-        if (string.IsNullOrEmpty(password) || password.Length < 8)
-            throw new InvalidOperationException("รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร");
+        password ??= "";
+        var errors = new List<string>();
 
-        if (!Regex.IsMatch(password, @"[A-Z]"))
-            throw new InvalidOperationException("รหัสผ่านต้องมีตัวอักษรพิมพ์ใหญ่อย่างน้อย 1 ตัว");
+        if (password.Length < 8)
+            errors.Add("ความยาวอย่างน้อย 8 ตัวอักษร");
 
-        if (!Regex.IsMatch(password, @"[a-z]"))
-            throw new InvalidOperationException("รหัสผ่านต้องมีตัวอักษรพิมพ์เล็กอย่างน้อย 1 ตัว");
+        var categories = 0;
+        if (Regex.IsMatch(password, @"[A-Z]")) categories++;
+        if (Regex.IsMatch(password, @"[a-z]")) categories++;
+        if (Regex.IsMatch(password, @"[0-9]")) categories++;
+        if (Regex.IsMatch(password, @"[!@#$%^&*()_+\-=\[\]{};':""\\|,.<>\/?~`]")) categories++;
 
-        if (!Regex.IsMatch(password, @"[0-9]"))
-            throw new InvalidOperationException("รหัสผ่านต้องมีตัวเลขอย่างน้อย 1 ตัว");
+        if (categories < 2)
+            errors.Add("ผสมอย่างน้อย 2 ประเภทจาก: ตัวพิมพ์ใหญ่ (A-Z), ตัวพิมพ์เล็ก (a-z), ตัวเลข (0-9), อักขระพิเศษ (!@#$...)");
 
-        if (!Regex.IsMatch(password, @"[!@#$%^&*()_+\-=\[\]{};':""\\|,.<>\/?]"))
-            throw new InvalidOperationException("รหัสผ่านต้องมีอักขระพิเศษอย่างน้อย 1 ตัว");
+        if (errors.Count > 0)
+            throw new InvalidOperationException("รหัสผ่านไม่ปลอดภัย — " + string.Join(" และ ", errors));
     }
 
     private async Task<LoginResponse> GenerateLoginResponse(User user)
