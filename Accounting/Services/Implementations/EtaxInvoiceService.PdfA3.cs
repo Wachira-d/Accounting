@@ -23,7 +23,7 @@ public partial class EtaxInvoiceService
         var docTypeRoot = etax.Document.DocumentType switch
         {
             DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
-            DocumentType.Receipt => "Receipt_CrossIndustryInvoice",
+            DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",      // T03 uses TaxInvoice schema
             DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
             DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
             _ => "TaxInvoice_CrossIndustryInvoice"

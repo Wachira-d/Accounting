@@ -531,12 +531,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
     private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null)
     {
-        // Document-type-specific root element + RAM namespace prefix
-        // Per ETDA Schematron, the RAM namespace MUST include the document-type prefix.
+        // Document-type-specific root element + RAM namespace prefix.
+        // Per ETDA Schematron rules:
+        //   TaxInvoice schema accepts TypeCode: 388 (ใบกำกับภาษี), T02 (ใบแจ้งหนี้/ใบกำกับภาษี),
+        //                              T03 (ใบเสร็จรับเงิน/ใบกำกับภาษี), T04 (ใบส่งของ/ใบกำกับภาษี)
+        //   Receipt schema accepts only T01 (ใบเสร็จรับเงิน standalone, non-VAT)
+        //   DebitCreditNote schema accepts 80 (ใบเพิ่มหนี้), 81 (ใบลดหนี้)
+        //
+        // Our DocumentType.Receipt represents the Thai-VAT-compliant
+        // "ใบเสร็จรับเงิน/ใบกำกับภาษี" combo → use TaxInvoice schema with T03.
+        // (Pure standalone Receipt T01 isn't currently exposed; companies that
+        // aren't VAT-registered shouldn't be issuing e-Tax anyway.)
         var rootElementName = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
-            DocumentType.Receipt => "Receipt_CrossIndustryInvoice",
+            DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",   // T03 → TaxInvoice schema
             DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
             DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
             _ => "TaxInvoice_CrossIndustryInvoice"
@@ -544,7 +553,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var ramSuffix = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
-            DocumentType.Receipt => "Receipt_ReusableAggregateBusinessInformationEntity",
+            DocumentType.Receipt => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
             DocumentType.DebitNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
             DocumentType.CreditNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
             _ => "TaxInvoice_ReusableAggregateBusinessInformationEntity"
@@ -552,19 +561,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var rsm = XNamespace.Get($"urn:etda:uncefact:data:standard:{rootElementName}:2");
         var ram = XNamespace.Get($"urn:etda:uncefact:data:standard:{ramSuffix}:2");
 
-        // TypeCode per UN/EDIFACT 1001 + ETDA: 388=TaxInvoice, T03=Receipt, 80=DebitNote, 81=CreditNote
+        // TypeCode per UN/EDIFACT 1001 + ETDA Schematron-validated codelist
         var docTypeCode = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "388",
-            DocumentType.Receipt => "T03",
+            DocumentType.Receipt => "T03",       // ใบเสร็จรับเงิน/ใบกำกับภาษี
             DocumentType.DebitNote => "80",
             DocumentType.CreditNote => "81",
             _ => "388"
         };
+        // Name MUST match the TypeCode-name pairing per Schematron TIV-Document-003 /
+        // DCN equivalents — exact strings, no extra qualifiers
         var docTypeName = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ",
+            DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",   // exact match required
             DocumentType.DebitNote => "ใบเพิ่มหนี้",
             DocumentType.CreditNote => "ใบลดหนี้",
             _ => "ใบกำกับภาษี"
@@ -645,10 +656,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             new XElement(ram + "CalculatedAmount",
                 doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
 
-        // Reference to original (for CN/DN)
+        // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001.
+        // ReferenceTypeCode must be one of 388/T02/T03/T04 (TaxInvoice variants).
+        // Per ETDA sample CDN_CN2017110001_Sample.xml, the simplest valid form is just
+        // <ReferenceTypeCode>; additional fields use specialised types we'd risk getting wrong.
         XElement? additionalRef = null;
-        if (originalDoc != null && (doc.DocumentType == DocumentType.CreditNote
-            || doc.DocumentType == DocumentType.DebitNote))
+        if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
             additionalRef = new XElement(ram + "AdditionalReferencedDocument",
                 new XElement(ram + "ReferenceTypeCode", "388"));
@@ -679,11 +692,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 : null);
 
         // Build full document
+        XNamespace xsi = "http://www.w3.org/2001/XMLSchema-instance";
         var xml = new XDocument(
             new XDeclaration("1.0", "UTF-8", null),
             new XElement(rsm + rootElementName,
                 new XAttribute(XNamespace.Xmlns + "rsm", rsm),
                 new XAttribute(XNamespace.Xmlns + "ram", ram),
+                new XAttribute(XNamespace.Xmlns + "xsi", xsi),
+                new XAttribute(xsi + "schemaLocation", $"urn:etda:uncefact:data:standard:{rootElementName}:2"),
 
                 new XElement(rsm + "ExchangedDocumentContext", contextParameter),
 
@@ -709,8 +725,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         return xml.ToString();
     }
 
+    /// <summary>ISO 8601 with 3-digit fractional seconds — matches ETDA reference samples.</summary>
     private static string FormatIso(DateTime dt) =>
-        dt.ToString("yyyy-MM-ddTHH:mm:ss.f", CultureInfo.InvariantCulture);
+        dt.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Compose ID per Schematron rules:
@@ -774,9 +791,15 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var streetLine = !string.IsNullOrEmpty(company.StreetName)
             ? $"ถ.{company.StreetName}"
             : (company.Address ?? "");
-        var subDistrict = !string.IsNullOrEmpty(company.SubDistrict) ? company.SubDistrict! : "00";
-        var district = !string.IsNullOrEmpty(company.District) ? company.District! : "00";
-        var province = !string.IsNullOrEmpty(company.Province) ? company.Province! : "00";
+
+        // ETDA XSD constrains CityName/CitySubDivisionName/CountrySubDivisionID to
+        // numeric TISI 1099 codes (free-text Thai names FAIL XSD validation).
+        // Resolve province by name or postcode prefix; district/sub-district fall back
+        // to known-valid placeholder codes from the TISI enum.
+        var provinceCode = ThaiAdminCodes.ResolveProvinceCode(company.Province, postCode);
+        var districtCode = ThaiAdminCodes.ResolveDistrictCode(company.District, postCode, provinceCode);
+        var subDistrictCode = ThaiAdminCodes.ResolveSubDistrictCode(
+            company.SubDistrict, postCode, districtCode);
 
         return new XElement(ram + "SellerTradeParty",
             new XElement(ram + "Name", company.Name),
@@ -789,11 +812,11 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 !string.IsNullOrEmpty(company.BuildingName)
                     ? new XElement(ram + "BuildingName", company.BuildingName) : null,
                 !string.IsNullOrEmpty(streetLine) ? new XElement(ram + "LineOne", streetLine) : null,
-                new XElement(ram + "CityName", district),
-                new XElement(ram + "CitySubDivisionName", subDistrict),
+                new XElement(ram + "CityName", districtCode),
+                new XElement(ram + "CitySubDivisionName", subDistrictCode),
                 new XElement(ram + "CountryID",
                     new XAttribute("schemeID", "3166-1 alpha-2"), "TH"),
-                new XElement(ram + "CountrySubDivisionID", province),
+                new XElement(ram + "CountrySubDivisionID", provinceCode),
                 new XElement(ram + "BuildingNumber", buildingNo)));
     }
 
@@ -819,20 +842,25 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
         if (hasStructured)
         {
-            // Structured form — passes Schematron strictly
+            // Structured form — passes Schematron strictly. TISI 1099 codes for
+            // CityName/CitySubDivisionName/CountrySubDivisionID per XSD enum constraint.
+            var provinceCode = ThaiAdminCodes.ResolveProvinceCode(contact.Province, postCode);
+            var districtCode = ThaiAdminCodes.ResolveDistrictCode(contact.District, postCode, provinceCode);
+            var subDistrictCode = ThaiAdminCodes.ResolveSubDistrictCode(
+                contact.SubDistrict, postCode, districtCode);
+
             if (!string.IsNullOrEmpty(contact.BuildingName))
                 addressElements.Add(new XElement(ram + "BuildingName", contact.BuildingName));
-            // LineOne = composed street info; ETDA still accepts/expects this
             var streetLine = !string.IsNullOrEmpty(contact.StreetName)
                 ? $"ถ.{contact.StreetName}"
                 : (contact.Address ?? "-");
             addressElements.Add(new XElement(ram + "LineOne", streetLine));
-            addressElements.Add(new XElement(ram + "CityName", contact.District));
-            addressElements.Add(new XElement(ram + "CitySubDivisionName", contact.SubDistrict));
+            addressElements.Add(new XElement(ram + "CityName", districtCode));
+            addressElements.Add(new XElement(ram + "CitySubDivisionName", subDistrictCode));
             addressElements.Add(new XElement(ram + "CountryID",
                 new XAttribute("schemeID", "3166-1 alpha-2"),
                 contact.CountryCode ?? "TH"));
-            addressElements.Add(new XElement(ram + "CountrySubDivisionID", contact.Province));
+            addressElements.Add(new XElement(ram + "CountrySubDivisionID", provinceCode));
             addressElements.Add(new XElement(ram + "BuildingNumber", contact.BuildingNumber));
         }
         else
@@ -911,8 +939,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     new XElement(ram + "BasisAmount", lineSubTotal.ToString("0.##", inv)),
                     new XElement(ram + "CalculatedAmount", line.VatAmount.ToString("0.##", inv))),
                 new XElement(ram + "SpecifiedTradeAllowanceCharge",
-                    new XElement(ram + "ChargeIndicator",
-                        line.DiscountAmount > 0 ? "true" : "false"),
+                    // ChargeIndicator: false = allowance (discount), true = charge (surcharge)
+                    // Per ETDA samples: always "false" with ActualAmount=0 when no discount.
+                    // We only emit allowance lines (discounts), so always false.
+                    new XElement(ram + "ChargeIndicator", "false"),
                     new XElement(ram + "ActualAmount", line.DiscountAmount.ToString("0.##", inv))),
                 new XElement(ram + "SpecifiedTradeSettlementLineMonetarySummation",
                     new XElement(ram + "TaxTotalAmount", line.VatAmount.ToString("0.##", inv)),
