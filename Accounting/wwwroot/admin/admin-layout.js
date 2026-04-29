@@ -15,6 +15,7 @@ const AdminLayout = {
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },
     { section: 'ตั้งค่า' },
     { id: 'site-settings', label: 'ตั้งค่าเว็บไซต์', icon: '⚙️', href: '/admin/site-settings.html' },
+    { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
   ],
 
   init(pageName) {

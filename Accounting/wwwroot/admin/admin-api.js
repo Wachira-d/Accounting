@@ -106,6 +106,11 @@ const AdminAPI = {
   siteSettings() { return this.get('/site-settings'); },
   updateSiteSettings(data) { return this.put('/site-settings', data); },
 
+  // System Email Configuration
+  systemEmail() { return this.get('/system-email'); },
+  updateSystemEmail(data) { return this.put('/system-email', data); },
+  testSystemEmail(toAddress) { return this.post('/system-email/test', { toAddress }); },
+
   // Integrations
   integrations() { return this.get('/integrations'); },
 

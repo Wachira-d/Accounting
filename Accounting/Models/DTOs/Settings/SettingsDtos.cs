@@ -30,9 +30,6 @@ public record UpdateCompanySettingsRequest(
     // Security
     bool? RequireApprovalForDocuments,
     decimal? ApprovalThresholdAmount,
-    bool? AllowFreelanceAccess,
-    int? MaxFreelanceUsers,
-    bool? RequireTwoFactorForFreelance,
     bool? EnableApiAccess,
     int? MaxApiKeys,
 
@@ -83,8 +80,6 @@ public record CompanySettingsResponse(
     // Security
     bool RequireApprovalForDocuments,
     decimal? ApprovalThresholdAmount,
-    bool AllowFreelanceAccess,
-    int MaxFreelanceUsers,
     bool EnableApiAccess,
     int MaxApiKeys,
     // Closing

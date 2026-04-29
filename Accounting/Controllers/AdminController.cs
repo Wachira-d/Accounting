@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Email;
 using Accounting.Models.DTOs.Settings;
 using Accounting.Models.DTOs.Subscription;
 using Accounting.Models.DTOs.Company;
@@ -7,6 +8,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Helpers;
 using Accounting.Services.Implementations;
+using Accounting.Services.Implementations.Email;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,15 +28,18 @@ public class AdminController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IRecurringTransactionService _recurringService;
+    private readonly IEmailSenderFactory _emailSenderFactory;
 
     public AdminController(
         AccountingDbContext db,
         ISubscriptionService subscriptionService,
-        IRecurringTransactionService recurringService)
+        IRecurringTransactionService recurringService,
+        IEmailSenderFactory emailSenderFactory)
     {
         _db = db;
         _subscriptionService = subscriptionService;
         _recurringService = recurringService;
+        _emailSenderFactory = emailSenderFactory;
     }
 
     // ===== Dashboard Analytics =====
@@ -865,6 +870,127 @@ public class AdminController : ControllerBase
             RecentLogs = recentLogs
         }));
     }
+
+    // ===== System Email (System-wide SMTP/API config managed by admin) =====
+    // ใช้สำหรับส่งคำเชิญ, รีเซ็ตรหัสผ่าน, และ system notifications
+
+    [HttpGet("system-email")]
+    public async Task<ActionResult<ApiResponse<SystemEmailConfigResponse>>> GetSystemEmail()
+    {
+        var s = await GetOrCreateSiteSettings();
+        return Ok(new ApiResponse<SystemEmailConfigResponse>(true, BuildSystemEmailResponse(s)));
+    }
+
+    [HttpPut("system-email")]
+    public async Task<ActionResult<ApiResponse<SystemEmailConfigResponse>>> UpdateSystemEmail(
+        [FromBody] UpdateSystemEmailConfigRequest req)
+    {
+        var s = await GetOrCreateSiteSettings();
+        s.SystemEmailProvider = req.Provider;
+        if (req.FromAddress != null) s.SystemEmailFromAddress = req.FromAddress;
+        if (req.FromName != null) s.SystemEmailFromName = req.FromName;
+        if (req.ReplyTo != null) s.SystemEmailReplyTo = req.ReplyTo;
+        if (req.AppBaseUrl != null) s.AppBaseUrl = req.AppBaseUrl;
+
+        if (req.Smtp != null)
+        {
+            if (req.Smtp.Host != null) s.SystemSmtpHost = req.Smtp.Host;
+            if (req.Smtp.Port.HasValue) s.SystemSmtpPort = req.Smtp.Port.Value;
+            if (req.Smtp.Username != null) s.SystemSmtpUsername = req.Smtp.Username;
+            if (!string.IsNullOrEmpty(req.Smtp.Password)) s.SystemSmtpPassword = req.Smtp.Password;
+            if (req.Smtp.UseSsl.HasValue) s.SystemSmtpUseSsl = req.Smtp.UseSsl.Value;
+        }
+        if (req.Microsoft != null)
+        {
+            if (req.Microsoft.TenantId != null) s.SystemMsTenantId = req.Microsoft.TenantId;
+            if (req.Microsoft.ClientId != null) s.SystemMsClientId = req.Microsoft.ClientId;
+            if (!string.IsNullOrEmpty(req.Microsoft.ClientSecret)) s.SystemMsClientSecret = req.Microsoft.ClientSecret;
+            if (req.Microsoft.SenderUpn != null) s.SystemMsSenderUpn = req.Microsoft.SenderUpn;
+        }
+        if (req.Gmail != null)
+        {
+            if (req.Gmail.ClientId != null) s.SystemGmailClientId = req.Gmail.ClientId;
+            if (!string.IsNullOrEmpty(req.Gmail.ClientSecret)) s.SystemGmailClientSecret = req.Gmail.ClientSecret;
+            if (!string.IsNullOrEmpty(req.Gmail.RefreshToken)) s.SystemGmailRefreshToken = req.Gmail.RefreshToken;
+        }
+
+        s.SystemEmailConfigured = false;  // must re-test after change
+        s.UpdatedAt = DateTime.UtcNow;
+        s.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<SystemEmailConfigResponse>(true, BuildSystemEmailResponse(s),
+            "บันทึกการตั้งค่าอีเมลระบบเรียบร้อย กรุณากด \"ทดสอบส่งอีเมล\" เพื่อยืนยัน"));
+    }
+
+    [HttpPost("system-email/test")]
+    public async Task<ActionResult<ApiResponse<EmailTestResult>>> TestSystemEmail([FromBody] TestEmailRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.ToAddress))
+            return BadRequest(new ApiResponse<EmailTestResult>(false, null, "กรุณาระบุอีเมลผู้รับ"));
+
+        var s = await GetOrCreateSiteSettings();
+        var sender = _emailSenderFactory.GetGlobalFallbackSender();
+
+        var msg = new EmailMessage
+        {
+            FromAddress = s.SystemEmailFromAddress ?? "noreply@nextacc.com",
+            FromName = s.SystemEmailFromName ?? s.SiteName ?? "Next Acc",
+            Subject = "[ทดสอบ] การตั้งค่าอีเมลระบบ Next Acc",
+            HtmlBody = $@"<div style='font-family:sans-serif;max-width:600px;margin:0 auto'>
+                <h2 style='color:#10b981'>ตั้งค่าอีเมลระบบสำเร็จ</h2>
+                <p>หากคุณได้รับอีเมลฉบับนี้ แสดงว่าการตั้งค่าผ่าน <strong>{s.SystemEmailProvider}</strong> ใช้งานได้</p>
+                <p>อีเมลระบบนี้จะใช้สำหรับ:</p>
+                <ul>
+                    <li>ส่งคำเชิญถึงผู้ใช้ที่ยังไม่ได้สมัครสมาชิก</li>
+                    <li>รีเซ็ตรหัสผ่าน</li>
+                    <li>การแจ้งเตือนของระบบ</li>
+                </ul>
+                <p style='color:#64748b;font-size:13px'>เวลาทดสอบ: {DateTime.UtcNow.AddHours(7):yyyy-MM-dd HH:mm:ss} (UTC+7)</p>
+            </div>"
+        };
+        msg.To.Add(req.ToAddress);
+
+        var result = await sender.SendAsync(msg);
+
+        s.SystemEmailLastTestedAt = DateTime.UtcNow;
+        s.SystemEmailLastTestStatus = result.Success ? "OK" : (result.ErrorMessage ?? "Failed");
+        s.SystemEmailConfigured = result.Success;
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<EmailTestResult>(result.Success,
+            new EmailTestResult(result.Success, result.ErrorMessage, s.SystemEmailLastTestedAt.Value),
+            result.Success ? "ส่งอีเมลทดสอบสำเร็จ" : (result.ErrorMessage ?? "ส่งทดสอบไม่สำเร็จ")));
+    }
+
+    private async Task<SiteSettings> GetOrCreateSiteSettings()
+    {
+        var s = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (s == null)
+        {
+            s = new SiteSettings();
+            _db.SiteSettings.Add(s);
+            await _db.SaveChangesAsync();
+        }
+        return s;
+    }
+
+    private static SystemEmailConfigResponse BuildSystemEmailResponse(SiteSettings s) => new(
+        Provider: s.SystemEmailProvider,
+        FromAddress: s.SystemEmailFromAddress,
+        FromName: s.SystemEmailFromName,
+        ReplyTo: s.SystemEmailReplyTo,
+        AppBaseUrl: s.AppBaseUrl,
+        Configured: s.SystemEmailConfigured,
+        LastTestedAt: s.SystemEmailLastTestedAt,
+        LastTestStatus: s.SystemEmailLastTestStatus,
+        Smtp: new SmtpConfigDto(s.SystemSmtpHost, s.SystemSmtpPort, s.SystemSmtpUsername,
+            !string.IsNullOrEmpty(s.SystemSmtpPassword), s.SystemSmtpUseSsl),
+        Microsoft: new MicrosoftGraphConfigDto(s.SystemMsTenantId, s.SystemMsClientId,
+            !string.IsNullOrEmpty(s.SystemMsClientSecret), s.SystemMsSenderUpn),
+        Gmail: new GmailConfigDto(s.SystemGmailClientId,
+            !string.IsNullOrEmpty(s.SystemGmailClientSecret),
+            !string.IsNullOrEmpty(s.SystemGmailRefreshToken)));
 }
 
 // ===== Admin-specific DTOs =====

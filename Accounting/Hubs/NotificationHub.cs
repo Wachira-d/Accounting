@@ -50,12 +50,6 @@ public class NotificationHub : Hub
             .AnyAsync(cu => cu.CompanyId == companyGuid && cu.UserId == userGuid);
 
         if (!hasAccess)
-        {
-            hasAccess = await _db.Set<Models.Entities.FreelanceAccess>()
-                .AnyAsync(fa => fa.CompanyId == companyGuid && fa.UserId == userGuid && fa.IsActive);
-        }
-
-        if (!hasAccess)
             throw new HubException("Access denied to this company.");
 
         await Groups.AddToGroupAsync(Context.ConnectionId, $"company:{companyId}");

@@ -100,6 +100,30 @@ public record GmailConfigInput(
 
 public record TestEmailRequest(string ToAddress);
 
+// ===== System Email (admin-managed, system-wide) =====
+public record SystemEmailConfigResponse(
+    EmailProvider Provider,
+    string? FromAddress,
+    string? FromName,
+    string? ReplyTo,
+    string? AppBaseUrl,
+    bool Configured,
+    DateTime? LastTestedAt,
+    string? LastTestStatus,
+    SmtpConfigDto? Smtp,
+    MicrosoftGraphConfigDto? Microsoft,
+    GmailConfigDto? Gmail);
+
+public record UpdateSystemEmailConfigRequest(
+    EmailProvider Provider,
+    string? FromAddress,
+    string? FromName,
+    string? ReplyTo,
+    string? AppBaseUrl,
+    SmtpConfigInput? Smtp,
+    MicrosoftGraphConfigInput? Microsoft,
+    GmailConfigInput? Gmail);
+
 // ===== e-Tax mode configuration =====
 public record EtaxConfigResponse(
     EtaxMode Mode,

@@ -1,3 +1,5 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Models.Entities;
 
 /// <summary>
@@ -27,4 +29,35 @@ public class SiteSettings : BaseEntity
     public string? FacebookUrl { get; set; }
     public string? LineOfficialUrl { get; set; }
     public string? WebsiteUrl { get; set; }
+
+    // ===== System Email (used for invitations, password resets, system notifications) =====
+    // ใช้สำหรับส่งอีเมลจาก "ระบบ" — เช่น เชิญ accountant ที่ยังไม่ได้สมัคร, reset password
+    public EmailProvider SystemEmailProvider { get; set; } = EmailProvider.Smtp;
+    public string? SystemEmailFromAddress { get; set; }
+    public string? SystemEmailFromName { get; set; }
+    public string? SystemEmailReplyTo { get; set; }
+    public bool SystemEmailConfigured { get; set; } = false;
+    public DateTime? SystemEmailLastTestedAt { get; set; }
+    public string? SystemEmailLastTestStatus { get; set; }
+
+    // SMTP (Gmail / Office365 / generic)
+    public string? SystemSmtpHost { get; set; }
+    public int SystemSmtpPort { get; set; } = 587;
+    public string? SystemSmtpUsername { get; set; }
+    public string? SystemSmtpPassword { get; set; }
+    public bool SystemSmtpUseSsl { get; set; } = true;
+
+    // Microsoft Graph
+    public string? SystemMsTenantId { get; set; }
+    public string? SystemMsClientId { get; set; }
+    public string? SystemMsClientSecret { get; set; }
+    public string? SystemMsSenderUpn { get; set; }
+
+    // Gmail API (OAuth2)
+    public string? SystemGmailClientId { get; set; }
+    public string? SystemGmailClientSecret { get; set; }
+    public string? SystemGmailRefreshToken { get; set; }
+
+    // Application base URL — used to build invitation/reset links in system emails
+    public string? AppBaseUrl { get; set; }
 }

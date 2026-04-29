@@ -232,7 +232,6 @@ public enum AuditAction
     View = 8,
     Approve = 9,
     Reject = 10,
-    FreelanceAccess = 11,
     ApiAccess = 12
 }
 
@@ -307,46 +306,6 @@ public enum ApprovalStatus
     Recalled = 3
 }
 
-// ==================== Freelance / External Worker ====================
-public enum FreelanceInvitationStatus
-{
-    Pending = 0,
-    Accepted = 1,
-    Declined = 2,
-    Expired = 3,
-    Revoked = 4
-}
-
-public enum FreelanceTaskStatus
-{
-    Assigned = 0,
-    InProgress = 1,
-    Submitted = 2,
-    UnderReview = 3,
-    Approved = 4,
-    Rejected = 5,
-    Completed = 6
-}
-
-public enum FreelanceTaskType
-{
-    MonthlyClosing = 1,      // ปิดบัญชีรายเดือน
-    YearEndClosing = 2,      // ปิดบัญชีสิ้นปี
-    TaxFiling = 3,           // ยื่นภาษี
-    Reconciliation = 4,      // กระทบยอด
-    AuditPrep = 5,          // เตรียมรับตรวจสอบ
-    DataEntry = 6,           // บันทึกข้อมูล
-    FinancialStatement = 7,  // จัดทำงบการเงิน
-    Custom = 99
-}
-
-public enum AccessScope
-{
-    ReadOnly = 1,
-    ReadWrite = 2,
-    Full = 3
-}
-
 // ==================== Subscription Payment ====================
 public enum SubscriptionPaymentStatus
 {
@@ -366,7 +325,6 @@ public enum NotificationType
     PaymentReceived = 4,
     ApprovalRequired = 5,
     TaskAssigned = 6,
-    FreelanceInvite = 7,
     SecurityAlert = 8,
     DocumentCreated = 9,
     MonthEndReminder = 10,
@@ -429,7 +387,6 @@ public enum FeatureFlags : long
     FixedAssets = 1 << 16,
     RecurringTransactions = 1 << 17,
     MultiCurrency = 1 << 18,
-    FreelanceManagement = 1 << 19,
     ApprovalWorkflow = 1 << 20,
     FileAttachments = 1 << 21,
     PurchaseOrders = 1 << 22,
@@ -468,7 +425,7 @@ public enum FeatureFlags : long
         | RecurringTransactions | ApprovalWorkflow | PurchaseOrders | ExpenseManagement | BudgetManagement
         | CostCenter | EtaxByEmail,
     EnterpriseFeatures = ProFeatures | EtaxInvoice | EtaxDirect | WorkflowEngine | FixedAssets
-        | MultiCurrency | FreelanceManagement | Payroll | ProjectAccounting | Consolidation
+        | MultiCurrency | Payroll | ProjectAccounting | Consolidation
         | WarehouseManagement | LoanManagement | Commission | AI_Features | DocumentOCR
         | ReportBuilder | CustomerPortal | TimeBilling | OpenBanking | Webhook
         | RevenueRecognition | FPA

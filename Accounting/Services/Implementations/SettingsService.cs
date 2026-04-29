@@ -45,9 +45,6 @@ public class SettingsService : ISettingsService
         if (request.InvoiceEmailBody != null) settings.InvoiceEmailBody = request.InvoiceEmailBody;
         if (request.RequireApprovalForDocuments.HasValue) settings.RequireApprovalForDocuments = request.RequireApprovalForDocuments.Value;
         if (request.ApprovalThresholdAmount.HasValue) settings.ApprovalThresholdAmount = request.ApprovalThresholdAmount.Value;
-        if (request.AllowFreelanceAccess.HasValue) settings.AllowFreelanceAccess = request.AllowFreelanceAccess.Value;
-        if (request.MaxFreelanceUsers.HasValue) settings.MaxFreelanceUsers = request.MaxFreelanceUsers.Value;
-        if (request.RequireTwoFactorForFreelance.HasValue) settings.RequireTwoFactorForFreelance = request.RequireTwoFactorForFreelance.Value;
         if (request.EnableApiAccess.HasValue) settings.EnableApiAccess = request.EnableApiAccess.Value;
         if (request.MaxApiKeys.HasValue) settings.MaxApiKeys = request.MaxApiKeys.Value;
         if (request.AutoCloseMonthEnd.HasValue) settings.AutoCloseMonthEnd = request.AutoCloseMonthEnd.Value;
@@ -370,7 +367,6 @@ public class SettingsService : ISettingsService
         s.DefaultVatRate, s.VatRegistered, s.VatRegistrationDate,
         // Security
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
-        s.AllowFreelanceAccess, s.MaxFreelanceUsers,
         s.EnableApiAccess, s.MaxApiKeys,
         // Closing
         s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod,

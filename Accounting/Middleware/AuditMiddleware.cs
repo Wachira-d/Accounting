@@ -52,9 +52,6 @@ public class AuditMiddleware
             if (isApiKey)
                 action = AuditAction.ApiAccess;
 
-            if (context.Items.ContainsKey("FreelanceAccessId"))
-                action = AuditAction.FreelanceAccess;
-
             var auditLog = new AuditLog
             {
                 CompanyId = companyId,

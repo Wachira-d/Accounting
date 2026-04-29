@@ -121,14 +121,6 @@ public class AccountingDbContext : DbContext
     // API Keys
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
-    // Freelance Management
-    public DbSet<FreelanceInvitation> FreelanceInvitations => Set<FreelanceInvitation>();
-    public DbSet<FreelanceAccess> FreelanceAccesses => Set<FreelanceAccess>();
-    public DbSet<FreelanceTask> FreelanceTasks => Set<FreelanceTask>();
-    public DbSet<FreelanceTaskComment> FreelanceTaskComments => Set<FreelanceTaskComment>();
-    public DbSet<FreelanceTimeLog> FreelanceTimeLogs => Set<FreelanceTimeLog>();
-    public DbSet<FreelanceActivityLog> FreelanceActivityLogs => Set<FreelanceActivityLog>();
-
     // Project Accounting
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectTask> ProjectTasks => Set<ProjectTask>();
@@ -779,60 +771,6 @@ public class AccountingDbContext : DbContext
             e.Property(l => l.IncomeDescription).HasMaxLength(500);
         });
 
-        // ===== FreelanceInvitation =====
-        modelBuilder.Entity<FreelanceInvitation>(e =>
-        {
-            e.HasIndex(i => i.InvitationToken).IsUnique();
-            e.Property(i => i.InviteeEmail).HasMaxLength(256);
-            e.Property(i => i.InviteeName).HasMaxLength(256);
-            e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(i => i.InvitedByUser).WithMany().HasForeignKey(i => i.InvitedByUserId).OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // ===== FreelanceAccess =====
-        modelBuilder.Entity<FreelanceAccess>(e =>
-        {
-            e.HasIndex(fa => new { fa.CompanyId, fa.UserId }).IsUnique();
-            e.HasOne(fa => fa.Company).WithMany().HasForeignKey(fa => fa.CompanyId).OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(fa => fa.User).WithMany().HasForeignKey(fa => fa.UserId).OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // ===== FreelanceTask =====
-        modelBuilder.Entity<FreelanceTask>(e =>
-        {
-            e.Property(t => t.Title).HasMaxLength(500);
-            e.Property(t => t.EstimatedHours).HasPrecision(8, 2);
-            e.Property(t => t.ActualHours).HasPrecision(8, 2);
-            e.Property(t => t.AgreedRate).HasPrecision(18, 2);
-            e.Property(t => t.TotalCost).HasPrecision(18, 2);
-            e.HasOne(t => t.FreelanceAccess).WithMany(fa => fa.Tasks).HasForeignKey(t => t.FreelanceAccessId).OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(t => t.Company).WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // ===== FreelanceTaskComment =====
-        modelBuilder.Entity<FreelanceTaskComment>(e =>
-        {
-            e.HasOne(c => c.FreelanceTask).WithMany(t => t.Comments).HasForeignKey(c => c.FreelanceTaskId).OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(c => c.User).WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // ===== FreelanceTimeLog =====
-        modelBuilder.Entity<FreelanceTimeLog>(e =>
-        {
-            e.Property(l => l.Hours).HasPrecision(8, 2);
-            e.HasOne(l => l.FreelanceTask).WithMany(t => t.TimeLogs).HasForeignKey(l => l.FreelanceTaskId).OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(l => l.User).WithMany().HasForeignKey(l => l.UserId).OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // ===== FreelanceActivityLog =====
-        modelBuilder.Entity<FreelanceActivityLog>(e =>
-        {
-            e.HasIndex(l => new { l.CompanyId, l.Timestamp });
-            e.HasIndex(l => new { l.FreelanceAccessId, l.Timestamp });
-            e.Property(l => l.Action).HasMaxLength(200);
-            e.HasOne(l => l.FreelanceAccess).WithMany(fa => fa.ActivityLogs).HasForeignKey(l => l.FreelanceAccessId).OnDelete(DeleteBehavior.Restrict);
-        });
-
         // ======================================================================
         // Advanced Operations & World-Class Features
         // ======================================================================
@@ -1479,13 +1417,6 @@ public class AccountingDbContext : DbContext
         // Company Settings & API
         modelBuilder.Entity<CompanySettings>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ApiKey>().HasQueryFilter(e => !e.IsDeleted);
-
-        // Freelance
-        modelBuilder.Entity<FreelanceInvitation>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<FreelanceAccess>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<FreelanceTask>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<FreelanceTaskComment>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<FreelanceTimeLog>().HasQueryFilter(e => !e.IsDeleted);
 
         // Project & Revenue Recognition
         modelBuilder.Entity<ProjectTask>().HasQueryFilter(e => !e.IsDeleted);
