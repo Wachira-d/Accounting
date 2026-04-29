@@ -87,7 +87,7 @@
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
-              <select class="form-select" id="fDocType">
+              <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation">ใบเสนอราคา</option>
                   <option value="Invoice">ใบแจ้งหนี้</option>
@@ -109,11 +109,11 @@
               </select>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
-              <select class="form-select" id="fContact"><option value="">เลือกผู้ติดต่อ</option></select>
+              <select class="form-select" id="fContact" onchange="Page.onContactChange()"><option value="">เลือกผู้ติดต่อ</option></select>
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate"></div>
+            <div class="form-group"><label class="form-label">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
             <div class="form-group"><label class="form-label">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
           <div class="form-row">
@@ -336,6 +336,9 @@
       toggleSendEmail() {
         const on = document.getElementById('fSendEmail').checked;
         document.getElementById('sendEmailFields').style.display = on ? 'block' : 'none';
+        // Auto-populate template on first activation so the user sees a sensible
+        // preview without manually selecting the contact again.
+        if (on) this.refreshEmailTemplate();
       },
       toggleEtaxByEmail() {
         // When e-Tax mode is on, the subject is dictated by RD (TaxId.RefNumber).
@@ -353,13 +356,36 @@
         if (badge) badge.style.display = on ? 'inline-block' : 'none';
         if (hint) hint.style.display = on ? 'block' : 'none';
       },
-      _populateEmailDefaults(contactId) {
+      /**
+       * Triggered when the user picks a contact in the create-document form.
+       * Fills email recipient, then regenerates the subject/body templates so the
+       * preview reflects the chosen customer's name. The user can still edit
+       * either field; we only overwrite when the field is empty or matches the
+       * previously generated template (so editing isn't clobbered).
+       */
+      onContactChange() {
+        const contactId = document.getElementById('fContact').value;
         const c = this.contacts.find(x => x.id === contactId);
-        if (c?.email && !document.getElementById('fEmailTo').value) {
-          document.getElementById('fEmailTo').value = c.email;
+        // Fill recipient email if empty (don't clobber user-entered address)
+        if (c?.email) {
+          const toEl = document.getElementById('fEmailTo');
+          if (toEl && !toEl.value) toEl.value = c.email;
         }
-        // Show e-Tax option if mode is ByEmail or Both AND document type qualifies
-        const docType = document.getElementById('fType')?.value;
+        this.refreshEmailTemplate();
+        this._refreshEtaxByEmailVisibility();
+      },
+      onDocTypeChange() {
+        this.refreshEmailTemplate();
+        this._refreshEtaxByEmailVisibility();
+      },
+      /**
+       * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
+       * Per RD spec, only TaxInvoice/Receipt/CreditNote/DebitNote qualify for
+       * e-Tax by Email; the company must also have ByEmail or Both mode and be
+       * RD-registered.
+       */
+      _refreshEtaxByEmailVisibility() {
+        const docType = document.getElementById('fDocType')?.value;
         const eligibleTypes = ['TaxInvoice', 'Receipt', 'CreditNote', 'DebitNote'];
         const mode = this._etaxConfig?.mode;
         const modeStr = (typeof mode === 'number') ? ['None','ByEmail','Direct','Both'][mode] : mode;
@@ -368,6 +394,54 @@
                       && eligibleTypes.includes(docType);
         const hint = document.getElementById('etaxByEmailHint');
         if (hint) hint.style.display = showEtax ? 'flex' : 'none';
+      },
+      /**
+       * Build a Thai-language subject + HTML body from the current form state.
+       * Mirrors DocumentEmailService.BuildDefaultTemplate so the preview matches
+       * what the server would generate if the fields are left blank.
+       *
+       * Only overwrites fEmailSubject / fEmailBody if they're empty or still
+       * contain the auto-generated text — preserves any manual edits.
+       */
+      refreshEmailTemplate() {
+        const contactId = document.getElementById('fContact').value;
+        const docType = document.getElementById('fDocType').value;
+        const dateStr = document.getElementById('fDate').value;
+        const c = this.contacts.find(x => x.id === contactId);
+        const docTypeLabel = Layout.docTypeLabel(docType) || 'เอกสาร';
+        const customerName = c?.name || 'ลูกค้า';
+        const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        const companyName = company.name || '';
+        const total = parseFloat(document.getElementById('sumTotal')?.textContent?.replace(/,/g, '')) || 0;
+        const dateLabel = dateStr
+          ? new Date(dateStr).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          : '—';
+
+        const subject = `${docTypeLabel} - ${customerName}`;
+        // Use simple HTML so it renders in plain mail clients too. Doc number is
+        // unknown until the document is saved, so we leave it as a placeholder
+        // the server fills in from BuildDefaultTemplate when it arrives.
+        const body =
+`<div style="font-family:'Noto Sans Thai',sans-serif;max-width:600px;color:#1e293b">
+  <h2 style="color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px">${docTypeLabel}</h2>
+  <p>เรียน คุณ${customerName}</p>
+  <p>${companyName ? companyName + ' ' : ''}ขอส่ง${docTypeLabel}ลงวันที่ <strong>${dateLabel}</strong>${total > 0 ? ` ยอดสุทธิ <strong>${total.toLocaleString('en-US',{minimumFractionDigits:2})} บาท</strong>` : ''} ถึงท่าน ตามไฟล์แนบ</p>
+  <p>หากท่านมีข้อสงสัย หรือต้องการสอบถามรายละเอียดเพิ่มเติม กรุณาติดต่อกลับมายังอีเมลนี้</p>
+  <p style="margin-top:24px">ขอแสดงความนับถือ<br>${companyName || '(ระบบบัญชี Next Acc)'}</p>
+</div>`;
+
+        // Only fill subject/body if empty OR currently contains the previous
+        // auto-template (so user edits are preserved across contact/type changes).
+        const subjEl = document.getElementById('fEmailSubject');
+        if (subjEl && (!subjEl.value || subjEl.value === this._lastAutoSubject)) {
+          subjEl.value = subject;
+          this._lastAutoSubject = subject;
+        }
+        const bodyEl = document.getElementById('fEmailBody');
+        if (bodyEl && (!bodyEl.value || bodyEl.value === this._lastAutoBody)) {
+          bodyEl.value = body;
+          this._lastAutoBody = body;
+        }
       },
       async exportAll(format) {
         const api = Layout.api(); if (!api) return;
@@ -545,6 +619,9 @@
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
         document.getElementById('sumTotal').textContent = Layout.money(sub + vat - wht);
+        // Keep email template's amount in sync — only when email is enabled to
+        // avoid wasted DOM work on every keystroke during line editing.
+        if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
       },
       editingId: null,
       openCreate(side) {
@@ -576,6 +653,10 @@
         document.getElementById('fSendEmail').checked = false;
         document.getElementById('sendEmailFields').style.display = 'none';
         ['fEmailTo','fEmailCc','fEmailSubject','fEmailBody'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        // Reset auto-template watermarks so refreshEmailTemplate() can re-fill
+        // the cleared subject/body when the user picks a contact.
+        this._lastAutoSubject = '';
+        this._lastAutoBody = '';
         Layout.openModal('formModal');
       },
       async openEdit(id) {
@@ -609,6 +690,10 @@
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
+          // Reset email-template watermarks so the auto-template re-applies if
+          // the user enables "send email" on this Edit session.
+          this._lastAutoSubject = '';
+          this._lastAutoBody = '';
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
