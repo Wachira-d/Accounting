@@ -820,6 +820,20 @@
           if (d.status === 'Approved' || d.status === 'Sent') {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
           }
+          // e-Tax generation: shown for VAT-eligible types (TaxInvoice / Receipt /
+          // DebitNote / CreditNote) once approved, when no e-Tax record exists yet.
+          // Per Revenue Code §86 these are the only document types that can carry
+          // an e-Tax XML payload.
+          const etaxEligibleTypes = ['TaxInvoice', 'Receipt', 'DebitNote', 'CreditNote'];
+          const hasEtaxId = !!d.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
+          if (etaxEligibleTypes.includes(d.documentType)
+              && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')
+              && !hasEtaxId) {
+            actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
+          }
+          if (hasEtaxId) {
+            actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
+          }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
           }
@@ -829,8 +843,71 @@
       },
       async approve(id) {
         const api = Layout.api(); if (!api) return;
-        try { await api.approveDocument(id); Layout.closeModal('detailModal'); Layout.toast('อนุมัติเอกสารสำเร็จ'); await this.load(); }
-        catch (e) { Layout.toast(e.message, 'error'); }
+        try {
+          await api.approveDocument(id);
+          Layout.closeModal('detailModal');
+          // After approve the backend may auto-generate the e-Tax record (when
+          // the company has e-Tax enabled). Reload so the list shows the new
+          // e-Tax badge and download button.
+          Layout.toast('อนุมัติเอกสารสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /**
+       * Manually create the e-Tax Invoice XML record for an approved document.
+       * After success, the "Download PDF/A-3" action becomes available.
+       * Useful when company-level auto-generation is off, or when the auto-run
+       * failed (e.g. cert misconfigured) and the user fixed the issue.
+       */
+      async generateEtax(id) {
+        if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
+        try {
+          Layout.toast('กำลังสร้าง e-Tax Invoice ...', 'info');
+          const companyId = Layout.getCompanyId();
+          const res = await API.post(`/api/companies/${companyId}/etax/generate`, {
+            documentId: id,
+            signDigitally: false   // user can sign separately in the e-Tax page
+          });
+          if (res?.success === false) throw new Error(res.message || 'สร้างไม่สำเร็จ');
+          Layout.toast('สร้าง e-Tax Invoice สำเร็จ — ดาวน์โหลด PDF/A-3 ได้แล้ว');
+          // Re-open detail to refresh actions (now shows download button)
+          await this.detail(id);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'สร้าง e-Tax ไม่สำเร็จ', 'error'); }
+      },
+      /**
+       * Download the embedded-XML PDF/A-3 directly from the detail modal,
+       * without going through the PDF preview screen. Mirrors downloadEtaxPdf
+       * but takes etaxInvoiceId/documentId as args (the preview-screen flow
+       * relies on _currentPdfDoc which isn't set when triggered from detail).
+       */
+      async downloadEtaxPdfFromDetail(etaxInvoiceId, docId) {
+        if (!etaxInvoiceId || etaxInvoiceId === '00000000-0000-0000-0000-000000000000') {
+          Layout.toast('เอกสารนี้ยังไม่มี e-Tax — กรุณากดสร้าง e-Tax ก่อน', 'error');
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังเตรียม PDF/A-3 ...', 'info');
+          const url = api.etaxDownloadPdfUrl(etaxInvoiceId);
+          const token = localStorage.getItem('token');
+          const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) {
+            let serverMsg = '';
+            try { const j = await resp.json(); serverMsg = j?.message || ''; } catch(_) {}
+            throw new Error(serverMsg || `โหลดไม่สำเร็จ (${resp.status})`);
+          }
+          const blob = await resp.blob();
+          const docNum = (this._currentDoc?.documentNumber) || docId;
+          const filename = `etax_${docNum}.pdf`;
+          const a = document.createElement('a');
+          const u = URL.createObjectURL(blob);
+          a.href = u; a.download = filename;
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(u), 1000);
+          Layout.toast('ดาวน์โหลด PDF/A-3 สำเร็จ — ไฟล์มี XML ฝังในตัว');
+        } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error'); }
       },
       async voidDoc(id) {
         const api = Layout.api(); if (!api) return;
