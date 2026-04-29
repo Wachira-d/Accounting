@@ -541,3 +541,15 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .page-header { margin-bottom: 12px; }
   .page-title { font-size: 18px; }
 }
+
+/* ===== Language Switcher ===== */
+.lang-switcher { display: inline-flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--gray-200); background: var(--gray-50); }
+.lang-switcher button { padding: 4px 10px; font-size: 12px; font-weight: 600; background: transparent; color: var(--gray-500); border: none; cursor: pointer; transition: all .15s; font-family: inherit; letter-spacing: .5px; }
+.lang-switcher button.active { background: var(--primary); color: #fff; }
+.lang-switcher button:hover:not(.active) { background: var(--gray-100); color: var(--gray-700); }
+
+/* Landing page lang switcher (in nav-actions) */
+.nav-actions .lang-switcher { margin-right: 4px; }
+
+/* App header lang switcher */
+.header .lang-switcher { margin-right: 8px; }

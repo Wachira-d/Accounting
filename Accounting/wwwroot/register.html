@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>สมัครสมาชิก - Next Acc</title>
+  <title data-i18n="register.title">สมัครสมาชิก - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <script src="/js/inapp-browser-guard.js"></script>
@@ -13,46 +13,46 @@
     <div class="auth-left">
       <div>
         <a href="/" style="font-size:24px;font-weight:800;margin-bottom:48px;display:block">Next Acc</a>
-        <h2>เริ่มต้นใช้งานฟรี!</h2>
-        <p>Free Edition ใช้ฟรีตลอดชีพ — อัปเกรดเมื่อธุรกิจของคุณพร้อม</p>
+        <h2 data-i18n="register.welcome">เริ่มต้นใช้งานฟรี!</h2>
+        <p data-i18n="register.desc">Free Edition ใช้ฟรีตลอดชีพ — อัปเกรดเมื่อธุรกิจของคุณพร้อม</p>
         <ul class="features-list">
-          <li>✓ Free Edition ฟรีตลอดชีพ ไม่หมดอายุ</li>
-          <li>✓ ไม่ต้องผูกบัตรเครดิต</li>
-          <li>✓ ออกเอกสาร + บันทึกบัญชีได้ครบ</li>
-          <li>✓ ทดลอง Pro 14 วันก็ได้</li>
-          <li>✓ อัปเกรด/ยกเลิกได้ตลอด</li>
+          <li data-i18n="register.feat1">✓ Free Edition ฟรีตลอดชีพ ไม่หมดอายุ</li>
+          <li data-i18n="register.feat2">✓ ไม่ต้องผูกบัตรเครดิต</li>
+          <li data-i18n="register.feat3">✓ ออกเอกสาร + บันทึกบัญชีได้ครบ</li>
+          <li data-i18n="register.feat4">✓ ทดลอง Pro 14 วันก็ได้</li>
+          <li data-i18n="register.feat5">✓ อัปเกรด/ยกเลิกได้ตลอด</li>
         </ul>
       </div>
     </div>
     <div class="auth-right">
       <div class="auth-form">
-        <h1>สมัครสมาชิก</h1>
-        <p class="subtitle">กรอกข้อมูลเพื่อเริ่มต้นใช้งาน</p>
+        <h1 data-i18n="register.heading">สมัครสมาชิก</h1>
+        <p class="subtitle" data-i18n="register.subtitle">กรอกข้อมูลเพื่อเริ่มต้นใช้งาน</p>
 
         <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
 
         <form onsubmit="handleRegister(event)">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="form-group">
-              <label class="form-label">ชื่อ</label>
-              <input type="text" id="firstName" class="form-input" placeholder="ชื่อ" required>
+              <label class="form-label" data-i18n="register.firstName">ชื่อ</label>
+              <input type="text" id="firstName" class="form-input" data-i18n-placeholder="register.firstName" placeholder="ชื่อ" required>
             </div>
             <div class="form-group">
-              <label class="form-label">นามสกุล</label>
-              <input type="text" id="lastName" class="form-input" placeholder="นามสกุล" required>
+              <label class="form-label" data-i18n="register.lastName">นามสกุล</label>
+              <input type="text" id="lastName" class="form-input" data-i18n-placeholder="register.lastName" placeholder="นามสกุล" required>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">อีเมล</label>
+            <label class="form-label" data-i18n="login.emailLabel">อีเมล</label>
             <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
           </div>
           <div class="form-group">
-            <label class="form-label">ชื่อบริษัท</label>
-            <input type="text" id="companyName" class="form-input" placeholder="ชื่อบริษัทหรือกิจการ" required>
+            <label class="form-label" data-i18n="register.companyName">ชื่อบริษัท</label>
+            <input type="text" id="companyName" class="form-input" data-i18n-placeholder="register.companyPlaceholder" placeholder="ชื่อบริษัทหรือกิจการ" required>
           </div>
           <div class="form-group">
-            <label class="form-label">รหัสผ่าน</label>
-            <input type="password" id="password" class="form-input" placeholder="อย่างน้อย 8 ตัวอักษร" required minlength="8" autocomplete="new-password">
+            <label class="form-label" data-i18n="register.passwordLabel">รหัสผ่าน</label>
+            <input type="password" id="password" class="form-input" data-i18n-placeholder="register.passwordHint" placeholder="อย่างน้อย 8 ตัวอักษร" required minlength="8" autocomplete="new-password">
             <div id="pwHelp" style="margin-top:8px;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#374151">
               <div style="font-weight:600;margin-bottom:4px">เกณฑ์รหัสผ่าน:</div>
               <div id="pwLen" class="pw-rule">⚪ ความยาวอย่างน้อย 8 ตัวอักษร</div>
@@ -64,14 +64,14 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">ยืนยันรหัสผ่าน</label>
-            <input type="password" id="confirmPassword" class="form-input" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8" autocomplete="new-password">
+            <label class="form-label" data-i18n="register.confirmPassword">ยืนยันรหัสผ่าน</label>
+            <input type="password" id="confirmPassword" class="form-input" data-i18n-placeholder="register.confirmPlaceholder" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8" autocomplete="new-password">
             <div id="pwMatch" style="margin-top:6px;font-size:12px;color:#6b7280;display:none"></div>
           </div>
 
           <!-- Plan Selection -->
           <div class="form-group" style="margin-bottom:20px">
-            <label class="form-label" style="font-weight:600;margin-bottom:10px">เลือกแพ็กเกจที่ต้องการ</label>
+            <label class="form-label" style="font-weight:600;margin-bottom:10px" data-i18n="register.selectPlan">เลือกแพ็กเกจที่ต้องการ</label>
             <div id="planGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
               <label class="plan-card" data-plan="FreeTrial" style="cursor:pointer;padding:12px;border:2px solid #10B981;border-radius:10px;text-align:center;transition:all 0.15s;background:linear-gradient(135deg,#ecfdf5,#ffffff);position:relative">
                 <input type="radio" name="plan" value="FreeTrial" checked style="display:none">
@@ -113,12 +113,12 @@
               <span style="font-size:14px;color:var(--gray-600)">ยอมรับ <a href="#" style="color:var(--primary)">ข้อกำหนดการใช้งาน</a> และ <a href="#" style="color:var(--primary)">นโยบายความเป็นส่วนตัว</a></span>
             </label>
           </div>
-          <button type="submit" class="btn btn-primary w-full btn-lg" id="registerBtn">
+          <button type="submit" class="btn btn-primary w-full btn-lg" id="registerBtn" data-i18n="register.registerBtn">
             สมัครสมาชิกฟรี
           </button>
         </form>
 
-        <div class="auth-divider">หรือสมัครด้วย</div>
+        <div class="auth-divider" data-i18n="register.orRegisterWith">หรือสมัครด้วย</div>
 
         <div style="display:flex;gap:12px;margin-bottom:24px">
           <button type="button" onclick="handleGoogleRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
@@ -132,7 +132,7 @@
         </div>
 
         <p style="text-align:center;font-size:14px;color:var(--gray-600)">
-          มีบัญชีอยู่แล้ว? <a href="/login.html" style="color:var(--primary);font-weight:600">เข้าสู่ระบบ</a>
+          <span data-i18n="register.hasAccount">มีบัญชีอยู่แล้ว?</span> <a href="/login.html" style="color:var(--primary);font-weight:600" data-i18n="register.loginLink">เข้าสู่ระบบ</a>
         </p>
       </div>
     </div>
@@ -143,8 +143,11 @@
   <!-- Facebook SDK -->
   <script async defer crossorigin="anonymous" src="https://connect.facebook.net/th_TH/sdk.js"></script>
 
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
   <script>
+    I18n.init();
     let ssoConfig = { google: '', facebook: '' };
     fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
       ssoConfig = d.data || d;

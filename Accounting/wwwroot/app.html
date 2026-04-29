@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>แดชบอร์ด - Next Acc</title>
+  <title data-i18n="dashboard.title">แดชบอร์ด - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -12,20 +12,20 @@
     <!-- KPI Cards -->
     <div class="page-header">
       <div>
-        <h2 class="page-title">แดชบอร์ด</h2>
-        <p class="page-subtitle">ภาพรวมธุรกิจ</p>
+        <h2 class="page-title" data-i18n="dashboard.heading">แดชบอร์ด</h2>
+        <p class="page-subtitle" data-i18n="dashboard.subtitle">ภาพรวมธุรกิจ</p>
       </div>
       <div class="flex gap-2" style="align-items:center">
         <select id="dashPreset" class="form-input" style="width:140px" onchange="Dashboard.applyPreset()">
-          <option value="thisMonth">เดือนนี้</option>
-          <option value="lastMonth">เดือนก่อน</option>
-          <option value="thisQuarter">ไตรมาสนี้</option>
-          <option value="thisYear">ปีนี้</option>
-          <option value="custom">กำหนดเอง</option>
+          <option value="thisMonth" data-i18n="common.thisMonth">เดือนนี้</option>
+          <option value="lastMonth" data-i18n="common.lastMonth">เดือนก่อน</option>
+          <option value="thisQuarter" data-i18n="common.thisQuarter">ไตรมาสนี้</option>
+          <option value="thisYear" data-i18n="common.thisYear">ปีนี้</option>
+          <option value="custom" data-i18n="common.custom">กำหนดเอง</option>
         </select>
         <input type="date" id="dashFrom" class="form-input" style="width:150px;display:none">
         <input type="date" id="dashTo" class="form-input" style="width:150px;display:none">
-        <button class="btn btn-primary" onclick="Dashboard.load()">โหลดข้อมูล</button>
+        <button class="btn btn-primary" onclick="Dashboard.load()" data-i18n="common.loadData">โหลดข้อมูล</button>
         <button class="btn btn-ghost" onclick="Dashboard.toggleCustomize()" title="ปรับแต่งวิดเจ็ต">⚙️</button>
         <button class="btn btn-ghost" onclick="Dashboard.exportPDF()" title="ส่งออก PDF">📄</button>
       </div>
@@ -34,45 +34,45 @@
     <!-- Widget Customization Panel -->
     <div id="widgetPanel" class="card" style="margin-bottom:16px;display:none;padding:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h4 style="margin:0">ปรับแต่งวิดเจ็ต</h4>
+        <h4 style="margin:0" data-i18n="layout.customizeWidgets">ปรับแต่งวิดเจ็ต</h4>
         <div class="flex gap-2">
-          <button class="btn btn-sm btn-secondary" onclick="Dashboard.resetWidgets()">รีเซ็ต</button>
-          <button class="btn btn-sm btn-primary" onclick="Dashboard.saveWidgets()">บันทึก</button>
+          <button class="btn btn-sm btn-secondary" onclick="Dashboard.resetWidgets()" data-i18n="common.reset">รีเซ็ต</button>
+          <button class="btn btn-sm btn-primary" onclick="Dashboard.saveWidgets()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
       <div id="widgetList" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     </div>
 
     <div class="grid grid-4 gap-4 dash-widget" data-widget="kpiMain" id="kpiCards" style="margin-bottom:24px">
-      <div class="kpi-card"><div class="kpi-label">รายได้รวม</div><div class="kpi-value" id="kpiRevenue">-</div></div>
-      <div class="kpi-card"><div class="kpi-label">ค่าใช้จ่ายรวม</div><div class="kpi-value" id="kpiExpense">-</div></div>
-      <div class="kpi-card"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value" id="kpiNet">-</div></div>
-      <div class="kpi-card"><div class="kpi-label">เงินสดคงเหลือ</div><div class="kpi-value" id="kpiCash">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.totalRevenue">รายได้รวม</div><div class="kpi-value" id="kpiRevenue">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.totalExpense">ค่าใช้จ่ายรวม</div><div class="kpi-value" id="kpiExpense">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.netProfit">กำไรสุทธิ</div><div class="kpi-value" id="kpiNet">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.cashBalance">เงินสดคงเหลือ</div><div class="kpi-value" id="kpiCash">-</div></div>
     </div>
 
     <div class="grid grid-4 gap-4 dash-widget" data-widget="kpiSecondary" style="margin-bottom:24px">
-      <div class="kpi-card" title="ยอดลูกหนี้ค้างชำระจากเอกสารที่อนุมัติแล้ว (ไม่รวมร่าง)"><div class="kpi-label">ลูกหนี้ค้างชำระ</div><div class="kpi-value text-warning" id="kpiAR">-</div></div>
-      <div class="kpi-card" title="ยอดเจ้าหนี้ค้างชำระจากเอกสารที่อนุมัติแล้ว (ไม่รวมร่าง)"><div class="kpi-label">เจ้าหนี้ค้างชำระ</div><div class="kpi-value text-danger" id="kpiAP">-</div></div>
-      <div class="kpi-card" title="ใบแจ้งหนี้และใบกำกับภาษี — ตามประมวลรัษฎากร §86 ทั้งสองเป็นเอกสารคนละประเภท"><div class="kpi-label">ใบแจ้งหนี้/ใบกำกับภาษี</div><div class="kpi-value" id="kpiInvoices">-</div><div class="text-xs text-gray-500" id="kpiInvoicesBreakdown" style="margin-top:4px">-</div></div>
-      <div class="kpi-card" title="เอกสารร่างที่รอการอนุมัติ — ยังไม่บันทึกบัญชีจนกว่าจะอนุมัติ"><div class="kpi-label">รออนุมัติ</div><div class="kpi-value text-primary" id="kpiPending">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.receivables">ลูกหนี้ค้างชำระ</div><div class="kpi-value text-warning" id="kpiAR">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.payables">เจ้าหนี้ค้างชำระ</div><div class="kpi-value text-danger" id="kpiAP">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.invoicesTaxInvoices">ใบแจ้งหนี้/ใบกำกับภาษี</div><div class="kpi-value" id="kpiInvoices">-</div><div class="text-xs text-gray-500" id="kpiInvoicesBreakdown" style="margin-top:4px">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.pendingApproval">รออนุมัติ</div><div class="kpi-value text-primary" id="kpiPending">-</div></div>
     </div>
 
     <!-- Charts Row -->
     <div class="grid grid-2 gap-4 dash-widget" data-widget="charts" style="margin-bottom:24px">
       <div class="card">
-        <div class="card-header"><h3 class="card-title">แนวโน้มรายได้/ค่าใช้จ่าย</h3></div>
+        <div class="card-header"><h3 class="card-title" data-i18n="dashboard.revenueTrend">แนวโน้มรายได้/ค่าใช้จ่าย</h3></div>
         <div id="revenueTrendChart" style="height:280px;display:flex;align-items:flex-end;gap:4px;padding:20px 0"></div>
       </div>
       <div class="card">
-        <div class="card-header"><h3 class="card-title">กระแสเงินสด</h3></div>
+        <div class="card-header"><h3 class="card-title" data-i18n="dashboard.cashFlow">กระแสเงินสด</h3></div>
         <div id="cashFlowChart" style="padding:20px 0">
           <div class="grid grid-3 gap-4 text-center">
-            <div><div class="text-sm text-gray-500">ยอดเปิด</div><div class="text-xl font-bold" id="cfOpen">-</div></div>
-            <div><div class="text-sm text-gray-500">รับเข้า</div><div class="text-xl font-bold text-success" id="cfIn">-</div></div>
-            <div><div class="text-sm text-gray-500">จ่ายออก</div><div class="text-xl font-bold text-danger" id="cfOut">-</div></div>
+            <div><div class="text-sm text-gray-500" data-i18n="dashboard.openingBal">ยอดเปิด</div><div class="text-xl font-bold" id="cfOpen">-</div></div>
+            <div><div class="text-sm text-gray-500" data-i18n="dashboard.inflows">รับเข้า</div><div class="text-xl font-bold text-success" id="cfIn">-</div></div>
+            <div><div class="text-sm text-gray-500" data-i18n="dashboard.outflows">จ่ายออก</div><div class="text-xl font-bold text-danger" id="cfOut">-</div></div>
           </div>
           <div style="margin-top:20px;background:var(--gray-100);border-radius:8px;padding:16px;text-align:center">
-            <div class="text-sm text-gray-500">ยอดปิด</div>
+            <div class="text-sm text-gray-500" data-i18n="dashboard.closingBal">ยอดปิด</div>
             <div class="text-2xl font-bold text-primary" id="cfClose">-</div>
           </div>
         </div>
@@ -82,19 +82,19 @@
     <!-- Tables Row -->
     <div class="grid grid-2 gap-4 dash-widget" data-widget="topTables" style="margin-bottom:24px">
       <div class="card">
-        <div class="card-header"><h3 class="card-title">ลูกค้ารายใหญ่</h3></div>
+        <div class="card-header"><h3 class="card-title" data-i18n="dashboard.topCustomers">ลูกค้ารายใหญ่</h3></div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th>ลูกค้า</th><th class="text-right">ยอดรวม</th><th class="text-right">จำนวนเอกสาร</th></tr></thead>
+            <thead><tr><th data-i18n="dashboard.thCustomer">ลูกค้า</th><th class="text-right" data-i18n="dashboard.thTotal">ยอดรวม</th><th class="text-right" data-i18n="dashboard.thDocCount">จำนวนเอกสาร</th></tr></thead>
             <tbody id="topCustomers"><tr><td colspan="3" class="text-center text-gray-400">-</td></tr></tbody>
           </table>
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><h3 class="card-title">ค่าใช้จ่ายสูงสุด</h3></div>
+        <div class="card-header"><h3 class="card-title" data-i18n="dashboard.topExpenses">ค่าใช้จ่ายสูงสุด</h3></div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th>หมวดหมู่</th><th class="text-right">จำนวนเงิน</th><th class="text-right">สัดส่วน</th></tr></thead>
+            <thead><tr><th data-i18n="dashboard.thCategory">หมวดหมู่</th><th class="text-right" data-i18n="dashboard.thAmount">จำนวนเงิน</th><th class="text-right" data-i18n="dashboard.thPercent">สัดส่วน</th></tr></thead>
             <tbody id="topExpenses"><tr><td colspan="3" class="text-center text-gray-400">-</td></tr></tbody>
           </table>
         </div>
@@ -104,7 +104,7 @@
     <!-- Overdue & Upcoming -->
     <div class="grid grid-2 gap-4 dash-widget" data-widget="overdue">
       <div class="card">
-        <div class="card-header"><h3 class="card-title">ใบแจ้งหนี้/ใบกำกับภาษีเกินกำหนด</h3></div>
+        <div class="card-header"><h3 class="card-title" data-i18n="dashboard.overdueInvoices">ใบแจ้งหนี้/ใบกำกับภาษีเกินกำหนด</h3></div>
         <div class="table-container" style="border:none">
           <table class="table">
             <thead><tr><th>เลขที่</th><th>ลูกค้า</th><th class="text-right">ค้างชำระ</th><th>เกิน</th></tr></thead>
@@ -113,7 +113,7 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><h3 class="card-title">รายจ่ายที่ถึงกำหนด</h3></div>
+        <div class="card-header"><h3 class="card-title" data-i18n="dashboard.upcomingPayables">รายจ่ายที่ถึงกำหนด</h3></div>
         <div class="table-container" style="border:none">
           <table class="table">
             <thead><tr><th>เลขที่</th><th>ผู้จำหน่าย</th><th class="text-right">ค้างชำระ</th><th>อีก</th></tr></thead>
@@ -125,16 +125,18 @@
 
     <!-- Bank Balances -->
     <div class="card dash-widget" data-widget="bank" style="margin-top:24px">
-      <div class="card-header"><h3 class="card-title">ยอดเงินในบัญชีธนาคาร</h3></div>
+      <div class="card-header"><h3 class="card-title" data-i18n="dashboard.bankBalances">ยอดเงินในบัญชีธนาคาร</h3></div>
       <div class="table-container" style="border:none">
         <table class="table">
-          <thead><tr><th>บัญชี</th><th>ธนาคาร</th><th>สกุลเงิน</th><th class="text-right">ยอดคงเหลือ</th></tr></thead>
+          <thead><tr><th data-i18n="dashboard.thAccount">บัญชี</th><th data-i18n="dashboard.thBank">ธนาคาร</th><th data-i18n="dashboard.thCurrency">สกุลเงิน</th><th class="text-right" data-i18n="dashboard.thBankBalance">ยอดคงเหลือ</th></tr></thead>
           <tbody id="bankBalances"><tr><td colspan="4" class="text-center text-gray-400">-</td></tr></tbody>
         </table>
       </div>
     </div>
   </div>
 
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/dbd-lookup.js"></script>
   <script src="/js/layout.js"></script>

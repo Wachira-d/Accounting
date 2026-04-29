@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>เข้าสู่ระบบ - Next Acc</title>
+  <title data-i18n="login.title">เข้าสู่ระบบ - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <script src="/js/inapp-browser-guard.js"></script>
@@ -13,45 +13,45 @@
     <div class="auth-left">
       <div>
         <a href="/" style="font-size:24px;font-weight:800;margin-bottom:48px;display:block">Next Acc</a>
-        <h2>ยินดีต้อนรับกลับ!</h2>
-        <p>เข้าสู่ระบบเพื่อจัดการบัญชีธุรกิจของคุณ</p>
+        <h2 data-i18n="login.welcome">ยินดีต้อนรับกลับ!</h2>
+        <p data-i18n="login.desc">เข้าสู่ระบบเพื่อจัดการบัญชีธุรกิจของคุณ</p>
         <ul class="features-list">
-          <li>✓ ระบบบัญชีครบวงจร 47 โมดูล</li>
-          <li>✓ รองรับภาษีไทย 100%</li>
-          <li>✓ AI อัจฉริยะช่วยจัดหมวดหมู่</li>
-          <li>✓ รายงานเรียลไทม์</li>
-          <li>✓ ปลอดภัยด้วย JWT & 2FA</li>
+          <li data-i18n="login.feat1">✓ ระบบบัญชีครบวงจร 47 โมดูล</li>
+          <li data-i18n="login.feat2">✓ รองรับภาษีไทย 100%</li>
+          <li data-i18n="login.feat3">✓ AI อัจฉริยะช่วยจัดหมวดหมู่</li>
+          <li data-i18n="login.feat4">✓ รายงานเรียลไทม์</li>
+          <li data-i18n="login.feat5">✓ ปลอดภัยด้วย JWT & 2FA</li>
         </ul>
       </div>
     </div>
     <div class="auth-right">
       <div class="auth-form">
-        <h1>เข้าสู่ระบบ</h1>
-        <p class="subtitle">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</p>
+        <h1 data-i18n="login.heading">เข้าสู่ระบบ</h1>
+        <p class="subtitle" data-i18n="login.subtitle">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</p>
 
         <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
 
         <form onsubmit="handleLogin(event)">
           <div class="form-group">
-            <label class="form-label">อีเมล</label>
+            <label class="form-label" data-i18n="login.emailLabel">อีเมล</label>
             <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
           </div>
           <div class="form-group">
-            <label class="form-label">รหัสผ่าน</label>
-            <input type="password" id="password" class="form-input" placeholder="กรอกรหัสผ่าน" required>
+            <label class="form-label" data-i18n="login.passwordLabel">รหัสผ่าน</label>
+            <input type="password" id="password" class="form-input" data-i18n-placeholder="login.passwordPlaceholder" placeholder="กรอกรหัสผ่าน" required>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
             <label class="form-checkbox">
-              <input type="checkbox"> <span style="font-size:14px;color:var(--gray-600)">จดจำฉัน</span>
+              <input type="checkbox"> <span style="font-size:14px;color:var(--gray-600)" data-i18n="login.rememberMe">จดจำฉัน</span>
             </label>
-            <a href="#" style="font-size:14px;color:var(--primary)">ลืมรหัสผ่าน?</a>
+            <a href="#" style="font-size:14px;color:var(--primary)" data-i18n="login.forgotPassword">ลืมรหัสผ่าน?</a>
           </div>
-          <button type="submit" class="btn btn-primary w-full btn-lg" id="loginBtn">
+          <button type="submit" class="btn btn-primary w-full btn-lg" id="loginBtn" data-i18n="login.loginBtn">
             เข้าสู่ระบบ
           </button>
         </form>
 
-        <div class="auth-divider">หรือเข้าสู่ระบบด้วย</div>
+        <div class="auth-divider" data-i18n="login.orLoginWith">หรือเข้าสู่ระบบด้วย</div>
 
         <div style="display:flex;gap:12px;margin-bottom:24px">
           <button type="button" id="googleBtn" onclick="handleGoogleLogin()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
@@ -65,7 +65,7 @@
         </div>
 
         <p style="text-align:center;font-size:14px;color:var(--gray-600)">
-          ยังไม่มีบัญชี? <a href="/register.html" style="color:var(--primary);font-weight:600">สมัครสมาชิกฟรี</a>
+          <span data-i18n="login.noAccount">ยังไม่มีบัญชี?</span> <a href="/register.html" style="color:var(--primary);font-weight:600" data-i18n="login.registerLink">สมัครสมาชิกฟรี</a>
         </p>
       </div>
     </div>
@@ -76,8 +76,11 @@
   <!-- Facebook SDK -->
   <script async defer crossorigin="anonymous" src="https://connect.facebook.net/th_TH/sdk.js"></script>
 
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
   <script>
+    I18n.init();
     // SSO config (loaded from server)
     let ssoConfig = { google: '', facebook: '' };
     fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
