@@ -24,4 +24,9 @@
     <PackageReference Include="QuestPDF" Version="2024.12.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Thai administrative codes (TISI 1099) for ETDA e-Tax XML -->
+    <EmbeddedResource Include="Resources\ThaiAdmin.csv" />
+  </ItemGroup>
+
 </Project>
