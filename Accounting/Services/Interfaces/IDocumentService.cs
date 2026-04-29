@@ -17,6 +17,8 @@ public interface IDocumentService
     /// <summary>ลบเอกสารถาวร: เฉพาะ Draft ที่ยังไม่กระทบบัญชี</summary>
     Task DeleteDocumentAsync(Guid companyId, Guid documentId);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
+    /// <summary>ตัดหนี้สูญ: Dr 64000 หนี้สูญ, Cr 113 ลูกหนี้ + เคลียร์เอกสาร</summary>
+    Task<DocumentResponse> WriteOffBadDebtAsync(Guid companyId, Guid documentId, string writtenOffBy, string? reason = null);
 
     // Contacts
     Task<ContactResponse> CreateContactAsync(Guid companyId, CreateContactRequest request);

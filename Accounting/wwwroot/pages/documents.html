@@ -834,6 +834,15 @@
           if (hasEtaxId) {
             actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
           }
+          // Bad debt write-off: only for AR docs that are still outstanding
+          const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
+          const outstandingStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
+          const balanceDue = Number(d.balanceDue || 0);
+          if (arTypes.includes(d.documentType)
+              && outstandingStatuses.includes(d.status)
+              && balanceDue > 0.01) {
+            actions += ` <button class="btn btn-warning" onclick="Page.writeOffBadDebt('${d.id}')" title="ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้">💸 ตัดหนี้สูญ</button>`;
+          }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
           }
@@ -944,6 +953,24 @@
           Layout.toast('ลบเอกสารสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      async writeOffBadDebt(id) {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผลการตัดหนี้สูญ (ไม่บังคับ):', '');
+        if (reason === null) return; // user cancelled
+        if (!(await Layout.confirmDanger({
+          title: 'ตัดหนี้สูญ (Bad Debt Write-off)',
+          message: 'ระบบจะสร้างใบสำคัญ JE: <strong>Dr หนี้สูญ, Cr ลูกหนี้การค้า</strong> ' +
+                   'และเคลียร์ยอดคงค้างของเอกสารนี้<br>' +
+                   '<strong style="color:#dc2626">การตัดหนี้สูญต้องเป็นไปตามเงื่อนไขประมวลรัษฎากร ม.65 ทวิ (9)</strong>',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.writeOffBadDebt(id, reason);
+          Layout.closeModal('detailModal');
+          Layout.toast('ตัดหนี้สูญสำเร็จ — สร้าง JE และเคลียร์เอกสารแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ตัดหนี้สูญไม่สำเร็จ', 'error'); }
       },
       async voidPayment(paymentId) {
         const api = Layout.api(); if (!api) return;

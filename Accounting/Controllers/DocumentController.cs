@@ -131,6 +131,19 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารสำเร็จ"));
     }
 
+    /// <summary>
+    /// ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้ และเคลียร์เอกสาร
+    /// ใช้สำหรับ Invoice/TaxInvoice/DebitNote ที่ลูกค้าผิดนัดและมั่นใจว่าจะไม่ได้รับเงิน
+    /// </summary>
+    [HttpPost("{documentId:guid}/write-off-bad-debt")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> WriteOffBadDebt(
+        Guid companyId, Guid documentId, [FromBody] WriteOffBadDebtRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _documentService.WriteOffBadDebtAsync(companyId, documentId, userId, request?.Reason);
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "ตัดหนี้สูญสำเร็จ"));
+    }
+
     // ===== Contacts =====
 
     [HttpGet("contacts")]

@@ -155,3 +155,6 @@ public record PaymentResponse(
     string? Reference,
     string? BankAccount,
     DateTime CreatedAt);
+
+
+public record WriteOffBadDebtRequest(string? Reason);
