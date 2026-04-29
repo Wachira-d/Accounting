@@ -396,6 +396,11 @@ public class DocumentService : IDocumentService
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
+                // Apply cross-document linkage: when a Receipt/CN/PaymentVoucher is
+                // approved with a RelatedDocumentId, the source document's balance
+                // must be updated so AR/AP aging and payment-status reports are correct.
+                await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
@@ -526,7 +531,12 @@ public class DocumentService : IDocumentService
                     etax.UpdatedAt = DateTime.UtcNow;
                 }
 
-                // 4) Finally void the document itself
+                // 4) Restore source document's balance if this was a derivative
+                //    (Receipt/CN/PaymentVoucher referencing another doc). Mirrors
+                //    the adjustment applied during ApproveDocumentAsync.
+                await RevertSourceDocumentAdjustmentsAsync(companyId, doc);
+
+                // 5) Finally void the document itself
                 doc.Status = DocumentStatus.Voided;
                 doc.UpdatedAt = DateTime.UtcNow;
 
@@ -664,6 +674,86 @@ public class DocumentService : IDocumentService
                 : DocumentStatus.PartiallyPaid;
         }
         doc.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Updates a source document's balance/status when a derivative (Receipt, CN, DN,
+    /// PaymentVoucher) referencing it is approved. This keeps AR/AP aging and per-document
+    /// status consistent with the GL.
+    ///
+    /// Rules (Thai accounting practice):
+    /// - Receipt/ReceiptVoucher with ref → settlement: source.PaidAmount += amount
+    /// - PaymentVoucher with ref → AP settlement: source.PaidAmount += amount
+    /// - CreditNote with ref → AR offset: source.PaidAmount += amount (treats as offset)
+    /// - DebitNote with ref → no source mutation (DN is a NEW AR, not adjustment)
+    ///
+    /// Validation: refuses if cumulative adjustments would exceed the source's TotalAmount
+    /// (i.e. you cannot refund/credit more than the customer owes).
+    ///
+    /// Caller is responsible for transaction + SaveChangesAsync.
+    /// </summary>
+    private async Task ApplySourceDocumentAdjustmentsAsync(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue) return;
+
+        var typeAffectsSource = doc.DocumentType == DocumentType.Receipt
+            || doc.DocumentType == DocumentType.ReceiptVoucher
+            || doc.DocumentType == DocumentType.PaymentVoucher
+            || doc.DocumentType == DocumentType.CreditNote;
+        if (!typeAffectsSource) return;
+
+        var source = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
+        if (source == null) return;
+
+        // Validate: cumulative adjustments cannot exceed source's TotalAmount.
+        // Example: TaxInvoice 5,000 → cannot create CN 50,000 against it.
+        if (doc.TotalAmount > source.BalanceDue + 0.01m)
+            throw new InvalidOperationException(
+                $"จำนวนเงิน ({doc.TotalAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
+                $"{source.DocumentNumber} (คงค้าง {source.BalanceDue:N2})");
+
+        // All four types reduce the source's outstanding balance the same way.
+        source.PaidAmount += doc.TotalAmount;
+        source.BalanceDue = source.TotalAmount - source.PaidAmount;
+        if (source.Status != DocumentStatus.Voided)
+        {
+            source.Status = source.BalanceDue <= 0.01m
+                ? DocumentStatus.Paid
+                : DocumentStatus.PartiallyPaid;
+        }
+        source.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Reverse of ApplySourceDocumentAdjustmentsAsync — called from VoidDocumentAsync
+    /// when a derivative document is voided, to restore the source's balance.
+    /// </summary>
+    private async Task RevertSourceDocumentAdjustmentsAsync(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue) return;
+
+        var typeAffectsSource = doc.DocumentType == DocumentType.Receipt
+            || doc.DocumentType == DocumentType.ReceiptVoucher
+            || doc.DocumentType == DocumentType.PaymentVoucher
+            || doc.DocumentType == DocumentType.CreditNote;
+        if (!typeAffectsSource) return;
+
+        var source = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
+        if (source == null) return;
+
+        source.PaidAmount = Math.Max(0m, source.PaidAmount - doc.TotalAmount);
+        source.BalanceDue = source.TotalAmount - source.PaidAmount;
+        if (source.Status != DocumentStatus.Voided)
+        {
+            source.Status = source.PaidAmount <= 0.01m
+                ? DocumentStatus.Approved
+                : source.BalanceDue <= 0.01m
+                    ? DocumentStatus.Paid
+                    : DocumentStatus.PartiallyPaid;
+        }
+        source.UpdatedAt = DateTime.UtcNow;
     }
 
     public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)
