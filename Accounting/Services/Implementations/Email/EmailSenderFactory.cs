@@ -53,12 +53,49 @@ public class EmailSenderFactory : IEmailSenderFactory
 
     public IEmailSender GetGlobalFallbackSender()
     {
+        // Try DB SiteSettings first (managed by admin via UI), fall back to appsettings.json
+        try
+        {
+            var siteSettings = _db.SiteSettings.FirstOrDefault();
+            if (siteSettings != null)
+            {
+                var sender = BuildSystemSender(siteSettings);
+                if (sender != null) return sender;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read SystemEmail from SiteSettings; falling back to appsettings.json");
+        }
+
         var host = _config["Email:SmtpHost"] ?? "";
         var port = int.TryParse(_config["Email:SmtpPort"], out var p) ? p : 587;
         var user = _config["Email:Username"];
         var pwd = _config["Email:Password"];
         var ssl = !bool.TryParse(_config["Email:UseSsl"], out var b) || b;
         return new SmtpEmailSender(host, port, user, pwd, ssl, _logger);
+    }
+
+    private IEmailSender? BuildSystemSender(SiteSettings s)
+    {
+        return s.SystemEmailProvider switch
+        {
+            EmailProvider.MicrosoftGraph when AllPresent(s.SystemMsTenantId, s.SystemMsClientId,
+                s.SystemMsClientSecret, s.SystemMsSenderUpn) =>
+                new MicrosoftGraphEmailSender(s.SystemMsTenantId!, s.SystemMsClientId!,
+                    s.SystemMsClientSecret!, s.SystemMsSenderUpn!, _httpFactory, _logger),
+
+            EmailProvider.GmailApi when AllPresent(s.SystemGmailClientId, s.SystemGmailClientSecret,
+                s.SystemGmailRefreshToken, s.SystemEmailFromAddress) =>
+                new GmailApiEmailSender(s.SystemGmailClientId!, s.SystemGmailClientSecret!,
+                    s.SystemGmailRefreshToken!, s.SystemEmailFromAddress!, _httpFactory, _logger),
+
+            EmailProvider.Smtp when !string.IsNullOrWhiteSpace(s.SystemSmtpHost) =>
+                new SmtpEmailSender(s.SystemSmtpHost!, s.SystemSmtpPort,
+                    s.SystemSmtpUsername, s.SystemSmtpPassword, s.SystemSmtpUseSsl, _logger),
+
+            _ => null
+        };
     }
 
     private static bool AllPresent(params string?[] values) =>

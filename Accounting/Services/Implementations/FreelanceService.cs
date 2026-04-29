@@ -12,11 +12,16 @@ public class FreelanceService : IFreelanceService
 {
     private readonly AccountingDbContext _db;
     private readonly INotificationService _notificationService;
+    private readonly IEmailService _emailService;
+    private readonly ILogger<FreelanceService> _logger;
 
-    public FreelanceService(AccountingDbContext db, INotificationService notificationService)
+    public FreelanceService(AccountingDbContext db, INotificationService notificationService,
+        IEmailService emailService, ILogger<FreelanceService> logger)
     {
         _db = db;
         _notificationService = notificationService;
+        _emailService = emailService;
+        _logger = logger;
     }
 
     // ==================== Invitations ====================
@@ -52,6 +57,25 @@ public class FreelanceService : IFreelanceService
 
         _db.Set<FreelanceInvitation>().Add(invitation);
         await _db.SaveChangesAsync();
+
+        // Send invitation email via system email
+        try
+        {
+            var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
+            var inviter = await _db.Users.FirstOrDefaultAsync(u => u.Id == invitedByUserId);
+            await _emailService.SendInvitationAsync(
+                to: invitation.InviteeEmail,
+                inviteeName: invitation.InviteeName,
+                inviterName: inviter?.FullName ?? "ผู้ดูแลระบบ",
+                companyName: company?.Name ?? "บริษัท",
+                invitationToken: token,
+                role: "ผู้ทำบัญชี (Freelance)");
+        }
+        catch (Exception ex)
+        {
+            // Log but do not fail invitation creation — admin can resend later
+            _logger.LogError(ex, "Failed to send invitation email to {Email}", invitation.InviteeEmail);
+        }
 
         return MapInvitationToResponse(invitation);
     }

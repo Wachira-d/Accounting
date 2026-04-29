@@ -8,4 +8,6 @@ public interface IEmailService
     Task SendPaymentReminderAsync(string to, string contactName, string documentNumber, decimal amount, DateTime dueDate);
     Task SendNotificationEmailAsync(string to, string fullName, string title, string message, string? actionUrl = null);
     Task SendPayslipAsync(string to, string employeeName, string payrollPeriod, byte[] pdfAttachment);
+    Task SendInvitationAsync(string to, string inviteeName, string inviterName,
+        string companyName, string invitationToken, string role);
 }
