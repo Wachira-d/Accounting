@@ -47,7 +47,33 @@
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked><label for="fIsCustomer">ลูกค้า</label></div>
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier"><label for="fIsSupplier">ผู้จำหน่าย</label></div>
           </div>
-          <div class="form-group"><label class="form-label">ที่อยู่</label><textarea class="form-textarea" id="fAddress" rows="2"></textarea></div>
+          <div class="form-group">
+            <label class="form-label">
+              ที่อยู่ (เต็ม)
+              <span style="font-weight:normal;color:#64748b;font-size:12px">— วาง/พิมพ์ที่นี่ ระบบจะแยกส่วนข้างล่างให้อัตโนมัติ</span>
+            </label>
+            <textarea class="form-textarea" id="fAddress" rows="2" placeholder="เช่น 123/45 ถ.สุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพฯ 10110" onblur="Page.parseAddressIfEmpty()"></textarea>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="Page.parseAddress()">🔍 แยกที่อยู่อัตโนมัติ</button>
+          </div>
+
+          <details style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:10px" open>
+            <summary style="cursor:pointer;font-weight:600">รายละเอียดที่อยู่ (โครงสร้าง — สำหรับ e-Tax XML)</summary>
+            <div class="form-row" style="margin-top:8px">
+              <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
+              <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
+            </div>
+            <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
+              <div class="form-group"><label class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" class="form-input" id="fProvince"></div>
+              <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric"></div>
+            </div>
+            <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
+          </details>
+
           <div class="form-row">
             <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
             <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
@@ -113,16 +139,23 @@
         this._dbdAttached = true;
         const fillFromDbd = (result) => {
           if (!result) return;
-          // Use fillCompanyForm helper for consistent population across all fields
+          // Fill name + taxId + free-text address + structured address parts
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'fName',
             taxId: 'fTaxId',
-            address: 'fAddress'
+            address: 'fAddress',
+            addressParts: {
+              subDistrict: 'fSubDistrict',
+              district: 'fDistrict',
+              province: 'fProvince',
+              postalCode: 'fPostalCode'
+            }
           });
-          // If response gave us an address but no taxId in the box, set it
           if (result.juristicId && !document.getElementById('fTaxId').value) {
             document.getElementById('fTaxId').value = result.juristicId;
           }
+          // After DBD fills the free-text Address, auto-parse to extract building number + street
+          setTimeout(() => Page.parseAddressIfEmpty(), 50);
         };
         DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd);
         DbdLookup.attachTaxIdLookup(
@@ -131,10 +164,16 @@
           document.getElementById('fDbdBtn')
         );
       },
+      _allFieldIds: [
+        'fName','fTaxId','fBranch','fBranchName','fAddress',
+        'fBuildingNumber','fBuildingName','fStreetName',
+        'fSubDistrict','fDistrict','fProvince','fPostalCode',
+        'fPhone','fEmail','fContactPerson'
+      ],
       openCreate() {
         document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
         document.getElementById('editId').value = '';
-        ['fName','fTaxId','fBranch','fAddress','fPhone','fEmail','fContactPerson'].forEach(id => document.getElementById(id).value = '');
+        this._allFieldIds.forEach(id => document.getElementById(id).value = '');
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
         Layout.openModal('formModal');
@@ -147,14 +186,53 @@
         document.getElementById('fName').value = c.name;
         document.getElementById('fTaxId').value = c.taxId || '';
         document.getElementById('fBranch').value = c.branchCode || '';
+        document.getElementById('fBranchName').value = c.branchName || '';
         document.getElementById('fIsCustomer').checked = c.isCustomer;
         document.getElementById('fIsSupplier').checked = c.isSupplier;
         document.getElementById('fAddress').value = c.address || '';
+        document.getElementById('fBuildingNumber').value = c.buildingNumber || '';
+        document.getElementById('fBuildingName').value = c.buildingName || '';
+        document.getElementById('fStreetName').value = c.streetName || '';
+        document.getElementById('fSubDistrict').value = c.subDistrict || '';
+        document.getElementById('fDistrict').value = c.district || '';
+        document.getElementById('fProvince').value = c.province || '';
+        document.getElementById('fPostalCode').value = c.postalCode || '';
         document.getElementById('fPhone').value = c.phone || '';
         document.getElementById('fEmail').value = c.email || '';
         document.getElementById('fContactPerson').value = c.contactPerson || '';
         Layout.openModal('formModal');
         setTimeout(() => this._attachDbd(), 100);
+      },
+      async parseAddress() {
+        const text = document.getElementById('fAddress').value;
+        if (!text || !text.trim()) {
+          Layout.toast('กรุณาพิมพ์ที่อยู่ก่อน', 'error');
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const j = await api.parseAddress(text);
+          if (!j || !j.success) throw new Error((j && j.message) || 'แยกที่อยู่ไม่สำเร็จ');
+          const p = j.data || {};
+          if (p.buildingNumber) document.getElementById('fBuildingNumber').value = p.buildingNumber;
+          if (p.buildingName) document.getElementById('fBuildingName').value = p.buildingName;
+          if (p.streetName) document.getElementById('fStreetName').value = p.streetName;
+          if (p.subDistrict) document.getElementById('fSubDistrict').value = p.subDistrict;
+          if (p.district) document.getElementById('fDistrict').value = p.district;
+          if (p.province) document.getElementById('fProvince').value = p.province;
+          if (p.postalCode) document.getElementById('fPostalCode').value = p.postalCode;
+          Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
+        } catch (e) {
+          Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error');
+        }
+      },
+      parseAddressIfEmpty() {
+        // Auto-trigger parse on blur only if structured fields are empty
+        const empty = ['fBuildingNumber','fSubDistrict','fDistrict','fProvince','fPostalCode']
+          .every(id => !document.getElementById(id).value);
+        if (empty && document.getElementById('fAddress').value.trim()) {
+          this.parseAddress();
+        }
       },
       async save() {
         const api = Layout.api(); if (!api) return;
@@ -163,9 +241,17 @@
           name: document.getElementById('fName').value,
           taxId: document.getElementById('fTaxId').value || null,
           branchCode: document.getElementById('fBranch').value || null,
+          branchName: document.getElementById('fBranchName').value || null,
           isCustomer: document.getElementById('fIsCustomer').checked,
           isSupplier: document.getElementById('fIsSupplier').checked,
           address: document.getElementById('fAddress').value || null,
+          buildingNumber: document.getElementById('fBuildingNumber').value || null,
+          buildingName: document.getElementById('fBuildingName').value || null,
+          streetName: document.getElementById('fStreetName').value || null,
+          subDistrict: document.getElementById('fSubDistrict').value || null,
+          district: document.getElementById('fDistrict').value || null,
+          province: document.getElementById('fProvince').value || null,
+          postalCode: document.getElementById('fPostalCode').value || null,
           phone: document.getElementById('fPhone').value || null,
           email: document.getElementById('fEmail').value || null,
           contactPerson: document.getElementById('fContactPerson').value || null,

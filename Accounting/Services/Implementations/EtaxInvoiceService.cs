@@ -766,11 +766,17 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var taxId = ComposeTxId(company.TaxId, company.BranchCode, taxIdSchemeId);
 
         var postCode = NormalizePostcode(company.PostalCode, company.Address);
-        var buildingNo = ExtractBuildingNumber(company.Address) ?? "0";
-        var streetLine = company.Address ?? "";
-        var subDistrict = company.SubDistrict ?? "00";
-        var district = company.District ?? "00";
-        var province = company.Province ?? "00";
+        // Prefer the dedicated structured field; fall back to extracting from address text
+        var buildingNo = !string.IsNullOrEmpty(company.BuildingNumber)
+            ? company.BuildingNumber!
+            : (ExtractBuildingNumber(company.Address) ?? "0");
+        // Compose a line-one address: street name (if structured) else free-text address
+        var streetLine = !string.IsNullOrEmpty(company.StreetName)
+            ? $"ถ.{company.StreetName}"
+            : (company.Address ?? "");
+        var subDistrict = !string.IsNullOrEmpty(company.SubDistrict) ? company.SubDistrict! : "00";
+        var district = !string.IsNullOrEmpty(company.District) ? company.District! : "00";
+        var province = !string.IsNullOrEmpty(company.Province) ? company.Province! : "00";
 
         return new XElement(ram + "SellerTradeParty",
             new XElement(ram + "Name", company.Name),
@@ -780,6 +786,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     taxId)),
             new XElement(ram + "PostalTradeAddress",
                 new XElement(ram + "PostcodeCode", postCode),
+                !string.IsNullOrEmpty(company.BuildingName)
+                    ? new XElement(ram + "BuildingName", company.BuildingName) : null,
                 !string.IsNullOrEmpty(streetLine) ? new XElement(ram + "LineOne", streetLine) : null,
                 new XElement(ram + "CityName", district),
                 new XElement(ram + "CitySubDivisionName", subDistrict),
@@ -791,12 +799,52 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
     /// <summary>
     /// Build BuyerTradeParty per Schematron TIV-BuyerTradeParty-007..009.
-    /// Buyer can use unstructured (LineOne only) format — we use this since contact
-    /// data typically only has free-text Address. PostcodeCode required if CountryID=TH.
+    /// If contact has structured fields (BuildingNumber/SubDistrict/District/Province),
+    /// emit fully structured form (preferred for ETDA validation).
+    /// Otherwise fall back to unstructured (LineOne only) — Schematron-007 allows this.
     /// </summary>
     private static XElement BuildBuyerParty(XNamespace ram, Contact contact, string schemeId, string txId)
     {
-        var postCode = NormalizePostcode(null, contact.Address);
+        var hasStructured =
+            !string.IsNullOrEmpty(contact.BuildingNumber)
+            && !string.IsNullOrEmpty(contact.SubDistrict)
+            && !string.IsNullOrEmpty(contact.District)
+            && !string.IsNullOrEmpty(contact.Province);
+
+        var postCode = NormalizePostcode(contact.PostalCode, contact.Address);
+        var addressElements = new List<object?>
+        {
+            !string.IsNullOrEmpty(postCode) ? new XElement(ram + "PostcodeCode", postCode) : null
+        };
+
+        if (hasStructured)
+        {
+            // Structured form — passes Schematron strictly
+            if (!string.IsNullOrEmpty(contact.BuildingName))
+                addressElements.Add(new XElement(ram + "BuildingName", contact.BuildingName));
+            // LineOne = composed street info; ETDA still accepts/expects this
+            var streetLine = !string.IsNullOrEmpty(contact.StreetName)
+                ? $"ถ.{contact.StreetName}"
+                : (contact.Address ?? "-");
+            addressElements.Add(new XElement(ram + "LineOne", streetLine));
+            addressElements.Add(new XElement(ram + "CityName", contact.District));
+            addressElements.Add(new XElement(ram + "CitySubDivisionName", contact.SubDistrict));
+            addressElements.Add(new XElement(ram + "CountryID",
+                new XAttribute("schemeID", "3166-1 alpha-2"),
+                contact.CountryCode ?? "TH"));
+            addressElements.Add(new XElement(ram + "CountrySubDivisionID", contact.Province));
+            addressElements.Add(new XElement(ram + "BuildingNumber", contact.BuildingNumber));
+        }
+        else
+        {
+            // Unstructured fallback — only LineOne required per TIV-BuyerTradeParty-007
+            addressElements.Add(!string.IsNullOrEmpty(contact.Address)
+                ? new XElement(ram + "LineOne", contact.Address)
+                : new XElement(ram + "LineOne", "-"));
+            addressElements.Add(new XElement(ram + "CountryID",
+                new XAttribute("schemeID", "3166-1 alpha-2"),
+                contact.CountryCode ?? "TH"));
+        }
 
         return new XElement(ram + "BuyerTradeParty",
             new XElement(ram + "Name", contact.Name),
@@ -804,14 +852,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 new XElement(ram + "ID",
                     new XAttribute("schemeID", schemeId),
                     txId)),
-            new XElement(ram + "PostalTradeAddress",
-                !string.IsNullOrEmpty(postCode)
-                    ? new XElement(ram + "PostcodeCode", postCode) : null,
-                !string.IsNullOrEmpty(contact.Address)
-                    ? new XElement(ram + "LineOne", contact.Address)
-                    : new XElement(ram + "LineOne", "-"),
-                new XElement(ram + "CountryID",
-                    new XAttribute("schemeID", "3166-1 alpha-2"), "TH")));
+            new XElement(ram + "PostalTradeAddress", addressElements.Where(e => e != null)));
     }
 
     /// <summary>Normalize postcode to 5 digits — first try the field, then extract from address.</summary>

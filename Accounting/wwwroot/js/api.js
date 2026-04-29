@@ -162,6 +162,7 @@ const API = {
       createContact: (d) => API.post(`${base}/document/contacts`, d),
       updateContact: (id, d) => API.put(`${base}/document/contacts/${id}`, d),
       getContactSmartDefaults: (id) => API.get(`${base}/document/contacts/${id}/smart-defaults`),
+      parseAddress: (text) => API.post(`${base}/document/contacts/parse-address`, { address: text }),
       // Payments
       getPayments: (q = '') => API.get(`${base}/document/payments${q}`),
       createPayment: (d) => API.post(`${base}/document/payments`, d),

@@ -1059,16 +1059,31 @@ public class DocumentService : IDocumentService
 
     public async Task<ContactResponse> CreateContactAsync(Guid companyId, CreateContactRequest request)
     {
+        // If structured fields are missing but free-text Address is provided,
+        // attempt to auto-parse so e-Tax XML has the data it needs.
+        var parsed = NeedsAutoParse(request) && !string.IsNullOrWhiteSpace(request.Address)
+            ? ThaiAddressParser.Parse(request.Address)
+            : null;
+
         var contact = new Contact
         {
             CompanyId = companyId,
             Name = request.Name,
             TaxId = request.TaxId,
             BranchCode = request.BranchCode,
+            BranchName = request.BranchName,
             ContactType = request.ContactType ?? InferContactType(request.TaxId, request.BranchCode),
             IsCustomer = request.IsCustomer,
             IsSupplier = request.IsSupplier,
             Address = request.Address,
+            BuildingNumber = request.BuildingNumber ?? parsed?.BuildingNumber,
+            BuildingName = request.BuildingName ?? parsed?.BuildingName,
+            StreetName = request.StreetName ?? parsed?.StreetName,
+            SubDistrict = request.SubDistrict ?? parsed?.SubDistrict,
+            District = request.District ?? parsed?.District,
+            Province = request.Province ?? parsed?.Province,
+            PostalCode = request.PostalCode ?? parsed?.PostalCode,
+            CountryCode = request.CountryCode ?? "TH",
             Phone = request.Phone,
             Email = request.Email,
             ContactPerson = request.ContactPerson
@@ -1079,6 +1094,11 @@ public class DocumentService : IDocumentService
 
         return MapContactToResponse(contact);
     }
+
+    private static bool NeedsAutoParse(CreateContactRequest r) =>
+        string.IsNullOrEmpty(r.BuildingNumber) && string.IsNullOrEmpty(r.SubDistrict)
+        && string.IsNullOrEmpty(r.District) && string.IsNullOrEmpty(r.Province)
+        && string.IsNullOrEmpty(r.PostalCode);
 
     public async Task<List<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null)
     {
@@ -1098,12 +1118,21 @@ public class DocumentService : IDocumentService
         if (request.Name != null) contact.Name = request.Name;
         if (request.TaxId != null) contact.TaxId = request.TaxId;
         if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
+        if (request.BranchName != null) contact.BranchName = request.BranchName;
         if (request.ContactType.HasValue) contact.ContactType = request.ContactType.Value;
         else if (request.TaxId != null || request.BranchCode != null)
             contact.ContactType = InferContactType(request.TaxId ?? contact.TaxId, request.BranchCode ?? contact.BranchCode);
         if (request.IsCustomer.HasValue) contact.IsCustomer = request.IsCustomer.Value;
         if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
         if (request.Address != null) contact.Address = request.Address;
+        if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
+        if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
+        if (request.StreetName != null) contact.StreetName = request.StreetName;
+        if (request.SubDistrict != null) contact.SubDistrict = request.SubDistrict;
+        if (request.District != null) contact.District = request.District;
+        if (request.Province != null) contact.Province = request.Province;
+        if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
+        if (request.CountryCode != null) contact.CountryCode = request.CountryCode;
         if (request.Phone != null) contact.Phone = request.Phone;
         if (request.Email != null) contact.Email = request.Email;
         if (request.ContactPerson != null) contact.ContactPerson = request.ContactPerson;
@@ -1823,7 +1852,16 @@ public class DocumentService : IDocumentService
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
-        c.Address, c.Phone, c.Email, c.ContactPerson, c.IsActive);
+        c.Address, c.Phone, c.Email, c.ContactPerson, c.IsActive,
+        BranchName: c.BranchName,
+        BuildingNumber: c.BuildingNumber,
+        BuildingName: c.BuildingName,
+        StreetName: c.StreetName,
+        SubDistrict: c.SubDistrict,
+        District: c.District,
+        Province: c.Province,
+        PostalCode: c.PostalCode,
+        CountryCode: c.CountryCode);
 
     // ==================== Smart Defaults ====================
 

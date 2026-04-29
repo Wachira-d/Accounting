@@ -81,17 +81,36 @@ public class DocumentLine : BaseEntity
 }
 
 /// <summary>
-/// Contact (ลูกค้า / ผู้ขาย)
+/// Contact (ลูกค้า / ผู้ขาย) — ที่อยู่เก็บแบบ structured ตามมาตรฐาน ETDA Schematron
+/// (ต้องมี BuildingNumber + ตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์ สำหรับ e-Tax XML).
+/// คงฟิลด์ Address ไว้เพื่อ backward compat — ใหม่ใช้ structured fields เป็นหลัก.
 /// </summary>
 public class Contact : TenantEntity
 {
     public string Name { get; set; } = null!;
     public string? TaxId { get; set; }
     public string? BranchCode { get; set; }
+    public string? BranchName { get; set; }
     public ContactType ContactType { get; set; } = ContactType.Individual;
     public bool IsCustomer { get; set; }
     public bool IsSupplier { get; set; }
+
+    // === Address fields (structured per ETDA TradePartyType) ===
+    /// <summary>Free-text address — kept for backward compat + display.
+    /// New code should prefer the structured fields below.</summary>
     public string? Address { get; set; }
+    /// <summary>บ้านเลขที่ — required by ETDA Schematron for CountryID=TH</summary>
+    public string? BuildingNumber { get; set; }
+    /// <summary>ชื่ออาคาร (optional)</summary>
+    public string? BuildingName { get; set; }
+    /// <summary>ถนน/ซอย</summary>
+    public string? StreetName { get; set; }
+    public string? SubDistrict { get; set; }   // ตำบล/แขวง
+    public string? District { get; set; }      // อำเภอ/เขต
+    public string? Province { get; set; }      // จังหวัด
+    public string? PostalCode { get; set; }    // 5 digits
+    public string CountryCode { get; set; } = "TH";
+
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public string? ContactPerson { get; set; }

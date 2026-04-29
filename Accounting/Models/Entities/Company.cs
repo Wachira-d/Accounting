@@ -21,12 +21,15 @@ public class Company : BaseEntity
     public bool IsSocialSecurityRegistered { get; set; } // จดทะเบียนประกันสังคม
     public string? SocialSecurityAccountNo { get; set; } // เลขที่บัญชีประกันสังคม
 
-    // Address (ที่อยู่ตามใบทะเบียน)
-    public string? Address { get; set; }
-    public string? SubDistrict { get; set; }             // แขวง/ตำบล
-    public string? District { get; set; }                // เขต/อำเภอ
-    public string? Province { get; set; }                // จังหวัด
-    public string? PostalCode { get; set; }              // รหัสไปรษณีย์
+    // Address (ที่อยู่ตามใบทะเบียน) — structured per ETDA Schematron
+    public string? Address { get; set; }                  // free-text fallback / display
+    public string? BuildingNumber { get; set; }           // บ้านเลขที่ (required by ETDA)
+    public string? BuildingName { get; set; }             // ชื่ออาคาร
+    public string? StreetName { get; set; }               // ถนน/ซอย
+    public string? SubDistrict { get; set; }              // แขวง/ตำบล
+    public string? District { get; set; }                 // เขต/อำเภอ
+    public string? Province { get; set; }                 // จังหวัด
+    public string? PostalCode { get; set; }               // รหัสไปรษณีย์ 5 digits
     public string? Phone { get; set; }
     public string? Fax { get; set; }
     public string? Email { get; set; }

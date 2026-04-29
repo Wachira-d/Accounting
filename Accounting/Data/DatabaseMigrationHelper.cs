@@ -60,6 +60,49 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "SignatureTitle" varchar(200) NULL;
             """,
 
+            // ===== Contacts: structured address fields (ETDA-compliant) =====
+            // Pre-existing schema had only `Address` text. New columns enable proper
+            // ETDA Schematron-conformant XML (BuildingNumber/CityName/CitySubDivisionName/
+            // CountrySubDivisionID required when CountryID=TH).
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BranchName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BuildingNumber" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BuildingName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "StreetName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "SubDistrict" varchar(100) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "District" varchar(100) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "Province" varchar(100) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PostalCode" varchar(10) NULL;
+            """,
+            """
+            ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "CountryCode" varchar(3) NOT NULL DEFAULT 'TH';
+            """,
+
+            // ===== Companies: structured address — add missing BuildingNumber/Name/StreetName =====
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "BuildingNumber" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "BuildingName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "StreetName" varchar(200) NULL;
+            """,
+
             // ===== Documents: currency field =====
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Currency" varchar(3) NOT NULL DEFAULT 'THB';

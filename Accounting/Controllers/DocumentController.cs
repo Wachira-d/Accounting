@@ -3,6 +3,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
 using Accounting.Models.DTOs.Email;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -177,6 +178,18 @@ public class DocumentController : ControllerBase
     {
         var result = await _documentService.GetContactSmartDefaultsAsync(companyId, contactId);
         return Ok(new ApiResponse<ContactSmartDefaults>(true, result));
+    }
+
+    /// <summary>
+    /// แปลงที่อยู่แบบ free-text → structured fields อัตโนมัติ (สำหรับ UI smart-fill)
+    /// ดึง บ้านเลขที่/ตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์ ออกจาก text
+    /// </summary>
+    [HttpPost("contacts/parse-address")]
+    public ActionResult<ApiResponse<ParsedAddressResponse>> ParseAddress(
+        Guid companyId, [FromBody] ParseAddressRequest request)
+    {
+        var result = ThaiAddressParser.Parse(request.Address);
+        return Ok(new ApiResponse<ParsedAddressResponse>(true, result));
     }
 
     // ===== Payments =====
