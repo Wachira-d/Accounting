@@ -36,7 +36,41 @@ const Layout = {
     this.initSignalR();
     // Page-level feature check — redirect to subscription if locked
     this._enforcePageAccess();
+    // Show banner if user has a legacy weak password
+    this._showPasswordWeakBannerIfNeeded();
     return true;
+  },
+
+  _showPasswordWeakBannerIfNeeded() {
+    let notice;
+    try { notice = JSON.parse(localStorage.getItem('passwordWeakNotice') || 'null'); } catch { return; }
+    if (!notice) return;
+    // If grace period expired, force redirect to change-password
+    if (notice.forced) {
+      window.location.href = '/change-password.html?required=1';
+      return;
+    }
+    if (sessionStorage.getItem('passwordWeakNoticeDismissed') === '1') return;
+
+    const banner = document.createElement('div');
+    banner.id = 'passwordWeakBanner';
+    banner.style.cssText = 'position:sticky;top:0;left:0;right:0;z-index:9999;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#78350f;padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+    const days = notice.daysRemaining ?? 0;
+    banner.innerHTML = `
+      <span style="font-size:18px">🔒</span>
+      <span style="flex:1">
+        <b>รหัสผ่านไม่ปลอดภัย</b> — กรุณาเปลี่ยนภายใน <b>${days} วัน</b>
+      </span>
+      <a href="/change-password.html" style="background:#78350f;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">เปลี่ยนเลย</a>
+      <button onclick="Layout._dismissPasswordWeakBanner()" style="background:transparent;border:none;color:#78350f;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+  },
+
+  _dismissPasswordWeakBanner() {
+    sessionStorage.setItem('passwordWeakNoticeDismissed', '1');
+    const el = document.getElementById('passwordWeakBanner');
+    if (el) el.remove();
   },
 
   // ===== Feature & Subscription Helpers =====

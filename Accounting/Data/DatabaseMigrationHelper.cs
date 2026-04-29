@@ -45,6 +45,9 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "EmailVerified" boolean NOT NULL DEFAULT false;
             """,
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "PasswordWeakDetectedAt" timestamp NULL;
+            """,
 
             // ===== Documents: currency field =====
             """

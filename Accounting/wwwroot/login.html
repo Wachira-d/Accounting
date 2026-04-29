@@ -157,6 +157,19 @@
           localStorage.setItem('token', token);
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           API.token = token;
+
+          // Handle weak password notice (legacy passwords not meeting current rules)
+          const notice = res.data.passwordWeakNotice;
+          if (notice) {
+            localStorage.setItem('passwordWeakNotice', JSON.stringify(notice));
+            sessionStorage.removeItem('passwordWeakNoticeDismissed');
+            if (notice.forced) {
+              window.location.href = '/change-password.html?required=1';
+              return;
+            }
+          } else {
+            localStorage.removeItem('passwordWeakNotice');
+          }
           window.location.href = '/app.html';
         } else {
           throw new Error(res.message || 'เข้าสู่ระบบไม่สำเร็จ');
