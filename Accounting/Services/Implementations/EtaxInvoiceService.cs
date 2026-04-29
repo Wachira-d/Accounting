@@ -531,12 +531,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
     private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null)
     {
-        // Document-type-specific root element + RAM namespace prefix
-        // Per ETDA Schematron, the RAM namespace MUST include the document-type prefix.
+        // Document-type-specific root element + RAM namespace prefix.
+        // Per ETDA Schematron rules:
+        //   TaxInvoice schema accepts TypeCode: 388 (ใบกำกับภาษี), T02 (ใบแจ้งหนี้/ใบกำกับภาษี),
+        //                              T03 (ใบเสร็จรับเงิน/ใบกำกับภาษี), T04 (ใบส่งของ/ใบกำกับภาษี)
+        //   Receipt schema accepts only T01 (ใบเสร็จรับเงิน standalone, non-VAT)
+        //   DebitCreditNote schema accepts 80 (ใบเพิ่มหนี้), 81 (ใบลดหนี้)
+        //
+        // Our DocumentType.Receipt represents the Thai-VAT-compliant
+        // "ใบเสร็จรับเงิน/ใบกำกับภาษี" combo → use TaxInvoice schema with T03.
+        // (Pure standalone Receipt T01 isn't currently exposed; companies that
+        // aren't VAT-registered shouldn't be issuing e-Tax anyway.)
         var rootElementName = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
-            DocumentType.Receipt => "Receipt_CrossIndustryInvoice",
+            DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",   // T03 → TaxInvoice schema
             DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
             DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
             _ => "TaxInvoice_CrossIndustryInvoice"
@@ -544,7 +553,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var ramSuffix = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
-            DocumentType.Receipt => "Receipt_ReusableAggregateBusinessInformationEntity",
+            DocumentType.Receipt => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
             DocumentType.DebitNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
             DocumentType.CreditNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
             _ => "TaxInvoice_ReusableAggregateBusinessInformationEntity"
@@ -552,19 +561,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var rsm = XNamespace.Get($"urn:etda:uncefact:data:standard:{rootElementName}:2");
         var ram = XNamespace.Get($"urn:etda:uncefact:data:standard:{ramSuffix}:2");
 
-        // TypeCode per UN/EDIFACT 1001 + ETDA: 388=TaxInvoice, T03=Receipt, 80=DebitNote, 81=CreditNote
+        // TypeCode per UN/EDIFACT 1001 + ETDA Schematron-validated codelist
         var docTypeCode = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "388",
-            DocumentType.Receipt => "T03",
+            DocumentType.Receipt => "T03",       // ใบเสร็จรับเงิน/ใบกำกับภาษี
             DocumentType.DebitNote => "80",
             DocumentType.CreditNote => "81",
             _ => "388"
         };
+        // Name MUST match the TypeCode-name pairing per Schematron TIV-Document-003 /
+        // DCN equivalents — exact strings, no extra qualifiers
         var docTypeName = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ",
+            DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",   // exact match required
             DocumentType.DebitNote => "ใบเพิ่มหนี้",
             DocumentType.CreditNote => "ใบลดหนี้",
             _ => "ใบกำกับภาษี"
@@ -714,8 +725,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         return xml.ToString();
     }
 
+    /// <summary>ISO 8601 with 3-digit fractional seconds — matches ETDA reference samples.</summary>
     private static string FormatIso(DateTime dt) =>
-        dt.ToString("yyyy-MM-ddTHH:mm:ss.f", CultureInfo.InvariantCulture);
+        dt.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Compose ID per Schematron rules:
