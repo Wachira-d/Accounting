@@ -756,12 +756,110 @@ public class DocumentService : IDocumentService
         source.UpdatedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Valid document conversions per Thai accounting workflow.
+    /// Each entry: source type → list of allowed target types.
+    /// Anything not listed is rejected to prevent illogical flows like
+    /// Quotation→CreditNote (CN must reference Invoice/TaxInvoice/sale).
+    /// </summary>
+    private static readonly Dictionary<DocumentType, DocumentType[]> ValidConversions = new()
+    {
+        // Sales side
+        [DocumentType.Quotation] = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.BillingNote, DocumentType.DeliveryNote,
+            DocumentType.Receipt
+        },
+        [DocumentType.BillingNote] = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt
+        },
+        [DocumentType.DeliveryNote] = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice
+        },
+        [DocumentType.Invoice] = new[]
+        {
+            DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher
+        },
+        [DocumentType.TaxInvoice] = new[]
+        {
+            DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.CreditNote, DocumentType.DebitNote
+        },
+        [DocumentType.DebitNote] = new[]
+        {
+            DocumentType.Receipt, DocumentType.ReceiptVoucher
+        },
+        // Purchase side
+        [DocumentType.PurchaseRequisition] = new[] { DocumentType.PurchaseOrder },
+        [DocumentType.PurchaseOrder] = new[]
+        {
+            DocumentType.PurchaseInvoice, DocumentType.Expense
+        },
+        [DocumentType.PurchaseInvoice] = new[] { DocumentType.PaymentVoucher },
+        [DocumentType.Expense] = new[] { DocumentType.PaymentVoucher }
+        // Terminal types (no further conversion):
+        // Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
+    };
+
+    /// <summary>Public accessor used by API endpoint to surface valid targets to UI.</summary>
+    public static IReadOnlyList<DocumentType> GetValidConversionTargets(DocumentType source) =>
+        ValidConversions.TryGetValue(source, out var targets) ? targets : Array.Empty<DocumentType>();
+
     public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)
     {
         var source = await _db.Documents
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // ===== Validation per Thai accounting workflow =====
+
+        // Block converting from Voided/Rejected source — they no longer reflect
+        // the customer's true position; new derivative would carry stale data.
+        if (source.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException(
+                $"เอกสาร {source.DocumentNumber} ถูกยกเลิกแล้ว ไม่สามารถแปลงเป็นเอกสารใหม่ได้");
+        if (source.Status == DocumentStatus.Rejected)
+            throw new InvalidOperationException(
+                $"เอกสาร {source.DocumentNumber} ถูกปฏิเสธ ไม่สามารถแปลงเป็นเอกสารใหม่ได้");
+
+        // Block converting to self (no-op)
+        if (source.DocumentType == targetType)
+            throw new InvalidOperationException(
+                $"ไม่สามารถแปลงเป็นเอกสารประเภทเดิม ({targetType})");
+
+        // Block invalid type-to-type conversion (e.g. Quotation→CreditNote)
+        var allowedTargets = GetValidConversionTargets(source.DocumentType);
+        if (!allowedTargets.Contains(targetType))
+        {
+            var allowedNames = string.Join(", ", allowedTargets);
+            throw new InvalidOperationException(
+                $"ไม่สามารถแปลง {source.DocumentType} → {targetType} ได้ตามมาตรฐานบัญชี " +
+                $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
+        }
+
+        // For derivative types that adjust source's balance, source must be approved
+        // and have outstanding balance. (CN/DN/Receipt validation happens at approval
+        // via ApplySourceDocumentAdjustmentsAsync, but warn earlier for better UX.)
+        var derivativeTypes = new[] {
+            DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.CreditNote, DocumentType.PaymentVoucher
+        };
+        if (derivativeTypes.Contains(targetType))
+        {
+            if (source.Status == DocumentStatus.Draft)
+                throw new InvalidOperationException(
+                    $"เอกสารต้นทาง {source.DocumentNumber} ยังเป็นฉบับร่าง — กรุณาอนุมัติก่อนแปลง");
+            if (source.BalanceDue <= 0.01m && targetType != DocumentType.CreditNote
+                && targetType != DocumentType.DebitNote)
+                throw new InvalidOperationException(
+                    $"เอกสาร {source.DocumentNumber} ไม่มียอดคงค้าง — ไม่สามารถแปลงเป็น {targetType}");
+        }
+
+        // ===== Build conversion =====
 
         var lines = source.Lines.Select(l => new DocumentLineRequest(
             l.Description, l.Quantity, l.Unit, l.UnitPrice,
@@ -1260,12 +1358,20 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
-        // Resolve fiscal period
+        // Resolve fiscal period — block posting to closed/locked periods per
+        // Thai accounting standard (TAS 1: closed period is immutable). If the
+        // document falls within a closed period, the user must reopen it first
+        // or re-date the document.
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId &&
             f.StartDate <= doc.DocumentDate &&
-            f.EndDate >= doc.DocumentDate &&
-            f.Status == FiscalPeriodStatus.Open);
+            f.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+        {
+            throw new InvalidOperationException(
+                $"ไม่สามารถบันทึกบัญชีในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว " +
+                $"กรุณาเปลี่ยนวันที่เอกสารเป็นงวดที่เปิดอยู่ หรือขอเปิดงวดก่อน");
+        }
 
         // Generate entry number
         var prefix = journalType switch

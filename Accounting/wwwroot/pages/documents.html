@@ -959,20 +959,39 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },
+      // Mirror of server-side ValidConversions in DocumentService.cs.
+      // Keep these in sync — server is source of truth and will reject invalid
+      // conversions, but pre-filtering improves UX.
+      _validConversions: {
+        Quotation:        ['Invoice','TaxInvoice','BillingNote','DeliveryNote','Receipt'],
+        BillingNote:      ['Invoice','TaxInvoice','Receipt'],
+        DeliveryNote:     ['Invoice','TaxInvoice'],
+        Invoice:          ['TaxInvoice','Receipt','ReceiptVoucher'],
+        TaxInvoice:       ['Receipt','ReceiptVoucher','CreditNote','DebitNote'],
+        DebitNote:        ['Receipt','ReceiptVoucher'],
+        PurchaseRequisition: ['PurchaseOrder'],
+        PurchaseOrder:    ['PurchaseInvoice','Expense'],
+        PurchaseInvoice:  ['PaymentVoucher'],
+        Expense:          ['PaymentVoucher']
+        // Terminal: Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
+      },
       openConvert(id) {
         document.getElementById('convertDocId').value = id;
-        // Filter conversion options based on source document type
         const doc = this._currentDoc;
         const select = document.getElementById('convertTarget');
         if (doc && select) {
-          const revenueTypes = ['Quotation','Invoice','TaxInvoice','Receipt','DebitNote','CreditNote','BillingNote','ReceiptVoucher'];
-          const expenseTypes = ['PurchaseOrder','PurchaseInvoice','PaymentVoucher','ExpenseNote'];
-          const isRevenue = revenueTypes.includes(doc.documentType);
+          const allowed = this._validConversions[doc.documentType] || [];
+          let firstVisible = null;
           Array.from(select.options).forEach(opt => {
-            const isRevenueTarget = revenueTypes.includes(opt.value);
-            const isExpenseTarget = expenseTypes.includes(opt.value);
-            opt.hidden = (isRevenue && isExpenseTarget) || (!isRevenue && isRevenueTarget);
+            // Hide if not in allowed list, or matches source (no-op convert)
+            opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
+            if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
           });
+          if (firstVisible) select.value = firstVisible;
+          if (!allowed.length) {
+            Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
+            return;
+          }
         }
         Layout.openModal('convertModal');
       },
