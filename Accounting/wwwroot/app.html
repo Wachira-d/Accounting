@@ -51,10 +51,10 @@
     </div>
 
     <div class="grid grid-4 gap-4 dash-widget" data-widget="kpiSecondary" style="margin-bottom:24px">
-      <div class="kpi-card"><div class="kpi-label">ลูกหนี้ค้างชำระ</div><div class="kpi-value text-warning" id="kpiAR">-</div></div>
-      <div class="kpi-card"><div class="kpi-label">เจ้าหนี้ค้างชำระ</div><div class="kpi-value text-danger" id="kpiAP">-</div></div>
-      <div class="kpi-card"><div class="kpi-label">ใบแจ้งหนี้ทั้งหมด</div><div class="kpi-value" id="kpiInvoices">-</div></div>
-      <div class="kpi-card"><div class="kpi-label">รออนุมัติ</div><div class="kpi-value text-primary" id="kpiPending">-</div></div>
+      <div class="kpi-card" title="ยอดลูกหนี้ค้างชำระจากเอกสารที่อนุมัติแล้ว (ไม่รวมร่าง)"><div class="kpi-label">ลูกหนี้ค้างชำระ</div><div class="kpi-value text-warning" id="kpiAR">-</div></div>
+      <div class="kpi-card" title="ยอดเจ้าหนี้ค้างชำระจากเอกสารที่อนุมัติแล้ว (ไม่รวมร่าง)"><div class="kpi-label">เจ้าหนี้ค้างชำระ</div><div class="kpi-value text-danger" id="kpiAP">-</div></div>
+      <div class="kpi-card" title="ใบแจ้งหนี้และใบกำกับภาษี — ตามประมวลรัษฎากร §86 ทั้งสองเป็นเอกสารคนละประเภท"><div class="kpi-label">ใบแจ้งหนี้/ใบกำกับภาษี</div><div class="kpi-value" id="kpiInvoices">-</div><div class="text-xs text-gray-500" id="kpiInvoicesBreakdown" style="margin-top:4px">-</div></div>
+      <div class="kpi-card" title="เอกสารร่างที่รอการอนุมัติ — ยังไม่บันทึกบัญชีจนกว่าจะอนุมัติ"><div class="kpi-label">รออนุมัติ</div><div class="kpi-value text-primary" id="kpiPending">-</div></div>
     </div>
 
     <!-- Charts Row -->
@@ -85,7 +85,7 @@
         <div class="card-header"><h3 class="card-title">ลูกค้ารายใหญ่</h3></div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th>ลูกค้า</th><th class="text-right">ยอดรวม</th><th class="text-right">จำนวนใบแจ้งหนี้</th></tr></thead>
+            <thead><tr><th>ลูกค้า</th><th class="text-right">ยอดรวม</th><th class="text-right">จำนวนเอกสาร</th></tr></thead>
             <tbody id="topCustomers"><tr><td colspan="3" class="text-center text-gray-400">-</td></tr></tbody>
           </table>
         </div>
@@ -104,7 +104,7 @@
     <!-- Overdue & Upcoming -->
     <div class="grid grid-2 gap-4 dash-widget" data-widget="overdue">
       <div class="card">
-        <div class="card-header"><h3 class="card-title">ใบแจ้งหนี้เกินกำหนด</h3></div>
+        <div class="card-header"><h3 class="card-title">ใบแจ้งหนี้/ใบกำกับภาษีเกินกำหนด</h3></div>
         <div class="table-container" style="border:none">
           <table class="table">
             <thead><tr><th>เลขที่</th><th>ลูกค้า</th><th class="text-right">ค้างชำระ</th><th>เกิน</th></tr></thead>
@@ -300,6 +300,10 @@
           document.getElementById('kpiAR').textContent = Layout.money(k.totalReceivables);
           document.getElementById('kpiAP').textContent = Layout.money(k.totalPayables);
           document.getElementById('kpiInvoices').textContent = k.totalInvoices ?? '-';
+          // Breakdown per Thai law: ใบแจ้งหนี้ vs ใบกำกับภาษี are legally distinct
+          const inv = k.invoiceCount ?? 0, tinv = k.taxInvoiceCount ?? 0;
+          const breakdownEl = document.getElementById('kpiInvoicesBreakdown');
+          if (breakdownEl) breakdownEl.textContent = `ใบแจ้งหนี้ ${inv} • ใบกำกับภาษี ${tinv}`;
           document.getElementById('kpiPending').textContent = k.pendingApprovals ?? '-';
 
           // Cash flow

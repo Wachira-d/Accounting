@@ -68,9 +68,10 @@ public class DocumentController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<DocumentResponse>>>> GetDocuments(
         Guid companyId, [FromQuery] DocumentType? type = null,
-        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
+        [FromQuery] Guid? projectId = null)
     {
-        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search));
+        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search), projectId);
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
 

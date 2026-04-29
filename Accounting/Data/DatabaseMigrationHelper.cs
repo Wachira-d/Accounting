@@ -59,6 +59,25 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "ProductCode" varchar(50) NULL;
             """,
 
+            // ===== Documents: Project linking (header-level) =====
+            // Tags an entire document to a project — propagates to JE.ProjectId
+            // on auto-post so per-project P&L picks up revenue/cost automatically.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_ProjectId" ON "Documents" ("ProjectId");
+            """,
+
+            // ===== DocumentLines: per-line project override =====
+            // Allows a single document to bill multiple projects (e.g. shared invoice).
+            """
+            ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_DocumentLines_ProjectId" ON "DocumentLines" ("ProjectId");
+            """,
+
             // ===== CompanySettings: e-Tax fields =====
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxEnabled" boolean NOT NULL DEFAULT false;

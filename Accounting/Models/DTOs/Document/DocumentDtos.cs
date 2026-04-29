@@ -9,7 +9,10 @@ public record CreateDocumentRequest(
     Guid ContactId,
     string? Reference,
     string? Notes,
-    List<DocumentLineRequest> Lines);
+    List<DocumentLineRequest> Lines,
+    // Project tagging — header default; lines may override individually.
+    // Auto-post propagates this to JournalEntry.ProjectId for per-project P&L.
+    Guid? ProjectId = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -19,7 +22,9 @@ public record DocumentLineRequest(
     decimal DiscountPercent,
     decimal VatRate,
     decimal WithholdingTaxRate,
-    Guid? AccountId);
+    Guid? AccountId,
+    // Optional per-line project override (null → inherits Document.ProjectId)
+    Guid? ProjectId = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -27,7 +32,8 @@ public record UpdateDocumentRequest(
     Guid? ContactId,
     string? Reference,
     string? Notes,
-    List<DocumentLineRequest>? Lines);
+    List<DocumentLineRequest>? Lines,
+    Guid? ProjectId = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -51,7 +57,11 @@ public record DocumentResponse(
     // The UI uses these to surface the "Download PDF/A-3 (with embedded XML)" action,
     // which is required for e-Tax by Email compliance — printing strips the XML payload.
     Guid? EtaxInvoiceId = null,
-    EtaxStatus? EtaxStatus = null);
+    EtaxStatus? EtaxStatus = null,
+    // Project link — populated when document is tagged to a project for cost tracking
+    Guid? ProjectId = null,
+    string? ProjectCode = null,
+    string? ProjectName = null);
 
 public record DocumentLineResponse(
     Guid Id,
@@ -66,7 +76,8 @@ public record DocumentLineResponse(
     decimal VatRate,
     decimal VatAmount,
     decimal WithholdingTaxRate,
-    decimal WithholdingTaxAmount);
+    decimal WithholdingTaxAmount,
+    Guid? ProjectId = null);
 
 public record ContactBrief(Guid Id, string Name, string? TaxId);
 

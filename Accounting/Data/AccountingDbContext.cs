@@ -413,6 +413,9 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.BalanceDue).HasPrecision(18, 2);
             e.Property(d => d.Currency).HasMaxLength(3);
             e.HasOne(d => d.Contact).WithMany(c => c.Documents).HasForeignKey(d => d.ContactId).OnDelete(DeleteBehavior.Restrict);
+            // Project link (nullable) — preserves doc when project is deleted
+            e.HasOne(d => d.Project).WithMany().HasForeignKey(d => d.ProjectId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(d => d.ProjectId);
             e.HasQueryFilter(d => !d.IsDeleted);
         });
 
@@ -420,6 +423,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<DocumentLine>(e =>
         {
             e.HasOne(l => l.Document).WithMany(d => d.Lines).HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.Project).WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(l => l.ProjectId);
             e.Property(l => l.Quantity).HasPrecision(18, 4);
             e.Property(l => l.UnitPrice).HasPrecision(18, 2);
             e.Property(l => l.Amount).HasPrecision(18, 2);

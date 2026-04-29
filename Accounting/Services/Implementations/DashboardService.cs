@@ -83,17 +83,25 @@ public class DashboardService : IDashboardService
         var prevRevenue = (prevRevGroup?.TotalCredit ?? 0) - (prevRevGroup?.TotalDebit ?? 0);
         var prevExpenses = (prevExpGroup?.TotalDebit ?? 0) - (prevExpGroup?.TotalCredit ?? 0);
 
+        // Per Thai GAAP / IFRS, AR/AP is recognized only when the document is issued
+        // (Approved or beyond) — Draft documents are internal-only and don't yet
+        // create a legal receivable/payable. Excluding Draft prevents inflated balances.
+        var arApStatuses = new[] {
+            DocumentStatus.Approved, DocumentStatus.Sent,
+            DocumentStatus.PartiallyPaid, DocumentStatus.Overdue
+        };
+
         // Sequential queries — DbContext is NOT thread-safe, cannot use Task.WhenAll
         var receivables = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
+                && arApStatuses.Contains(d.Status))
             .SumAsync(d => d.BalanceDue);
 
         var payables = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.DocumentType == DocumentType.PurchaseInvoice
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid)
+                && arApStatuses.Contains(d.Status))
             .SumAsync(d => d.BalanceDue);
 
         var bankBalance = await _db.BankAccounts
@@ -107,16 +115,37 @@ public class DashboardService : IDashboardService
                 && l.Account.AccountCode.StartsWith("111"))
             .SumAsync(l => l.DebitAmount - l.CreditAmount);
 
-        var totalInvoices = await _db.Documents.CountAsync(d =>
+        // Per Thai law (§86 Revenue Code), ใบแจ้งหนี้ and ใบกำกับภาษี are legally
+        // distinct documents. Count separately for transparency, sum for the headline KPI.
+        var invoiceCount = await _db.Documents.CountAsync(d =>
             d.CompanyId == companyId
-            && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+            && d.DocumentType == DocumentType.Invoice
+            && d.Status != DocumentStatus.Voided
             && d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
 
-        var overdueCount = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId && d.Status == DocumentStatus.Overdue);
+        var taxInvoiceCount = await _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId
+            && d.DocumentType == DocumentType.TaxInvoice
+            && d.Status != DocumentStatus.Voided
+            && d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
 
+        var totalInvoices = invoiceCount + taxInvoiceCount;
+
+        // Overdue: documents past due date with balance due — not just docs flagged Overdue
+        // (the Overdue status is set by a background job; falling back to date check is more accurate)
+        var today = DateTime.UtcNow.Date;
+        var overdueCount = await _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId
+            && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+            && d.DueDate < today
+            && d.BalanceDue > 0
+            && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid && d.Status != DocumentStatus.Draft);
+
+        // Pending approval: include both Draft (this app's flow) and explicit WaitingApproval
+        // (multi-step workflow). Draft documents need explicit approval to become AR/AP.
         var pendingApprovals = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId && d.Status == DocumentStatus.WaitingApproval);
+            d.CompanyId == companyId
+            && (d.Status == DocumentStatus.Draft || d.Status == DocumentStatus.WaitingApproval));
 
         var revenueGrowth = prevRevenue != 0 ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
         var expenseGrowth = prevExpenses != 0 ? ((totalExpenses - prevExpenses) / prevExpenses) * 100 : 0;
@@ -124,7 +153,8 @@ public class DashboardService : IDashboardService
         return new DashboardKpis(totalRevenue, totalExpenses, totalRevenue - totalExpenses,
             receivables, payables, cashBalance, bankBalance,
             totalInvoices, overdueCount, pendingApprovals,
-            Math.Round(revenueGrowth, 2), Math.Round(expenseGrowth, 2));
+            Math.Round(revenueGrowth, 2), Math.Round(expenseGrowth, 2),
+            invoiceCount, taxInvoiceCount);
     }
 
     public async Task<CashFlowSummary> GetCashFlowSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)
