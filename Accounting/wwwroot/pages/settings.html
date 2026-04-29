@@ -32,6 +32,7 @@
       <div class="tab" onclick="Page.showTab('email',this)">อีเมล</div>
       <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
+      <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
     </div>
 
     <!-- Setup Banner (shown on first setup) -->
@@ -435,6 +436,44 @@
       <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</div></div>
     </div>
 
+    <!-- ===== Signature Tab ===== -->
+    <div id="tabSignature" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">ลายเซ็นอิเล็กทรอนิกส์</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        ลายเซ็นนี้จะถูกประทับอัตโนมัติบน PDF ใบกำกับภาษี / ใบเสร็จ ที่คุณ
+        <strong>สร้าง</strong> หรือ <strong>อนุมัติ</strong> เพื่อใช้เป็นหลักฐานทางบัญชี
+      </p>
+      <div class="form-group">
+        <label class="form-label">ชื่อ-นามสกุล (ใต้ลายเซ็น)</label>
+        <input id="sigName" type="text" class="form-input" placeholder="เช่น สมชาย ใจดี" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">ตำแหน่ง</label>
+        <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">รูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div style="flex:1">
+            <input id="sigUpload" type="file" accept="image/png,image/jpeg" onchange="Page.onSignatureUpload(event)" />
+            <p class="text-gray-400" style="font-size:12px;margin-top:6px">
+              ขนาดสูงสุด ~2 MB · รองรับ PNG / JPG · ระบบจะแปลงเป็น base64 อัตโนมัติ
+            </p>
+            <button type="button" class="btn btn-secondary" style="margin-top:8px" onclick="Page.clearSignature()">
+              ลบลายเซ็นออก
+            </button>
+          </div>
+          <div id="sigPreviewBox" style="border:1px dashed #94a3b8;width:240px;height:120px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border-radius:6px">
+            <span id="sigPreviewEmpty" class="text-gray-400" style="font-size:12px">ยังไม่มีลายเซ็น</span>
+            <img id="sigPreview" src="" style="max-width:100%;max-height:100%;display:none" alt="ลายเซ็นปัจจุบัน" />
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-primary" onclick="Page.saveSignature()">บันทึกลายเซ็น</button>
+      </div>
+    </div>
+
     <!-- ===== Services Tab ===== -->
 
     <div style="margin-top:20px;display:flex;justify-content:flex-end">
@@ -495,7 +534,7 @@
         }, document.getElementById('cDbdBtn'));
       },
       showTab(tab, el) {
-        ['tabCompany','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabApproval','tabNumbering'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        ['tabCompany','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -503,6 +542,80 @@
         if (tab === 'numbering') this.loadNumberSeries();
         if (tab === 'email') this.loadEmailConfig();
         if (tab === 'etax') this.loadEtaxConfig();
+        if (tab === 'signature') this.loadSignature();
+      },
+
+      // ===== Signature Settings =====
+      _signatureBase64: null,
+      async loadSignature() {
+        try {
+          const res = await fetch('/api/auth/profile', {
+            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('access_token') || '') }
+          });
+          const j = await res.json();
+          if (!j.success) throw new Error(j.message || 'โหลดข้อมูลไม่สำเร็จ');
+          const p = j.data || {};
+          document.getElementById('sigName').value = p.signatureName || p.fullName || '';
+          document.getElementById('sigTitle').value = p.signatureTitle || '';
+          this._signatureBase64 = p.signatureImageBase64 || null;
+          this._renderSignaturePreview();
+        } catch (e) {
+          Layout.toast(e.message || 'โหลดลายเซ็นไม่สำเร็จ', 'error');
+        }
+      },
+      onSignatureUpload(ev) {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) {
+          Layout.toast('รูปมีขนาดใหญ่เกินไป (สูงสุด 2 MB)', 'error');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          this._signatureBase64 = reader.result;
+          this._renderSignaturePreview();
+        };
+        reader.readAsDataURL(file);
+      },
+      clearSignature() {
+        this._signatureBase64 = null;
+        document.getElementById('sigUpload').value = '';
+        this._renderSignaturePreview();
+      },
+      _renderSignaturePreview() {
+        const img = document.getElementById('sigPreview');
+        const empty = document.getElementById('sigPreviewEmpty');
+        if (this._signatureBase64) {
+          img.src = this._signatureBase64;
+          img.style.display = 'block';
+          empty.style.display = 'none';
+        } else {
+          img.src = '';
+          img.style.display = 'none';
+          empty.style.display = 'block';
+        }
+      },
+      async saveSignature() {
+        const body = {
+          signatureName: document.getElementById('sigName').value || null,
+          signatureTitle: document.getElementById('sigTitle').value || null,
+          signatureImageBase64: this._signatureBase64
+        };
+        try {
+          const res = await fetch('/api/auth/profile', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + (localStorage.getItem('access_token') || '')
+            },
+            body: JSON.stringify(body)
+          });
+          const j = await res.json();
+          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          Layout.toast('บันทึกลายเซ็นสำเร็จ');
+        } catch (e) {
+          Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+        }
       },
 
       // ===== Email Config =====

@@ -32,6 +32,19 @@ public class User : BaseEntity
     /// </summary>
     public DateTime? PasswordWeakDetectedAt { get; set; }
 
+    /// <summary>
+    /// User's signature image (base64 data URL or raw base64). Stamped onto
+    /// auto-generated PDF documents (e-Tax, receipts) when this user creates
+    /// or approves them.
+    /// </summary>
+    public string? SignatureImageBase64 { get; set; }
+
+    /// <summary>Display name shown next to the signature on documents.</summary>
+    public string? SignatureName { get; set; }
+
+    /// <summary>Job title shown under the signature name (e.g. "ผู้จัดการ").</summary>
+    public string? SignatureTitle { get; set; }
+
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();
 }

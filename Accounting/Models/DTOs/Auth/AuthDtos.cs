@@ -73,3 +73,22 @@ public record SsoLoginRequest(
     string IdToken,        // OAuth ID token from provider
 
     string? CompanyName);  // Optional: create company on first SSO signup
+
+/// <summary>
+/// Returned by GET /api/auth/profile and used to render the signature settings UI.
+/// </summary>
+public record UserProfileResponse(
+    Guid Id,
+    string Email,
+    string FullName,
+    string? Phone,
+    string? SignatureImageBase64,
+    string? SignatureName,
+    string? SignatureTitle);
+
+public record UpdateProfileRequest(
+    string? FullName,
+    string? Phone,
+    string? SignatureImageBase64,  // base64 PNG data URL, or null to clear
+    string? SignatureName,
+    string? SignatureTitle);
