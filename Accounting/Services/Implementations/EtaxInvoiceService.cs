@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -530,6 +531,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
     private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null)
     {
+        // Document-type-specific root element + RAM namespace prefix
+        // Per ETDA Schematron, the RAM namespace MUST include the document-type prefix.
         var rootElementName = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
@@ -538,10 +541,18 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
             _ => "TaxInvoice_CrossIndustryInvoice"
         };
-        var ns = XNamespace.Get($"urn:etda:uncefact:data:standard:{rootElementName}:2");
-        var ram = XNamespace.Get("urn:etda:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:2");
+        var ramSuffix = doc.DocumentType switch
+        {
+            DocumentType.TaxInvoice => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
+            DocumentType.Receipt => "Receipt_ReusableAggregateBusinessInformationEntity",
+            DocumentType.DebitNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
+            DocumentType.CreditNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
+            _ => "TaxInvoice_ReusableAggregateBusinessInformationEntity"
+        };
+        var rsm = XNamespace.Get($"urn:etda:uncefact:data:standard:{rootElementName}:2");
+        var ram = XNamespace.Get($"urn:etda:uncefact:data:standard:{ramSuffix}:2");
 
-        // ETDA TypeCodes per UN/EDIFACT 1001 — สรรพากร accepts these specific codes
+        // TypeCode per UN/EDIFACT 1001 + ETDA: 388=TaxInvoice, T03=Receipt, 80=DebitNote, 81=CreditNote
         var docTypeCode = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "388",
@@ -550,7 +561,6 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             DocumentType.CreditNote => "81",
             _ => "388"
         };
-
         var docTypeName = doc.DocumentType switch
         {
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
@@ -559,200 +569,247 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             DocumentType.CreditNote => "ใบลดหนี้",
             _ => "ใบกำกับภาษี"
         };
+        // PurposeCode per ETDA ThaiMessageFunctionCode (rd1225) — required for CN/DN
+        var purposeCode = doc.DocumentType switch
+        {
+            DocumentType.CreditNote => "CDNG01", // ปรับปรุงราคาสินค้า/บริการที่ออกใบกำกับ
+            DocumentType.DebitNote => "DBNG01",
+            _ => (string?)null
+        };
 
         var vatRate = doc.Lines.Any(l => l.VatRate > 0)
             ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate)
             : 0m;
-
         var currency = doc.Currency ?? "THB";
-        var sellerBranch = company.BranchCode ?? "00000";
-        var buyerBranch = doc.Contact.BranchCode ?? "00000";
-        var isBranch = sellerBranch != "00000";
 
-        // Build TradeParty elements in ETDA-required order
-        var sellerParty = BuildTradeParty(ram, "SellerTradeParty", company.Name, company.TaxId!,
-            sellerBranch, isBranch ? (company.BranchName ?? "สาขา") : "สำนักงานใหญ่",
+        // Combine TaxId (13 digits) + Branch (5 digits) into 18-digit TXID
+        var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode);
+        var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode);
+
+        var sellerParty = BuildTradeParty(ram, "SellerTradeParty",
+            company.Name, sellerTxId,
             company.Address, company.SubDistrict, company.District, company.Province,
-            company.PostalCode, "TH", company.Phone, company.Email);
+            company.PostalCode);
 
-        var buyerBranchName = buyerBranch != "00000" ? "สาขา" : "สำนักงานใหญ่";
-        var buyerParty = BuildTradeParty(ram, "BuyerTradeParty", doc.Contact.Name, doc.Contact.TaxId ?? "",
-            buyerBranch, buyerBranchName,
-            doc.Contact.Address, null, null, null, null,
-            "TH", doc.Contact.Phone, doc.Contact.Email);
+        var buyerParty = BuildTradeParty(ram, "BuyerTradeParty",
+            doc.Contact.Name, buyerTxId,
+            doc.Contact.Address, null, null, null, null);
 
-        // Line items per ETDA spec
-        var lineItems = doc.Lines.OrderBy(l => l.LineOrder).Select((line, idx) =>
-            new XElement(ram + "IncludedSupplyChainTradeLineItem",
-                new XElement(ram + "AssociatedDocumentLineDocument",
-                    new XElement(ram + "LineID", (idx + 1).ToString())),
-                new XElement(ram + "SpecifiedTradeProduct",
-                    line.ProductCode != null ? new XElement(ram + "GlobalID", line.ProductCode) : null,
-                    new XElement(ram + "Name", line.Description)),
-                new XElement(ram + "SpecifiedLineTradeAgreement",
-                    new XElement(ram + "GrossPriceProductTradePrice",
-                        new XElement(ram + "ChargeAmount", line.UnitPrice.ToString("F2")))),
-                new XElement(ram + "SpecifiedLineTradeDelivery",
-                    new XElement(ram + "BilledQuantity",
-                        new XAttribute("unitCode", MapUnitCode(line.Unit)),
-                        line.Quantity.ToString("F4"))),
-                new XElement(ram + "SpecifiedLineTradeSettlement",
-                    new XElement(ram + "ApplicableTradeTax",
-                        new XElement(ram + "TypeCode", "VAT"),
-                        new XElement(ram + "RateApplicablePercent", line.VatRate.ToString("F2"))),
-                    new XElement(ram + "SpecifiedTradeSettlementLineMonetarySummation",
-                        new XElement(ram + "NetLineTotalAmount", line.Amount.ToString("F2")),
-                        new XElement(ram + "NetIncludingTaxesLineTotalAmount",
-                            (line.Amount + line.VatAmount).ToString("F2"))))));
+        // ShipToTradeParty (used as buyer's delivery address; minimal in current model)
+        var shipToParty = new XElement(ram + "ShipToTradeParty",
+            new XElement(ram + "PostalTradeAddress",
+                !string.IsNullOrEmpty(doc.Contact.Address)
+                    ? new XElement(ram + "LineOne", doc.Contact.Address) : null,
+                new XElement(ram + "CountryID",
+                    new XAttribute("schemeID", "3166-1 alpha-2"), "TH")));
 
-        // Build additional reference for CN/DN
-        XElement? additionalRef = null;
-        if (originalDoc != null && (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote))
-        {
-            additionalRef = new XElement(ram + "AdditionalReferencedDocument",
-                new XElement(ram + "IssuerAssignedID", originalDoc.DocumentNumber),
-                new XElement(ram + "IssueDateTime",
-                    new XElement(ram + "DateTimeString",
-                        new XAttribute("format", "102"),
-                        originalDoc.DocumentDate.ToString("yyyyMMdd"))),
-                new XElement(ram + "ReferenceTypeCode", "AWR"));
-        }
-
-        // CN/DN reason
-        XElement? cnDnReason = null;
+        // Header settlement
+        var summationElements = new List<object?>();
+        // For CN/DN: include OriginalInformationAmount + DifferenceInformationAmount
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
-            cnDnReason = new XElement(ram + "AdditionalReferencedDocument",
-                new XElement(ram + "IssuerAssignedID", doc.DocumentNumber),
-                new XElement(ram + "ReferenceTypeCode", "ANG"),
-                new XElement(ram + "Name", doc.Notes ?? "ปรับปรุงรายการ"));
+            var originalAmount = originalDoc?.SubTotal ?? doc.SubTotal;
+            summationElements.Add(new XElement(ram + "OriginalInformationAmount",
+                originalAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+        }
+        summationElements.Add(new XElement(ram + "LineTotalAmount",
+            doc.SubTotal.ToString("0.##", CultureInfo.InvariantCulture)));
+        if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
+        {
+            // Difference between current and original
+            var diff = doc.SubTotal - (originalDoc?.SubTotal ?? doc.SubTotal);
+            summationElements.Add(new XElement(ram + "DifferenceInformationAmount",
+                diff.ToString("0.##", CultureInfo.InvariantCulture)));
+        }
+        summationElements.Add(new XElement(ram + "AllowanceTotalAmount",
+            doc.DiscountAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+        summationElements.Add(new XElement(ram + "TaxBasisTotalAmount",
+            (doc.SubTotal - doc.DiscountAmount).ToString("0.##", CultureInfo.InvariantCulture)));
+        summationElements.Add(new XElement(ram + "TaxTotalAmount",
+            doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+        summationElements.Add(new XElement(ram + "GrandTotalAmount",
+            doc.TotalAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+
+        // Header trade tax
+        var headerTradeTax = new XElement(ram + "ApplicableTradeTax",
+            new XElement(ram + "TypeCode", "VAT"),
+            new XElement(ram + "CalculatedRate",
+                vatRate.ToString("0.##", CultureInfo.InvariantCulture)),
+            new XElement(ram + "BasisAmount",
+                (doc.SubTotal - doc.DiscountAmount).ToString("0.##", CultureInfo.InvariantCulture)),
+            new XElement(ram + "CalculatedAmount",
+                doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+
+        // Reference to original (for CN/DN)
+        XElement? additionalRef = null;
+        if (originalDoc != null && (doc.DocumentType == DocumentType.CreditNote
+            || doc.DocumentType == DocumentType.DebitNote))
+        {
+            additionalRef = new XElement(ram + "AdditionalReferencedDocument",
+                new XElement(ram + "ReferenceTypeCode", "388"));
         }
 
+        // Line items (last in CII per ETDA — after Settlement)
+        var lineItems = doc.Lines.OrderBy(l => l.LineOrder).Select((line, idx) =>
+            BuildLineItem(ram, line, idx + 1, currency)).ToList<object>();
+
+        // Context parameter — ER3-2560 with scheme attributes
+        var contextParameter = new XElement(ram + "GuidelineSpecifiedDocumentContextParameter",
+            new XElement(ram + "ID",
+                new XAttribute("schemeAgencyID", "ETDA"),
+                new XAttribute("schemeVersionID", "v2.0"),
+                "ER3-2560"));
+
+        // ExchangedDocument — order: ID, Name, TypeCode, IssueDateTime, [PurposeCode], CreationDateTime, [IncludedNote]
+        var exchangedDoc = new XElement(rsm + "ExchangedDocument",
+            new XElement(ram + "ID", doc.DocumentNumber),
+            new XElement(ram + "Name", docTypeName),
+            new XElement(ram + "TypeCode", docTypeCode),
+            new XElement(ram + "IssueDateTime", FormatIso(doc.DocumentDate)),
+            purposeCode != null ? new XElement(ram + "PurposeCode", purposeCode) : null,
+            new XElement(ram + "CreationDateTime", FormatIso(DateTime.UtcNow)),
+            !string.IsNullOrWhiteSpace(doc.Notes)
+                ? new XElement(ram + "IncludedNote",
+                    new XElement(ram + "Subject", doc.Notes))
+                : null);
+
+        // Build full document
         var xml = new XDocument(
             new XDeclaration("1.0", "UTF-8", null),
-            new XElement(ns + rootElementName,
-                new XAttribute(XNamespace.Xmlns + "rsm", ns),
+            new XElement(rsm + rootElementName,
+                new XAttribute(XNamespace.Xmlns + "rsm", rsm),
                 new XAttribute(XNamespace.Xmlns + "ram", ram),
 
-                // ExchangedDocumentContext — ETDA required structure
-                new XElement(ns + "ExchangedDocumentContext",
-                    new XElement(ram + "GuidelineSpecifiedDocumentContextParameter",
-                        new XElement(ram + "ID", etaxRef))),
+                new XElement(rsm + "ExchangedDocumentContext", contextParameter),
 
-                // ExchangedDocument — ETDA required structure and element order
-                new XElement(ns + "ExchangedDocument",
-                    new XElement(ram + "ID", doc.DocumentNumber),
-                    new XElement(ram + "Name", docTypeName),
-                    new XElement(ram + "TypeCode", docTypeCode),
-                    new XElement(ram + "IssueDateTime",
-                        new XElement(ram + "DateTimeString",
-                            new XAttribute("format", "102"),
-                            doc.DocumentDate.ToString("yyyyMMdd"))),
-                    doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote
-                        ? new XElement(ram + "Purpose", doc.Notes ?? "ปรับปรุงรายการ") : null,
-                    doc.Notes != null && doc.DocumentType != DocumentType.CreditNote && doc.DocumentType != DocumentType.DebitNote
-                        ? new XElement(ram + "IncludedNote",
-                            new XElement(ram + "Content", doc.Notes)) : null),
+                exchangedDoc,
 
-                // SupplyChainTradeTransaction
-                new XElement(ns + "SupplyChainTradeTransaction",
-
-                    // ApplicableHeaderTradeAgreement
+                // SupplyChainTradeTransaction order: Agreement → Delivery → Settlement → LineItem
+                new XElement(rsm + "SupplyChainTradeTransaction",
                     new XElement(ram + "ApplicableHeaderTradeAgreement",
                         sellerParty,
                         buyerParty,
-                        additionalRef,
-                        cnDnReason),
-
-                    // IncludedSupplyChainTradeLineItem (all line items)
-                    lineItems,
-
-                    // ApplicableHeaderTradeDelivery
-                    new XElement(ram + "ApplicableHeaderTradeDelivery",
-                        new XElement(ram + "ActualDeliverySupplyChainEvent",
-                            new XElement(ram + "OccurrenceDateTime",
-                                new XElement(ram + "DateTimeString",
-                                    new XAttribute("format", "102"),
-                                    doc.DocumentDate.ToString("yyyyMMdd"))))),
-
-                    // ApplicableHeaderTradeSettlement
+                        additionalRef),
+                    new XElement(ram + "ApplicableHeaderTradeDelivery", shipToParty),
                     new XElement(ram + "ApplicableHeaderTradeSettlement",
-                        new XElement(ram + "InvoiceCurrencyCode", currency),
-                        new XElement(ram + "ApplicableTradeTax",
-                            new XElement(ram + "TypeCode", "VAT"),
-                            new XElement(ram + "CalculatedAmount", doc.VatAmount.ToString("F2")),
-                            new XElement(ram + "BasisAmount", doc.SubTotal.ToString("F2")),
-                            new XElement(ram + "RateApplicablePercent", vatRate.ToString("F2"))),
+                        new XElement(ram + "InvoiceCurrencyCode",
+                            new XAttribute("listID", "ISO 4217 3A"),
+                            currency),
+                        headerTradeTax,
                         new XElement(ram + "SpecifiedTradeSettlementHeaderMonetarySummation",
-                            new XElement(ram + "LineTotalAmount", doc.SubTotal.ToString("F2")),
-                            doc.DiscountAmount > 0
-                                ? new XElement(ram + "AllowanceTotalAmount", doc.DiscountAmount.ToString("F2")) : null,
-                            new XElement(ram + "TaxBasisTotalAmount", (doc.SubTotal - doc.DiscountAmount).ToString("F2")),
-                            new XElement(ram + "TaxTotalAmount",
-                                new XAttribute("currencyID", currency),
-                                doc.VatAmount.ToString("F2")),
-                            new XElement(ram + "GrandTotalAmount", doc.TotalAmount.ToString("F2")),
-                            new XElement(ram + "DuePayableAmount", doc.TotalAmount.ToString("F2")))))));
+                            summationElements.Where(e => e != null))),
+                    lineItems
+                )));
 
         return xml.ToString();
     }
 
-    private static XElement BuildTradeParty(XNamespace ram, string partyElement, string name, string taxId,
-        string branchCode, string branchName, string? address, string? subDistrict,
-        string? district, string? province, string? postalCode, string countryId,
-        string? phone, string? email)
-    {
-        var elements = new List<object?>
-        {
-            new XElement(ram + "Name", name),
-            new XElement(ram + "SpecifiedTaxRegistration",
-                new XElement(ram + "ID",
-                    new XAttribute("schemeID", "TXID"),
-                    taxId)),
-            new XElement(ram + "SpecifiedTaxRegistration",
-                new XElement(ram + "ID",
-                    new XAttribute("schemeID", "NIDN"),
-                    branchCode)),
-        };
+    private static string FormatIso(DateTime dt) =>
+        dt.ToString("yyyy-MM-ddTHH:mm:ss.f", CultureInfo.InvariantCulture);
 
-        // PostalTradeAddress
+    /// <summary>
+    /// Compose 18-digit TXID per ETDA spec: 13-digit TaxID + 5-digit branch suffix.
+    /// If branch is null/empty/"00000", use "00000". TaxId without branch concatenation
+    /// is invalid per ETDA — always 18 digits.
+    /// </summary>
+    private static string ComposeTxId(string? taxId, string? branchCode)
+    {
+        var tid = (taxId ?? "").Trim().PadLeft(13, '0');
+        if (tid.Length > 13) tid = tid.Substring(tid.Length - 13);
+        var bid = (branchCode ?? "00000").Trim();
+        if (bid.Length > 5) bid = bid.Substring(bid.Length - 5);
+        if (bid.Length < 5) bid = bid.PadLeft(5, '0');
+        return tid + bid;
+    }
+
+    private static XElement BuildLineItem(XNamespace ram, DocumentLine line, int lineNo, string currency)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var unitCode = MapUnitCode(line.Unit);
+        var lineSubTotal = line.Amount;
+        var lineWithVat = line.Amount + line.VatAmount;
+
+        return new XElement(ram + "IncludedSupplyChainTradeLineItem",
+            new XElement(ram + "AssociatedDocumentLineDocument",
+                new XElement(ram + "LineID", lineNo.ToString())),
+            new XElement(ram + "SpecifiedTradeProduct",
+                line.ProductCode != null ? new XElement(ram + "ID", line.ProductCode) : null,
+                new XElement(ram + "Name", line.Description)),
+            new XElement(ram + "SpecifiedLineTradeAgreement",
+                new XElement(ram + "GrossPriceProductTradePrice",
+                    new XElement(ram + "ChargeAmount",
+                        line.UnitPrice.ToString("0.##", inv)))),
+            new XElement(ram + "SpecifiedLineTradeDelivery",
+                new XElement(ram + "BilledQuantity",
+                    new XAttribute("unitCode", unitCode),
+                    line.Quantity.ToString("0.##", inv))),
+            new XElement(ram + "SpecifiedLineTradeSettlement",
+                new XElement(ram + "ApplicableTradeTax",
+                    new XElement(ram + "TypeCode", "VAT"),
+                    new XElement(ram + "CalculatedRate", line.VatRate.ToString("0.##", inv)),
+                    new XElement(ram + "BasisAmount", lineSubTotal.ToString("0.##", inv)),
+                    new XElement(ram + "CalculatedAmount", line.VatAmount.ToString("0.##", inv))),
+                new XElement(ram + "SpecifiedTradeAllowanceCharge",
+                    new XElement(ram + "ChargeIndicator",
+                        line.DiscountAmount > 0 ? "true" : "false"),
+                    new XElement(ram + "ActualAmount", line.DiscountAmount.ToString("0.##", inv))),
+                new XElement(ram + "SpecifiedTradeSettlementLineMonetarySummation",
+                    new XElement(ram + "TaxTotalAmount", line.VatAmount.ToString("0.##", inv)),
+                    new XElement(ram + "NetLineTotalAmount",
+                        new XAttribute("currencyID", currency),
+                        lineSubTotal.ToString("0.##", inv)),
+                    new XElement(ram + "NetIncludingTaxesLineTotalAmount",
+                        new XAttribute("currencyID", currency),
+                        lineWithVat.ToString("0.##", inv)))));
+    }
+
+    /// <summary>
+    /// Build TradeParty (Seller/Buyer) per ETDA TradePartyType:
+    /// Name, SpecifiedTaxRegistration (single, with TXID), PostalTradeAddress.
+    /// NO DefinedTradeContact (not in ETDA TradePartyType).
+    /// NO secondary BRID/NIDN registration (TXID encodes 13+5=18 digits).
+    /// </summary>
+    private static XElement BuildTradeParty(XNamespace ram, string partyElement,
+        string name, string txId,
+        string? address, string? subDistrict, string? district, string? province, string? postalCode)
+    {
         var addressElements = new List<object?>();
-        addressElements.Add(new XElement(ram + "PostcodeCode", postalCode ?? ""));
-        if (!string.IsNullOrEmpty(branchName))
-            addressElements.Add(new XElement(ram + "BuildingName", branchName));
+        if (!string.IsNullOrEmpty(postalCode))
+            addressElements.Add(new XElement(ram + "PostcodeCode", postalCode));
         if (!string.IsNullOrEmpty(address))
             addressElements.Add(new XElement(ram + "LineOne", address));
         if (!string.IsNullOrEmpty(subDistrict))
             addressElements.Add(new XElement(ram + "LineTwo", subDistrict));
+        // Note: ETDA expects TISI 1099 numeric codes for CityName/CitySubDivisionName,
+        // but free-text Thai names are commonly accepted by the validator
         if (!string.IsNullOrEmpty(district))
             addressElements.Add(new XElement(ram + "CityName", district));
+        if (!string.IsNullOrEmpty(subDistrict))
+            addressElements.Add(new XElement(ram + "CitySubDivisionName", subDistrict));
+        addressElements.Add(new XElement(ram + "CountryID",
+            new XAttribute("schemeID", "3166-1 alpha-2"), "TH"));
         if (!string.IsNullOrEmpty(province))
-            addressElements.Add(new XElement(ram + "CitySubDivisionName", province));
-        addressElements.Add(new XElement(ram + "CountryID", countryId));
-        elements.Add(new XElement(ram + "PostalTradeAddress", addressElements.Where(e => e != null)));
+            addressElements.Add(new XElement(ram + "CountrySubDivisionID", province));
 
-        // DefinedTradeContact
-        if (!string.IsNullOrEmpty(phone) || !string.IsNullOrEmpty(email))
-        {
-            var contactElements = new List<object?>();
-            if (!string.IsNullOrEmpty(phone))
-                contactElements.Add(new XElement(ram + "TelephoneUniversalCommunication",
-                    new XElement(ram + "CompleteNumber", phone)));
-            if (!string.IsNullOrEmpty(email))
-                contactElements.Add(new XElement(ram + "EmailURIUniversalCommunication",
-                    new XElement(ram + "URIID", email)));
-            elements.Add(new XElement(ram + "DefinedTradeContact", contactElements.Where(e => e != null)));
-        }
-
-        return new XElement(ram + partyElement, elements.Where(e => e != null));
+        return new XElement(ram + partyElement,
+            new XElement(ram + "Name", name),
+            new XElement(ram + "SpecifiedTaxRegistration",
+                new XElement(ram + "ID",
+                    new XAttribute("schemeID", "TXID"),
+                    txId)),
+            new XElement(ram + "PostalTradeAddress", addressElements.Where(e => e != null)));
     }
 
+    /// <summary>
+    /// Map Thai unit names to ETDA-accepted unit codes.
+    /// ETDA samples primarily use simple "Unit" — UN/CEFACT codes (C62, MTR, etc.) are accepted.
+    /// </summary>
     private static string MapUnitCode(string? unit)
     {
-        if (string.IsNullOrEmpty(unit)) return "C62";
+        if (string.IsNullOrEmpty(unit)) return "Unit";
         return unit.ToLowerInvariant() switch
         {
-            "ชิ้น" or "ea" or "pcs" => "C62",
+            "ชิ้น" or "ea" or "pcs" or "หน่วย" => "Unit",
             "กล่อง" or "box" => "BX",
             "ชุด" or "set" => "SET",
             "เมตร" or "m" => "MTR",
@@ -763,8 +820,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             "เดือน" or "month" => "MON",
             "ปี" or "year" => "ANN",
             "งาน" or "job" => "E49",
-            "รายการ" or "item" => "C62",
-            _ => "C62"
+            "รายการ" or "item" => "Unit",
+            _ => "Unit"
         };
     }
 
