@@ -21,6 +21,12 @@ public class Document : TenantEntity
     public string? Reference { get; set; }
     public Guid? RelatedDocumentId { get; set; }  // e.g. Quotation → Invoice
 
+    // Project tagging — header default; lines can override per-line.
+    // Used to attribute revenue/cost on auto-posted journal entries to a Project,
+    // enabling per-project P&L (see ProjectAccountingService.GetGlSummaryAsync).
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+
     // Amounts
     public string Currency { get; set; } = "THB";
     public decimal SubTotal { get; set; }
@@ -66,6 +72,12 @@ public class DocumentLine : BaseEntity
     // Account mapping for auto-posting
     public Guid? AccountId { get; set; }
     public ChartOfAccount? Account { get; set; }
+
+    // Per-line project override — falls back to Document.ProjectId if null.
+    // Allows splitting a single document across multiple projects (e.g. one
+    // mixed invoice billing two projects).
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
 }
 
 /// <summary>

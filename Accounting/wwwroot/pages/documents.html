@@ -58,6 +58,9 @@
         <option value="Overdue">เกินกำหนด</option>
         <option value="Voided">ยกเลิก</option>
       </select>
+      <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
+        <option value="">ทุกโครงการ</option>
+      </select>
     </div>
 
     <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
@@ -114,8 +117,14 @@
             <div class="form-group"><label class="form-label">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
           <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
+              <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
+            </div>
             <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
-            <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
           <div style="margin-top:16px">
@@ -236,7 +245,7 @@
   <script src="/js/export.js"></script>
   <script>
     const Page = {
-      page: 1, docType: '', side: '', contacts: [], selectedDocs: new Set(),
+      page: 1, docType: '', side: '', contacts: [], projects: [], selectedDocs: new Set(),
       onDocCheck(cb) {
         if (cb.checked) this.selectedDocs.add(cb.dataset.id);
         else this.selectedDocs.delete(cb.dataset.id);
@@ -302,6 +311,15 @@
         }
         const api = Layout.api(); if (!api) return;
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
+        // Load active projects (for the document → project tagging dropdown).
+        // ProjectId on a document propagates to JournalEntry on auto-post, so
+        // the project's P&L (ProjectAccountingService.GetGlSummaryAsync) will
+        // include this document's revenue/cost automatically.
+        try {
+          const pr = await api.getActiveProjects();
+          this.projects = pr?.data || [];
+          this.populateProjects();
+        } catch(e) { this.projects = []; }
         // Check if email is configured for this company
         try {
           const ec = await api.getEmailConfig();
@@ -388,6 +406,22 @@
         sel.innerHTML = '<option value="">เลือกผู้ติดต่อ</option>' +
           this.contacts.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ` (${c.taxId})` : ''}</option>`).join('');
       },
+      populateProjects() {
+        const projects = this.projects || [];
+        const optionsHtml = projects.map(p =>
+          `<option value="${p.id}">${this.escapeHtml(p.code)} — ${this.escapeHtml(p.name)}</option>`
+        ).join('');
+        // Form selector (create/edit)
+        const fSel = document.getElementById('fProject');
+        if (fSel) fSel.innerHTML = '<option value="">— ไม่ระบุโครงการ —</option>' + optionsHtml;
+        // Toolbar filter
+        const filt = document.getElementById('projectFilter');
+        if (filt) filt.innerHTML = '<option value="">ทุกโครงการ</option>' + optionsHtml;
+      },
+      escapeHtml(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c =>
+          ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+      },
       setSide(side) {
         this.side = side;
         this.docType = '';
@@ -427,6 +461,7 @@
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
+        const projectId = document.getElementById('projectFilter')?.value || '';
         let q = `?page=${this.page}&pageSize=20`;
         if (this.docType) q += `&type=${this.docType}`;
         // Filter by side (revenue/expense) if no specific type selected
@@ -436,6 +471,7 @@
         }
         if (status) q += `&status=${status}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (projectId) q += `&projectId=${projectId}`;
         try {
           const res = await api.getDocuments(q);
           const data = res.data;
@@ -455,9 +491,12 @@
             const etaxBadge = hasEtaxId(d.etaxInvoiceId)
               ? `<span title="มี e-Tax (PDF/A-3 + XML) — กดปุ่ม PDF เพื่อดาวน์โหลด" style="margin-left:6px;padding:1px 6px;background:#10b981;color:#fff;border-radius:6px;font-size:10px;font-weight:600">e-Tax</span>`
               : '';
+            const projectBadge = d.projectId
+              ? `<span title="โครงการ: ${this.escapeHtml(d.projectName || '')} — บัญชีของเอกสารนี้จะถูกบันทึกเข้าโครงการนี้" style="margin-left:6px;padding:1px 6px;background:#6366f1;color:#fff;border-radius:6px;font-size:10px;font-weight:600">📁 ${this.escapeHtml(d.projectCode || d.projectName || '')}</span>`
+              : '';
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}</td>
+            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -526,6 +565,7 @@
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
         document.getElementById('fContact').value = '';
+        const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
         this.addLine();
@@ -553,6 +593,8 @@
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
+          const fp = document.getElementById('fProject');
+          if (fp) fp.value = d.projectId || '';
           document.getElementById('linesBody').innerHTML = '';
           this.lineCount = 0;
           (d.lines || []).forEach(l => {
@@ -587,6 +629,7 @@
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
+        const projectId = document.getElementById('fProject')?.value || null;
         const payload = {
           documentType: document.getElementById('fDocType').value,
           documentDate: document.getElementById('fDate').value,
@@ -594,6 +637,7 @@
           contactId,
           reference: document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
+          projectId,
           lines
         };
         try {
@@ -666,6 +710,7 @@
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact?.name || '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
+              ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
             </div>
             <div class="table-container">
               <table class="table"><thead><tr><th>#</th><th>รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right">จำนวนเงิน</th></tr></thead>

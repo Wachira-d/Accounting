@@ -38,6 +38,24 @@ public class DocumentService : IDocumentService
         if (!contactExists)
             throw new InvalidOperationException("ไม่พบผู้ติดต่อในบริษัทนี้");
 
+        // Validate project tags belong to this company (security: prevent cross-tenant tagging)
+        if (request.ProjectId.HasValue)
+        {
+            var projectOk = await _db.Projects.AnyAsync(p =>
+                p.Id == request.ProjectId.Value && p.CompanyId == companyId);
+            if (!projectOk)
+                throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
+        }
+        var lineProjectIds = request.Lines?.Where(l => l.ProjectId.HasValue)
+            .Select(l => l.ProjectId!.Value).Distinct().ToList() ?? new List<Guid>();
+        if (lineProjectIds.Count > 0)
+        {
+            var validCount = await _db.Projects
+                .CountAsync(p => p.CompanyId == companyId && lineProjectIds.Contains(p.Id));
+            if (validCount != lineProjectIds.Count)
+                throw new InvalidOperationException("รหัสโครงการในรายการบางบรรทัดไม่ถูกต้อง");
+        }
+
         // Validate at least 1 line item
         if (request.Lines == null || request.Lines.Count == 0)
             throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
@@ -108,6 +126,7 @@ public class DocumentService : IDocumentService
                 ContactId = request.ContactId,
                 Reference = request.Reference,
                 Notes = request.Notes,
+                ProjectId = request.ProjectId,
                 CreatedBy = createdBy
             };
 
@@ -144,7 +163,8 @@ public class DocumentService : IDocumentService
                     VatAmount = vatAmt,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = whtAmt,
-                    AccountId = line.AccountId
+                    AccountId = line.AccountId,
+                    ProjectId = line.ProjectId
                 });
             }
 
@@ -174,6 +194,7 @@ public class DocumentService : IDocumentService
         var doc = await _db.Documents
             .Include(d => d.Contact)
             .Include(d => d.Lines)
+            .Include(d => d.Project)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
@@ -181,15 +202,20 @@ public class DocumentService : IDocumentService
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
             .Include(d => d.Lines)
+            .Include(d => d.Project)
             .Where(d => d.CompanyId == companyId);
 
         if (type.HasValue)
             query = query.Where(d => d.DocumentType == type.Value);
+
+        if (projectId.HasValue)
+            query = query.Where(d => d.ProjectId == projectId.Value
+                || d.Lines.Any(l => l.ProjectId == projectId.Value));
 
         if (!string.IsNullOrEmpty(request.Search))
         {
@@ -257,6 +283,16 @@ public class DocumentService : IDocumentService
         if (request.ContactId.HasValue) doc.ContactId = request.ContactId.Value;
         if (request.Reference != null) doc.Reference = request.Reference;
         if (request.Notes != null) doc.Notes = request.Notes;
+
+        // Project re-assignment (only allowed while Draft, which is enforced above)
+        if (request.ProjectId.HasValue)
+        {
+            var projectOk = await _db.Projects.AnyAsync(p =>
+                p.Id == request.ProjectId.Value && p.CompanyId == companyId);
+            if (!projectOk)
+                throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
+            doc.ProjectId = request.ProjectId.Value;
+        }
 
         if (request.Lines != null)
         {
@@ -441,11 +477,13 @@ public class DocumentService : IDocumentService
 
         var lines = source.Lines.Select(l => new DocumentLineRequest(
             l.Description, l.Quantity, l.Unit, l.UnitPrice,
-            l.DiscountPercent, l.VatRate, l.WithholdingTaxRate, l.AccountId)).ToList();
+            l.DiscountPercent, l.VatRate, l.WithholdingTaxRate, l.AccountId,
+            ProjectId: l.ProjectId)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, DateTime.UtcNow, source.DueDate, source.ContactId,
-            source.DocumentNumber, source.Notes, lines), createdBy);
+            source.DocumentNumber, source.Notes, lines,
+            ProjectId: source.ProjectId), createdBy);
 
         // Link
         var created = await _db.Documents.FindAsync(newDoc.Id);
@@ -690,6 +728,15 @@ public class DocumentService : IDocumentService
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
         JournalType journalType;
+        // ProjectId map: each pendingLines index → resolved project. System-generated
+        // lines (AR/VAT/Cash/AP/WHT) inherit doc.ProjectId; per-line revenue/expense
+        // can override via docLine.ProjectId.
+        var lineProjects = new List<Guid?>();
+        void AddLine(Guid accountId, decimal debit, decimal credit, string? desc, Guid? proj = null)
+        {
+            pendingLines.Add((accountId, debit, credit, desc));
+            lineProjects.Add(proj ?? doc.ProjectId);
+        }
 
         // ============================================================
         // SALES SIDE: Invoice / TaxInvoice / DebitNote (full sale entry)
@@ -704,14 +751,14 @@ public class DocumentService : IDocumentService
             // Dr: ลูกหนี้การค้า (113) — TotalAmount is net of WHT (Gross - WHT)
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                pendingLines.Add((arAccount.Id, doc.TotalAmount, 0, $"{typeLabel} - {doc.DocumentNumber}"));
+                AddLine(arAccount.Id, doc.TotalAmount, 0, $"{typeLabel} - {doc.DocumentNumber}");
 
             // Dr: ภาษีถูกหัก ณ ที่จ่าย (สินทรัพย์ 11910) — claim from Revenue Dept
             if (doc.WithholdingTaxAmount > 0)
             {
                 var whtAccount = await FindAccountAsync(companyId, "11910");
                 if (whtAccount != null)
-                    pendingLines.Add((whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
+                    AddLine(whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)");
             }
 
             // Cr: บัญชีรายได้ตามแต่ละบรรทัด (default = 411)
@@ -719,7 +766,7 @@ public class DocumentService : IDocumentService
             {
                 var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
                 if (revenueAccountId.HasValue)
-                    pendingLines.Add((revenueAccountId.Value, 0, docLine.Amount, docLine.Description));
+                    AddLine(revenueAccountId.Value, 0, docLine.Amount, docLine.Description, docLine.ProjectId);
             }
 
             // Cr: ภาษีขาย (Output VAT 21911) per ภ.พ.30
@@ -727,7 +774,7 @@ public class DocumentService : IDocumentService
             {
                 var vatAccount = await FindAccountAsync(companyId, "21911");
                 if (vatAccount != null)
-                    pendingLines.Add((vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
+                    AddLine(vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย");
             }
         }
         // ============================================================
@@ -741,14 +788,14 @@ public class DocumentService : IDocumentService
             // Cr: ลูกหนี้การค้า (113) — reverse direction
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                pendingLines.Add((arAccount.Id, 0, doc.TotalAmount, $"ใบลดหนี้ - {doc.DocumentNumber}"));
+                AddLine(arAccount.Id, 0, doc.TotalAmount, $"ใบลดหนี้ - {doc.DocumentNumber}");
 
             // Cr: ภาษีถูกหัก ณ ที่จ่าย — reverse if WHT was claimed on original sale
             if (doc.WithholdingTaxAmount > 0)
             {
                 var whtAccount = await FindAccountAsync(companyId, "11910");
                 if (whtAccount != null)
-                    pendingLines.Add((whtAccount.Id, 0, doc.WithholdingTaxAmount, "กลับรายการ ภาษีถูกหัก ณ ที่จ่าย"));
+                    AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "กลับรายการ ภาษีถูกหัก ณ ที่จ่าย");
             }
 
             // Dr: รายได้ — reverse direction
@@ -756,7 +803,7 @@ public class DocumentService : IDocumentService
             {
                 var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
                 if (revenueAccountId.HasValue)
-                    pendingLines.Add((revenueAccountId.Value, docLine.Amount, 0, $"กลับรายการ - {docLine.Description}"));
+                    AddLine(revenueAccountId.Value, docLine.Amount, 0, $"กลับรายการ - {docLine.Description}", docLine.ProjectId);
             }
 
             // Dr: ภาษีขาย — reverse direction (reduces VAT payable)
@@ -764,7 +811,7 @@ public class DocumentService : IDocumentService
             {
                 var vatAccount = await FindAccountAsync(companyId, "21911");
                 if (vatAccount != null)
-                    pendingLines.Add((vatAccount.Id, doc.VatAmount, 0, "กลับรายการ ภาษีขาย"));
+                    AddLine(vatAccount.Id, doc.VatAmount, 0, "กลับรายการ ภาษีขาย");
             }
         }
         // ============================================================
@@ -780,7 +827,7 @@ public class DocumentService : IDocumentService
             {
                 var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
                 if (expenseAccountId.HasValue)
-                    pendingLines.Add((expenseAccountId.Value, docLine.Amount, 0, docLine.Description));
+                    AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
             }
 
             // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30
@@ -788,13 +835,13 @@ public class DocumentService : IDocumentService
             {
                 var vatInputAccount = await FindAccountAsync(companyId, "116");
                 if (vatInputAccount != null)
-                    pendingLines.Add((vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ"));
+                    AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
             }
 
             // Cr: เจ้าหนี้การค้า (212) — net of WHT
             var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
-                pendingLines.Add((apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}"));
+                AddLine(apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}");
 
             // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53)
             if (doc.WithholdingTaxAmount > 0)
@@ -802,7 +849,7 @@ public class DocumentService : IDocumentService
                 var whtAccount = await FindAccountAsync(companyId, "21916")
                     ?? await FindAccountAsync(companyId, "21917");
                 if (whtAccount != null)
-                    pendingLines.Add((whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
+                    AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
             }
         }
         // ============================================================
@@ -822,38 +869,38 @@ public class DocumentService : IDocumentService
                 // The original Invoice already booked Dr WHT-Asset (Policy A: WHT
                 // claimed at issuance). Don't book WHT again here — just clear AR.
                 if (cashAccount != null)
-                    pendingLines.Add((cashAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}"));
+                    AddLine(cashAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
 
                 var arAccount = await FindAccountAsync(companyId, "113");
                 if (arAccount != null)
-                    pendingLines.Add((arAccount.Id, 0, doc.TotalAmount,
-                        $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+                    AddLine(arAccount.Id, 0, doc.TotalAmount,
+                        $"ตัดลูกหนี้ - {doc.DocumentNumber}");
             }
             else
             {
                 // Direct cash sale (ใบเสร็จรับเงิน/ใบกำกับภาษี): no prior AR
                 if (cashAccount != null)
-                    pendingLines.Add((cashAccount.Id, doc.TotalAmount, 0, $"รับเงินสด - {doc.DocumentNumber}"));
+                    AddLine(cashAccount.Id, doc.TotalAmount, 0, $"รับเงินสด - {doc.DocumentNumber}");
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
                     var whtAccount = await FindAccountAsync(companyId, "11910");
                     if (whtAccount != null)
-                        pendingLines.Add((whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)"));
+                        AddLine(whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)");
                 }
 
                 foreach (var docLine in doc.Lines)
                 {
                     var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
                     if (revenueAccountId.HasValue)
-                        pendingLines.Add((revenueAccountId.Value, 0, docLine.Amount, docLine.Description));
+                        AddLine(revenueAccountId.Value, 0, docLine.Amount, docLine.Description, docLine.ProjectId);
                 }
 
                 if (doc.VatAmount > 0)
                 {
                     var vatAccount = await FindAccountAsync(companyId, "21911");
                     if (vatAccount != null)
-                        pendingLines.Add((vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
+                        AddLine(vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย");
                 }
             }
         }
@@ -874,11 +921,11 @@ public class DocumentService : IDocumentService
                 // ภ.ง.ด.3/53 with Revenue Dept). Just clear AP and pay cash here.
                 var apAccount = await FindAccountAsync(companyId, "212");
                 if (apAccount != null)
-                    pendingLines.Add((apAccount.Id, doc.TotalAmount, 0,
-                        $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+                    AddLine(apAccount.Id, doc.TotalAmount, 0,
+                        $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
 
                 if (cashAccount != null)
-                    pendingLines.Add((cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}"));
+                    AddLine(cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}");
             }
             else
             {
@@ -887,25 +934,25 @@ public class DocumentService : IDocumentService
                 {
                     var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
                     if (expenseAccountId.HasValue)
-                        pendingLines.Add((expenseAccountId.Value, docLine.Amount, 0, docLine.Description));
+                        AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
                 }
 
                 if (doc.VatAmount > 0)
                 {
                     var vatInputAccount = await FindAccountAsync(companyId, "116");
                     if (vatInputAccount != null)
-                        pendingLines.Add((vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ"));
+                        AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
                 }
 
                 if (cashAccount != null)
-                    pendingLines.Add((cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงินสด - {doc.DocumentNumber}"));
+                    AddLine(cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงินสด - {doc.DocumentNumber}");
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
                     var whtAccount = await FindAccountAsync(companyId, "21916")
                         ?? await FindAccountAsync(companyId, "21917");
                     if (whtAccount != null)
-                        pendingLines.Add((whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
+                        AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
                 }
             }
         }
@@ -957,14 +1004,19 @@ public class DocumentService : IDocumentService
             CreatedBy = createdBy,
             IsAutoGenerated = true,
             SourceDocumentId = doc.Id,
-            FiscalPeriodId = period?.Id
+            FiscalPeriodId = period?.Id,
+            // Header-level Project: enables filtering JE lookups by project even on
+            // system-generated lines that inherit. ProjectAccountingService queries
+            // (l.ProjectId == projectId || l.JournalEntry.ProjectId == projectId).
+            ProjectId = doc.ProjectId
         };
 
         _db.JournalEntries.Add(entry);
 
         var order = 1;
-        foreach (var line in pendingLines)
+        for (int i = 0; i < pendingLines.Count; i++)
         {
+            var line = pendingLines[i];
             _db.JournalEntryLines.Add(new JournalEntryLine
             {
                 JournalEntryId = entry.Id,
@@ -972,7 +1024,8 @@ public class DocumentService : IDocumentService
                 DebitAmount = line.Debit,
                 CreditAmount = line.Credit,
                 Description = line.Description,
-                LineOrder = order++
+                LineOrder = order++,
+                ProjectId = lineProjects[i]
             });
         }
     }
@@ -1059,7 +1112,10 @@ public class DocumentService : IDocumentService
             CreatedBy = createdBy,
             IsAutoGenerated = true,
             SourceDocumentId = doc.Id,
-            FiscalPeriodId = period?.Id
+            FiscalPeriodId = period?.Id,
+            // Inherit project tag from the source document so payment JEs roll up
+            // into per-project P&L (cash collection on a project's invoice).
+            ProjectId = doc.ProjectId
         };
 
         _db.JournalEntries.Add(entry);
@@ -1074,7 +1130,8 @@ public class DocumentService : IDocumentService
                 DebitAmount = line.Debit,
                 CreditAmount = line.Credit,
                 Description = line.Description,
-                LineOrder = order++
+                LineOrder = order++,
+                ProjectId = doc.ProjectId
             });
         }
     }
@@ -1088,10 +1145,14 @@ public class DocumentService : IDocumentService
         d.Lines.OrderBy(l => l.LineOrder).Select(l => new DocumentLineResponse(
             l.Id, l.LineOrder, l.Description, l.Quantity, l.Unit,
             l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
-            l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList(),
+            l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount,
+            ProjectId: l.ProjectId)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
-        EtaxStatus: etax?.Status);
+        EtaxStatus: etax?.Status,
+        ProjectId: d.ProjectId,
+        ProjectCode: d.Project?.Code,
+        ProjectName: d.Project?.Name);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
