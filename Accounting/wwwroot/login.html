@@ -6,6 +6,7 @@
   <title>เข้าสู่ระบบ - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/inapp-browser-guard.js"></script>
 </head>
 <body>
   <div class="auth-page">
@@ -28,7 +29,7 @@
         <h1>เข้าสู่ระบบ</h1>
         <p class="subtitle">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</p>
 
-        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px"></div>
+        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
 
         <form onsubmit="handleLogin(event)">
           <div class="form-group">
@@ -156,6 +157,19 @@
           localStorage.setItem('token', token);
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           API.token = token;
+
+          // Handle weak password notice (legacy passwords not meeting current rules)
+          const notice = res.data.passwordWeakNotice;
+          if (notice) {
+            localStorage.setItem('passwordWeakNotice', JSON.stringify(notice));
+            sessionStorage.removeItem('passwordWeakNoticeDismissed');
+            if (notice.forced) {
+              window.location.href = '/change-password.html?required=1';
+              return;
+            }
+          } else {
+            localStorage.removeItem('passwordWeakNotice');
+          }
           window.location.href = '/app.html';
         } else {
           throw new Error(res.message || 'เข้าสู่ระบบไม่สำเร็จ');

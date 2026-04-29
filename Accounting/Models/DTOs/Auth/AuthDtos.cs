@@ -28,7 +28,8 @@ public record LoginResponse(
     string AccessToken,
     string RefreshToken,
     DateTime ExpiresAt,
-    UserInfo User);
+    UserInfo User,
+    PasswordWeakNotice? PasswordWeakNotice = null);
 
 public record UserInfo(
     Guid Id,
@@ -36,6 +37,18 @@ public record UserInfo(
     string FullName,
     string? Phone,
     bool IsSystemAdmin = false);
+
+/// <summary>
+/// Returned in LoginResponse when the user's current password no longer meets
+/// complexity rules. The frontend should warn the user and (if Forced=true)
+/// redirect them to change their password before continuing.
+/// </summary>
+public record PasswordWeakNotice(
+    DateTime DetectedAt,
+    DateTime DeadlineAt,
+    int DaysRemaining,
+    bool Forced,
+    string Message);
 
 public record RefreshTokenRequest(string RefreshToken);
 

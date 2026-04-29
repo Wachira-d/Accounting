@@ -25,6 +25,13 @@ public class User : BaseEntity
     public DateTime? PasswordResetTokenExpiry { get; set; }
     public bool EmailVerified { get; set; } = false;
 
+    /// <summary>
+    /// Timestamp when login first detected the user's password no longer meets
+    /// current complexity rules. Cleared on successful password change.
+    /// Drives a 30-day grace period before forcing change.
+    /// </summary>
+    public DateTime? PasswordWeakDetectedAt { get; set; }
+
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();
 }
