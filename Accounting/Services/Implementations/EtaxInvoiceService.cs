@@ -656,14 +656,16 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             new XElement(ram + "CalculatedAmount",
                 doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
 
-        // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001.
-        // ReferenceTypeCode must be one of 388/T02/T03/T04 (TaxInvoice variants).
-        // Per ETDA sample CDN_CN2017110001_Sample.xml, the simplest valid form is just
-        // <ReferenceTypeCode>; additional fields use specialised types we'd risk getting wrong.
+        // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001..002.
+        // IssuerAssignedID = original document number; ReferenceTypeCode = 388/T02/T03/T04 (TaxInvoice variants).
+        // We omit FormattedIssueDateTime since it requires a separate udt: namespace declaration
+        // that's not currently emitted — the simpler 2-element form passes our tested Schematron rules.
         XElement? additionalRef = null;
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
+            var origRef = originalDoc?.DocumentNumber ?? doc.Reference ?? "-";
             additionalRef = new XElement(ram + "AdditionalReferencedDocument",
+                new XElement(ram + "IssuerAssignedID", origRef),
                 new XElement(ram + "ReferenceTypeCode", "388"));
         }
 
