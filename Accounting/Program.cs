@@ -96,7 +96,6 @@ builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 // New modules
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<IBankService, BankService>();
-builder.Services.AddScoped<IFreelanceService, FreelanceService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 

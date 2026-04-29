@@ -229,8 +229,6 @@ const Layout = {
 
     { section: 'ผู้ติดต่อ' },
     { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html', feature: 'DocumentEngine' },
-    { id: 'freelance', label: 'Freelancer/ผู้รับจ้าง', icon: '👤', href: '/pages/freelance.html', feature: 'FreelanceManagement' },
-
     { section: 'สินค้า/บริการ' },
     { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html', feature: 'Inventory' },
     { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html', feature: 'WarehouseManagement' },

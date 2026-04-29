@@ -37,9 +37,6 @@ public class CompanySettings : TenantEntity
     // Security
     public bool RequireApprovalForDocuments { get; set; } = false;
     public decimal? ApprovalThresholdAmount { get; set; }
-    public bool AllowFreelanceAccess { get; set; } = false;
-    public int MaxFreelanceUsers { get; set; } = 3;
-    public bool RequireTwoFactorForFreelance { get; set; } = false;
     public bool EnableApiAccess { get; set; } = false;
     public int MaxApiKeys { get; set; } = 5;
 

@@ -52,7 +52,6 @@ public class SubscriptionCheckMiddleware
         ("/payroll",                  FeatureFlags.Payroll),
         ("/commission",               FeatureFlags.Commission),
         ("/fixed-assets",             FeatureFlags.FixedAssets),
-        ("/freelance",                FeatureFlags.FreelanceManagement),
         ("/recurring",                FeatureFlags.RecurringTransactions),
         ("/revenue-recognition",      FeatureFlags.RevenueRecognition),
         ("/loans",                    FeatureFlags.LoanManagement),
