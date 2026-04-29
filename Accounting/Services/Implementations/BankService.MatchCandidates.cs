@@ -165,7 +165,7 @@ public partial class BankService
             .GroupBy(l => l.JournalEntryId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var rankedPayments = paymentCandidates
+        var rankedPaymentsAll = paymentCandidates
             .Select(p =>
             {
                 var amountDiff = Math.Abs(p.Amount - bankAmount);
@@ -201,8 +201,10 @@ public partial class BankService
             })
             .OrderByDescending(c => c.Score)
             .ThenBy(c => c.DateDiffDays)
-            .Take(50)
             .ToList();
+
+        var totalPaymentsInWindow = rankedPaymentsAll.Count;
+        var rankedPayments = rankedPaymentsAll.Take(DisplayCap).ToList();
 
         // ===== Candidate Journal Entries =====
         var jeExclude = usedJeIds.ToList();
@@ -218,7 +220,7 @@ public partial class BankService
         var bankTxnIsDeposit2 = bankTxn.TransactionType == BankTransactionType.Deposit
             || bankTxn.TransactionType == BankTransactionType.Interest;
 
-        var rankedJournals = jeCandidates
+        var rankedJournalsAll = jeCandidates
             .Select(j =>
             {
                 // Use TotalDebit (= TotalCredit) as the JE amount
@@ -256,8 +258,10 @@ public partial class BankService
             })
             .OrderByDescending(c => c.Score)
             .ThenBy(c => c.DateDiffDays)
-            .Take(50)
             .ToList();
+
+        var totalJournalEntriesInWindow = rankedJournalsAll.Count;
+        var rankedJournals = rankedJournalsAll.Take(DisplayCap).ToList();
 
         return new MatchCandidatesResponse(
             BankTransactionId: bankTxn.Id,
@@ -266,8 +270,17 @@ public partial class BankService
             BankTransactionDescription: bankTxn.Description ?? "",
             Payments: rankedPayments,
             JournalEntries: rankedJournals,
-            ExcludedAlreadyMatchedCount: usedPaymentIds.Count + usedJeIds.Count);
+            ExcludedAlreadyMatchedCount: usedPaymentIds.Count + usedJeIds.Count,
+            TotalPaymentsInWindow: totalPaymentsInWindow,
+            TotalJournalEntriesInWindow: totalJournalEntriesInWindow);
     }
+
+    /// <summary>
+    /// Max rows displayed per tab in the picker. Anything beyond is reachable via
+    /// the search box / amount filter. We expose a "totalInWindow" diagnostic so
+    /// the UI can show "showing 200 of 480" — making the cap visible.
+    /// </summary>
+    private const int DisplayCap = 200;
 
     /// <summary>
     /// AI auto-suggest: pick a subset of match candidates whose amounts sum to

@@ -119,7 +119,7 @@ public class CurrencyService : ICurrencyService
     /// <summary>
     /// Convert amount from one currency to another using the latest available rate
     /// </summary>
-    public async Task<decimal> ConvertAsync(Guid companyId, string fromCurrency, string toCurrency, decimal amount, DateTime? asOfDate = null)
+    public async Task<decimal> ConvertAsync(Guid companyId, string fromCurrency, string toCurrency, decimal amount, DateTime? asOfDate = null, string? direction = null)
     {
         if (fromCurrency == toCurrency) return amount;
 
@@ -135,7 +135,15 @@ public class CurrencyService : ICurrencyService
             .FirstOrDefaultAsync();
 
         if (rate != null)
-            return amount * rate.MidRate;
+        {
+            var effectiveRate = direction switch
+            {
+                "buy" => rate.BuyRate > 0 ? rate.BuyRate : rate.MidRate,
+                "sell" => rate.SellRate > 0 ? rate.SellRate : rate.MidRate,
+                _ => rate.MidRate
+            };
+            return amount * effectiveRate;
+        }
 
         // Try inverse rate
         var inverseRate = await _db.CurrencyRates
@@ -192,7 +200,7 @@ public class CurrencyService : ICurrencyService
 
             var previousBalance = previousRate != null
                 ? account.CurrentBalance * previousRate.MidRate
-                : account.CurrentBalance;
+                : revaluedBalance;
 
             var gainLoss = revaluedBalance - previousBalance;
 

@@ -46,7 +46,12 @@ public record DocumentResponse(
     decimal BalanceDue,
     string? Notes,
     List<DocumentLineResponse> Lines,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // e-Tax info — set when this document has been processed via the e-Tax pipeline.
+    // The UI uses these to surface the "Download PDF/A-3 (with embedded XML)" action,
+    // which is required for e-Tax by Email compliance — printing strips the XML payload.
+    Guid? EtaxInvoiceId = null,
+    EtaxStatus? EtaxStatus = null);
 
 public record DocumentLineResponse(
     Guid Id,

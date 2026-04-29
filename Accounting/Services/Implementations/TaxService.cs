@@ -123,8 +123,8 @@ public class TaxService : ITaxService
                 vatExemptAmount += exemptLines.Sum(l => l.Amount);
             }
 
-            // Output VAT - from sales documents
-            if (doc.DocumentType == DocumentType.Invoice || doc.DocumentType == DocumentType.TaxInvoice)
+            // Output VAT - only from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30
+            if (doc.DocumentType == DocumentType.TaxInvoice)
             {
                 outputVat += doc.VatAmount;
                 report.Lines.Add(new TaxReportLine
@@ -168,7 +168,7 @@ public class TaxService : ITaxService
         // Handles data imported via /integration/journals or /integration/daily-summary
         // which create JournalEntries without Documents.
         // Detection by BOTH account code AND name to support custom charts:
-        //   - Output VAT: code starts with "219" or "215" OR name contains "ภาษีขาย"
+        //   - Output VAT: code starts with "2191" (ภาษีขาย) OR name contains "ภาษีขาย"
         //   - Input VAT: code starts with "116" or "114" or "115" OR name contains "ภาษีซื้อ"
         var endDateInclusive = endDate.Date.AddDays(1);
         var journalOnlyEntryIds = await _db.JournalEntries
@@ -186,8 +186,7 @@ public class TaxService : ITaxService
                 .Include(l => l.JournalEntry)
                 .Where(l => journalOnlyEntryIds.Contains(l.JournalEntryId)
                     && l.Account != null
-                    && (l.Account.AccountCode.StartsWith("219")
-                        || l.Account.AccountCode.StartsWith("215")
+                    && (l.Account.AccountCode.StartsWith("2191")
                         || l.Account.AccountCode.StartsWith("116")
                         || l.Account.AccountCode.StartsWith("114")
                         || l.Account.AccountCode.StartsWith("115")
@@ -196,7 +195,7 @@ public class TaxService : ITaxService
                 .ToListAsync();
 
             bool IsOutputVat(Models.Entities.ChartOfAccount a) =>
-                a.AccountCode.StartsWith("219") || a.AccountCode.StartsWith("215")
+                a.AccountCode.StartsWith("2191")
                 || a.AccountName.Contains("ภาษีขาย");
             bool IsInputVat(Models.Entities.ChartOfAccount a) =>
                 a.AccountCode.StartsWith("116") || a.AccountCode.StartsWith("114") || a.AccountCode.StartsWith("115")
@@ -390,7 +389,17 @@ public class TaxService : ITaxService
                 var whtAmount = grp.Sum(l => l.CreditAmount - l.DebitAmount);
                 if (whtAmount <= 0) continue;
 
-                var baseAmount = Math.Round(whtAmount / 0.03m, 2);
+                var allLinesInJe = await _db.JournalEntryLines
+                    .Where(l => l.JournalEntryId == je.Id)
+                    .SumAsync(l => l.DebitAmount);
+                var expenseTotal = allLinesInJe - whtAmount;
+                var estimatedRate = expenseTotal > 0
+                    ? Math.Round(whtAmount / expenseTotal * 100, 2)
+                    : 3m;
+                var baseAmount = estimatedRate > 0
+                    ? Math.Round(whtAmount / (estimatedRate / 100), 2)
+                    : 0m;
+
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -398,7 +407,7 @@ public class TaxService : ITaxService
                     TransactionDate = je.EntryDate,
                     Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
                     IncomeAmount = baseAmount,
-                    TaxRate = 3,
+                    TaxRate = estimatedRate,
                     TaxAmount = whtAmount,
                     IncomeTypeCode = "40(8)"
                 });
@@ -823,8 +832,7 @@ public class TaxService : ITaxService
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= start && l.JournalEntry.EntryDate < end
                 && l.Account != null
-                && (l.Account.AccountCode.StartsWith("219")
-                    || l.Account.AccountCode.StartsWith("215")
+                && (l.Account.AccountCode.StartsWith("2191")
                     || l.Account.AccountCode.StartsWith("116")
                     || l.Account.AccountCode.StartsWith("114")
                     || l.Account.AccountCode.StartsWith("115")

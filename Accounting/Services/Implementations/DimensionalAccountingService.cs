@@ -124,6 +124,11 @@ public class DimensionalAccountingService : IDimensionalAccountingService
             .FirstOrDefaultAsync(l => l.Id == journalEntryLineId && l.JournalEntry.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการบันทึกบัญชี");
 
+        var totalPercent = allocations.Sum(a => a.Percent);
+        if (allocations.Count > 0 && Math.Abs(totalPercent - 100m) > 0.01m)
+            throw new InvalidOperationException(
+                $"สัดส่วนการจัดสรรรวมต้องเท่ากับ 100% (ปัจจุบัน: {totalPercent:N2}%)");
+
         // Remove existing allocations
         var existing = await _db.Set<JournalLineDimension>()
             .Where(d => d.JournalEntryLineId == journalEntryLineId)

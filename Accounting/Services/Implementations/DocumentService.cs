@@ -83,8 +83,20 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var count = await _db.Documents.CountAsync(d => d.CompanyId == companyId && d.DocumentType == request.DocumentType);
-            var docNumber = $"{prefix}-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}";
+            var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+            var docPrefix = $"{prefix}-{yearMonth}-";
+            var maxNumber = await _db.Documents
+                .IgnoreQueryFilters()
+                .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
+                .Select(d => d.DocumentNumber)
+                .MaxAsync() as string;
+            var nextSeq = 1;
+            if (maxNumber != null)
+            {
+                var lastPart = maxNumber.Substring(docPrefix.Length);
+                if (int.TryParse(lastPart, out var parsed)) nextSeq = parsed + 1;
+            }
+            var docNumber = $"{docPrefix}{nextSeq:D4}";
 
             var doc = new Document
             {
@@ -106,11 +118,11 @@ public class DocumentService : IDocumentService
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = line.Quantity * line.UnitPrice;
-                var discountAmt = lineAmount * line.DiscountPercent / 100;
+                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2);
+                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2);
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = afterDiscount * line.VatRate / 100;
-                var whtAmt = afterDiscount * line.WithholdingTaxRate / 100;
+                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2) : 0m;
+                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2);
 
                 subTotal += afterDiscount;
                 totalDiscount += discountAmt;
@@ -165,7 +177,8 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        return MapDocumentToResponse(doc);
+        var etax = await GetLatestEtaxAsync(companyId, new[] { documentId });
+        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request)
@@ -192,10 +205,41 @@ public class DocumentService : IDocumentService
             .Take(request.PageSize)
             .ToListAsync();
 
+        var etaxByDoc = await GetLatestEtaxAsync(companyId, items.Select(i => i.Id));
+
         return new PagedResponse<DocumentResponse>(
-            items.Select(MapDocumentToResponse).ToList(),
+            items.Select(d => MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id))).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
+    }
+
+    /// <summary>
+    /// Batch-load the latest e-Tax invoice per document. Picks the highest-status
+    /// (Accepted &gt; Submitted &gt; Signed &gt; Generated) so the UI shows the most
+    /// "advanced" eTax record that exists. Used to surface the download button on
+    /// docs whose XML has been embedded in a PDF/A-3.
+    /// </summary>
+    private async Task<Dictionary<Guid, (Guid EtaxId, EtaxStatus Status)>> GetLatestEtaxAsync(
+        Guid companyId, IEnumerable<Guid> docIds)
+    {
+        var ids = docIds.Distinct().ToList();
+        if (ids.Count == 0) return new();
+
+        var rows = await _db.EtaxInvoices
+            .AsNoTracking()
+            .Where(e => e.CompanyId == companyId && ids.Contains(e.DocumentId))
+            .Select(e => new { e.Id, e.DocumentId, e.Status, e.CreatedAt })
+            .ToListAsync();
+
+        return rows
+            .GroupBy(r => r.DocumentId)
+            .ToDictionary(
+                g => g.Key,
+                g => g
+                    .OrderByDescending(r => (int)r.Status)
+                    .ThenByDescending(r => r.CreatedAt)
+                    .Select(r => (r.Id, r.Status))
+                    .First());
     }
 
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request)
@@ -223,11 +267,11 @@ public class DocumentService : IDocumentService
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = line.Quantity * line.UnitPrice;
-                var discountAmt = lineAmount * line.DiscountPercent / 100;
+                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2);
+                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2);
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = afterDiscount * line.VatRate / 100;
-                var whtAmt = afterDiscount * line.WithholdingTaxRate / 100;
+                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2) : 0m;
+                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2);
 
                 subTotal += afterDiscount;
                 totalDiscount += discountAmt;
@@ -310,21 +354,66 @@ public class DocumentService : IDocumentService
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        doc.Status = DocumentStatus.Voided;
-        doc.UpdatedAt = DateTime.UtcNow;
+        if (doc.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");
+        if (doc.Status == DocumentStatus.Paid || doc.Status == DocumentStatus.PartiallyPaid)
+            throw new InvalidOperationException("ไม่สามารถยกเลิกเอกสารที่มีการชำระเงินแล้ว กรุณายกเลิกการชำระเงินก่อน");
 
-        // Void linked journal entries
-        var linkedJournals = await _db.JournalEntries
-            .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
-                && j.Status == JournalEntryStatus.Posted)
-            .ToListAsync();
-        foreach (var je in linkedJournals)
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            je.Status = JournalEntryStatus.Voided;
-            je.UpdatedAt = DateTime.UtcNow;
-        }
+            doc.Status = DocumentStatus.Voided;
+            doc.UpdatedAt = DateTime.UtcNow;
 
-        await _db.SaveChangesAsync();
+            // Create reversal journal entries for linked journals (Thai standard: reversal, not deletion)
+            var linkedJournals = await _db.JournalEntries
+                .Include(j => j.Lines)
+                .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted)
+                .ToListAsync();
+            foreach (var je in linkedJournals)
+            {
+                je.Status = JournalEntryStatus.Voided;
+                je.UpdatedAt = DateTime.UtcNow;
+
+                // Create reversal entry (swap Dr↔Cr)
+                var reversalEntry = new JournalEntry
+                {
+                    CompanyId = companyId,
+                    EntryNumber = $"{je.EntryNumber}-REV",
+                    EntryDate = DateTime.UtcNow,
+                    Description = $"กลับรายการ - {je.Description}",
+                    Reference = je.Reference,
+                    JournalType = je.JournalType,
+                    TotalDebit = je.TotalCredit,
+                    TotalCredit = je.TotalDebit,
+                    Status = JournalEntryStatus.Posted,
+                    IsAutoGenerated = true,
+                    SourceDocumentId = documentId,
+                    FiscalPeriodId = je.FiscalPeriodId
+                };
+                foreach (var line in je.Lines)
+                {
+                    reversalEntry.Lines.Add(new JournalEntryLine
+                    {
+                        AccountId = line.AccountId,
+                        DebitAmount = line.CreditAmount,
+                        CreditAmount = line.DebitAmount,
+                        Description = $"กลับรายการ - {line.Description}",
+                        LineOrder = line.LineOrder
+                    });
+                }
+                _db.JournalEntries.Add(reversalEntry);
+            }
+
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)
@@ -443,11 +532,23 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var count = await _db.Payments.CountAsync(p => p.CompanyId == companyId);
+            var payYearMonth = DateTime.UtcNow.ToString("yyyyMM");
+            var payPrefix = $"PAY-{payYearMonth}-";
+            var maxPayNum = await _db.Payments
+                .IgnoreQueryFilters()
+                .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(payPrefix))
+                .Select(p => p.PaymentNumber)
+                .MaxAsync() as string;
+            var paySeq = 1;
+            if (maxPayNum != null)
+            {
+                var lastPart = maxPayNum.Substring(payPrefix.Length);
+                if (int.TryParse(lastPart, out var parsed)) paySeq = parsed + 1;
+            }
             var payment = new Payment
             {
                 CompanyId = companyId,
-                PaymentNumber = $"PAY-{DateTime.UtcNow:yyyyMM}-{(count + 1):D4}",
+                PaymentNumber = $"{payPrefix}{paySeq:D4}",
                 DocumentId = request.DocumentId,
                 PaymentDate = request.PaymentDate,
                 Amount = request.Amount,
@@ -559,10 +660,10 @@ public class DocumentService : IDocumentService
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     docLine.AccountId!.Value, 0, docLine.Amount, docLine.Description));
 
-            // Cr: ภาษีขาย (212101)
+            // Cr: ภาษีขาย (21911 ภาษีขาย ภ.พ. 30)
             if (doc.VatAmount > 0)
             {
-                var vatAccount = await FindAccountAsync(companyId, "219");
+                var vatAccount = await FindAccountAsync(companyId, "21911");
                 if (vatAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย"));
@@ -601,10 +702,11 @@ public class DocumentService : IDocumentService
                 lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                     apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}"));
 
-            // Cr: ภาษีหัก ณ ที่จ่าย ค้างจ่าย (212201)
+            // Cr: ภาษีหัก ณ ที่จ่าย ค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53)
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await FindAccountAsync(companyId, "219");
+                var whtAccount = await FindAccountAsync(companyId, "21916")
+                    ?? await FindAccountAsync(companyId, "21917");
                 if (whtAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย"));
@@ -715,7 +817,7 @@ public class DocumentService : IDocumentService
         }
     }
 
-    private static DocumentResponse MapDocumentToResponse(Document d) => new(
+    private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null) => new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
@@ -725,7 +827,9 @@ public class DocumentService : IDocumentService
             l.Id, l.LineOrder, l.Description, l.Quantity, l.Unit,
             l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
             l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList(),
-        d.CreatedAt);
+        d.CreatedAt,
+        EtaxInvoiceId: etax?.EtaxId,
+        EtaxStatus: etax?.Status);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,

@@ -189,7 +189,12 @@ public record MatchCandidatesResponse(
     List<MatchCandidate> JournalEntries,
     // Diagnostics: how many candidates were excluded because they're already matched
     // to a sibling bank transaction. Useful for the UI to show transparency.
-    int ExcludedAlreadyMatchedCount = 0);
+    int ExcludedAlreadyMatchedCount = 0,
+    // Total **unmatched** rows that survived the date-window + voided/deleted filters,
+    // BEFORE the display cap. The picker may cap displayed rows for performance, so the
+    // UI uses these to show "showing N of M" and let the user know if the cap was hit.
+    int TotalPaymentsInWindow = 0,
+    int TotalJournalEntriesInWindow = 0);
 
 /// <summary>
 /// AI auto-suggestion for many-to-one match — finds the subset of candidates whose

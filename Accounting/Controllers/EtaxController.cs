@@ -242,8 +242,7 @@ public class EtaxController : ControllerBase
         if (req.ByEmailRegistrationDate.HasValue) s.EtaxByEmailRegistrationDate = req.ByEmailRegistrationDate;
         if (req.ByEmailRegistrationNumber != null) s.EtaxByEmailRegistrationNumber = req.ByEmailRegistrationNumber;
         if (req.ByEmailSenderEmail != null) s.EtaxByEmailSenderEmail = req.ByEmailSenderEmail;
-        if (!string.IsNullOrWhiteSpace(req.ByEmailRdTimestampAddress))
-            s.EtaxByEmailRdTimestampAddress = req.ByEmailRdTimestampAddress;
+        // RD timestamp address is fixed by ETDA — never allow user override
         if (req.ByEmailEmbedXml.HasValue) s.EtaxByEmailEmbedXml = req.ByEmailEmbedXml.Value;
         if (req.ByEmailAutoSendOnApprove.HasValue) s.EtaxByEmailAutoSendOnApprove = req.ByEmailAutoSendOnApprove.Value;
         if (req.ServiceProvider != null) s.EtaxServiceProvider = req.ServiceProvider;

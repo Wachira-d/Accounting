@@ -193,6 +193,9 @@ public class ApprovalService : IApprovalService
         if (request.OverallStatus != ApprovalStatus.Pending)
             throw new InvalidOperationException("คำขอนี้ไม่อยู่ในสถานะรอการอนุมัติ");
 
+        if (userId == request.RequestedByUserId)
+            throw new InvalidOperationException("ผู้ขอไม่สามารถอนุมัติคำขอของตนเองได้");
+
         var action = request.Actions
             .FirstOrDefault(a => a.ApproverUserId == userId && a.StepOrder == request.CurrentStep && a.Status == ApprovalStatus.Pending)
             ?? throw new InvalidOperationException("คุณไม่มีสิทธิ์อนุมัติขั้นตอนนี้");

@@ -38,6 +38,8 @@ public class EmailConfigController : ControllerBase
         var s = await GetOrCreateSettings(companyId);
         s.EmailProvider = req.Provider;
         if (req.FromAddress != null) s.EmailFromAddress = req.FromAddress;
+        if (req.FromName != null) s.EmailFromName = req.FromName;
+        if (req.ReplyTo != null) s.EmailReplyTo = req.ReplyTo;
 
         if (req.Smtp != null)
         {
@@ -96,6 +98,8 @@ public class EmailConfigController : ControllerBase
     private static EmailConfigResponse BuildResponse(CompanySettings s) => new(
         Provider: s.EmailProvider,
         FromAddress: s.EmailFromAddress,
+        FromName: s.EmailFromName,
+        ReplyTo: s.EmailReplyTo,
         Configured: s.EmailConfigured,
         LastTestedAt: s.EmailLastTestedAt,
         LastTestStatus: s.EmailLastTestStatus,

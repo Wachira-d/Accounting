@@ -80,7 +80,13 @@ public class TaxCalendarService : ITaxCalendarService
 
                 DateTime? eFilingDueDate = null;
                 if (eFilingExtra > 0)
+                {
                     eFilingDueDate = dueDate.AddDays(eFilingExtra);
+                    if (eFilingDueDate.Value.DayOfWeek == DayOfWeek.Saturday)
+                        eFilingDueDate = eFilingDueDate.Value.AddDays(2);
+                    else if (eFilingDueDate.Value.DayOfWeek == DayOfWeek.Sunday)
+                        eFilingDueDate = eFilingDueDate.Value.AddDays(1);
+                }
 
                 events.Add(new TaxCalendarEvent
                 {

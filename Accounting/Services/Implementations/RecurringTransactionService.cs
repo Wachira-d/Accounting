@@ -159,6 +159,13 @@ public class RecurringTransactionService : IRecurringTransactionService
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
 
+        if (recurring.Status != RecurringStatus.Active)
+            throw new InvalidOperationException("รายการนี้ไม่อยู่ในสถานะ Active");
+        if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
+            throw new InvalidOperationException("รายการนี้ถึงจำนวนครั้งสูงสุดแล้ว");
+        if (recurring.EndDate.HasValue && DateTime.UtcNow > recurring.EndDate.Value)
+            throw new InvalidOperationException("รายการนี้เลยวันสิ้นสุดแล้ว");
+
         await ExecuteRecurringAsync(recurring, performedBy);
         await _db.SaveChangesAsync();
         return MapToResponse(recurring);
@@ -177,12 +184,19 @@ public class RecurringTransactionService : IRecurringTransactionService
             if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
             {
                 recurring.Status = RecurringStatus.Completed;
+                await _db.SaveChangesAsync();
                 continue;
             }
+
+            // Advance NextRunDate immediately to prevent duplicate execution on concurrent scheduler runs
+            var scheduledDate = recurring.NextRunDate;
+            recurring.NextRunDate = GetNextRunDate(recurring);
+            await _db.SaveChangesAsync();
 
             try
             {
                 await ExecuteRecurringAsync(recurring, "System");
+                await _db.SaveChangesAsync();
             }
             catch (Exception ex)
             {
@@ -190,8 +204,6 @@ public class RecurringTransactionService : IRecurringTransactionService
                 await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.Execute/{recurring.Id}");
             }
         }
-
-        await _db.SaveChangesAsync();
     }
 
     private async Task ExecuteRecurringAsync(RecurringTransaction recurring, string performedBy)
@@ -215,22 +227,21 @@ public class RecurringTransactionService : IRecurringTransactionService
         recurring.LastRunDate = DateTime.UtcNow;
         recurring.TotalRuns++;
 
-        // Calculate next run date
-        recurring.NextRunDate = recurring.Frequency switch
-        {
-            RecurringFrequency.Daily => recurring.NextRunDate.AddDays(1),
-            RecurringFrequency.Weekly => recurring.NextRunDate.AddDays(7),
-            RecurringFrequency.BiWeekly => recurring.NextRunDate.AddDays(14),
-            RecurringFrequency.Monthly => recurring.NextRunDate.AddMonths(1),
-            RecurringFrequency.Quarterly => recurring.NextRunDate.AddMonths(3),
-            RecurringFrequency.SemiAnnual => recurring.NextRunDate.AddMonths(6),
-            RecurringFrequency.Annual => recurring.NextRunDate.AddYears(1),
-            _ => recurring.NextRunDate.AddMonths(1)
-        };
-
         if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
             recurring.Status = RecurringStatus.Completed;
     }
+
+    private static DateTime GetNextRunDate(RecurringTransaction r) => r.Frequency switch
+    {
+        RecurringFrequency.Daily => r.NextRunDate.AddDays(1),
+        RecurringFrequency.Weekly => r.NextRunDate.AddDays(7),
+        RecurringFrequency.BiWeekly => r.NextRunDate.AddDays(14),
+        RecurringFrequency.Monthly => r.NextRunDate.AddMonths(1),
+        RecurringFrequency.Quarterly => r.NextRunDate.AddMonths(3),
+        RecurringFrequency.SemiAnnual => r.NextRunDate.AddMonths(6),
+        RecurringFrequency.Annual => r.NextRunDate.AddYears(1),
+        _ => r.NextRunDate.AddMonths(1)
+    };
 
     private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions)
     {

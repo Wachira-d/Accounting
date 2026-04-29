@@ -375,14 +375,22 @@ public class PayrollService : IPayrollService
                     otherDeductions += amount;
                 }
 
-                var grossIncome = emp.BaseSalary + overtimePay + allowances + commission + bonus + otherIncome;
+                // Deduct unpaid leave from base salary
+                var unpaidLeaveDays = approvedLeaves
+                    .Where(l => l.LeaveType == "UnpaidLeave" || l.LeaveType == "ลาไม่รับค่าจ้าง")
+                    .Sum(l => l.TotalDays);
+                var leaveDeduction = workDaysInMonth > 0
+                    ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2)
+                    : 0m;
 
-                // Social security calculation
+                var grossIncome = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+
+                // Social security: base on BaseSalary (not gross), capped at 15,000 THB/month per Thai SSO law
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
                 if (emp.IsSubjectToSocialSecurity)
                 {
-                    var ssoBase = Math.Min(grossIncome, SsoMaxBase);
+                    var ssoBase = Math.Min(emp.BaseSalary, SsoMaxBase);
                     ssoEmployee = Math.Min(ssoBase * SsoRate, SsoMaxContribution);
                     ssoEmployer = ssoEmployee;
                 }
@@ -396,8 +404,9 @@ public class PayrollService : IPayrollService
                     pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
                 }
 
-                // Thai withholding tax calculation (annualized method) on full gross income
-                var estimatedAnnualIncome = cumulativeIncome + grossIncome * (13 - run.Month);
+                // Thai withholding tax: TRD-standard annualization = (YTD including this month) * 12 / elapsed months
+                var ytdIncome = cumulativeIncome + grossIncome;
+                var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
                 var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedAnnualIncome);
                 var remainingMonths = 13 - run.Month;
                 var monthlyTax = remainingMonths > 0
@@ -505,17 +514,17 @@ public class PayrollService : IPayrollService
         if (alreadyPaid)
             throw new InvalidOperationException($"รอบจ่ายเงินเดือน {run.Year}/{run.Month:D2} ถูกจ่ายไปแล้ว");
 
-        run.Status = "Paid";
-        run.UpdatedBy = processedBy;
-        run.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        // Create journal entry for payroll
-        // Dr: เงินเดือนและค่าจ้าง (531xxx), Cr: เงินสด/ธนาคาร + ภาษีหัก ณ ที่จ่าย + ประกันสังคม
-        if (_accountingService != null && run.TotalGrossSalary > 0)
+        await using var payTransaction = await _db.Database.BeginTransactionAsync();
+        try
         {
-            try
+            run.Status = "Paid";
+            run.UpdatedBy = processedBy;
+            run.UpdatedAt = DateTime.UtcNow;
+
+            if (_accountingService != null && run.TotalGrossSalary > 0)
             {
+                try
+                {
                 var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
                 // Dr: เงินเดือนและค่าจ้าง (541 - ค่าใช้จ่ายบุคลากร)
@@ -605,6 +614,12 @@ public class PayrollService : IPayrollService
 
                 if (lines.Count >= 2)
                 {
+                    var totalDebit = lines.Sum(l => l.DebitAmount);
+                    var totalCredit = lines.Sum(l => l.CreditAmount);
+                    if (totalDebit != totalCredit)
+                        throw new InvalidOperationException(
+                            $"Payroll journal unbalanced: Dr={totalDebit:N2} Cr={totalCredit:N2}");
+
                     var entry = await _accountingService.CreateJournalEntryAsync(companyId,
                         new Models.DTOs.Accounting.CreateJournalEntryRequest(
                             run.PayDate,
@@ -617,7 +632,20 @@ public class PayrollService : IPayrollService
                     await _db.SaveChangesAsync();
                 }
             }
-            catch { /* Journal creation failure should not block payroll payment */ }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Payroll journal creation failed: {ex.Message}", ex);
+            }
+            }
+
+            await _db.SaveChangesAsync();
+            await payTransaction.CommitAsync();
+        }
+        catch
+        {
+            await payTransaction.RollbackAsync();
+            throw;
         }
 
         return MapToPayrollRunResponse(run);

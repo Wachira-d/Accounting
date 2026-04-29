@@ -292,8 +292,13 @@
             <div class="form-group"><label class="form-label">วันที่ได้รับอนุมัติ</label><input type="date" class="form-input" id="sEtaxByEmailRegDate"></div>
             <div class="form-group"><label class="form-label">เลขรหัสรับรอง (ถ้ามี)</label><input type="text" class="form-input" id="sEtaxByEmailRegNumber"></div>
             <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span style="color:red">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
-            <div class="form-group"><label class="form-label">CC สรรพากร (Time Stamp)</label><input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th"></div>
+            <div class="form-group">
+              <label class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
+              <input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
+              <div style="font-size:11px;color:#64748b;margin-top:2px">ETDA กำหนดที่อยู่นี้สำหรับลงเวลาประทับ — ห้ามเปลี่ยน</div>
+            </div>
           </div>
+          <div id="etaxSenderMismatchWarning" style="display:none;padding:10px;background:#fee2e2;border-radius:6px;font-size:12px;color:#991b1b;margin-top:8px"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
             <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailEmbedXml" checked><label for="sEtaxByEmailEmbedXml">ฝัง XML ใน PDF/A-3 (สรรพากรกำหนด)</label></div>
             <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailAutoSend"><label for="sEtaxByEmailAutoSend">ส่งอัตโนมัติเมื่อ approve เอกสาร</label></div>
@@ -350,7 +355,13 @@
         </select>
       </div>
 
-      <div class="form-group"><label class="form-label">ที่อยู่อีเมลผู้ส่ง (From Address)</label><input type="email" class="form-input" id="emailFromAddress" placeholder="invoice@yourcompany.com"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label class="form-label">ที่อยู่อีเมลผู้ส่ง (From Address)</label><input type="email" class="form-input" id="emailFromAddress" placeholder="invoice@yourcompany.com"></div>
+        <div class="form-group"><label class="form-label">ชื่อผู้ส่ง (From Name)</label><input type="text" class="form-input" id="emailFromName" placeholder="บริษัท ABC จำกัด"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Reply-To (อีเมลตอบกลับ)</label><input type="email" class="form-input" id="emailReplyTo" placeholder="accounting@yourcompany.com — เว้นว่างจะใช้ From Address"></div>
+
+      <div id="emailProviderWarning" style="display:none;padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px;margin-bottom:12px"></div>
 
       <!-- SMTP -->
       <div id="emailSmtp" style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;margin-bottom:12px">
@@ -510,6 +521,8 @@
           const c = res.data || {};
           document.getElementById('emailProvider').value = c.provider || 'Smtp';
           document.getElementById('emailFromAddress').value = c.fromAddress || '';
+          document.getElementById('emailFromName').value = c.fromName || '';
+          document.getElementById('emailReplyTo').value = c.replyTo || '';
           if (c.smtp) {
             document.getElementById('smtpHost').value = c.smtp.host || '';
             document.getElementById('smtpPort').value = c.smtp.port || 587;
@@ -529,14 +542,41 @@
             document.getElementById('gmailRefreshToken').placeholder = c.gmail.hasRefreshToken ? '••••••• (เก็บไว้)' : '';
           }
           this.toggleEmailProvider();
+          this._checkEmailProviderFields(c);
 
           const status = document.getElementById('emailStatus');
           if (c.configured) {
             status.innerHTML = `<div style="padding:10px;background:#dcfce7;border-radius:6px;color:#166534;font-size:13px">✓ ตั้งค่าและทดสอบสำเร็จ • ${c.lastTestedAt ? new Date(c.lastTestedAt).toLocaleString('th-TH') : ''}</div>`;
           } else if (c.lastTestStatus) {
             status.innerHTML = `<div style="padding:10px;background:#fee2e2;border-radius:6px;color:#991b1b;font-size:13px">⚠ ทดสอบล่าสุดไม่ผ่าน: ${c.lastTestStatus}</div>`;
+          } else {
+            status.innerHTML = `<div style="padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px">⚠ ยังไม่ได้ทดสอบ — กรอกข้อมูลแล้วกด "ทดสอบส่งอีเมล" เพื่อยืนยัน</div>`;
           }
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _checkEmailProviderFields(c) {
+        const provider = document.getElementById('emailProvider').value;
+        const warn = document.getElementById('emailProviderWarning');
+        const missing = [];
+        if (provider === 'Smtp') {
+          if (!c?.smtp?.host) missing.push('SMTP Host');
+        } else if (provider === 'MicrosoftGraph') {
+          if (!c?.microsoft?.tenantId) missing.push('Tenant ID');
+          if (!c?.microsoft?.clientId) missing.push('Client ID');
+          if (!c?.microsoft?.hasClientSecret) missing.push('Client Secret');
+          if (!c?.microsoft?.senderUpn) missing.push('Sender Mailbox');
+        } else if (provider === 'GmailApi') {
+          if (!c?.gmail?.clientId) missing.push('Client ID');
+          if (!c?.gmail?.hasClientSecret) missing.push('Client Secret');
+          if (!c?.gmail?.hasRefreshToken) missing.push('Refresh Token');
+          if (!c?.fromAddress) missing.push('From Address');
+        }
+        if (missing.length > 0) {
+          warn.style.display = 'block';
+          warn.innerHTML = `⚠️ ยังขาดข้อมูลที่จำเป็นสำหรับ ${provider}: <strong>${missing.join(', ')}</strong> — หากไม่กรอก ระบบจะ fallback ไปใช้ SMTP ส่วนกลาง`;
+        } else {
+          warn.style.display = 'none';
+        }
       },
       async saveEmailConfig() {
         const api = Layout.api(); if (!api) return;
@@ -544,6 +584,8 @@
         const data = {
           provider,
           fromAddress: document.getElementById('emailFromAddress').value || null,
+          fromName: document.getElementById('emailFromName').value || null,
+          replyTo: document.getElementById('emailReplyTo').value || null,
           smtp: {
             host: document.getElementById('smtpHost').value || null,
             port: parseInt(document.getElementById('smtpPort').value) || 587,
@@ -606,6 +648,22 @@
           document.getElementById('sEtaxByEmailRdCc').value = c.byEmailRdTimestampAddress || 'csemail@etax.teda.th';
           document.getElementById('sEtaxByEmailEmbedXml').checked = c.byEmailEmbedXml !== false;
           document.getElementById('sEtaxByEmailAutoSend').checked = !!c.byEmailAutoSendOnApprove;
+
+          // Cross-validate: e-Tax sender email vs email provider From address
+          if (c.byEmailSenderEmail && (mode === 'ByEmail' || mode === 'Both')) {
+            try {
+              const emailRes = await api.getEmailConfig();
+              const ec = emailRes.data || {};
+              const providerFrom = ec.fromAddress || '';
+              const warn = document.getElementById('etaxSenderMismatchWarning');
+              if (providerFrom && c.byEmailSenderEmail.toLowerCase() !== providerFrom.toLowerCase()) {
+                warn.style.display = 'block';
+                warn.innerHTML = `⚠️ อีเมลผู้ส่งที่ลงทะเบียนกับสรรพากร (<strong>${c.byEmailSenderEmail}</strong>) ไม่ตรงกับ From Address ในตั้งค่าอีเมล (<strong>${providerFrom}</strong>) — สรรพากรจะตรวจสอบว่าอีเมลต้นทางตรงกับที่ลงทะเบียนไว้`;
+              } else {
+                warn.style.display = 'none';
+              }
+            } catch (_) {}
+          }
         } catch (e) { /* graceful */ }
         // Hook radio buttons to toggler
         document.querySelectorAll('input[name="etaxMode"]').forEach(r =>
