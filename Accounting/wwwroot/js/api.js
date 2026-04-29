@@ -696,6 +696,10 @@ const API = {
   deleteSignature: (id) => API.del(`/api/signatures/${id}`),
 
   // Company management
+  // User profile (incl. signature)
+  getProfile: () => API.get('/api/auth/profile'),
+  updateProfile: (data) => API.put('/api/auth/profile', data),
+
   getCompanies: () => API.get('/api/company'),
   createCompany: (d) => API.post('/api/company', d),
   getCompany: (id) => API.get(`/api/company/${id}`),

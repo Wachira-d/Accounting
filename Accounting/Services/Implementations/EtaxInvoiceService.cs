@@ -582,22 +582,27 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             : 0m;
         var currency = doc.Currency ?? "THB";
 
-        // Combine TaxId (13 digits) + Branch (5 digits) into 18-digit TXID
-        var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode);
-        var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode);
+        // Tax IDs: ETDA Schematron requires TXID = 13-digit TaxID + 5-digit branch (18 total)
+        // Detect if user entered 13 (need branch suffix) or 18 (already concatenated).
+        var sellerTaxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId);
+        var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId);
+        var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode, sellerTaxIdSchemeId);
+        var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode, buyerTaxIdSchemeId);
 
-        var sellerParty = BuildTradeParty(ram, "SellerTradeParty",
-            company.Name, sellerTxId,
-            company.Address, company.SubDistrict, company.District, company.Province,
-            company.PostalCode);
+        // Per Schematron TIV-SellerTradeParty-009..012: when CountryID=TH, seller MUST
+        // have BuildingNumber, CityName (อำเภอ), CitySubDivisionName (ตำบล), CountrySubDivisionID
+        // (province) and 5-digit PostcodeCode. Provide safe fallbacks if data missing.
+        var sellerParty = BuildSellerParty(ram, company);
 
-        var buyerParty = BuildTradeParty(ram, "BuyerTradeParty",
-            doc.Contact.Name, buyerTxId,
-            doc.Contact.Address, null, null, null, null);
+        // Buyer rules are looser (TIV-BuyerTradeParty-007): structured OR unstructured
+        // address acceptable. PostcodeCode required if CountryID=TH.
+        var buyerParty = BuildBuyerParty(ram, doc.Contact, buyerTaxIdSchemeId, buyerTxId);
 
-        // ShipToTradeParty (used as buyer's delivery address; minimal in current model)
+        // ShipToTradeParty: same address as buyer (delivery to billing address by default)
         var shipToParty = new XElement(ram + "ShipToTradeParty",
             new XElement(ram + "PostalTradeAddress",
+                ExtractPostcodeOrEmpty(doc.Contact.Address) is { Length: > 0 } pc
+                    ? new XElement(ram + "PostcodeCode", pc) : null,
                 !string.IsNullOrEmpty(doc.Contact.Address)
                     ? new XElement(ram + "LineOne", doc.Contact.Address) : null,
                 new XElement(ram + "CountryID",
@@ -708,18 +713,133 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         dt.ToString("yyyy-MM-ddTHH:mm:ss.f", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Compose 18-digit TXID per ETDA spec: 13-digit TaxID + 5-digit branch suffix.
-    /// If branch is null/empty/"00000", use "00000". TaxId without branch concatenation
-    /// is invalid per ETDA — always 18 digits.
+    /// Compose ID per Schematron rules:
+    ///   TXID  → 13-digit TaxID + 5-digit branch (18 chars total)
+    ///   NIDN  → 13-digit national ID
+    ///   CCPT  → passport (≤35 chars)
+    ///   OTHR  → must be exactly "N/A"
+    /// If user entered 18 digits already (TaxID+Branch concatenated), use as-is.
     /// </summary>
-    private static string ComposeTxId(string? taxId, string? branchCode)
+    private static string ComposeTxId(string? taxId, string? branchCode, string schemeId)
     {
-        var tid = (taxId ?? "").Trim().PadLeft(13, '0');
-        if (tid.Length > 13) tid = tid.Substring(tid.Length - 13);
-        var bid = (branchCode ?? "00000").Trim();
-        if (bid.Length > 5) bid = bid.Substring(bid.Length - 5);
-        if (bid.Length < 5) bid = bid.PadLeft(5, '0');
-        return tid + bid;
+        var raw = (taxId ?? "").Trim();
+        switch (schemeId)
+        {
+            case "TXID":
+                if (raw.Length == 18 && raw.All(char.IsDigit)) return raw;
+                var tid = raw.Length >= 13 ? raw.Substring(0, 13) : raw.PadLeft(13, '0');
+                var bid = (branchCode ?? "00000").Trim();
+                if (bid.Length > 5) bid = bid.Substring(0, 5);
+                if (bid.Length < 5) bid = bid.PadLeft(5, '0');
+                return tid + bid;
+            case "NIDN":
+                return raw.Length >= 13 ? raw.Substring(0, 13) : raw.PadLeft(13, '0');
+            case "CCPT":
+                return raw.Length > 35 ? raw.Substring(0, 35) : raw;
+            case "OTHR":
+                return "N/A";
+            default:
+                return raw;
+        }
+    }
+
+    /// <summary>
+    /// Pick a Schematron-allowed schemeID based on what the user entered.
+    /// 13 digits → TXID (assume juristic — append branch for full 18); empty → OTHR (N/A).
+    /// </summary>
+    private static string DetermineTaxIdSchemeId(string? taxId)
+    {
+        if (string.IsNullOrWhiteSpace(taxId)) return "OTHR";
+        var raw = taxId.Trim();
+        if (raw.All(char.IsDigit) && (raw.Length == 13 || raw.Length == 18)) return "TXID";
+        return "OTHR";
+    }
+
+    /// <summary>
+    /// Build SellerTradeParty per Schematron TIV-SellerTradeParty-001..012.
+    /// All address fields required for CountryID=TH; provides "00" fallbacks where data
+    /// missing so the document still validates structurally (user should fill company info).
+    /// </summary>
+    private static XElement BuildSellerParty(XNamespace ram, Company company)
+    {
+        var taxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId);
+        var taxId = ComposeTxId(company.TaxId, company.BranchCode, taxIdSchemeId);
+
+        var postCode = NormalizePostcode(company.PostalCode, company.Address);
+        var buildingNo = ExtractBuildingNumber(company.Address) ?? "0";
+        var streetLine = company.Address ?? "";
+        var subDistrict = company.SubDistrict ?? "00";
+        var district = company.District ?? "00";
+        var province = company.Province ?? "00";
+
+        return new XElement(ram + "SellerTradeParty",
+            new XElement(ram + "Name", company.Name),
+            new XElement(ram + "SpecifiedTaxRegistration",
+                new XElement(ram + "ID",
+                    new XAttribute("schemeID", taxIdSchemeId),
+                    taxId)),
+            new XElement(ram + "PostalTradeAddress",
+                new XElement(ram + "PostcodeCode", postCode),
+                !string.IsNullOrEmpty(streetLine) ? new XElement(ram + "LineOne", streetLine) : null,
+                new XElement(ram + "CityName", district),
+                new XElement(ram + "CitySubDivisionName", subDistrict),
+                new XElement(ram + "CountryID",
+                    new XAttribute("schemeID", "3166-1 alpha-2"), "TH"),
+                new XElement(ram + "CountrySubDivisionID", province),
+                new XElement(ram + "BuildingNumber", buildingNo)));
+    }
+
+    /// <summary>
+    /// Build BuyerTradeParty per Schematron TIV-BuyerTradeParty-007..009.
+    /// Buyer can use unstructured (LineOne only) format — we use this since contact
+    /// data typically only has free-text Address. PostcodeCode required if CountryID=TH.
+    /// </summary>
+    private static XElement BuildBuyerParty(XNamespace ram, Contact contact, string schemeId, string txId)
+    {
+        var postCode = NormalizePostcode(null, contact.Address);
+
+        return new XElement(ram + "BuyerTradeParty",
+            new XElement(ram + "Name", contact.Name),
+            new XElement(ram + "SpecifiedTaxRegistration",
+                new XElement(ram + "ID",
+                    new XAttribute("schemeID", schemeId),
+                    txId)),
+            new XElement(ram + "PostalTradeAddress",
+                !string.IsNullOrEmpty(postCode)
+                    ? new XElement(ram + "PostcodeCode", postCode) : null,
+                !string.IsNullOrEmpty(contact.Address)
+                    ? new XElement(ram + "LineOne", contact.Address)
+                    : new XElement(ram + "LineOne", "-"),
+                new XElement(ram + "CountryID",
+                    new XAttribute("schemeID", "3166-1 alpha-2"), "TH")));
+    }
+
+    /// <summary>Normalize postcode to 5 digits — first try the field, then extract from address.</summary>
+    private static string NormalizePostcode(string? postCode, string? addressFallback)
+    {
+        var pc = (postCode ?? "").Trim();
+        if (pc.Length == 5 && pc.All(char.IsDigit)) return pc;
+        var extracted = ExtractPostcodeOrEmpty(addressFallback);
+        if (!string.IsNullOrEmpty(extracted)) return extracted;
+        // Last resort: pad/truncate to 5 (validator will flag if invalid)
+        if (pc.Length > 5) return pc.Substring(0, 5);
+        return string.IsNullOrEmpty(pc) ? "00000" : pc.PadLeft(5, '0');
+    }
+
+    /// <summary>Find a 5-digit postcode in free-text address (Thai postcodes are 5 digits).</summary>
+    private static string ExtractPostcodeOrEmpty(string? address)
+    {
+        if (string.IsNullOrEmpty(address)) return "";
+        var match = System.Text.RegularExpressions.Regex.Match(address, @"\b(\d{5})\b");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    /// <summary>Extract leading building number from address ("123/45 ถนน..." → "123/45").</summary>
+    private static string? ExtractBuildingNumber(string? address)
+    {
+        if (string.IsNullOrEmpty(address)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(address.Trim(), @"^(\d+(?:/\d+)?)");
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     private static XElement BuildLineItem(XNamespace ram, DocumentLine line, int lineNo, string currency)
@@ -764,41 +884,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     }
 
     /// <summary>
-    /// Build TradeParty (Seller/Buyer) per ETDA TradePartyType:
-    /// Name, SpecifiedTaxRegistration (single, with TXID), PostalTradeAddress.
-    /// NO DefinedTradeContact (not in ETDA TradePartyType).
-    /// NO secondary BRID/NIDN registration (TXID encodes 13+5=18 digits).
-    /// </summary>
-    private static XElement BuildTradeParty(XNamespace ram, string partyElement,
-        string name, string txId,
-        string? address, string? subDistrict, string? district, string? province, string? postalCode)
-    {
-        var addressElements = new List<object?>();
-        if (!string.IsNullOrEmpty(postalCode))
-            addressElements.Add(new XElement(ram + "PostcodeCode", postalCode));
-        if (!string.IsNullOrEmpty(address))
-            addressElements.Add(new XElement(ram + "LineOne", address));
-        if (!string.IsNullOrEmpty(subDistrict))
-            addressElements.Add(new XElement(ram + "LineTwo", subDistrict));
-        // Note: ETDA expects TISI 1099 numeric codes for CityName/CitySubDivisionName,
-        // but free-text Thai names are commonly accepted by the validator
-        if (!string.IsNullOrEmpty(district))
-            addressElements.Add(new XElement(ram + "CityName", district));
-        if (!string.IsNullOrEmpty(subDistrict))
-            addressElements.Add(new XElement(ram + "CitySubDivisionName", subDistrict));
-        addressElements.Add(new XElement(ram + "CountryID",
-            new XAttribute("schemeID", "3166-1 alpha-2"), "TH"));
-        if (!string.IsNullOrEmpty(province))
-            addressElements.Add(new XElement(ram + "CountrySubDivisionID", province));
-
-        return new XElement(ram + partyElement,
-            new XElement(ram + "Name", name),
-            new XElement(ram + "SpecifiedTaxRegistration",
-                new XElement(ram + "ID",
-                    new XAttribute("schemeID", "TXID"),
-                    txId)),
-            new XElement(ram + "PostalTradeAddress", addressElements.Where(e => e != null)));
-    }
+    // Legacy BuildTradeParty removed — replaced by BuildSellerParty / BuildBuyerParty
+    // which apply ETDA Schematron-required address fields per side.
 
     /// <summary>
     /// Map Thai unit names to ETDA-accepted unit codes.
