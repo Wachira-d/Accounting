@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using Accounting.Models.DTOs.Etax;
+using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
