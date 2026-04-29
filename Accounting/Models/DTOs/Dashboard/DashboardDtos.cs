@@ -27,7 +27,11 @@ public record DashboardKpis(
     int OverdueInvoices,
     int PendingApprovals,
     decimal RevenueGrowthPercent,
-    decimal ExpenseGrowthPercent);
+    decimal ExpenseGrowthPercent,
+    // Per-type breakdown — required by Thai law: ใบแจ้งหนี้ ≠ ใบกำกับภาษี
+    // (Revenue Code §86 governs ใบกำกับภาษี with strict format/issuance rules)
+    int InvoiceCount = 0,
+    int TaxInvoiceCount = 0);
 
 public record CashFlowSummary(
     decimal OpeningBalance,
