@@ -7,12 +7,19 @@ const API = {
     this.token = localStorage.getItem('token');
   },
 
+  _t(key, fallback) {
+    if (typeof I18n === 'undefined') return fallback;
+    const v = I18n.t(key);
+    return (v && v !== key) ? v : fallback;
+  },
+
   async request(method, url, data = null, isFormData = false) {
     // Re-read token from localStorage on each request (handles token refresh by other tabs)
     this.token = localStorage.getItem('token');
     const headers = {};
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     if (!isFormData) headers['Content-Type'] = 'application/json';
+    headers['Accept-Language'] = (typeof I18n !== 'undefined' && I18n.lang) ? I18n.lang : (localStorage.getItem('nextacc_lang') || 'th');
 
     const options = { method, headers };
     if (data && !isFormData) options.body = JSON.stringify(data);
@@ -30,7 +37,7 @@ const API = {
           return;
         }
         const json = await res.json();
-        throw new Error(json.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+        throw new Error(json.message || this._t('api.invalidLogin', 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'));
       }
       if (res.status === 403) {
         // Try to parse structured 403 (feature locked / subscription inactive)
@@ -39,30 +46,30 @@ const API = {
           if (json.code === 'FEATURE_NOT_AVAILABLE' || json.code === 'SUBSCRIPTION_INACTIVE') {
             // Auto-redirect to subscription page on locked feature
             if (typeof Layout !== 'undefined' && Layout.toast) {
-              Layout.toast(json.message || 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ', 'error');
+              Layout.toast(json.message || this._t('api.featureLocked', 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ'), 'error');
               setTimeout(() => { window.location.href = json.upgradeUrl || '/pages/subscription.html'; }, 1500);
             }
-            const err = new Error(json.message || 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ');
+            const err = new Error(json.message || this._t('api.featureNotInPlan', 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ'));
             err.code = json.code; err.feature = json.feature;
             throw err;
           }
-          throw new Error(json.message || 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+          throw new Error(json.message || this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));
         } catch (parseErr) {
           if (parseErr.code) throw parseErr;
-          throw new Error('คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้');
+          throw new Error(this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));
         }
       }
       if (res.status === 429) {
         // Rate limited - silently skip, don't show error to user
         console.warn('Rate limited:', url);
-        return { success: false, data: null, message: 'กรุณารอสักครู่' };
+        return { success: false, data: null, message: this._t('api.rateLimited', 'กรุณารอสักครู่') };
       }
       // Check content-type to avoid parsing HTML as JSON
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
         const errMsg = `Server returned non-JSON (HTTP ${res.status}) for ${method} ${url}`;
         API._logError(method, url, res.status, errMsg);
-        throw new Error(errMsg + '. กรุณา restart server');
+        throw new Error(errMsg + '. ' + this._t('api.serverNonJson', 'กรุณา restart server'));
       }
       const json = await res.json();
       if (!res.ok) {
@@ -82,7 +89,7 @@ const API = {
         msg === 'Failed to fetch' ||
         /NetworkError|Network request failed|Load failed|connection|net::|Failed to load/i.test(msg);
       if (isNetworkErr) {
-        const e = new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่');
+        const e = new Error(this._t('api.networkError', 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่'));
         e.cause = err;
         throw e;
       }

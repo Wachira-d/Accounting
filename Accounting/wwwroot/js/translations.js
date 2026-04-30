@@ -85,6 +85,15 @@ layout: {
   setupNow: 'ตั้งค่าเลย',
   createCompanyBtn: 'สร้างบริษัทและเริ่มต้นใช้งาน',
 },
+api: {
+  invalidLogin: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
+  featureLocked: 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ',
+  featureNotInPlan: 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ',
+  forbidden: 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้',
+  rateLimited: 'กรุณารอสักครู่',
+  serverNonJson: 'กรุณา restart server',
+  networkError: 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่',
+},
 status: {
   Draft: 'ร่าง', Posted: 'ผ่านรายการ', Voided: 'ยกเลิก',
   Active: 'ใช้งาน', Inactive: 'ปิดใช้งาน',
@@ -357,6 +366,15 @@ layout: {
   setupCompleteDesc: 'Fill in company info for accurate tax documents and reports',
   setupNow: 'Set up now',
   createCompanyBtn: 'Create company & get started',
+},
+api: {
+  invalidLogin: 'Invalid email or password',
+  featureLocked: 'This feature is not in your plan',
+  featureNotInPlan: 'Feature not in plan',
+  forbidden: 'You do not have permission to access this resource',
+  rateLimited: 'Please wait a moment',
+  serverNonJson: 'Please restart the server',
+  networkError: 'Unable to connect to the server — please check your internet connection and try again',
 },
 status: {
   Draft: 'Draft', Posted: 'Posted', Voided: 'Voided',

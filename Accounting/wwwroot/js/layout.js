@@ -64,13 +64,17 @@ const Layout = {
     banner.id = 'passwordWeakBanner';
     banner.style.cssText = 'position:sticky;top:0;left:0;right:0;z-index:9999;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#78350f;padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.15)';
     const days = notice.daysRemaining ?? 0;
+    const weakLabel = this._t('layout.weakPassword', 'รหัสผ่านไม่ปลอดภัย');
+    const changeWithinTpl = this._t('layout.changeWithinDays', 'กรุณาเปลี่ยนภายใน {days} วัน', { days });
+    const changeNow = this._t('layout.changeNow', 'เปลี่ยนเลย');
+    const closeLabel = this._t('common.close', 'ปิด');
     banner.innerHTML = `
       <span style="font-size:18px">🔒</span>
       <span style="flex:1">
-        <b>รหัสผ่านไม่ปลอดภัย</b> — กรุณาเปลี่ยนภายใน <b>${days} วัน</b>
+        <b>${this.esc(weakLabel)}</b> — ${this.esc(changeWithinTpl)}
       </span>
-      <a href="/change-password.html" style="background:#78350f;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">เปลี่ยนเลย</a>
-      <button onclick="Layout._dismissPasswordWeakBanner()" style="background:transparent;border:none;color:#78350f;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>
+      <a href="/change-password.html" style="background:#78350f;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">${this.esc(changeNow)}</a>
+      <button onclick="Layout._dismissPasswordWeakBanner()" style="background:transparent;border:none;color:#78350f;font-size:20px;cursor:pointer;padding:0 4px" aria-label="${this.esc(closeLabel)}">×</button>
     `;
     document.body.insertBefore(banner, document.body.firstChild);
   },
@@ -94,7 +98,7 @@ const Layout = {
     if (this.hasFeature(name)) return true;
     if (opts.silent) return false;
     const label = opts.label || name;
-    this.toast(`ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, 'error');
+    this.toast(this._t('layout.upgradeNeeded', `ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, { label }), 'error');
     setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1200);
     return false;
   },
@@ -169,13 +173,15 @@ const Layout = {
     const item = this.navItems.find(n => n.id === this.currentPage);
     if (!item || !item.feature) return;
     if (!this.hasFeature(item.feature)) {
-      this.toast(`ฟีเจอร์ "${item.label}" ไม่อยู่ในแพ็กเกจของคุณ — กำลังพาไปหน้าแพ็กเกจ`, 'error');
+      this.toast(this._t('layout.upgradeRedirect', `ฟีเจอร์ "${item.label}" ไม่อยู่ในแพ็กเกจของคุณ — กำลังพาไปหน้าแพ็กเกจ`, { label: item.label }), 'error');
       setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1500);
     }
   },
 
-  _t(key, fallback) {
-    return (typeof I18n !== 'undefined') ? I18n.t(key) || fallback : fallback;
+  _t(key, fallback, vars) {
+    if (typeof I18n === 'undefined') return fallback;
+    const val = I18n.t(key, vars);
+    return (val && val !== key) ? val : fallback;
   },
 
   _renderNavItem(item) {
@@ -229,7 +235,7 @@ const Layout = {
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (refreshing || !hadController) return;
         refreshing = true;
-        if (this.toast) this.toast('ระบบอัปเดตเวอร์ชันใหม่ กำลังโหลด...', 'info');
+        if (this.toast) this.toast(this._t('layout.systemUpdate', 'ระบบอัปเดตเวอร์ชันใหม่ กำลังโหลด...'), 'info');
         setTimeout(() => window.location.reload(), 500);
       });
     }).catch(() => {});
@@ -259,7 +265,7 @@ const Layout = {
         .build();
 
       this.signalRConnection.on('ReceiveNotification', (notification) => {
-        this.toast(notification.title || notification.message || 'การแจ้งเตือนใหม่', 'info');
+        this.toast(notification.title || notification.message || this._t('layout.newNotification', 'การแจ้งเตือนใหม่'), 'info');
         this.loadNotificationCount();
       });
 
@@ -368,26 +374,31 @@ const Layout = {
     const sidebar = document.createElement('aside');
     sidebar.className = 'sidebar';
     sidebar.id = 'sidebar';
+    const tSelectCo = this._t('nav.selectCompany', '-- เลือกบริษัท --');
+    const tLogout = this._t('nav.logout', 'ออกจากระบบ');
     sidebar.innerHTML = `
       <div class="sidebar-header">
         <div class="sidebar-logo"><span>Next Acc</span></div>
       </div>
       <div style="padding:12px 16px;border-bottom:1px solid var(--gray-800)">
         <select id="companySelect" class="form-select" style="background:var(--gray-800);color:#fff;border-color:var(--gray-700);font-size:13px;padding:8px 10px">
-          <option value="">-- เลือกบริษัท --</option>
+          <option value="">${this.esc(tSelectCo)}</option>
         </select>
       </div>
       <nav class="sidebar-nav">
         ${this.navItems.map(item => this._renderNavItem(item)).join('')}
       </nav>
       <div class="sidebar-footer">
-        <a href="#" class="nav-item" onclick="Layout.logout();return false"><span class="icon">🚪</span>ออกจากระบบ</a>
+        <a href="#" class="nav-item" onclick="Layout.logout();return false"><span class="icon">🚪</span>${this.esc(tLogout)}</a>
       </div>
     `;
 
     // Create header
     const header = document.createElement('header');
     header.className = 'app-header';
+    const tNotif = this._t('layout.notifications', 'การแจ้งเตือน');
+    const tUser = this._t('nav.user', 'ผู้ใช้');
+    const tSettings = this._t('layout.settings', 'ตั้งค่า');
     header.innerHTML = `
       <div class="header-left">
         <button class="mobile-toggle" onclick="Layout.toggleSidebar()">☰</button>
@@ -395,18 +406,18 @@ const Layout = {
       </div>
       <div class="header-right">
         <div id="appLangSwitcher" style="margin-right:8px"></div>
-        <button class="header-icon-btn" onclick="Layout.toggleNotifications()" title="การแจ้งเตือน">
+        <button class="header-icon-btn" onclick="Layout.toggleNotifications()" title="${this.esc(tNotif)}">
           🔔<span class="badge-dot hidden" id="notifDot"></span>
         </button>
         <div class="dropdown">
           <div class="header-user" onclick="this.nextElementSibling.classList.toggle('show')">
-            <div class="header-avatar">${(this.user?.fullName || 'U').charAt(0)}</div>
-            <span class="text-sm font-medium">${this.user?.fullName || 'ผู้ใช้'}</span>
+            <div class="header-avatar">${this.esc((this.user?.fullName || 'U').charAt(0))}</div>
+            <span class="text-sm font-medium">${this.esc(this.user?.fullName || tUser)}</span>
           </div>
           <div class="dropdown-menu" id="userDropdown">
-            <a class="dropdown-item" href="/pages/settings.html">⚙️ ตั้งค่า</a>
+            <a class="dropdown-item" href="/pages/settings.html">⚙️ ${this.esc(tSettings)}</a>
             <div class="dropdown-divider"></div>
-            <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ออกจากระบบ</a>
+            <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ${this.esc(tLogout)}</a>
           </div>
         </div>
       </div>
@@ -444,7 +455,9 @@ const Layout = {
     const np = document.createElement('div');
     np.className = 'modal-overlay';
     np.id = 'notifPanel';
-    np.innerHTML = `<div class="modal" style="max-width:420px"><div class="modal-header"><h3 class="modal-title">การแจ้งเตือน</h3><button class="modal-close" onclick="Layout.closeNotifications()">&times;</button></div><div class="modal-body" id="notifList" style="max-height:400px;overflow-y:auto"><p class="text-gray-500 text-sm text-center" style="padding:20px">ไม่มีการแจ้งเตือน</p></div></div>`;
+    const tnTitle = this._t('layout.notifications', 'การแจ้งเตือน');
+    const tnEmpty = this._t('layout.noNotifications', 'ไม่มีการแจ้งเตือน');
+    np.innerHTML = `<div class="modal" style="max-width:420px"><div class="modal-header"><h3 class="modal-title">${this.esc(tnTitle)}</h3><button class="modal-close" onclick="Layout.closeNotifications()">&times;</button></div><div class="modal-body" id="notifList" style="max-height:400px;overflow-y:auto"><p class="text-gray-500 text-sm text-center" style="padding:20px">${this.esc(tnEmpty)}</p></div></div>`;
     document.body.appendChild(np);
 
     if (typeof I18n !== 'undefined') {
@@ -473,7 +486,7 @@ const Layout = {
 
       if (companies.length === 0) {
         // No companies — show create prompt
-        select.innerHTML = '<option value="">ยังไม่มีบริษัท</option>';
+        select.innerHTML = `<option value="">${this.esc(this._t('nav.noCompany', 'ยังไม่มีบริษัท'))}</option>`;
         this.showCompanySetupPrompt();
         return;
       }
@@ -535,12 +548,15 @@ const Layout = {
     const banner = document.createElement('div');
     banner.id = 'setupReminder';
     banner.style.cssText = 'background:linear-gradient(135deg,#4F46E5,#4338ca);color:#fff;padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px';
+    const tsTitle = this._t('layout.setupComplete', 'ตั้งค่าบริษัทให้เสร็จสมบูรณ์');
+    const tsDesc = this._t('layout.setupCompleteDesc', 'กรอกข้อมูลบริษัทเพื่อออกเอกสารภาษีและรายงานได้ถูกต้อง');
+    const tsBtn = this._t('layout.setupNow', 'ตั้งค่าเลย');
     banner.innerHTML = `
       <div>
-        <strong style="font-size:1rem">⚙️ ตั้งค่าบริษัทให้เสร็จสมบูรณ์</strong>
-        <p style="margin:4px 0 0;font-size:0.875rem;opacity:0.9">กรอกข้อมูลบริษัทเพื่อออกเอกสารภาษีและรายงานได้ถูกต้อง</p>
+        <strong style="font-size:1rem">⚙️ ${this.esc(tsTitle)}</strong>
+        <p style="margin:4px 0 0;font-size:0.875rem;opacity:0.9">${this.esc(tsDesc)}</p>
       </div>
-      <a href="/pages/settings.html?setup=1" class="btn" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3);white-space:nowrap">ตั้งค่าเลย</a>`;
+      <a href="/pages/settings.html?setup=1" class="btn" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3);white-space:nowrap">${this.esc(tsBtn)}</a>`;
     pageContent.insertBefore(banner, pageContent.firstChild);
   },
 
@@ -744,8 +760,8 @@ const Layout = {
   nextSetupStep() {
     this.saveCurrentStepData();
     if (this.setupStep === 1) {
-      if (!this._setupData.name) { this.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
-      if (!this._setupData.taxId) { this.toast('กรุณากรอกเลขผู้เสียภาษี', 'error'); return; }
+      if (!this._setupData.name) { this.toast(this._t('layout.enterCompanyName', 'กรุณากรอกชื่อบริษัท'), 'error'); return; }
+      if (!this._setupData.taxId) { this.toast(this._t('layout.enterTaxId', 'กรุณากรอกเลขผู้เสียภาษี'), 'error'); return; }
     }
     this.setupStep++;
     this.renderSetupStep();
@@ -809,7 +825,7 @@ const Layout = {
   async createFirstCompany() {
     this.saveCurrentStepData();
     const d = this._setupData;
-    if (!d.name) { this.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
+    if (!d.name) { this.toast(this._t('layout.enterCompanyName', 'กรุณากรอกชื่อบริษัท'), 'error'); return; }
     const btn = document.getElementById('setupBtn');
     btn.disabled = true; btn.textContent = 'กำลังสร้าง...';
     try {
@@ -836,7 +852,7 @@ const Layout = {
       const company = res.data;
       localStorage.setItem('currentCompany', JSON.stringify(company));
       this._setupData = {};
-      this.toast('สร้างบริษัทสำเร็จ!');
+      this.toast(this._t('layout.companyCreated', 'สร้างบริษัทสำเร็จ!'));
       // Redirect to settings page for additional setup
       setTimeout(() => window.location.href = '/pages/settings.html?setup=1', 500);
     } catch (e) {
@@ -1139,7 +1155,7 @@ const Layout = {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(link.href);
-    this.toast('ส่งออก CSV สำเร็จ', 'success');
+    this.toast(this._t('common.csvSuccess', 'ส่งออก CSV สำเร็จ'), 'success');
   },
 
   // Export table to Excel (simple HTML table format)
@@ -1157,7 +1173,7 @@ const Layout = {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(link.href);
-    this.toast('ส่งออก Excel สำเร็จ', 'success');
+    this.toast(this._t('common.excelSuccess', 'ส่งออก Excel สำเร็จ'), 'success');
   },
 
   // Print specific element

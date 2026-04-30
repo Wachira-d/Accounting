@@ -657,16 +657,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
 
         // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001..002.
-        // IssuerAssignedID = original document number; ReferenceTypeCode = 388/T02/T03/T04 (TaxInvoice variants).
-        // We omit FormattedIssueDateTime since it requires a separate udt: namespace declaration
-        // that's not currently emitted — the simpler 2-element form passes our tested Schematron rules.
+        // IssuerAssignedID = original document number; ReferenceTypeCode = 388 (original tax invoice).
+        // FormattedIssueDateTime uses udt: namespace per ETDA reference samples.
+        XNamespace udt = "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:6";
         XElement? additionalRef = null;
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
             var origRef = originalDoc?.DocumentNumber ?? doc.Reference ?? "-";
+            var origDate = originalDoc?.DocumentDate ?? doc.DocumentDate;
             additionalRef = new XElement(ram + "AdditionalReferencedDocument",
                 new XElement(ram + "IssuerAssignedID", origRef),
-                new XElement(ram + "ReferenceTypeCode", "388"));
+                new XElement(ram + "ReferenceTypeCode", "388"),
+                new XElement(ram + "FormattedIssueDateTime",
+                    new XElement(udt + "DateTimeString",
+                        new XAttribute("format", "102"),
+                        origDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture))));
         }
 
         // Line items (last in CII per ETDA — after Settlement)
@@ -693,15 +698,20 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     new XElement(ram + "Subject", doc.Notes))
                 : null);
 
-        // Build full document
+        // Build full document — declare udt only when CN/DN (FormattedIssueDateTime present)
         XNamespace xsi = "http://www.w3.org/2001/XMLSchema-instance";
+        var rootAttrs = new List<object>
+        {
+            new XAttribute(XNamespace.Xmlns + "rsm", rsm),
+            new XAttribute(XNamespace.Xmlns + "ram", ram),
+            new XAttribute(XNamespace.Xmlns + "xsi", xsi)
+        };
+        if (additionalRef != null)
+            rootAttrs.Add(new XAttribute(XNamespace.Xmlns + "udt", udt));
         var xml = new XDocument(
             new XDeclaration("1.0", "UTF-8", null),
             new XElement(rsm + rootElementName,
-                new XAttribute(XNamespace.Xmlns + "rsm", rsm),
-                new XAttribute(XNamespace.Xmlns + "ram", ram),
-                new XAttribute(XNamespace.Xmlns + "xsi", xsi),
-                new XAttribute(xsi + "schemaLocation", $"urn:etda:uncefact:data:standard:{rootElementName}:2"),
+                rootAttrs,
 
                 new XElement(rsm + "ExchangedDocumentContext", contextParameter),
 

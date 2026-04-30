@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Claims;
 using System.Text.Json;
 using Accounting.Models.DTOs;
+using Accounting.Services.Localization;
 
 namespace Accounting.Middleware;
 
@@ -91,9 +92,12 @@ public class ExceptionMiddleware
             _ => (HttpStatusCode.InternalServerError, "เกิดข้อผิดพลาดภายในระบบ")
         };
 
+        var locale = ErrorMessageTranslator.ResolveLocale(context.Request.Headers["Accept-Language"].ToString());
+        var translatedMessage = ErrorMessageTranslator.Translate(message, locale);
+
         context.Response.StatusCode = (int)statusCode;
 
-        var response = new ApiResponse<object>(false, null, message);
+        var response = new ApiResponse<object>(false, null, translatedMessage);
         var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         await context.Response.WriteAsync(json);
     }
