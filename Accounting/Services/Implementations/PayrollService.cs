@@ -380,7 +380,7 @@ public class PayrollService : IPayrollService
                     .Where(l => l.LeaveType == "UnpaidLeave" || l.LeaveType == "ลาไม่รับค่าจ้าง")
                     .Sum(l => l.TotalDays);
                 var leaveDeduction = workDaysInMonth > 0
-                    ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2)
+                    ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2, MidpointRounding.AwayFromZero)
                     : 0m;
 
                 var grossIncome = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
@@ -974,7 +974,7 @@ public class PayrollService : IPayrollService
             previousBound = upperBound;
         }
 
-        return Math.Round(totalTax, 2);
+        return Math.Round(totalTax, 2, MidpointRounding.AwayFromZero);
     }
 
     // ===== Mapping Helpers =====

@@ -39,6 +39,7 @@ public class Project : TenantEntity
 
     public ICollection<ProjectTask> Tasks { get; set; } = new List<ProjectTask>();
     public ICollection<ProjectCostEntry> CostEntries { get; set; } = new List<ProjectCostEntry>();
+    public ICollection<RevenueContract> RevenueContracts { get; set; } = new List<RevenueContract>();
 }
 
 public class ProjectTask : TenantEntity
@@ -89,6 +90,8 @@ public class RevenueContract : TenantEntity
     public string Name { get; set; } = "";
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
     public DateTime ContractDate { get; set; }
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }

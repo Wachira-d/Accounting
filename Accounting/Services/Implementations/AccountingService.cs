@@ -236,7 +236,7 @@ public class AccountingService : IAccountingService
         // Validate debit = credit
         var totalDebit = request.Lines.Sum(l => l.DebitAmount);
         var totalCredit = request.Lines.Sum(l => l.CreditAmount);
-        if (totalDebit != totalCredit)
+        if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException($"ยอดเดบิต ({totalDebit:N2}) ไม่เท่ากับยอดเครดิต ({totalCredit:N2})");
 
         if (totalDebit == 0)

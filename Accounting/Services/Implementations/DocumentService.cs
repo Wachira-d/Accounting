@@ -145,11 +145,11 @@ public class DocumentService : IDocumentService
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2);
+                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2);
+                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
+                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
 
                 subTotal += afterDiscount;
                 totalDiscount += discountAmt;
@@ -311,11 +311,11 @@ public class DocumentService : IDocumentService
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2);
+                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2);
+                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
+                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
 
                 subTotal += afterDiscount;
                 totalDiscount += discountAmt;
@@ -1656,7 +1656,7 @@ public class DocumentService : IDocumentService
         // Validate double-entry balance per Thai accounting standards (TAS 1)
         var totalDebit = pendingLines.Sum(l => l.Debit);
         var totalCredit = pendingLines.Sum(l => l.Credit);
-        if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
+        if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
@@ -1781,7 +1781,7 @@ public class DocumentService : IDocumentService
 
         var totalDebit = pendingLines.Sum(l => l.Debit);
         var totalCredit = pendingLines.Sum(l => l.Credit);
-        if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
+        if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีชำระเงินไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 

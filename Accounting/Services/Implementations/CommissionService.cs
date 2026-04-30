@@ -336,7 +336,7 @@ public class CommissionService : ICommissionService
                     if (applicableAmount > 0)
                         totalCommission += applicableAmount * tier.Rate / 100m;
                 }
-                return Math.Round(totalCommission, 2);
+                return Math.Round(totalCommission, 2, MidpointRounding.AwayFromZero);
 
             default:
                 return 0;

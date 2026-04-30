@@ -12,11 +12,13 @@ public partial class PosService : IPosService
 {
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;
+    private readonly ILogger<PosService> _logger;
 
-    public PosService(AccountingDbContext db, IAccountingService accountingService)
+    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger)
     {
         _db = db;
         _accountingService = accountingService;
+        _logger = logger;
     }
 
     // ==================== Terminal ====================

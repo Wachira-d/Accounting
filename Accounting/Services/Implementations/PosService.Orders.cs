@@ -55,11 +55,12 @@ public partial class PosService
         // Add items if provided
         if (request.Items?.Count > 0)
         {
+            var vatRate = await GetCompanyVatRateAsync(companyId);
             for (int i = 0; i < request.Items.Count; i++)
             {
-                await AddItemToOrder(order, request.Items[i], i + 1);
+                await AddItemToOrder(order, request.Items[i], i + 1, vatRate);
             }
-            RecalculateOrder(order);
+            RecalculateOrder(order, vatRate);
             await _db.SaveChangesAsync();
         }
 
@@ -120,7 +121,8 @@ public partial class PosService
 
         // Reload items to recalculate
         await _db.Entry(order).Collection(o => o.Items).LoadAsync();
-        RecalculateOrder(order);
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
         await _db.SaveChangesAsync();
         return await GetOrderAsync(companyId, orderId);
     }
@@ -183,8 +185,9 @@ public partial class PosService
             throw new InvalidOperationException("ไม่สามารถเพิ่มรายการในออเดอร์ที่เสร็จสิ้น");
 
         var nextLine = order.Items.Count + 1;
-        await AddItemToOrder(order, request, nextLine);
-        RecalculateOrder(order);
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        await AddItemToOrder(order, request, nextLine, vatRate);
+        RecalculateOrder(order, vatRate);
         await _db.SaveChangesAsync();
         return await GetOrderAsync(companyId, orderId);
     }
@@ -197,7 +200,8 @@ public partial class PosService
         var item = order.Items.FirstOrDefault(i => i.Id == itemId)
             ?? throw new KeyNotFoundException("ไม่พบรายการ");
         item.IsDeleted = true;
-        RecalculateOrder(order);
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
         await _db.SaveChangesAsync();
     }
 
@@ -328,9 +332,10 @@ public partial class PosService
             order.JournalEntryId = journal.Id;
             await _accountingService.PostJournalEntryAsync(companyId, journal.Id);
         }
-        catch
+        catch (Exception ex)
         {
-            // Don't fail the order if journal creation fails
+            _logger.LogError(ex, "POS journal creation failed for order {OrderNumber} in company {CompanyId}. GL entry missing.",
+                order.OrderNumber, companyId);
         }
     }
 
@@ -377,7 +382,13 @@ public partial class PosService
 
     // ==================== Helpers ====================
 
-    private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder)
+    private async Task<decimal> GetCompanyVatRateAsync(Guid companyId)
+    {
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        return company?.VatRate ?? 7;
+    }
+
+    private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate)
     {
         var item = new PosOrderItem
         {
@@ -399,7 +410,9 @@ public partial class PosService
         var linePrice = (item.UnitPrice + modifierTotal) * item.Quantity;
         item.DiscountAmount = linePrice * item.DiscountPercent / 100;
         item.SubTotal = linePrice - item.DiscountAmount;
-        item.VatAmount = Math.Round(item.SubTotal * 7 / 107, 2); // VAT inclusive
+        item.VatAmount = vatRate > 0
+            ? Math.Round(item.SubTotal * vatRate / (100 + vatRate), 2, MidpointRounding.AwayFromZero)
+            : 0;
         item.TotalAmount = item.SubTotal;
 
         _db.PosOrderItems.Add(item);
@@ -436,7 +449,7 @@ public partial class PosService
                     ComponentId = comp.Id,
                     CommissionAmount = comp.CommissionType == CommissionType.Fixed
                         ? comp.CommissionValue
-                        : Math.Round(item.TotalAmount * comp.CommissionValue / 100, 2)
+                        : Math.Round(item.TotalAmount * comp.CommissionValue / 100, 2, MidpointRounding.AwayFromZero)
                 });
             }
         }
@@ -444,15 +457,17 @@ public partial class PosService
         order.Items.Add(item);
     }
 
-    private static void RecalculateOrder(PosOrder order)
+    private static void RecalculateOrder(PosOrder order, decimal vatRate)
     {
         var activeItems = order.Items.Where(i => !i.IsDeleted).ToList();
         order.SubTotal = activeItems.Sum(i => i.SubTotal);
         order.DiscountAmount = order.SubTotal * order.DiscountPercent / 100;
         var afterDiscount = order.SubTotal - order.DiscountAmount;
-        order.ServiceChargeAmount = Math.Round(afterDiscount * order.ServiceChargePercent / 100, 2);
+        order.ServiceChargeAmount = Math.Round(afterDiscount * order.ServiceChargePercent / 100, 2, MidpointRounding.AwayFromZero);
         order.TotalAmount = afterDiscount + order.ServiceChargeAmount;
-        order.VatAmount = Math.Round(order.TotalAmount * 7 / 107, 2);
+        order.VatAmount = vatRate > 0
+            ? Math.Round(order.TotalAmount * vatRate / (100 + vatRate), 2, MidpointRounding.AwayFromZero)
+            : 0;
         order.RoundingAmount = Math.Round(order.TotalAmount) - order.TotalAmount;
         order.NetAmount = order.TotalAmount + order.RoundingAmount;
     }

@@ -241,10 +241,10 @@ public class LoanService : ILoanService
                 LoanId = loanId,
                 InstallmentNumber = i,
                 DueDate = loan.FirstPaymentDate.AddMonths(i - 1),
-                PaymentAmount = Math.Round(monthlyPayment, 2),
-                PrincipalPortion = Math.Round(principalPortion, 2),
-                InterestPortion = Math.Round(interestPortion, 2),
-                RemainingBalance = Math.Round(balance, 2)
+                PaymentAmount = Math.Round(monthlyPayment, 2, MidpointRounding.AwayFromZero),
+                PrincipalPortion = Math.Round(principalPortion, 2, MidpointRounding.AwayFromZero),
+                InterestPortion = Math.Round(interestPortion, 2, MidpointRounding.AwayFromZero),
+                RemainingBalance = Math.Round(balance, 2, MidpointRounding.AwayFromZero)
             };
 
             schedules.Add(schedule);
@@ -461,7 +461,7 @@ public class LoanService : ILoanService
         var power = Math.Pow(1 + rateDouble, termMonths);
         var pmt = (double)principal * (rateDouble * power) / (power - 1);
 
-        return Math.Round((decimal)pmt, 2);
+        return Math.Round((decimal)pmt, 2, MidpointRounding.AwayFromZero);
     }
 
     // ===== Mappers =====

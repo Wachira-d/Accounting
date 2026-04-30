@@ -571,7 +571,7 @@ const API = {
       getKpis: () => API.get(`${base}/fpa/kpis`),
       getKpiHistory: (id) => API.get(`${base}/fpa/kpis/${id}/history`),
       calculateKpiSnapshots: (y, m) => API.post(`${base}/fpa/kpis/snapshots/${y}/${m}`),
-      getFinancialRatios: (q = '') => API.get(`${base}/fpa/ratios${q}`),
+      getFpaFinancialRatios: (q = '') => API.get(`${base}/fpa/ratios${q}`),
       getBreakEven: (fy) => API.get(`${base}/fpa/break-even/${fy}`),
       // Custom Report Builder
       getCustomReports: () => API.get(`${base}/reports`),

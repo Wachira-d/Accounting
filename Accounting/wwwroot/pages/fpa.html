@@ -139,6 +139,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -336,7 +338,7 @@
         const api = Layout.api(); if (!api) return;
         const y = document.getElementById('ratioYear').value;
         try {
-          const res = await api.getFinancialRatios(`?fiscalYear=${y}`);
+          const res = await api.getFpaFinancialRatios(`?fiscalYear=${y}`);
           const d = res.data;
           if (!d) { document.getElementById('ratioGrid').innerHTML = '<p class="text-gray-400" style="grid-column:1/-1;text-align:center;padding:40px">ไม่มีข้อมูล</p>'; return; }
           const render = (title, items) => `<div class="card" style="padding:20px"><h4 style="margin-bottom:12px">${title}</h4>${items.map(([label, val]) => `<div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-100)"><span class="text-sm">${label}</span><span class="font-semibold">${val != null ? (typeof val === 'number' ? val.toFixed(2) : val) : '-'}</span></div>`).join('')}</div>`;
