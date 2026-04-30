@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ติดต่อเรา - Next Acc</title>
+  <title data-i18n="contact.title">ติดต่อเรา - Next Acc</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
@@ -47,13 +47,13 @@
       <div class="container nav-inner">
         <a href="/" class="nav-logo"><span>Next Acc</span></a>
         <div class="nav-links" id="navLinks">
-          <a href="/#features">ฟีเจอร์</a>
-          <a href="/#pricing">ราคา</a>
-          <a href="/contact.html" style="color:var(--primary);font-weight:600">ติดต่อเรา</a>
+          <a href="/#features" data-i18n="landing.navFeatures">ฟีเจอร์</a>
+          <a href="/#pricing" data-i18n="landing.navPricing">ราคา</a>
+          <a href="/contact.html" style="color:var(--primary);font-weight:600" data-i18n="landing.navContact">ติดต่อเรา</a>
         </div>
         <div class="nav-actions">
-          <a href="/login.html" class="btn btn-ghost">เข้าสู่ระบบ</a>
-          <a href="/register.html" class="btn btn-primary">ทดลองใช้ฟรี</a>
+          <a href="/login.html" class="btn btn-ghost" data-i18n="landing.login">เข้าสู่ระบบ</a>
+          <a href="/register.html" class="btn btn-primary" data-i18n="landing.tryFree">ทดลองใช้ฟรี</a>
         </div>
         <button class="nav-mobile-toggle" onclick="toggleMobileNav()">&#9776;</button>
       </div>
@@ -62,8 +62,8 @@
     <!-- Hero -->
     <section class="contact-hero">
       <div class="container">
-        <h1>ติดต่อเรา</h1>
-        <p>มีคำถาม ข้อเสนอแนะ หรือต้องการความช่วยเหลือ? ทีมงานของเรายินดีให้บริการ</p>
+        <h1 data-i18n="contact.heroTitle">ติดต่อเรา</h1>
+        <p data-i18n="contact.heroDesc">มีคำถาม ข้อเสนอแนะ หรือต้องการความช่วยเหลือ? ทีมงานของเรายินดีให้บริการ</p>
       </div>
     </section>
 
@@ -71,61 +71,61 @@
     <div class="contact-grid">
       <div class="contact-form-card">
         <div id="formSection">
-          <h3>ส่งข้อความถึงเรา</h3>
+          <h3 data-i18n="contact.formTitle">ส่งข้อความถึงเรา</h3>
           <div id="errorMsg" style="display:none;padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
           <form id="contactForm" onsubmit="handleSubmit(event)">
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">ชื่อ-นามสกุล *</label>
-                <input type="text" id="name" class="form-input" placeholder="ชื่อของคุณ" required>
+                <label class="form-label" data-i18n="contact.nameLabel">ชื่อ-นามสกุล *</label>
+                <input type="text" id="name" class="form-input" data-i18n-placeholder="contact.namePlaceholder" placeholder="ชื่อของคุณ" required>
               </div>
               <div class="form-group">
-                <label class="form-label">อีเมล *</label>
+                <label class="form-label" data-i18n="contact.emailLabel">อีเมล *</label>
                 <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
               </div>
             </div>
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">เบอร์โทรศัพท์</label>
+                <label class="form-label" data-i18n="contact.phoneLabel">เบอร์โทรศัพท์</label>
                 <input type="tel" id="phone" class="form-input" placeholder="08x-xxx-xxxx">
               </div>
               <div class="form-group">
-                <label class="form-label">บริษัท/องค์กร</label>
-                <input type="text" id="company" class="form-input" placeholder="ชื่อบริษัท (ถ้ามี)">
+                <label class="form-label" data-i18n="contact.companyLabel">บริษัท/องค์กร</label>
+                <input type="text" id="company" class="form-input" data-i18n-placeholder="contact.companyPlaceholder" placeholder="ชื่อบริษัท (ถ้ามี)">
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">หัวข้อ *</label>
-              <input type="text" id="subject" class="form-input" placeholder="หัวข้อที่ต้องการติดต่อ" required>
+              <label class="form-label" data-i18n="contact.subjectLabel">หัวข้อ *</label>
+              <input type="text" id="subject" class="form-input" data-i18n-placeholder="contact.subjectPlaceholder" placeholder="หัวข้อที่ต้องการติดต่อ" required>
             </div>
             <div class="form-group">
-              <label class="form-label">ข้อความ *</label>
-              <textarea id="message" placeholder="รายละเอียดที่ต้องการแจ้ง..." required></textarea>
+              <label class="form-label" data-i18n="contact.messageLabel">ข้อความ *</label>
+              <textarea id="message" data-i18n-placeholder="contact.messagePlaceholder" placeholder="รายละเอียดที่ต้องการแจ้ง..." required></textarea>
             </div>
-            <button type="submit" class="btn btn-primary w-full btn-lg" id="submitBtn">ส่งข้อความ</button>
+            <button type="submit" class="btn btn-primary w-full btn-lg" id="submitBtn" data-i18n="contact.submitBtn">ส่งข้อความ</button>
           </form>
         </div>
         <div class="success-msg" id="successSection">
           <div class="icon">&#10004;&#65039;</div>
-          <h3>ส่งข้อความสำเร็จ!</h3>
-          <p>ขอบคุณที่ติดต่อเรา ทีมงานจะตอบกลับภายใน 1-2 วันทำการ</p>
-          <button class="btn btn-secondary btn-lg" style="margin-top:20px" onclick="resetForm()">ส่งข้อความอีกครั้ง</button>
+          <h3 data-i18n="contact.successTitle">ส่งข้อความสำเร็จ!</h3>
+          <p data-i18n="contact.successDesc">ขอบคุณที่ติดต่อเรา ทีมงานจะตอบกลับภายใน 1-2 วันทำการ</p>
+          <button class="btn btn-secondary btn-lg" style="margin-top:20px" onclick="resetForm()" data-i18n="contact.sendAgain">ส่งข้อความอีกครั้ง</button>
         </div>
       </div>
 
       <div class="contact-info-card">
-        <h3>ช่องทางติดต่อ</h3>
+        <h3 data-i18n="contact.infoTitle">ช่องทางติดต่อ</h3>
         <div class="info-item">
           <div class="info-icon">&#128231;</div>
           <div class="info-text">
-            <h4>อีเมล</h4>
+            <h4 data-i18n="contact.infoEmail">อีเมล</h4>
             <p>support@nextacc.com</p>
           </div>
         </div>
         <div class="info-item">
           <div class="info-icon">&#128222;</div>
           <div class="info-text">
-            <h4>โทรศัพท์</h4>
+            <h4 data-i18n="contact.infoPhone">โทรศัพท์</h4>
             <p>02-xxx-xxxx (จ-ศ 9:00-18:00)</p>
           </div>
         </div>
@@ -139,24 +139,27 @@
         <div class="info-item">
           <div class="info-icon">&#127970;</div>
           <div class="info-text">
-            <h4>สำนักงาน</h4>
-            <p>กรุงเทพมหานคร ประเทศไทย</p>
+            <h4 data-i18n="contact.infoOffice">สำนักงาน</h4>
+            <p data-i18n="contact.officeLoc">กรุงเทพมหานคร ประเทศไทย</p>
           </div>
         </div>
 
         <div style="margin-top:32px;padding-top:24px;border-top:1px solid var(--gray-200)">
-          <h3 style="margin-bottom:16px">เวลาทำการ</h3>
+          <h3 style="margin-bottom:16px" data-i18n="contact.hoursTitle">เวลาทำการ</h3>
           <div style="font-size:0.9rem;color:var(--gray-600);line-height:2">
-            <div style="display:flex;justify-content:space-between"><span>จันทร์ - ศุกร์</span><span style="font-weight:600;color:var(--gray-900)">9:00 - 18:00</span></div>
-            <div style="display:flex;justify-content:space-between"><span>เสาร์</span><span style="font-weight:600;color:var(--gray-900)">10:00 - 15:00</span></div>
-            <div style="display:flex;justify-content:space-between"><span>อาทิตย์</span><span style="color:#DC2626">ปิดทำการ</span></div>
+            <div style="display:flex;justify-content:space-between"><span data-i18n="contact.monFri">จันทร์ - ศุกร์</span><span style="font-weight:600;color:var(--gray-900)">9:00 - 18:00</span></div>
+            <div style="display:flex;justify-content:space-between"><span data-i18n="contact.sat">เสาร์</span><span style="font-weight:600;color:var(--gray-900)">10:00 - 15:00</span></div>
+            <div style="display:flex;justify-content:space-between"><span data-i18n="contact.sun">อาทิตย์</span><span style="color:#DC2626" data-i18n="contact.closed">ปิดทำการ</span></div>
           </div>
         </div>
       </div>
     </div>
   </div>
 
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script>
+    I18n.init();
     function toggleMobileNav() {
       document.getElementById('navLinks').classList.toggle('show');
     }

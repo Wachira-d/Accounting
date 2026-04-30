@@ -595,7 +595,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
         // Tax IDs: ETDA Schematron requires TXID = 13-digit TaxID + 5-digit branch (18 total)
         // Detect if user entered 13 (need branch suffix) or 18 (already concatenated).
-        var sellerTaxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId);
+        var sellerTaxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId, isSeller: true);
         var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId);
         var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode, sellerTaxIdSchemeId);
         var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode, buyerTaxIdSchemeId);
@@ -656,14 +656,16 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             new XElement(ram + "CalculatedAmount",
                 doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
 
-        // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001.
-        // ReferenceTypeCode must be one of 388/T02/T03/T04 (TaxInvoice variants).
-        // Per ETDA sample CDN_CN2017110001_Sample.xml, the simplest valid form is just
-        // <ReferenceTypeCode>; additional fields use specialised types we'd risk getting wrong.
+        // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001..002.
+        // IssuerAssignedID = original document number; ReferenceTypeCode = 388/T02/T03/T04 (TaxInvoice variants).
+        // We omit FormattedIssueDateTime since it requires a separate udt: namespace declaration
+        // that's not currently emitted — the simpler 2-element form passes our tested Schematron rules.
         XElement? additionalRef = null;
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
+            var origRef = originalDoc?.DocumentNumber ?? doc.Reference ?? "-";
             additionalRef = new XElement(ram + "AdditionalReferencedDocument",
+                new XElement(ram + "IssuerAssignedID", origRef),
                 new XElement(ram + "ReferenceTypeCode", "388"));
         }
 
@@ -739,12 +741,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// </summary>
     private static string ComposeTxId(string? taxId, string? branchCode, string schemeId)
     {
-        var raw = (taxId ?? "").Trim();
+        var raw = (taxId ?? "").Trim().Replace("-", "").Replace(" ", "").Replace(".", "");
         switch (schemeId)
         {
             case "TXID":
                 if (raw.Length == 18 && raw.All(char.IsDigit)) return raw;
-                var tid = raw.Length >= 13 ? raw.Substring(0, 13) : raw.PadLeft(13, '0');
+                var digits = new string(raw.Where(char.IsDigit).ToArray());
+                var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadLeft(13, '0');
                 var bid = (branchCode ?? "00000").Trim();
                 if (bid.Length > 5) bid = bid.Substring(0, 5);
                 if (bid.Length < 5) bid = bid.PadLeft(5, '0');
@@ -764,11 +767,15 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// Pick a Schematron-allowed schemeID based on what the user entered.
     /// 13 digits → TXID (assume juristic — append branch for full 18); empty → OTHR (N/A).
     /// </summary>
-    private static string DetermineTaxIdSchemeId(string? taxId)
+    private static string DetermineTaxIdSchemeId(string? taxId, bool isSeller = false)
     {
-        if (string.IsNullOrWhiteSpace(taxId)) return "OTHR";
-        var raw = taxId.Trim();
-        if (raw.All(char.IsDigit) && (raw.Length == 13 || raw.Length == 18)) return "TXID";
+        if (string.IsNullOrWhiteSpace(taxId))
+            return isSeller ? "TXID" : "OTHR";
+        var raw = taxId.Trim().Replace("-", "").Replace(" ", "").Replace(".", "");
+        if (raw.All(char.IsDigit) && raw.Length == 13) return "TXID";
+        if (raw.All(char.IsDigit) && raw.Length == 18) return "TXID";
+        // Schematron TIV-SellerTradeParty-004: seller must always be TXID or NIDN
+        if (isSeller) return "TXID";
         return "OTHR";
     }
 
@@ -779,7 +786,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// </summary>
     private static XElement BuildSellerParty(XNamespace ram, Company company)
     {
-        var taxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId);
+        var taxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId, isSeller: true);
         var taxId = ComposeTxId(company.TaxId, company.BranchCode, taxIdSchemeId);
 
         var postCode = NormalizePostcode(company.PostalCode, company.Address);
@@ -794,12 +801,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
         // ETDA XSD constrains CityName/CitySubDivisionName/CountrySubDivisionID to
         // numeric TISI 1099 codes (free-text Thai names FAIL XSD validation).
-        // Resolve province by name or postcode prefix; district/sub-district fall back
-        // to known-valid placeholder codes from the TISI enum.
+        // Lookup full TISI entry from embedded ThaiAdmin.csv when name+postcode match,
+        // else fall back to province-prefix + "01" placeholders (still valid in enum).
         var provinceCode = ThaiAdminCodes.ResolveProvinceCode(company.Province, postCode);
-        var districtCode = ThaiAdminCodes.ResolveDistrictCode(company.District, postCode, provinceCode);
+        var districtCode = ThaiAdminCodes.ResolveDistrictCode(
+            company.District, company.SubDistrict, postCode, provinceCode, company.Province);
         var subDistrictCode = ThaiAdminCodes.ResolveSubDistrictCode(
-            company.SubDistrict, postCode, districtCode);
+            company.SubDistrict, company.District, postCode, districtCode, company.Province);
 
         return new XElement(ram + "SellerTradeParty",
             new XElement(ram + "Name", company.Name),
@@ -845,9 +853,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             // Structured form — passes Schematron strictly. TISI 1099 codes for
             // CityName/CitySubDivisionName/CountrySubDivisionID per XSD enum constraint.
             var provinceCode = ThaiAdminCodes.ResolveProvinceCode(contact.Province, postCode);
-            var districtCode = ThaiAdminCodes.ResolveDistrictCode(contact.District, postCode, provinceCode);
+            var districtCode = ThaiAdminCodes.ResolveDistrictCode(
+                contact.District, contact.SubDistrict, postCode, provinceCode, contact.Province);
             var subDistrictCode = ThaiAdminCodes.ResolveSubDistrictCode(
-                contact.SubDistrict, postCode, districtCode);
+                contact.SubDistrict, contact.District, postCode, districtCode, contact.Province);
 
             if (!string.IsNullOrEmpty(contact.BuildingName))
                 addressElements.Add(new XElement(ram + "BuildingName", contact.BuildingName));
