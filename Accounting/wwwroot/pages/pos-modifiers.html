@@ -38,7 +38,7 @@
       <input type="text" class="search-input" placeholder="ค้นหากลุ่มตัวเลือก..." id="searchInput" oninput="Page.load()">
     </div>
     <div id="cardContainer" class="modifier-cards">
-      <div class="empty-state" style="grid-column:1/-1"><p>กำลังโหลด...</p></div>
+      <div class="empty-state" style="grid-column:1/-1"><p data-i18n="common.loading">กำลังโหลด...</p></div>
     </div>
 
     <!-- Create/Edit Group Modal -->
@@ -70,8 +70,8 @@
           <div id="optionRows"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -82,8 +82,8 @@
         <div class="modal-header"><h3 class="modal-title">ยืนยันการลบ</h3><button class="modal-close" onclick="Layout.closeModal('deleteModal')">&times;</button></div>
         <div class="modal-body"><p>คุณต้องการลบกลุ่มตัวเลือก <strong id="deleteName"></strong> หรือไม่?</p><p style="color:var(--text-danger,#ef4444);font-size:.9rem">การลบจะไม่สามารถกู้คืนได้</p></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('deleteModal')">ยกเลิก</button>
-          <button class="btn btn-danger" onclick="Page.confirmDelete()">ลบ</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('deleteModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.confirmDelete()" data-i18n="common.delete">ลบ</button>
         </div>
       </div>
     </div>
@@ -129,13 +129,13 @@
                   <h4 class="modifier-card-title">${this._esc(g.name)}</h4>
                   ${g.nameEn ? `<div style="font-size:.85rem;color:var(--text-muted,#6b7280)">${this._esc(g.nameEn)}</div>` : ''}
                   <div class="modifier-card-badges">
-                    ${g.isRequired ? '<span class="badge badge-warning">จำเป็น</span>' : '<span class="badge badge-gray">ไม่จำเป็น</span>'}
+                    ${g.isRequired ? '<span class="badge badge-warning" data-i18n="common.required">จำเป็น</span>' : '<span class="badge badge-gray">ไม่จำเป็น</span>'}
                     ${g.allowMultiple ? '<span class="badge badge-info">เลือกได้หลายรายการ</span>' : '<span class="badge badge-gray">เลือกได้รายการเดียว</span>'}
                   </div>
                 </div>
                 <div class="modifier-card-actions">
-                  <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${g.id}')">แก้ไข</button>
-                  <button class="btn btn-sm btn-ghost" style="color:var(--text-danger,#ef4444)" onclick="Page.openDelete('${g.id}')">ลบ</button>
+                  <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${g.id}')" data-i18n="common.edit">แก้ไข</button>
+                  <button class="btn btn-sm btn-ghost" style="color:var(--text-danger,#ef4444)" onclick="Page.openDelete('${g.id}')" data-i18n="common.delete">ลบ</button>
                 </div>
               </div>
               ${options.length ? `<ul class="modifier-options-list">${options.map(o => `<li>

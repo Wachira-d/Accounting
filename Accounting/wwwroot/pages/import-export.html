@@ -37,7 +37,7 @@
           <div id="templateLink" style="margin-bottom:16px"></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary" onclick="Page.validateImport()">ตรวจสอบข้อมูล</button>
-            <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+            <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
           </div>
         </div>
 
@@ -79,7 +79,7 @@
             <option value="xlsx">Excel (XLSX)</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="Page.doExport()">ส่งออก</button>
+        <button class="btn btn-primary" onclick="Page.doExport()" data-i18n="common.export">ส่งออก</button>
       </div>
     </div>
 

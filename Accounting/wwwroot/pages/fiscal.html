@@ -15,8 +15,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่องวด</th><th>ปี</th><th>เดือน</th><th>วันเริ่มต้น</th><th>วันสิ้นสุด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ชื่องวด</th><th>ปี</th><th>เดือน</th><th>วันเริ่มต้น</th><th>วันสิ้นสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -43,7 +43,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.save()">สร้างงวด</button>
         </div>
       </div>

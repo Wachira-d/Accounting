@@ -49,7 +49,7 @@
           <div class="form-group"><label class="form-label">บริษัทแม่ *</label><select class="form-select" id="groupParent"></select></div>
           <div class="form-group"><label class="form-label">สกุลเงินรายงาน</label><input type="text" class="form-input" id="groupCurrency" value="THB"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('groupModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveGroup()">สร้าง</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('groupModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveGroup()">สร้าง</button></div>
       </div>
     </div>
 
@@ -61,7 +61,7 @@
           <div class="form-group"><label class="form-label">บริษัท *</label><select class="form-select" id="memberCompany"></select></div>
           <div class="form-group"><label class="form-label">สัดส่วนการถือหุ้น (%)</label><input type="number" class="form-input" id="memberOwnership" value="100" min="0" max="100"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('memberModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.addMember()">เพิ่ม</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('memberModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.addMember()" data-i18n="common.add">เพิ่ม</button></div>
       </div>
     </div>
   </div>
@@ -106,8 +106,8 @@ const Page = {
             <div><h3 class="font-medium">${g.name}</h3><span class="text-sm text-gray-500">สกุลเงิน: ${g.reportingCurrency || 'THB'} | สมาชิก: ${members.length} บริษัท</span></div>
             <button class="btn btn-sm btn-primary" onclick="Page.openAddMember('${g.id}')">+ เพิ่มบริษัทลูก</button>
           </div>
-          ${members.length ? `<div class="table-container"><table class="table"><thead><tr><th>บริษัท</th><th class="text-right">สัดส่วน (%)</th><th>จัดการ</th></tr></thead>
-          <tbody>${members.map(m => `<tr><td>${m.companyName || '-'}</td><td class="text-right">${m.ownershipPercentage || 100}%</td><td><button class="btn btn-sm btn-danger" onclick="Page.removeMember('${g.id}','${m.id}')">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="text-sm text-gray-400">ยังไม่มีบริษัทลูก</p>'}
+          ${members.length ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.company">บริษัท</th><th class="text-right">สัดส่วน (%)</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody>${members.map(m => `<tr><td>${m.companyName || '-'}</td><td class="text-right">${m.ownershipPercentage || 100}%</td><td><button class="btn btn-sm btn-danger" onclick="Page.removeMember('${g.id}','${m.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="text-sm text-gray-400">ยังไม่มีบริษัทลูก</p>'}
         </div>`;
       }).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -164,7 +164,7 @@ const Page = {
       const d = res.data || {};
       const items = d.items || d.lines || [];
       content.innerHTML = `<h3 style="margin-bottom:16px">${type === 'bs' ? 'งบดุลรวม' : 'งบกำไรขาดทุนรวม'}</h3>
-      <div class="table-container"><table class="table"><thead><tr><th>รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
+      <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
       <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${i.name||i.accountName||'-'}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table></div>`;
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
   },
@@ -177,7 +177,7 @@ const Page = {
     try {
       const res = await api.getEliminations(gid);
       const items = res.data?.items || res.data || [];
-      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>รายการ</th><th>บัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
+      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th>บัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
       <tbody>${items.map(e => `<tr><td>${e.description||'-'}</td><td>${e.accountName||'-'}</td><td class="text-right">${Layout.money(e.debit)}</td><td class="text-right">${Layout.money(e.credit)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
   },

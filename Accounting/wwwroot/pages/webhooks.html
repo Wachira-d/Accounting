@@ -83,7 +83,7 @@
         <h3 class="card-title" style="margin-bottom:16px">Endpoints หลัก</h3>
         <div class="table-container">
           <table class="table">
-            <thead><tr><th>Method</th><th>Endpoint</th><th>คำอธิบาย</th></tr></thead>
+            <thead><tr><th>Method</th><th>Endpoint</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead>
             <tbody id="endpointList"></tbody>
           </table>
         </div>
@@ -106,8 +106,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>URL</th><th>Events</th><th>สถานะ</th><th>ส่งล่าสุด</th><th>จัดการ</th></tr></thead>
-          <tbody id="webhookBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>URL</th><th>Events</th><th data-i18n="common.status">สถานะ</th><th>ส่งล่าสุด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="webhookBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -120,8 +120,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อ</th><th>Key (prefix)</th><th>สร้างเมื่อ</th><th>ใช้ล่าสุด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="apikeyBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th data-i18n="common.name">ชื่อ</th><th>Key (prefix)</th><th>สร้างเมื่อ</th><th>ใช้ล่าสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="apikeyBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -139,7 +139,7 @@
           </div>
           <div class="form-group"><label class="form-label"><input type="checkbox" id="whActive" checked> เปิดใช้งาน</label></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('webhookModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveWebhook()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('webhookModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveWebhook()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -148,7 +148,7 @@
       <div class="modal" style="max-width:700px">
         <div class="modal-header"><h3 class="modal-title">ประวัติการส่ง</h3><button class="modal-close" onclick="Layout.closeModal('deliveryModal')">&times;</button></div>
         <div class="modal-body" id="deliveryContent" style="max-height:60vh;overflow-y:auto"></div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('deliveryModal')">ปิด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('deliveryModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
 
@@ -167,7 +167,7 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('apikeyModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveApiKey()">สร้าง</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('apikeyModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveApiKey()">สร้าง</button></div>
       </div>
     </div>
 
@@ -310,10 +310,10 @@ const Page = {
         <td>${Layout.statusBadge(w.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td class="text-sm">${w.lastDeliveryAt ? Layout.date(w.lastDeliveryAt) : 'ยังไม่เคยส่ง'}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="Page.editWebhook('${w.id}')">แก้ไข</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editWebhook('${w.id}')" data-i18n="common.edit">แก้ไข</button>
           <button class="btn btn-sm btn-info" onclick="Page.testWebhook('${w.id}')">ทดสอบ</button>
           <button class="btn btn-sm btn-secondary" onclick="Page.viewDeliveries('${w.id}')">ประวัติ</button>
-          <button class="btn btn-sm btn-danger" onclick="Page.deleteWebhook('${w.id}')">ลบ</button>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteWebhook('${w.id}')" data-i18n="common.delete">ลบ</button>
         </td>
       </tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -365,7 +365,7 @@ const Page = {
     try {
       const res = await api.getWebhookDeliveries(id);
       const items = res.data?.items || res.data || [];
-      document.getElementById('deliveryContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>HTTP Status</th><th>Response Time</th><th>จัดการ</th></tr></thead>
+      document.getElementById('deliveryContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>HTTP Status</th><th>Response Time</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
       <tbody>${items.map(d => `<tr>
         <td class="text-sm">${new Date(d.timestamp || d.createdAt).toLocaleString('th-TH')}</td>
         <td class="text-sm">${d.eventType || '-'}</td>

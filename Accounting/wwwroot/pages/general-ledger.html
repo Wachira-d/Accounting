@@ -53,11 +53,11 @@
       <span>เลือกแล้ว <b id="glSelCount">0</b> บัญชี</span>
       <label style="margin-left:8px"><input type="checkbox" id="glSelectAll" onchange="Page.toggleAllAccounts(this.checked)"> เลือกทั้งหมดในหน้า</label>
       <span id="glSelExportSlot"></span>
-      <button class="btn btn-secondary btn-sm" onclick="Page.clearAccountSelection()">ยกเลิกการเลือก</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearAccountSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
     <div class="account-type-filters" id="typeFilters">
-      <button class="account-type-btn active" data-type="" onclick="Page.filterType('')">ทั้งหมด</button>
+      <button class="account-type-btn active" data-type="" onclick="Page.filterType('')" data-i18n="common.all">ทั้งหมด</button>
       <button class="account-type-btn" data-type="Asset" onclick="Page.filterType('Asset')">สินทรัพย์</button>
       <button class="account-type-btn" data-type="Liability" onclick="Page.filterType('Liability')">หนี้สิน</button>
       <button class="account-type-btn" data-type="Equity" onclick="Page.filterType('Equity')">ส่วนของเจ้าของ</button>
@@ -268,7 +268,7 @@
         if (proj) q += `&projectId=${proj}`;
         if (br) q += `&branchId=${br}`;
         const content = document.getElementById('ledgerContent');
-        content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">กำลังโหลด...</div>';
+        content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px" data-i18n="common.loading">กำลังโหลด...</div>';
         try {
           const res = await api.generalLedger(q);
           this.data = res.data;
@@ -394,10 +394,10 @@
             <div class="gl-account-body">
               <div class="table-container"><table class="table">
                 <thead><tr>
-                  <th>วันที่</th>
+                  <th data-i18n="common.date">วันที่</th>
                   <th>เลขที่</th>
-                  <th>ประเภท</th>
-                  <th>คำอธิบาย</th>
+                  <th data-i18n="common.type">ประเภท</th>
+                  <th data-i18n="common.description">คำอธิบาย</th>
                   <th class="text-right">เดบิต</th>
                   <th class="text-right">เครดิต</th>
                   <th class="text-right">ยอดคงเหลือ</th>

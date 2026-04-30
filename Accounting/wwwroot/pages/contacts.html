@@ -15,7 +15,7 @@
     </div>
 
     <div class="tabs">
-      <div class="tab active" onclick="Page.setFilter('all',this)">ทั้งหมด</div>
+      <div class="tab active" onclick="Page.setFilter('all',this)" data-i18n="common.all">ทั้งหมด</div>
       <div class="tab" onclick="Page.setFilter('customer',this)">ลูกค้า</div>
       <div class="tab" onclick="Page.setFilter('supplier',this)">ผู้จำหน่าย</div>
     </div>
@@ -26,8 +26,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่อ</th><th>เลขผู้เสียภาษี</th><th>ประเภท</th><th>โทรศัพท์</th><th>อีเมล</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.phone">โทรศัพท์</th><th data-i18n="common.email">อีเมล</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -75,14 +75,14 @@
           </details>
 
           <div class="form-row">
-            <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
-            <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
           </div>
           <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="text" class="form-input" id="fContactPerson"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -128,8 +128,8 @@
             <td>${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
-            <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')">แก้ไข</button></td>
+            <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }

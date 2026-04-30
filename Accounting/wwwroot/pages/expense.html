@@ -26,8 +26,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>หัวข้อ</th><th>วันที่</th><th>ผู้เบิก</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>หัวข้อ</th><th data-i18n="common.date">วันที่</th><th>ผู้เบิก</th><th class="text-right">ยอดรวม</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -41,23 +41,23 @@
           <div class="form-group"><label class="form-label">หัวข้อ *</label><input type="text" class="form-input" id="fTitle"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
-            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
           </div>
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
-              <label class="form-label" style="margin:0">รายการ</label>
+              <label class="form-label" style="margin:0" data-i18n="common.items">รายการ</label>
               <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่ม</button>
             </div>
             <div class="table-container"><table class="table">
-              <thead><tr><th>รายละเอียด</th><th>จำนวนเงิน</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+              <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th data-i18n="common.amount">จำนวนเงิน</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
               <tbody id="linesBody"></tbody>
             </table></div>
             <div class="text-right font-semibold" style="margin-top:8px">รวม: <span id="fTotal">0.00</span> บาท</div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -95,7 +95,7 @@
           const res = await api.getExpenseClaims(q);
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(e => `<tr>
             <td class="font-medium">${e.claimNumber}</td>
             <td>${e.title}</td>
@@ -104,8 +104,8 @@
             <td class="text-right font-semibold">${Layout.money(e.totalAmount)}</td>
             <td>${Layout.statusBadge(e.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${e.id}')">ดู</button>
-              ${e.status === 'Draft' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${e.id}')">แก้ไข</button>` : ''}
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${e.id}')" data-i18n="common.view">ดู</button>
+              ${e.status === 'Draft' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${e.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
             </td>
           </tr>`).join('');
           const totalPages = data?.totalPages || 1;
@@ -206,15 +206,15 @@
           document.getElementById('detailContent').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${e.claimNumber}</div></div>
-              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(e.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(e.status)}</div></div>
               <div><div class="text-xs text-gray-500">หัวข้อ</div><div>${e.title}</div></div>
-              <div><div class="text-xs text-gray-500">วันที่</div><div>${Layout.date(e.expenseDate)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.date">วันที่</div><div>${Layout.date(e.expenseDate)}</div></div>
               <div><div class="text-xs text-gray-500">ผู้เบิก</div><div>${e.submittedByName || '-'}</div></div>
               <div><div class="text-xs text-gray-500">ยอดรวม</div><div class="font-semibold text-lg">${Layout.money(e.totalAmount)}</div></div>
             </div>
-            ${e.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px;margin-bottom:16px"><div class="text-xs text-gray-500">คำอธิบาย</div><div>${e.description}</div></div>` : ''}
+            ${e.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px;margin-bottom:16px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${e.description}</div></div>` : ''}
             <div class="table-container"><table class="table">
-              <thead><tr><th>รายละเอียด</th><th class="text-right">จำนวนเงิน</th><th class="text-right">VAT</th><th class="text-right">WHT</th><th class="text-right">สุทธิ</th></tr></thead>
+              <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th class="text-right">VAT</th><th class="text-right">WHT</th><th class="text-right">สุทธิ</th></tr></thead>
               <tbody>${(e.lines || []).map(l => `<tr>
                 <td>${l.description}</td>
                 <td class="text-right">${Layout.money(l.amount)}</td>
@@ -226,7 +226,7 @@
             ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${e.rejectionReason}</div></div>` : ''}`;
 
           // Actions based on status
-          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (e.status === 'Draft') {
             actions += ` <button class="btn btn-primary" onclick="Page.submitClaim('${e.id}')">ส่งอนุมัติ</button>`;
           }

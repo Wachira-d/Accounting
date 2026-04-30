@@ -16,8 +16,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่อ</th><th>ปีงบประมาณ</th><th class="text-right">งบประมาณรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th data-i18n="common.name">ชื่อ</th><th>ปีงบประมาณ</th><th class="text-right">งบประมาณรวม</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -52,8 +52,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -90,11 +90,11 @@
             <td class="font-medium">${b.name}</td>
             <td>${b.fiscalYear}</td>
             <td class="text-right font-semibold">${Layout.money(b.totalBudget)}</td>
-            <td>${b.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td>${b.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.compare('${b.id}')">เปรียบเทียบ</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${b.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.remove('${b.id}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${b.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.remove('${b.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -112,7 +112,7 @@
               <div class="text-sm">งบ: <strong>${Layout.money(totalBudget)}</strong> | จริง: <strong>${Layout.money(totalActual)}</strong> | ผลต่าง: <strong class="${totalBudget - totalActual >= 0 ? 'text-success':'text-danger'}">${Layout.money(totalBudget - totalActual)}</strong></div>
             </div>
             <div class="table-container"><table class="table">
-              <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">งบประมาณ</th><th class="text-right">ยอดจริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th>สถานะ</th></tr></thead>
+              <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">งบประมาณ</th><th class="text-right">ยอดจริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th data-i18n="common.status">สถานะ</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => {
                 const pct = l.budgetAmount > 0 ? (l.actualAmount / l.budgetAmount * 100) : 0;
                 const over = l.actualAmount > l.budgetAmount;

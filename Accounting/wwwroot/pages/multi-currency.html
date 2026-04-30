@@ -23,8 +23,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>สัญลักษณ์</th><th class="text-right">อัตราล่าสุด (ต่อ THB)</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="currBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>สัญลักษณ์</th><th class="text-right">อัตราล่าสุด (ต่อ THB)</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="currBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -40,8 +40,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>วันที่</th><th>จากสกุลเงิน</th><th>เป็นสกุลเงิน</th><th class="text-right">อัตรา</th><th>แหล่งข้อมูล</th></tr></thead>
-          <tbody id="rateBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th data-i18n="common.date">วันที่</th><th>จากสกุลเงิน</th><th>เป็นสกุลเงิน</th><th class="text-right">อัตรา</th><th>แหล่งข้อมูล</th></tr></thead>
+          <tbody id="rateBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -52,7 +52,7 @@
         <div><h2 class="page-title">แปลงสกุลเงิน</h2><p class="page-subtitle">คำนวณอัตราแลกเปลี่ยนตามอัตราล่าสุดในระบบ</p></div>
       </div>
       <div class="card" style="padding:32px;max-width:500px">
-        <div class="form-group"><label class="form-label">จำนวนเงิน</label><input type="number" class="form-input" id="convAmount" value="1000" step="0.01" oninput="Page.convert()"></div>
+        <div class="form-group"><label class="form-label" data-i18n="common.amount">จำนวนเงิน</label><input type="number" class="form-input" id="convAmount" value="1000" step="0.01" oninput="Page.convert()"></div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">จาก</label><select class="form-select" id="convFrom" onchange="Page.convert()"></select></div>
           <div class="form-group" style="display:flex;align-items:end;justify-content:center;max-width:60px">
@@ -91,7 +91,7 @@
           </div>
           <div class="form-group"><label class="form-label">อัตราแลกเปลี่ยนเริ่มต้น (1 หน่วย = ? THB)</label><input type="number" class="form-input" id="newCurrRate" step="0.0001" placeholder="เช่น 34.50"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('currModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveCurrency()">เพิ่ม</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('currModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveCurrency()" data-i18n="common.add">เพิ่ม</button></div>
       </div>
     </div>
 
@@ -106,10 +106,10 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">อัตรา *</label><input type="number" class="form-input" id="addRateValue" step="0.000001"></div>
-            <div class="form-group"><label class="form-label">วันที่</label><input type="date" class="form-input" id="addRateDate"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.date">วันที่</label><input type="date" class="form-input" id="addRateDate"></div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
   </div>
@@ -152,7 +152,7 @@ const Page = {
         <td>${c.symbol || '-'}</td>
         <td class="text-right">${c.latestRate ? Layout.money(c.latestRate) : '-'}</td>
         <td>${Layout.statusBadge(c.isActive !== false ? 'Active' : 'Inactive')}</td>
-        <td><button class="btn btn-sm btn-secondary" onclick="Page.editCurrency('${c.id}')">แก้ไข</button></td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editCurrency('${c.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
 
       // Populate filter selects

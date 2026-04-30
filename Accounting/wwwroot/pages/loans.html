@@ -27,8 +27,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -39,7 +39,7 @@
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group"><label class="form-label">เลขที่สินเชื่อ *</label><input type="text" class="form-input" id="fNum"></div>
-            <div class="form-group"><label class="form-label">ประเภท</label>
+            <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
               <select class="form-select" id="fType"><option value="BankLoan">สินเชื่อธนาคาร</option><option value="Mortgage">จำนอง</option><option value="LineOfCredit">วงเงินเบิกเกินบัญชี</option></select>
             </div>
           </div>
@@ -65,8 +65,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -102,10 +102,10 @@
             <div class="form-group"><label class="form-label">เงินต้น</label><input type="number" class="form-input" id="payPrincipal" step="0.01"></div>
             <div class="form-group"><label class="form-label">ดอกเบี้ย</label><input type="number" class="form-input" id="payInterest" step="0.01"></div>
           </div>
-          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="payNotes"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="payNotes"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('payModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('payModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.savePayment()">บันทึกชำระ</button>
         </div>
       </div>
@@ -157,7 +157,7 @@
             <td>${Layout.date(l.maturityDate)}</td>
             <td>${Layout.statusBadge(l.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${l.id}')">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${l.id}')" data-i18n="common.view">ดู</button>
               ${l.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.openPayment('${l.id}')">ชำระ</button>` : ''}
             </td>
           </tr>`).join('');
@@ -199,12 +199,12 @@
               <div><div class="text-xs text-gray-500">ยอดคงเหลือ</div><div class="font-semibold text-danger">${Layout.money(l.outstandingBalance)}</div></div>
               <div><div class="text-xs text-gray-500">อัตราดอกเบี้ย</div><div>${l.interestRate}% (${l.interestType === 'Fixed' ? 'คงที่' : 'ลอยตัว'})</div></div>
               <div><div class="text-xs text-gray-500">วันเริ่ม - ครบกำหนด</div><div>${Layout.date(l.startDate)} - ${Layout.date(l.maturityDate)}</div></div>
-              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(l.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(l.status)}</div></div>
             </div>`;
 
           // Load schedule
           await this.loadSchedule(id);
-          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (l.status === 'Active') {
             footer += ` <button class="btn btn-info" onclick="Page.generateSchedule('${id}')">สร้างตารางผ่อน</button>`;
             footer += ` <button class="btn btn-primary" onclick="Page.openPayment('${id}')">บันทึกชำระ</button>`;
@@ -226,7 +226,7 @@
           const res = await api.getLoanSchedule(id);
           const items = res.data?.items || res.data || [];
           document.getElementById('scheduleTab').innerHTML = items.length ?
-            `<div class="table-container"><table class="table"><thead><tr><th>งวดที่</th><th>วันครบกำหนด</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th class="text-right">รวม</th><th class="text-right">คงเหลือ</th><th>สถานะ</th></tr></thead><tbody>${items.map(s => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>งวดที่</th><th>วันครบกำหนด</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th class="text-right" data-i18n="common.total">รวม</th><th class="text-right">คงเหลือ</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>${items.map(s => `<tr>
               <td>${s.installmentNumber || s.periodNumber}</td>
               <td>${Layout.date(s.dueDate)}</td>
               <td class="text-right">${Layout.money(s.principalAmount)}</td>
@@ -244,7 +244,7 @@
           const res = await api.getLoanPayments(id);
           const items = res.data?.items || res.data || [];
           document.getElementById('paymentsTab').innerHTML = items.length ?
-            `<div class="table-container"><table class="table"><thead><tr><th>วันที่</th><th class="text-right">จำนวน</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th>หมายเหตุ</th></tr></thead><tbody>${items.map(p => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th class="text-right">จำนวน</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th data-i18n="common.note">หมายเหตุ</th></tr></thead><tbody>${items.map(p => `<tr>
               <td>${Layout.date(p.paymentDate)}</td>
               <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
               <td class="text-right">${Layout.money(p.principalPortion)}</td>

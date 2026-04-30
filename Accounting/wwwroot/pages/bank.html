@@ -28,7 +28,7 @@
     <!-- Bank Account Cards -->
     <div id="tabAccounts">
       <div class="grid grid-3 gap-4" id="bankCards" style="margin-bottom:24px">
-        <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
+        <div class="card text-center" style="padding:40px"><div class="text-gray-400" data-i18n="common.loading">กำลังโหลด...</div></div>
       </div>
 
       <!-- Transactions for selected account -->
@@ -65,13 +65,13 @@
         <div id="bulkActionBar" style="display:none;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:8px;display:none;align-items:center;gap:12px">
           <span class="font-medium" id="bulkSelectedCount">0 รายการที่เลือก</span>
           <button class="btn btn-sm btn-danger" onclick="Page.deleteSelectedTransactions()">ลบที่เลือกทั้งหมด</button>
-          <button class="btn btn-sm btn-ghost" onclick="Page.clearTransSelection()">ยกเลิก</button>
+          <button class="btn btn-sm btn-ghost" onclick="Page.clearTransSelection()" data-i18n="common.cancel">ยกเลิก</button>
         </div>
         <div class="table-container" style="border:none">
           <table class="table">
             <thead><tr>
               <th style="width:30px"><input type="checkbox" id="transSelectAll" onchange="Page.toggleSelectAllTrans(this.checked)"></th>
-              <th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th>คำอธิบาย</th><th>สถานะ</th><th>จัดการ</th>
+              <th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th data-i18n="common.description">คำอธิบาย</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th>
             </tr></thead>
             <tbody id="transBody"><tr><td colspan="8" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
           </table>
@@ -123,7 +123,7 @@
           <div class="flex gap-2">
             <span class="badge badge-primary" id="aiSugCount">0 คู่</span>
             <button class="btn btn-sm btn-success" onclick="Page.acceptAllSuggestions()">ยืนยันทั้งหมด</button>
-            <button class="btn btn-sm btn-secondary" onclick="Page.dismissSuggestions()">ปิด</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.dismissSuggestions()" data-i18n="common.close">ปิด</button>
           </div>
         </div>
         <div id="aiSuggestionsList" style="max-height:500px;overflow-y:auto"></div>
@@ -137,7 +137,7 @@
         </div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th>วันที่</th><th>เลขที่บันทึก</th><th class="text-right">จำนวน</th><th>คำอธิบาย</th><th>ลงบัญชีเป็น</th><th>แนะนำ</th></tr></thead>
+            <thead><tr><th data-i18n="common.date">วันที่</th><th>เลขที่บันทึก</th><th class="text-right">จำนวน</th><th data-i18n="common.description">คำอธิบาย</th><th>ลงบัญชีเป็น</th><th>แนะนำ</th></tr></thead>
             <tbody id="discrepancyBody"></tbody>
           </table>
         </div>
@@ -195,8 +195,8 @@
         </div>
         <div class="table-container" style="border:none">
           <table class="table">
-            <thead><tr><th>ธนาคาร</th><th>บัญชี</th><th>สถานะ</th><th>ซิงค์ล่าสุด</th><th>จัดการ</th></tr></thead>
-            <tbody id="connBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+            <thead><tr><th>ธนาคาร</th><th>บัญชี</th><th data-i18n="common.status">สถานะ</th><th>ซิงค์ล่าสุด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+            <tbody id="connBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -235,8 +235,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -256,12 +256,12 @@
             <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="tAmount" step="0.01"></div>
             <div class="form-group"><label class="form-label">ผู้รับ/ผู้จ่าย</label><input type="text" class="form-input" id="tPayee"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="tDesc"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="tDesc"></div>
           <div class="form-group"><label class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="tRef"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('transModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveTrans()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('transModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveTrans()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -283,7 +283,7 @@
           <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
             <strong>📌 รูปแบบ CSV ที่รองรับ:</strong><br>
             ระบบจะตรวจหาคอลัมน์อัตโนมัติ — ไฟล์ต้องมีหัวคอลัมน์ที่มีคำว่า:<br>
-            • <strong>วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
+            • <strong data-i18n="common.date">วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
             • <strong>ฝากเงิน/ถอนเงิน</strong> หรือ Deposit/Withdrawal (หรือคอลัมน์ Amount เดียวที่มีเครื่องหมาย +/-)<br>
             • <strong>ยอดคงเหลือ</strong> หรือ Balance<br>
             • (option) เวลา, รายการ, ช่องทาง, รายละเอียด, เลขอ้างอิง<br>
@@ -293,8 +293,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
         </div>
       </div>
     </div>
@@ -332,7 +332,7 @@
           </label>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkDeleteModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkDeleteModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-danger" onclick="Page.confirmBulkDeleteByRange()">ลบรายการตามช่วง</button>
         </div>
       </div>
@@ -357,8 +357,8 @@
           <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="cApiSecret"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('connModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveConnection()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('connModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveConnection()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -411,7 +411,7 @@
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
               <span style="font-size:11px;color:#64748b">กรองตามที่ลงบัญชี:</span>
               <button class="dep-chip active" data-cat="" onclick="Page.setDepositFilter('')"
-                style="padding:3px 10px;border:1px solid #4F46E5;background:#4F46E5;color:#fff;border-radius:14px;font-size:11px;cursor:pointer">ทั้งหมด</button>
+                style="padding:3px 10px;border:1px solid #4F46E5;background:#4F46E5;color:#fff;border-radius:14px;font-size:11px;cursor:pointer" data-i18n="common.all">ทั้งหมด</button>
               <button class="dep-chip" data-cat="Bank" onclick="Page.setDepositFilter('Bank')"
                 style="padding:3px 10px;border:1px solid #93c5fd;background:#fff;color:#0369a1;border-radius:14px;font-size:11px;cursor:pointer">🏦 บัญชีธนาคาร</button>
               <button class="dep-chip" data-cat="Mixed" onclick="Page.setDepositFilter('Mixed')"
@@ -430,7 +430,7 @@
 
           <!-- Candidate list -->
           <div id="rCandidateList" style="max-height:380px;overflow-y:auto;padding:8px">
-            <div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>
+            <div style="text-align:center;color:#94a3b8;padding:40px" data-i18n="common.loading">กำลังโหลด...</div>
           </div>
 
           <!-- Selection summary bar -->
@@ -446,7 +446,7 @@
           </div>
         </div>
         <div class="modal-footer" style="justify-content:space-between">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('reconcileModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reconcileModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" id="rConfirmBtn" onclick="Page.confirmMultiMatch()" disabled
             style="background:linear-gradient(135deg,#10b981,#059669);border:none">
             ✓ จับคู่ <span id="rConfirmCountText">(เลือกรายการก่อน)</span>
@@ -500,7 +500,7 @@
               <div class="flex items-center justify-between" style="margin-bottom:12px">
                 <div class="font-semibold">${a.accountName}</div>
                 <div class="flex gap-1">
-                  ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}
+                  ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
                   <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${a.id}')" title="แก้ไข">&#9998;</button>
                 </div>
               </div>
@@ -552,7 +552,7 @@
         if (typeF) items = items.filter(t => t.transactionType === typeF);
         if (statusF) items = items.filter(t => (t.reconciliationStatus || 'Unmatched') === statusF);
         const tbody = document.getElementById('transBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400">ไม่มีรายการ</td></tr>'; this.updateBulkBar(); return; }
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; this.updateBulkBar(); return; }
         const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
         const isCredit = t => t === 'Deposit' || t === 'Interest';
         const sel = this.selectedTxnIds || new Set();
@@ -565,7 +565,7 @@
           <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
           <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
           <td>
-            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}
+            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
           </td>
         </tr>`).join('');
@@ -893,7 +893,7 @@
                 <span class="text-xs text-gray-500">${s.reasoning}</span>
               </div>
               <div class="flex gap-1">
-                <button class="btn btn-sm btn-success" onclick="Page.acceptSuggestion(${idx})">ยืนยัน</button>
+                <button class="btn btn-sm btn-success" onclick="Page.acceptSuggestion(${idx})" data-i18n="common.confirm">ยืนยัน</button>
                 <button class="btn btn-sm btn-ghost" onclick="Page.dismissSuggestion('${s.matchId}')">ข้าม</button>
               </div>
             </div>
@@ -1564,11 +1564,11 @@
           tbody.innerHTML = items.map(c => `<tr>
             <td class="font-medium">${c.bankCode || c.bankName || '-'}</td>
             <td>${c.bankAccountName || '-'}</td>
-            <td>${c.status === 'Active' ? '<span class="badge badge-success">เชื่อมต่อ</span>' : c.status === 'Error' ? '<span class="badge badge-danger">ผิดพลาด</span>' : '<span class="badge badge-gray">' + (c.status || 'ไม่ทราบ') + '</span>'}</td>
+            <td>${c.status === 'Active' ? '<span class="badge badge-success">เชื่อมต่อ</span>' : c.status === 'Error' ? '<span class="badge badge-danger" data-i18n="common.error">ผิดพลาด</span>' : '<span class="badge badge-gray">' + (c.status || 'ไม่ทราบ') + '</span>'}</td>
             <td>${c.lastSyncAt ? Layout.date(c.lastSyncAt) : 'ยังไม่เคย'}</td>
             <td class="flex gap-1">
               <button class="btn btn-sm btn-primary" onclick="Page.syncConn('${c.id}')">ซิงค์</button>
-              <button class="btn btn-sm btn-danger" onclick="Page.deleteConn('${c.id}')">ลบ</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteConn('${c.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }

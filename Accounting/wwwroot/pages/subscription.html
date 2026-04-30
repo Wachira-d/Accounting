@@ -36,14 +36,14 @@
 
     <div id="currentSubSection" class="card" style="margin-bottom:24px">
       <div class="card-header"><h3 class="card-title">สถานะ Subscription ปัจจุบัน</h3></div>
-      <div id="currentSubContent"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+      <div id="currentSubContent"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- Usage -->
     <div class="card" style="margin-bottom:24px">
       <div class="card-header"><h3 class="card-title">การใช้งานเดือนนี้</h3></div>
       <div id="usageContent" class="grid grid-4 gap-4">
-        <div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1">กำลังโหลด...</div>
+        <div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1" data-i18n="common.loading">กำลังโหลด...</div>
       </div>
     </div>
 
@@ -58,13 +58,13 @@
           <button class="billing-toggle" onclick="Sub.setCycle('annual',this)" style="font-size:13px;padding:6px 12px">รายปี</button>
         </div>
       </div>
-      <div id="plansGrid" class="grid grid-3 gap-4"><div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1">กำลังโหลด...</div></div>
+      <div id="plansGrid" class="grid grid-3 gap-4"><div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- Trial Details -->
     <div class="card" style="margin-bottom:24px" id="trialDetailSection">
       <div class="card-header"><h3 class="card-title">รายละเอียดการทดลองใช้</h3></div>
-      <div id="trialDetailContent"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+      <div id="trialDetailContent"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- Payment History -->
@@ -72,8 +72,8 @@
       <div class="card-header"><h3 class="card-title">ประวัติการชำระเงิน</h3></div>
       <div class="table-container" style="border:none">
         <table class="table">
-          <thead><tr><th>เลขที่</th><th>วันที่</th><th>แพ็กเกจ</th><th>รอบ</th><th class="text-right">จำนวนเงิน</th><th>ช่องทาง</th><th>สถานะ</th></tr></thead>
-          <tbody id="paymentHistory"><tr><td colspan="7" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>เลขที่</th><th data-i18n="common.date">วันที่</th><th>แพ็กเกจ</th><th>รอบ</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th>ช่องทาง</th><th data-i18n="common.status">สถานะ</th></tr></thead>
+          <tbody id="paymentHistory"><tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -84,7 +84,7 @@
         <div class="modal-header"><h3 class="modal-title">ขยายเวลาทดลองใช้</h3><button class="modal-close" onclick="Layout.closeModal('extendModal')">&times;</button></div>
         <div class="modal-body" id="extendContent"></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('extendModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('extendModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Sub.confirmExtend()">ขยายเวลา</button>
         </div>
       </div>
@@ -96,7 +96,7 @@
         <div class="modal-header"><h3 class="modal-title">อัปเกรดแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('upgradeModal')">&times;</button></div>
         <div class="modal-body" id="upgradeContent"></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('upgradeModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('upgradeModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Sub.confirmUpgrade()">ยืนยันอัปเกรด</button>
         </div>
       </div>
@@ -169,7 +169,7 @@
             <td>${methodMap[p.paymentMethod] || p.paymentMethod}</td>
             <td>${Layout.statusBadge(p.status)}</td>
           </tr>`).join('');
-        } catch (e) { document.getElementById('paymentHistory').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>'; }
+        } catch (e) { document.getElementById('paymentHistory').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'; }
       },
 
       renderSubscription() {
@@ -182,7 +182,7 @@
         document.getElementById('currentSubContent').innerHTML = `
           <div class="grid grid-4 gap-4" style="margin-bottom:16px">
             <div><div class="text-xs text-gray-500">แพ็กเกจ</div><div class="text-lg font-bold"><span class="plan-badge plan-${s.plan?.toLowerCase()}">${planMap[s.plan] || s.plan}</span></div></div>
-            <div><div class="text-xs text-gray-500">สถานะ</div><div class="text-lg font-bold">${Layout.statusBadge(s.status)}</div></div>
+            <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div class="text-lg font-bold">${Layout.statusBadge(s.status)}</div></div>
             <div><div class="text-xs text-gray-500">รอบบิล</div><div class="text-lg font-bold">${cycleMap[s.billingCycle] || s.billingCycle}</div></div>
             <div><div class="text-xs text-gray-500">ราคา/รอบ</div><div class="text-lg font-bold">฿${Layout.money(s.pricePerCycle)}</div></div>
           </div>
@@ -224,7 +224,7 @@
             <div class="trial-countdown">
               <div style="margin-bottom:8px;opacity:.8">ระยะเวลาทดลองใช้คงเหลือ</div>
               <div class="days">${t.daysRemaining}</div>
-              <div style="font-size:18px;margin-top:4px">วัน</div>
+              <div style="font-size:18px;margin-top:4px" data-i18n="common.days">วัน</div>
               <div style="margin-top:16px;display:flex;justify-content:center;gap:12px">
                 ${t.canExtend ? `<button class="btn btn-white" onclick="Sub.openExtend()">ขยายเวลา (+${t.extensionsUsed < t.maxExtensions ? '7' : '0'} วัน)</button>` : ''}
                 <button class="btn btn-white" onclick="Sub.openUpgradeFromTrial()">อัปเกรดเลย</button>

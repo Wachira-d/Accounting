@@ -23,8 +23,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>ที่อยู่</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="branchBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>ที่อยู่</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="branchBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -37,8 +37,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อมิติ</th><th>รหัส</th><th>ค่าที่กำหนด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="dimBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>ชื่อมิติ</th><th>รหัส</th><th>ค่าที่กำหนด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="dimBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -69,7 +69,7 @@
           <div class="form-group"><label class="form-label">ที่อยู่</label><input type="text" class="form-input" id="branchAddr"></div>
           <div class="form-group"><label class="form-label"><input type="checkbox" id="branchActive" checked> ใช้งาน</label></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('branchModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveBranch()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('branchModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveBranch()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -83,11 +83,11 @@
             <div class="form-group"><label class="form-label">ชื่อมิติ *</label><input type="text" class="form-input" id="dimName" placeholder="เช่น แผนก, ภูมิภาค"></div>
             <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="dimCode" placeholder="DEPT"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="dimDesc"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="dimDesc"></div>
           <div class="form-group"><label class="form-label">ค่าที่กำหนด (คั่นด้วยเครื่องหมายจุลภาค)</label><input type="text" class="form-input" id="dimValues" placeholder="เช่น ฝ่ายขาย, ฝ่ายผลิต, ฝ่ายบัญชี"></div>
           <div class="form-group"><label class="form-label"><input type="checkbox" id="dimRequired"> จำเป็นต้องระบุ</label></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('dimModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveDimension()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('dimModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveDimension()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
   </div>
@@ -127,7 +127,7 @@ const Page = {
         <td>${b.name || '-'}</td>
         <td>${b.address || '-'}</td>
         <td>${Layout.statusBadge(b.isActive !== false ? 'Active' : 'Inactive')}</td>
-        <td><button class="btn btn-sm btn-secondary" onclick="Page.editBranch('${b.id}')">แก้ไข</button></td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editBranch('${b.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
@@ -172,8 +172,8 @@ const Page = {
         <td>${d.values?.length || d.valueCount || 0} ค่า</td>
         <td>${Layout.statusBadge(d.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="Page.editDimension('${d.id}')">แก้ไข</button>
-          <button class="btn btn-sm btn-danger" onclick="Page.deleteDimension('${d.id}')">ลบ</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editDimension('${d.id}')" data-i18n="common.edit">แก้ไข</button>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteDimension('${d.id}')" data-i18n="common.delete">ลบ</button>
         </td>
       </tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -231,7 +231,7 @@ const Page = {
       const d = res.data || {};
       const items = d.items || d.values || [];
       content.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>มิติ</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th><th class="text-right">กำไร/ขาดทุน</th></tr></thead>
-      <tbody>${items.length ? items.map(i => `<tr><td class="font-medium">${i.name||i.value||'-'}</td><td class="text-right">${Layout.money(i.revenue)}</td><td class="text-right">${Layout.money(i.expense)}</td><td class="text-right ${(i.revenue-i.expense)>=0?'text-success':'text-danger'}">${Layout.money((i.revenue||0)-(i.expense||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody></table></div>`;
+      <tbody>${items.length ? items.map(i => `<tr><td class="font-medium">${i.name||i.value||'-'}</td><td class="text-right">${Layout.money(i.revenue)}</td><td class="text-right">${Layout.money(i.expense)}</td><td class="text-right ${(i.revenue-i.expense)>=0?'text-success':'text-danger'}">${Layout.money((i.revenue||0)-(i.expense||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'}</tbody></table></div>`;
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
   },
 };

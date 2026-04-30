@@ -78,7 +78,7 @@
             <div class="card-header"><h3 class="card-title">${this.reportType === 'AccountsReceivable' ? 'ลูกหนี้' : 'เจ้าหนี้'} - รายละเอียด</h3></div>
             <div class="table-container" style="border:none">
               <table class="table">
-                <thead><tr><th>ผู้ติดต่อ</th><th class="text-right">ปัจจุบัน</th><th class="text-right">1-30 วัน</th><th class="text-right">31-60 วัน</th><th class="text-right">61-90 วัน</th><th class="text-right">>90 วัน</th><th class="text-right font-bold">รวม</th></tr></thead>
+                <thead><tr><th>ผู้ติดต่อ</th><th class="text-right">ปัจจุบัน</th><th class="text-right">1-30 วัน</th><th class="text-right">31-60 วัน</th><th class="text-right">61-90 วัน</th><th class="text-right">>90 วัน</th><th class="text-right font-bold" data-i18n="common.total">รวม</th></tr></thead>
                 <tbody>${details.map(c => `<tr>
                   <td class="font-medium">${c.contactName}</td>
                   <td class="text-right">${Layout.money(c.current)}</td>

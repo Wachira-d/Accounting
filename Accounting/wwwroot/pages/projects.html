@@ -24,8 +24,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>ลูกค้า</th><th class="text-right">งบประมาณ</th><th class="text-right">ต้นทุนจริง</th><th>ความคืบหน้า</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>ลูกค้า</th><th class="text-right">งบประมาณ</th><th class="text-right">ต้นทุนจริง</th><th>ความคืบหน้า</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -39,7 +39,7 @@
             <div class="form-group"><label class="form-label">รหัสโครงการ *</label><input type="text" class="form-input" id="fCode"></div>
             <div class="form-group"><label class="form-label">ชื่อโครงการ *</label><input type="text" class="form-input" id="fName"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
             <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEnd"></div>
@@ -50,8 +50,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -82,14 +82,14 @@
         <div class="modal-body">
           <input type="hidden" id="taskProjectId">
           <div class="form-group"><label class="form-label">ชื่องาน *</label><input type="text" class="form-input" id="taskName"></div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="taskDesc"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="taskDesc"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันเริ่ม</label><input type="date" class="form-input" id="taskStart"></div>
             <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="taskEnd"></div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('taskModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('taskModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.saveTask()">เพิ่มงาน</button>
         </div>
       </div>
@@ -115,8 +115,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('costModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveCost()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('costModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveCost()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -164,8 +164,8 @@
             </td>
             <td>${Layout.statusBadge(p.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')">ดู</button>
-              ${p.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')">แก้ไข</button>` : ''}
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
+              ${p.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
             </td>
           </tr>`}).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -230,7 +230,7 @@
           document.getElementById('detailInfo').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
               <div><div class="text-xs text-gray-500">ระยะเวลา</div><div>${Layout.date(p.startDate)} - ${Layout.date(p.endDate)}</div></div>
-              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(p.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(p.status)}</div></div>
               <div><div class="text-xs text-gray-500">ความคืบหน้า</div><div class="font-semibold">${p.completionPercent || 0}%</div></div>
             </div>
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
@@ -239,18 +239,18 @@
               <div class="kpi-card"><div class="kpi-label">ต้นทุนจริง</div><div class="kpi-value ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</div></div>
               <div class="kpi-card"><div class="kpi-label">กำไร (ประมาณ)</div><div class="kpi-value ${profit >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(profit)}</div></div>
             </div>
-            ${p.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500">คำอธิบาย</div><div>${p.description}</div></div>` : ''}`;
+            ${p.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${p.description}</div></div>` : ''}`;
 
           await this.loadTasks(id);
 
-          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (p.status === 'Active') {
             footer += ` <button class="btn btn-info" onclick="Page.openAddTask('${id}')">+ เพิ่มงาน</button>`;
             footer += ` <button class="btn btn-primary" onclick="Page.openAddCost('${id}')">+ บันทึกต้นทุน</button>`;
             footer += ` <button class="btn btn-success" onclick="Page.completeProject('${id}')">เสร็จสิ้นโครงการ</button>`;
           }
-          footer += ` <button class="btn btn-warning" onclick="Page.openEdit('${id}')">แก้ไข</button>`;
-          footer += ` <button class="btn btn-danger" onclick="Page.deleteProject('${id}')">ลบ</button>`;
+          footer += ` <button class="btn btn-warning" onclick="Page.openEdit('${id}')" data-i18n="common.edit">แก้ไข</button>`;
+          footer += ` <button class="btn btn-danger" onclick="Page.deleteProject('${id}')" data-i18n="common.delete">ลบ</button>`;
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -271,7 +271,7 @@
           const items = res.data?.items || res.data || [];
           const statusMap = { Pending:'รอดำเนินการ', InProgress:'กำลังทำ', Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก' };
           document.getElementById('tasksTab').innerHTML = items.length ?
-            `<div class="table-container"><table class="table"><thead><tr><th>ชื่องาน</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th>สถานะ</th></tr></thead><tbody>${items.map(t => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th>ชื่องาน</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>${items.map(t => `<tr>
               <td class="font-medium">${t.name}</td>
               <td>${Layout.date(t.startDate)}</td>
               <td>${Layout.date(t.endDate)}</td>
@@ -287,7 +287,7 @@
           const items = res.data?.items || res.data || [];
           const catMap = { Labor:'ค่าแรง', Material:'วัสดุ', Equipment:'อุปกรณ์', Subcontract:'ผู้รับเหมาช่วง', Travel:'ค่าเดินทาง', Other:'อื่นๆ' };
           document.getElementById('costsTab').innerHTML = items.length ?
-            `<div class="table-container"><table class="table"><thead><tr><th>วันที่</th><th>รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
+            `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.detail">รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
               <td>${Layout.date(c.costDate || c.date)}</td>
               <td>${c.description}</td>
               <td><span class="badge badge-info">${catMap[c.category] || c.category}</span></td>

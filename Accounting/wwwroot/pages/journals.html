@@ -42,7 +42,7 @@
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
         <option value="Posted">ผ่านรายการ</option>
-        <option value="Voided">ยกเลิก</option>
+        <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
         <option value="Reversed">กลับรายการแล้ว</option>
       </select>
       <input type="date" class="form-input" id="fromDate" style="width:160px" onchange="Page.load()">
@@ -58,16 +58,16 @@
       <span>เลือกแล้ว <span class="count" id="batchCount">0</span> รายการ</span>
       <span id="batchExportSlot"></span>
       <button class="btn btn-danger btn-sm" onclick="Page.batchDelete()" title="ลบข้อมูลออกจากระบบ (สำหรับข้อมูลที่ยิงผิด)">ลบรายการที่เลือก</button>
-      <button class="btn btn-secondary btn-sm" onclick="Page.clearSelection()">ยกเลิกการเลือก</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
     <div class="table-container">
       <table class="table">
         <thead><tr>
           <th style="width:36px"><input type="checkbox" id="checkAll" onchange="Page.toggleAll(this.checked)"></th>
-          <th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>คำอธิบาย</th><th>อ้างอิง</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th><th>จัดการ</th>
+          <th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.description">คำอธิบาย</th><th data-i18n="common.reference">อ้างอิง</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th>
         </tr></thead>
-        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -94,8 +94,8 @@
             <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
-            <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -115,16 +115,16 @@
 
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
-              <label class="form-label" style="margin:0">รายการ</label>
+              <label class="form-label" style="margin:0" data-i18n="common.items">รายการ</label>
               <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มบรรทัด</button>
             </div>
             <div class="table-container">
               <table class="table" id="linesTable">
-                <thead><tr><th>บัญชี</th><th>เดบิต</th><th>เครดิต</th><th>คำอธิบาย</th><th></th></tr></thead>
+                <thead><tr><th>บัญชี</th><th>เดบิต</th><th>เครดิต</th><th data-i18n="common.description">คำอธิบาย</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
                 <tfoot>
                   <tr style="background:var(--gray-50)">
-                    <td class="font-semibold">รวม</td>
+                    <td class="font-semibold" data-i18n="common.total">รวม</td>
                     <td class="text-right font-semibold" id="totalDebit">0.00</td>
                     <td class="text-right font-semibold" id="totalCredit">0.00</td>
                     <td colspan="2"></td>
@@ -136,8 +136,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -381,7 +381,7 @@
           this.currentItems = items;
           const tbody = document.getElementById('tableBody');
           if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>';
             document.getElementById('checkAll').checked = false;
             return;
           }
@@ -391,12 +391,12 @@
             const statusBadge = j.status === 'Reversed'
               ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
               : Layout.statusBadge(j.status);
-            let actBtns = `<button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')">ดู</button>`;
+            let actBtns = `<button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')" data-i18n="common.view">ดู</button>`;
             if (j.status === 'Posted') {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#7c3aed" onclick="Page.reverseEntry('${j.id}')" title="กลับรายการ (สร้างรายการตรงข้าม)">กลับรายการ</button>`;
             }
             if (j.status !== 'Reversed') {
-              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#ef4444" onclick="Page.deleteEntry('${j.id}')" title="ลบออกจากระบบ">ลบ</button>`;
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#ef4444" onclick="Page.deleteEntry('${j.id}')" title="ลบออกจากระบบ" data-i18n="common.delete">ลบ</button>`;
             }
             return `<tr${isChecked ? ' style="background:#fffbeb"' : ''}>
               <td><input type="checkbox" class="row-check" data-id="${j.id}" ${canSelect ? '' : 'disabled'} ${isChecked ? 'checked' : ''} onchange="Page.toggleRow('${j.id}',this.checked)"></td>
@@ -530,10 +530,10 @@
           document.getElementById('detailContent').innerHTML = `
             <div class="detail-list" style="margin-bottom:20px">
               <div class="detail-item"><span class="detail-label">เลขที่</span><span class="detail-value">${j.entryNumber}${j.isAutoGenerated ? ' <span class="badge badge-info" style="font-size:10px;padding:2px 6px">สร้างจาก API</span>' : ''}${j.originalEntryId ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:2px 6px">รายการกลับรายการ</span>' : ''}</span></div>
-              <div class="detail-item"><span class="detail-label">ประเภท</span><span class="detail-value">${this.journalTypeBadge(j.journalType)}</span></div>
-              <div class="detail-item"><span class="detail-label">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
-              <div class="detail-item"><span class="detail-label">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
-              <div class="detail-item"><span class="detail-label">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.type">ประเภท</span><span class="detail-value">${this.journalTypeBadge(j.journalType)}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.date">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.status">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.reference">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
               ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value">${j.sourceDocumentNumber}${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
               ${reversalInfo}
             </div>
@@ -546,10 +546,10 @@
                   <td class="text-right">${l.debitAmount > 0 ? Layout.money(l.debitAmount) : ''}</td>
                   <td class="text-right">${l.creditAmount > 0 ? Layout.money(l.creditAmount) : ''}</td>
                 </tr>`).join('')}</tbody>
-                <tfoot><tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold">รวม</td><td class="text-right font-semibold">${Layout.money(j.totalDebit)}</td><td class="text-right font-semibold">${Layout.money(j.totalCredit)}</td></tr></tfoot>
+                <tfoot><tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold" data-i18n="common.total">รวม</td><td class="text-right font-semibold">${Layout.money(j.totalDebit)}</td><td class="text-right font-semibold">${Layout.money(j.totalCredit)}</td></tr></tfoot>
               </table>
             </div>`;
-          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (j.status === 'Draft') {
             actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
           }
@@ -557,7 +557,7 @@
             actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">กลับรายการ</button>`;
           }
           if (j.status !== 'Reversed') {
-            actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')">ลบ</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" data-i18n="common.delete">ลบ</button>`;
           }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');

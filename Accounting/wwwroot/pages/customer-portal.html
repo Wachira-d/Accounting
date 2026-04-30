@@ -36,8 +36,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -70,7 +70,7 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('createModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveAccess()">สร้าง</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('createModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveAccess()">สร้าง</button></div>
       </div>
     </div>
   </div>

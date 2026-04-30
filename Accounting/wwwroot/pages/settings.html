@@ -29,7 +29,7 @@
       <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
       <div class="tab" onclick="Page.showTab('etax',this)">e-Tax</div>
-      <div class="tab" onclick="Page.showTab('email',this)">อีเมล</div>
+      <div class="tab" onclick="Page.showTab('email',this)" data-i18n="common.email">อีเมล</div>
       <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
@@ -150,7 +150,7 @@
         <div class="form-group"><label class="form-label">รหัสไปรษณีย์</label><input type="text" id="cPostalCode" class="form-input" maxlength="5"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
+        <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
         <div class="form-group"><label class="form-label">แฟกซ์</label><input type="text" id="cFax" class="form-input"></div>
       </div>
       <div class="form-row">
@@ -433,7 +433,7 @@
     <!-- ===== Numbering Tab ===== -->
     <div id="tabNumbering" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">ลำดับเลขที่เอกสาร</h3>
-      <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</div></div>
+      <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- ===== Signature Tab ===== -->
@@ -1099,14 +1099,14 @@
           const items = res.data?.items || res.data || [];
           document.getElementById('numberSeriesContent').innerHTML = items.length ?
             `<div class="table-container"><table class="table">
-              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th>รีเซ็ต</th><th>สถานะ</th></tr></thead>
+              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th data-i18n="common.reset">รีเซ็ต</th><th data-i18n="common.status">สถานะ</th></tr></thead>
               <tbody>${items.map(n => `<tr>
                 <td>${Layout.docTypeLabel(n.documentType)}</td>
                 <td>${n.prefix}</td><td>${n.format}</td>
                 <td>${n.currentNumber}</td><td>${n.resetPeriod}</td>
-                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
               </tr>`).join('')}</tbody>
-            </table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
+            </table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
         } catch (e) { document.getElementById('numberSeriesContent').innerHTML = '<p class="text-danger text-center">' + e.message + '</p>'; }
       },
       async save() {

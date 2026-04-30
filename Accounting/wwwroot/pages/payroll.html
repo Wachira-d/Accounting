@@ -28,8 +28,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>รหัส</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>แผนก</th><th class="text-right">เงินเดือน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="empBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>รหัส</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>แผนก</th><th class="text-right">เงินเดือน</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="empBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
       <div id="empPagination"></div>
@@ -43,8 +43,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>รอบที่</th><th>ชื่อรอบ</th><th>งวด</th><th>วันจ่าย</th><th class="text-right">จำนวนพนักงาน</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="runBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>รอบที่</th><th>ชื่อรอบ</th><th>งวด</th><th>วันจ่าย</th><th class="text-right">จำนวนพนักงาน</th><th class="text-right">ยอดรวม</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="runBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
       <div id="runPagination"></div>
@@ -61,8 +61,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>พนักงาน</th><th>ประเภทลา</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th class="text-right">จำนวนวัน</th><th>เหตุผล</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="leaveBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>พนักงาน</th><th>ประเภทลา</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th class="text-right">จำนวนวัน</th><th>เหตุผล</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="leaveBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -119,11 +119,11 @@
             <div class="form-group"><label class="form-label">บัญชีธนาคาร</label><input type="text" class="form-input" id="empBankAccount" placeholder="เลขบัญชี"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="empEmail"></div>
-            <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="empPhone"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="empEmail"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" class="form-input" id="empPhone"></div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('empModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEmployee()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('empModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEmployee()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -146,7 +146,7 @@
           </div>
           <div class="form-group"><label class="form-label">วันจ่ายเงิน *</label><input type="date" class="form-input" id="runPayDate"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('runModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRun()">สร้างรอบ</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('runModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRun()">สร้างรอบ</button></div>
       </div>
     </div>
 
@@ -177,7 +177,7 @@
           </div>
           <div class="form-group"><label class="form-label">เหตุผล</label><textarea class="form-input" id="leaveReason" rows="2"></textarea></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('leaveModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveLeave()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('leaveModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveLeave()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -186,7 +186,7 @@
       <div class="modal" style="max-width:800px">
         <div class="modal-header"><h3 class="modal-title">สลิปเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('payslipModal')">&times;</button></div>
         <div class="modal-body" style="padding:0"><iframe id="payslipFrame" style="width:100%;height:70vh;border:none"></iframe></div>
-        <div class="modal-footer"><button class="btn btn-primary" onclick="Page.printPayslip()">พิมพ์</button></div>
+        <div class="modal-footer"><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
       </div>
     </div>
   </div>
@@ -246,7 +246,7 @@ const Page = {
         <td>${e.department || '-'}</td>
         <td class="text-right">${Layout.money(e.salary || e.baseSalary)}</td>
         <td>${Layout.statusBadge(e.status || 'Active')}</td>
-        <td><button class="btn btn-sm btn-secondary" onclick="Page.editEmployee('${e.id}')">แก้ไข</button></td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editEmployee('${e.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
       const totalPages = res.data?.totalPages || 1;
       document.getElementById('empPagination').innerHTML = Layout.renderPagination(this.empPage, totalPages, 'Page.gotoEmpPage');
@@ -329,7 +329,7 @@ const Page = {
         <td class="text-right">${Layout.money(r.totalNetPay || r.totalAmount)}</td>
         <td>${Layout.statusBadge(r.status || 'Draft')}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="Page.viewRun('${r.id}')">ดู</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.viewRun('${r.id}')" data-i18n="common.view">ดู</button>
           ${r.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.calculateRun('${r.id}')">คำนวณ</button>` : ''}
           ${r.status === 'Calculated' ? `<button class="btn btn-sm btn-success" onclick="Page.approveRun('${r.id}')">อนุมัติ</button>` : ''}
           ${r.status === 'Approved' ? `<button class="btn btn-sm btn-primary" onclick="Page.payRun('${r.id}')">จ่าย</button>` : ''}
@@ -420,7 +420,7 @@ const Page = {
           <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary)}</td>
           <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${d.employeeId||d.id}')">ดูสลิป</button></td>
         </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>`;
-      document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')">ปิด</button>`;
+      document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       Layout.openModal('runDetailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
@@ -523,7 +523,7 @@ const Page = {
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalIncome)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTax)}</div></div>
           </div>
-          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
+          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
           <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.income)}</td><td class="text-right">${Layout.money(e.tax)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       } else {
         res = await api.getSso(year, month);
@@ -535,7 +535,7 @@ const Page = {
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.employeeContribution)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.employerContribution)}</div></div>
           </div>
-          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
+          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
           <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.wage)}</td><td class="text-right">${Layout.money(e.contribution)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       }
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }

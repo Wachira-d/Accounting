@@ -35,8 +35,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th><input type="checkbox" onchange="Page.toggleAll(this)"></th><th>ประเภท</th><th>รหัส</th><th>ผู้ขอ</th><th>วันที่ขอ</th><th>ขั้นตอน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th><input type="checkbox" onchange="Page.toggleAll(this)"></th><th data-i18n="common.type">ประเภท</th><th>รหัส</th><th>ผู้ขอ</th><th>วันที่ขอ</th><th>ขั้นตอน</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -48,8 +48,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อกฎ</th><th>ประเภท</th><th>เงื่อนไข</th><th>ผู้อนุมัติ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="rulesBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>ชื่อกฎ</th><th data-i18n="common.type">ประเภท</th><th>เงื่อนไข</th><th>ผู้อนุมัติ</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="rulesBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -106,8 +106,8 @@
           <div class="form-group"><label class="form-label">อีเมลผู้อนุมัติ (คั่นด้วย ,)</label><input type="text" class="form-input" id="ruleApprovers" placeholder="user1@email.com, user2@email.com"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('ruleModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveRule()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('ruleModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveRule()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -161,7 +161,7 @@
           <td>ขั้นตอน ${a.currentStep || '-'}</td>
           <td>${Layout.statusBadge(a.overallStatus)}</td>
           <td class="flex gap-1">
-            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')">ดู</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button>
             <button class="btn btn-sm btn-success" onclick="Page.quickApprove('${a.id}')">อนุมัติ</button>
             <button class="btn btn-sm btn-danger" onclick="Page.openAction('${a.id}')">ปฏิเสธ</button>
           </td>
@@ -177,15 +177,15 @@
           const typeMap = { Document: 'เอกสาร', Payment: 'การชำระเงิน', ExpenseClaim: 'เบิกค่าใช้จ่าย', Journal: 'รายการบัญชี', PayrollRun: 'เงินเดือน' };
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
-              <div><span class="text-gray-500 text-xs">ประเภท</span><div class="font-semibold">${typeMap[d.entityType] || d.entityType}</div></div>
-              <div><span class="text-gray-500 text-xs">สถานะ</span><div>${Layout.statusBadge(d.overallStatus)}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div class="font-semibold">${typeMap[d.entityType] || d.entityType}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.status">สถานะ</span><div>${Layout.statusBadge(d.overallStatus)}</div></div>
               <div><span class="text-gray-500 text-xs">ผู้ขออนุมัติ</span><div class="font-medium">${d.requestedByName || d.requestedByEmail || '-'}</div></div>
               <div><span class="text-gray-500 text-xs">วันที่ขอ</span><div>${Layout.date(d.requestedAt)}</div></div>
               <div><span class="text-gray-500 text-xs">ขั้นตอนปัจจุบัน</span><div>ขั้นตอนที่ ${d.currentStep || 1} / ${d.totalSteps || 1}</div></div>
               <div><span class="text-gray-500 text-xs">รหัสเอกสาร</span><div class="text-xs">${d.entityId || '-'}</div></div>
             </div>`;
           if (d.steps && d.steps.length) {
-            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">ประวัติการอนุมัติ</h4><div class="table-container"><table class="table"><thead><tr><th>ขั้นตอน</th><th>ผู้อนุมัติ</th><th>สถานะ</th><th>ความคิดเห็น</th><th>วันที่</th></tr></thead><tbody>';
+            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">ประวัติการอนุมัติ</h4><div class="table-container"><table class="table"><thead><tr><th>ขั้นตอน</th><th>ผู้อนุมัติ</th><th data-i18n="common.status">สถานะ</th><th>ความคิดเห็น</th><th data-i18n="common.date">วันที่</th></tr></thead><tbody>';
             html += d.steps.map(s => `<tr>
               <td>${s.stepNumber}</td>
               <td>${s.approverName || s.approverEmail || '-'}</td>
@@ -261,10 +261,10 @@
             <td>${typeMap[r.entityType] || r.entityType}</td>
             <td>${r.minAmount != null ? Layout.money(r.minAmount) + ' - ' + Layout.money(r.maxAmount || 999999999) : 'ทั้งหมด'}</td>
             <td class="text-xs">${(r.approverEmails || r.approvers || []).join(', ') || '-'}</td>
-            <td>${r.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td>${r.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td class="flex gap-1">
-              <button class="btn btn-sm btn-ghost" onclick="Page.editRule('${r.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger" onclick="Page.deleteRule('${r.id}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.editRule('${r.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteRule('${r.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('');
           this._rules = items;

@@ -22,13 +22,13 @@
 
     <!-- Side selector -->
     <div style="display:flex;gap:8px;margin-bottom:12px">
-      <button class="btn btn-sm" id="sideAll" onclick="Page.setSide('')" style="font-weight:600;background:var(--primary);color:#fff">ทั้งหมด</button>
+      <button class="btn btn-sm" id="sideAll" onclick="Page.setSide('')" style="font-weight:600;background:var(--primary);color:#fff" data-i18n="common.all">ทั้งหมด</button>
       <button class="btn btn-sm btn-ghost" id="sideRevenue" onclick="Page.setSide('revenue')">📥 ฝั่งรายรับ</button>
       <button class="btn btn-sm btn-ghost" id="sideExpense" onclick="Page.setSide('expense')">📤 ฝั่งรายจ่าย</button>
     </div>
 
     <div class="tabs" id="docTabs">
-      <div class="tab active" data-type="" onclick="Page.setType(this)">ทั้งหมด</div>
+      <div class="tab active" data-type="" onclick="Page.setType(this)" data-i18n="common.all">ทั้งหมด</div>
       <!-- Revenue tabs -->
       <div class="tab tab-revenue" data-type="Invoice" onclick="Page.setType(this)">ใบแจ้งหนี้</div>
       <div class="tab tab-revenue" data-type="TaxInvoice" onclick="Page.setType(this)">ใบกำกับภาษี</div>
@@ -56,7 +56,7 @@
         <option value="Paid">ชำระแล้ว</option>
         <option value="PartiallyPaid">ชำระบางส่วน</option>
         <option value="Overdue">เกินกำหนด</option>
-        <option value="Voided">ยกเลิก</option>
+        <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
       </select>
       <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
         <option value="">ทุกโครงการ</option>
@@ -66,13 +66,13 @@
     <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
       <span>เลือกแล้ว <b id="docSelCount">0</b> เอกสาร</span>
       <span id="docSelExportSlot"></span>
-      <button class="btn btn-secondary btn-sm" onclick="Page.clearDocSelection()">ยกเลิกการเลือก</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearDocSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.date">วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -121,10 +121,10 @@
               <label class="form-label">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
               <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
             </div>
-            <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
-            <div class="form-group" style="flex:1"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
+            <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
           <div style="margin-top:16px">
@@ -134,7 +134,7 @@
             </div>
             <div class="table-container">
               <table class="table">
-                <thead><tr><th>รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
             </div>
@@ -174,8 +174,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -233,7 +233,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('convertModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('convertModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.doConvert()">แปลงเอกสาร</button>
         </div>
       </div>
@@ -580,7 +580,7 @@
             <td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
             </td>
           </tr>`;
@@ -789,18 +789,18 @@
           document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
           document.getElementById('detailContent').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
-              <div><div class="text-xs text-gray-500">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
-              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact?.name || '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
-              ${d.reference ? `<div><div class="text-xs text-gray-500">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
+              ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
             </div>
             <div class="table-container">
-              <table class="table"><thead><tr><th>#</th><th>รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
             </div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
@@ -810,12 +810,12 @@
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
-            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
+            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
 
-          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
           if (d.status === 'Draft') {
-            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')">แก้ไข</button>`;
+            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
             actions += ` <button class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
           }
@@ -846,7 +846,7 @@
             actions += ` <button class="btn btn-warning" onclick="Page.writeOffBadDebt('${d.id}')" title="ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้">💸 ตัดหนี้สูญ</button>`;
           }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
@@ -1157,11 +1157,11 @@
             <thead>
               <tr style="background:#4F46E5;color:#fff">
                 <th style="padding:10px 8px;text-align:left;font-size:13px;border-radius:6px 0 0 0">#</th>
-                <th style="padding:10px 8px;text-align:left;font-size:13px">รายละเอียด</th>
+                <th style="padding:10px 8px;text-align:left;font-size:13px" data-i18n="common.detail">รายละเอียด</th>
                 <th style="padding:10px 8px;text-align:right;font-size:13px">จำนวน</th>
                 <th style="padding:10px 8px;text-align:right;font-size:13px">ราคา/หน่วย</th>
                 ${isTaxInvoice ? '<th style="padding:10px 8px;text-align:right;font-size:13px">VAT</th>' : ''}
-                <th style="padding:10px 8px;text-align:right;font-size:13px;border-radius:0 6px 0 0">จำนวนเงิน</th>
+                <th style="padding:10px 8px;text-align:right;font-size:13px;border-radius:0 6px 0 0" data-i18n="common.amount">จำนวนเงิน</th>
               </tr>
             </thead>
             <tbody>

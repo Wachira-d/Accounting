@@ -45,9 +45,9 @@
             <th>รหัส</th><th>ชื่อวัสดุ</th><th>หมวด</th><th>หน่วย</th>
             <th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th>
             <th class="text-right">มูลค่า</th><th class="text-right">ขั้นต่ำ</th>
-            <th>สถานะ</th><th>จัดการ</th>
+            <th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th>
           </tr></thead>
-          <tbody id="balanceBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <tbody id="balanceBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -60,7 +60,7 @@
         <span class="text-gray-400">ถึง</span>
         <input type="date" class="form-input" id="usageTo" style="min-width:120px;">
         <input type="text" class="form-input" id="usageDept" placeholder="แผนก" style="width:140px;">
-        <button class="btn btn-primary btn-sm" onclick="Page.loadUsageSummary()">ค้นหา</button>
+        <button class="btn btn-primary btn-sm" onclick="Page.loadUsageSummary()" data-i18n="common.search">ค้นหา</button>
       </div>
       <div id="usageSummaryCards" class="summary-cards"></div>
       <div class="table-container">
@@ -75,11 +75,11 @@
       <div style="display:flex;gap:24px;margin-top:16px;">
         <div style="flex:1;border:1px solid var(--gray-200);border-radius:10px;padding:16px;">
           <h4 style="font-size:14px;font-weight:600;margin-bottom:8px;">ตามแผนก</h4>
-          <div id="deptChartBody"><p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p></div>
+          <div id="deptChartBody"><p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p></div>
         </div>
         <div style="flex:1;border:1px solid var(--gray-200);border-radius:10px;padding:16px;">
           <h4 style="font-size:14px;font-weight:600;margin-bottom:8px;">ตามหมวดหมู่</h4>
-          <div id="catChartBody"><p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p></div>
+          <div id="catChartBody"><p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p></div>
         </div>
       </div>
     </div>
@@ -123,7 +123,7 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="Layout.closeModal('useModal')">ยกเลิก</button>
+        <button class="btn btn-secondary" onclick="Layout.closeModal('useModal')" data-i18n="common.cancel">ยกเลิก</button>
         <button class="btn btn-primary" onclick="Page.submitUse()">เบิกใช้</button>
       </div>
     </div>
@@ -140,7 +140,7 @@
         <div class="table-container">
           <table class="table">
             <thead><tr>
-              <th>วันที่</th><th>จำนวน</th><th>ต้นทุน</th><th>แผนก</th><th>วัตถุประสงค์</th><th>อ้างอิง</th>
+              <th data-i18n="common.date">วันที่</th><th>จำนวน</th><th>ต้นทุน</th><th>แผนก</th><th>วัตถุประสงค์</th><th data-i18n="common.reference">อ้างอิง</th>
             </tr></thead>
             <tbody id="historyBody"></tbody>
           </table>
@@ -202,7 +202,7 @@
         const d = res.data;
 
         document.getElementById('balanceSummary').innerHTML = `
-          <div class="summary-card"><div class="summary-value">${d.totalItems}</div><div class="summary-label">รายการ</div></div>
+          <div class="summary-card"><div class="summary-value">${d.totalItems}</div><div class="summary-label" data-i18n="common.items">รายการ</div></div>
           <div class="summary-card"><div class="summary-value">${this.fmt(d.totalValue)}</div><div class="summary-label">มูลค่ารวม (บาท)</div></div>
           <div class="summary-card" style="border-color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">
             <div class="summary-value" style="color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">${d.lowStockCount}</div>
@@ -238,7 +238,7 @@
 
         document.getElementById('usageSummaryCards').innerHTML = `
           <div class="summary-card"><div class="summary-value">${this.fmt(d.grandTotal)}</div><div class="summary-label">ยอดเบิกรวม (บาท)</div></div>
-          <div class="summary-card"><div class="summary-value">${d.items?.length || 0}</div><div class="summary-label">รายการ</div></div>
+          <div class="summary-card"><div class="summary-value">${d.items?.length || 0}</div><div class="summary-label" data-i18n="common.items">รายการ</div></div>
           <div class="summary-card"><div class="summary-value">${d.byDepartment?.length || 0}</div><div class="summary-label">แผนก</div></div>`;
 
         document.getElementById('usageBody').innerHTML = (!d.items || d.items.length === 0)
@@ -254,13 +254,13 @@
           `<div class="breakdown-row">
             <span>${x.department}</span>
             <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
-          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p>';
+          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p>';
 
         document.getElementById('catChartBody').innerHTML = (d.byCategory || []).map(x =>
           `<div class="breakdown-row">
             <span>${x.category}</span>
             <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
-          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p>';
+          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p>';
       } catch (e) { console.error(e); }
     },
 

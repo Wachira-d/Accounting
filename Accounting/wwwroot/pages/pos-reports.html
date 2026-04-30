@@ -57,7 +57,7 @@
     <!-- Daily Summary Tab -->
     <div id="tabDaily">
       <div class="report-cards" id="summaryCards">
-        <div class="report-card"><div class="rc-label">กำลังโหลด...</div><div class="rc-value">-</div></div>
+        <div class="report-card"><div class="rc-label" data-i18n="common.loading">กำลังโหลด...</div><div class="rc-value">-</div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div style="background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:20px;">
@@ -66,7 +66,7 @@
         </div>
         <div style="background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:20px;">
           <h4 style="margin-bottom:12px;">แยกตามช่องทางชำระ</h4>
-          <div id="paymentBreakdown"><p class="text-center text-gray-400" style="padding:20px;">กำลังโหลด...</p></div>
+          <div id="paymentBreakdown"><p class="text-center text-gray-400" style="padding:20px;" data-i18n="common.loading">กำลังโหลด...</p></div>
         </div>
       </div>
     </div>
@@ -81,13 +81,13 @@
           <option value="1">กำลังทำ</option>
           <option value="2">พร้อมเสิร์ฟ</option>
           <option value="3">เสร็จสิ้น</option>
-          <option value="4">ยกเลิก</option>
+          <option value="4" data-i18n="common.cancel">ยกเลิก</option>
         </select>
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>เลขออเดอร์</th><th>วันที่</th><th>ประเภท</th><th>ลูกค้า</th><th>รายการ</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="ordersBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>เลขออเดอร์</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th>ลูกค้า</th><th data-i18n="common.items">รายการ</th><th class="text-right">ยอดรวม</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="ordersBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
       <div id="ordersPagination"></div>
@@ -95,7 +95,7 @@
 
     <!-- Commission Tab -->
     <div id="tabCommission" style="display:none;">
-      <div id="commissionContent"><p class="text-center text-gray-400" style="padding:40px;">กำลังโหลด...</p></div>
+      <div id="commissionContent"><p class="text-center text-gray-400" style="padding:40px;" data-i18n="common.loading">กำลังโหลด...</p></div>
     </div>
 
     <!-- Order Detail Modal -->
@@ -166,7 +166,7 @@
                 }).join('')}</tbody>
               </table></div>`;
           } else {
-            document.getElementById('paymentBreakdown').innerHTML = '<p class="text-center text-gray-400" style="padding:20px;">ไม่มีข้อมูล</p>';
+            document.getElementById('paymentBreakdown').innerHTML = '<p class="text-center text-gray-400" style="padding:20px;" data-i18n="common.noData">ไม่มีข้อมูล</p>';
           }
           // Daily chart - try loading last 7 days individually
           this.renderDailyChart(d);
@@ -178,7 +178,7 @@
         // If we have breakdown by day, use it; otherwise show single bar
         const totalSales = summaryData.totalSales || 0;
         if (totalSales <= 0) {
-          chart.innerHTML = '<p class="text-center text-gray-400" style="width:100%;align-self:center;">ไม่มีข้อมูล</p>';
+          chart.innerHTML = '<p class="text-center text-gray-400" style="width:100%;align-self:center;" data-i18n="common.noData">ไม่มีข้อมูล</p>';
           return;
         }
         // Show a simple summary bar for the period
@@ -217,7 +217,7 @@
           const res = await api.getPosOrders(q);
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('ordersBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           items.forEach(o => this._orderCache[o.id] = o);
           tbody.innerHTML = items.map(o => `<tr>
             <td class="font-medium">${o.orderNumber}</td>
@@ -227,7 +227,7 @@
             <td>${o.itemCount || (o.items||[]).length} รายการ</td>
             <td class="text-right font-semibold">${Layout.money(o.netAmount)}</td>
             <td>${Page.statusBadge(o.status)}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.showOrderDetail('${o.id}')">ดู</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.showOrderDetail('${o.id}')" data-i18n="common.view">ดู</button></td>
           </tr>`).join('');
           document.getElementById('ordersPagination').innerHTML = Layout.renderPagination(this.ordersPage, data.totalPages || 1, 'Page.goOrdersPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -253,7 +253,7 @@
             </div>
             <h4 style="margin-bottom:8px;">รายการสินค้า</h4>
             <div class="table-container"><table class="table" style="font-size:13px;margin-bottom:16px;">
-              <thead><tr><th>รายการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา</th><th class="text-right">รวม</th></tr></thead>
+              <thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา</th><th class="text-right" data-i18n="common.total">รวม</th></tr></thead>
               <tbody>${(o.items || []).map(i => `<tr>
                 <td>${i.itemName}${(i.modifiers||[]).length ? '<br><small class="text-gray-400">+ ' + i.modifiers.map(m=>m.modifierName).join(', ') + '</small>' : ''}</td>
                 <td class="text-right">${i.quantity}</td>

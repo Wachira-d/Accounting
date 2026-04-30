@@ -21,8 +21,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่อ</th><th>หมวดหมู่</th><th class="text-right">ราคา</th><th class="text-right">ระยะเวลา (นาที)</th><th class="text-right">จำนวนขั้นตอน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th data-i18n="common.name">ชื่อ</th><th>หมวดหมู่</th><th class="text-right">ราคา</th><th class="text-right">ระยะเวลา (นาที)</th><th class="text-right">จำนวนขั้นตอน</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -53,7 +53,7 @@
             <div class="form-group form-checkbox" style="margin-top:8px"><input type="checkbox" id="fVatIncl" checked><label for="fVatIncl">ราคารวม VAT แล้ว</label></div>
             <div class="form-group"><label class="form-label">URL รูปภาพ</label><input type="text" class="form-input" id="fImageUrl"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
 
           <!-- Components Section (edit mode only) -->
           <div id="componentsSection" style="display:none; margin-top:16px; border-top:1px solid var(--gray-200); padding-top:16px">
@@ -80,18 +80,18 @@
               </div>
               <div class="form-row">
                 <div class="form-group form-checkbox" style="margin-top:8px"><input type="checkbox" id="cRequiresStaff"><label for="cRequiresStaff">ต้องมีพนักงาน</label></div>
-                <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="cDesc"></div>
+                <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="cDesc"></div>
               </div>
               <div style="display:flex; gap:8px; margin-top:8px">
                 <button class="btn btn-primary btn-sm" onclick="Page.saveComponent()">บันทึกขั้นตอน</button>
-                <button class="btn btn-secondary btn-sm" onclick="Page.hideComponentForm()">ยกเลิก</button>
+                <button class="btn btn-secondary btn-sm" onclick="Page.hideComponentForm()" data-i18n="common.cancel">ยกเลิก</button>
               </div>
             </div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -120,7 +120,7 @@
           const res = await api.getPosPackages(q);
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           items.forEach(p => {
             Page._cache[p.id] = p;
             if (p.category) Page._categories.add(p.category);
@@ -132,10 +132,10 @@
             <td class="text-right">${Layout.money(p.price)}</td>
             <td class="text-right">${p.durationMinutes || '-'}</td>
             <td class="text-right">${p.components?.length ?? p.componentsCount ?? 0}</td>
-            <td>${p.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td>${p.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.remove('${p.id}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.remove('${p.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
@@ -195,16 +195,16 @@
           return;
         }
         list.innerHTML = `<div class="table-container"><table class="table" style="margin-bottom:0">
-          <thead><tr><th>ลำดับ</th><th>ชื่อ</th><th class="text-right">ระยะเวลา</th><th>ค่าคอม</th><th>ต้องมีพนักงาน</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th>ลำดับ</th><th data-i18n="common.name">ชื่อ</th><th class="text-right">ระยะเวลา</th><th>ค่าคอม</th><th>ต้องมีพนักงาน</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
           <tbody>${components.map(c => `<tr>
             <td>${c.stepOrder}</td>
             <td class="font-medium">${c.name}</td>
             <td class="text-right">${c.durationMinutes || '-'} นาที</td>
             <td>${c.commissionType === 1 ? c.commissionValue + '%' : Layout.money(c.commissionValue || 0)}</td>
-            <td>${c.requiresStaff ? '<span class="badge badge-success">ใช่</span>' : '<span class="badge badge-gray">ไม่</span>'}</td>
+            <td>${c.requiresStaff ? '<span class="badge badge-success" data-i18n="common.yes">ใช่</span>' : '<span class="badge badge-gray" data-i18n="common.no">ไม่</span>'}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.editComponent('${c.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeComponent('${c.id}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.editComponent('${c.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeComponent('${c.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('')}</tbody>
         </table></div>`;
