@@ -40,6 +40,11 @@ const API = {
         throw new Error(json.message || this._t('api.invalidLogin', 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'));
       }
       if (res.status === 403) {
+        // During initial load, company may be stale — suppress and let loadCompanies() retry
+        if (typeof Layout !== 'undefined' && !Layout._companiesLoaded) {
+          console.warn('403 suppressed (companies not loaded yet):', url);
+          return { success: false, data: null, message: 'company not ready' };
+        }
         // Try to parse structured 403 (feature locked / subscription inactive)
         try {
           const json = await res.json();

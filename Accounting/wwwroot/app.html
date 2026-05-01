@@ -284,7 +284,7 @@
         if (!Layout.init('dashboard')) return;
         Layout.setTitle('แดชบอร์ด');
         const api = Layout.api();
-        if (!api) return;
+        if (!api) return; // company not selected yet — loadCompanies() will call us again
         this.applyWidgetVisibility();
 
         try {
@@ -363,12 +363,16 @@
           ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
 
         } catch (e) {
+          if (!Layout._companiesLoaded) return; // still loading — loadCompanies() will retry
           console.error(e);
           Layout.toast('โหลดข้อมูลแดชบอร์ดไม่สำเร็จ: ' + e.message, 'error');
         }
       }
     };
-    Dashboard.load();
+    // Dashboard.load() is triggered by Layout.loadCompanies() after company is ready.
+    // Calling Layout.init() here sets up the shell; loadCompanies() will call Dashboard.load().
+    Layout.init('dashboard');
+    Layout.setTitle('แดชบอร์ด');
   </script>
 </body>
 </html>

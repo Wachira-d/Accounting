@@ -467,6 +467,8 @@ const Layout = {
     this.loadCompanies();
   },
 
+  _companiesLoaded: false,
+
   async loadCompanies() {
     try {
       const res = await API.get('/api/company');
@@ -529,6 +531,8 @@ const Layout = {
           this.showSetupReminder();
         }
       }
+
+      this._companiesLoaded = true;
 
       // Load subscription/features for the selected company (no await - menu refreshes when ready)
       this.loadSubscription();
