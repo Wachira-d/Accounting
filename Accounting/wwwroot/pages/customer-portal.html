@@ -36,8 +36,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -70,12 +70,14 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('createModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveAccess()">สร้าง</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('createModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveAccess()">สร้าง</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
 const Page = {
@@ -141,7 +143,7 @@ const Page = {
       const contacts = res.data?.items || res.data || [];
       const sel = document.getElementById('accessContact');
       sel.innerHTML = '<option value="">-- เลือกลูกค้า --</option>' +
-        contacts.map(c => `<option value="${c.id}" data-email="${c.email||''}">${c.name}</option>`).join('');
+        contacts.map(c => `<option value="${c.id}" data-email="${Layout.esc(c.email||'')}">${Layout.esc(c.name)}</option>`).join('');
       sel.onchange = function() {
         const opt = this.options[this.selectedIndex];
         const email = opt?.dataset?.email;

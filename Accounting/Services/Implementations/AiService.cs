@@ -111,7 +111,7 @@ public class AiService : IAiService
                                 confidence = 0.80m;
                             }
                         }
-                        catch { /* invalid regex, skip */ }
+                        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Invalid regex pattern '{rule.MatchPattern}' in AI rule: {ex.Message}"); }
                     }
                     break;
                 case "AI":

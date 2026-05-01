@@ -18,7 +18,33 @@ const I18n = {
     }
     document.documentElement.lang = this._lang;
     this.apply();
+    this._installAutoApply();
     return this;
+  },
+
+  // Auto-translate dynamically-added content via MutationObserver
+  _installAutoApply() {
+    if (this._observer || typeof MutationObserver === 'undefined') return;
+    let pending = false;
+    const dirty = new Set();
+    this._observer = new MutationObserver(muts => {
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 1) dirty.add(n);
+        }
+      }
+      if (pending || dirty.size === 0) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        const nodes = Array.from(dirty);
+        dirty.clear();
+        for (const node of nodes) {
+          try { this.apply(node); } catch {}
+        }
+      });
+    });
+    this._observer.observe(document.body, { childList: true, subtree: true });
   },
 
   setLang(lang) {
@@ -45,31 +71,23 @@ const I18n = {
 
   apply(root) {
     const scope = root || document;
-    // data-i18n="key" → textContent
-    scope.querySelectorAll('[data-i18n]').forEach(el => {
-      const key = el.getAttribute('data-i18n');
-      if (key) el.textContent = this.t(key);
-    });
-    // data-i18n-html="key" → innerHTML
-    scope.querySelectorAll('[data-i18n-html]').forEach(el => {
-      const key = el.getAttribute('data-i18n-html');
-      if (key) el.innerHTML = this.t(key);
-    });
-    // data-i18n-placeholder="key"
-    scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-      const key = el.getAttribute('data-i18n-placeholder');
-      if (key) el.placeholder = this.t(key);
-    });
-    // data-i18n-title="key"
-    scope.querySelectorAll('[data-i18n-title]').forEach(el => {
-      const key = el.getAttribute('data-i18n-title');
-      if (key) el.title = this.t(key);
-    });
-    // data-i18n-aria="key"
-    scope.querySelectorAll('[data-i18n-aria]').forEach(el => {
-      const key = el.getAttribute('data-i18n-aria');
-      if (key) el.setAttribute('aria-label', this.t(key));
-    });
+    const isElement = scope.nodeType === 1;
+
+    const applyOne = (el) => {
+      const k1 = el.getAttribute && el.getAttribute('data-i18n');
+      if (k1) el.textContent = this.t(k1);
+      const k2 = el.getAttribute && el.getAttribute('data-i18n-html');
+      if (k2) el.innerHTML = this.t(k2);
+      const k3 = el.getAttribute && el.getAttribute('data-i18n-placeholder');
+      if (k3) el.placeholder = this.t(k3);
+      const k4 = el.getAttribute && el.getAttribute('data-i18n-title');
+      if (k4) el.title = this.t(k4);
+      const k5 = el.getAttribute && el.getAttribute('data-i18n-aria');
+      if (k5) el.setAttribute('aria-label', this.t(k5));
+    };
+
+    if (isElement) applyOne(scope);
+    scope.querySelectorAll('[data-i18n], [data-i18n-html], [data-i18n-placeholder], [data-i18n-title], [data-i18n-aria]').forEach(applyOne);
     // <title> tag
     const titleKey = document.querySelector('title')?.getAttribute('data-i18n');
     if (titleKey) document.title = this.t(titleKey);

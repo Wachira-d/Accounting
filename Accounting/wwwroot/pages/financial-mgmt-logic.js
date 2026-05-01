@@ -42,7 +42,7 @@ const Page = {
     try {
       const res = await this.api.getAccounts();
       if (res?.success) this.accounts = res.data || [];
-    } catch {}
+    } catch (e) { console.error('loadAccounts:', e); }
   },
 
   fillAccountSelect(selId, prefix) {
@@ -64,7 +64,7 @@ const Page = {
           <td>${p.totalPeriods}</td><td class="text-right">${this.fmt(p.totalAmount)}</td>
           <td class="text-right">${this.fmt(p.amortizedAmount)}</td><td class="text-right">${this.fmt(p.remainingAmount)}</td>
           <td>${this.statusBadge(p.status)}</td></tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadPrepaid:', e); }
   },
   async submitPrepaid() {
     try {
@@ -103,7 +103,7 @@ const Page = {
           <td class="text-right">${this.fmt(d.remainingAmount)}</td><td>${this.statusBadge(d.status)}</td>
           <td>${d.remainingAmount > 0 ? `<button class="btn btn-sm" onclick="Page.showRefund('${d.id}',${d.remainingAmount})">คืน</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadDeposits:', e); }
   },
   async submitDeposit() {
     try {
@@ -145,7 +145,7 @@ const Page = {
           <td class="text-right">${this.fmt(a.remainingAmount)}</td><td>${this.statusBadge(a.status)}</td>
           <td>${a.remainingAmount > 0 ? `<button class="btn btn-sm" onclick="Page.showPayAccrued('${a.id}',${a.remainingAmount})">จ่าย</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadAccrued:', e); }
   },
   async submitAccrued() {
     try {
@@ -190,7 +190,7 @@ const Page = {
           <td class="text-right">${this.fmt(b.adjustmentAmount)}</td><td>${this.statusBadge(b.status)}</td>
           <td>${b.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.postBadDebt('${b.id}')">บันทึกบัญชี</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadBadDebt:', e); }
   },
   async createBadDebt() {
     try {
@@ -218,7 +218,7 @@ const Page = {
           <td class="text-right">${this.fmt(i.adjustmentAmount)}</td><td>${this.statusBadge(i.status)}</td>
           <td>${i.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.postObsolescence('${i.id}')">บันทึกบัญชี</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadObsolescence:', e); }
   },
   async createObsolescence() {
     try {
@@ -247,7 +247,7 @@ const Page = {
           <td class="text-right">${this.fmt(c.netTaxPayable)}</td><td>${this.statusBadge(c.status)}</td>
           <td>${c.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.postCIT('${c.id}')">บันทึก</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadCIT:', e); }
   },
   async submitCIT() {
     try {
@@ -283,7 +283,7 @@ const Page = {
           <td>${this.statusBadge(p.status)}</td>
           <td>${p.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.approveDividend('${p.id}')">อนุมัติ</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadDividend:', e); }
   },
   async submitDividend() {
     try {
@@ -318,7 +318,7 @@ const Page = {
           <td>${this.statusBadge(c.status)}</td>
           <td>${c.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.completeCapital('${c.id}')">ดำเนินการ</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadCapital:', e); }
   },
   async submitCapital() {
     try {
@@ -354,7 +354,7 @@ const Page = {
           <td>${this.statusBadge(i.status)}</td>
           <td>${i.status === 'Active' ? `<button class="btn btn-sm" onclick="Page.showSell('${i.id}',${i.purchaseCost})">ขาย</button>` : ''}</td>
         </tr>`).join('');
-    } catch {}
+    } catch (e) { console.error('loadInvestment:', e); }
   },
   async submitInvestment() {
     try {

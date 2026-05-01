@@ -35,7 +35,9 @@ public class CompanyService : ICompanyService
             IsWhtRegistered = request.IsWhtRegistered,
             IsSocialSecurityRegistered = request.IsSocialSecurityRegistered,
             SocialSecurityAccountNo = request.SocialSecurityAccountNo,
-            Address = request.Address,
+            BuildingNumber = request.BuildingNumber,
+            BuildingName = request.BuildingName,
+            StreetName = request.StreetName,
             SubDistrict = request.SubDistrict,
             District = request.District,
             Province = request.Province,
@@ -47,6 +49,8 @@ public class CompanyService : ICompanyService
             FiscalYearStartMonth = request.FiscalYearStartMonth,
             CreatedBy = userId.ToString()
         };
+
+        company.Address = request.Address ?? ComposeAddress(company);
 
         _db.Companies.Add(company);
 
@@ -123,11 +127,14 @@ public class CompanyService : ICompanyService
         if (request.IsWhtRegistered.HasValue) company.IsWhtRegistered = request.IsWhtRegistered.Value;
         if (request.IsSocialSecurityRegistered.HasValue) company.IsSocialSecurityRegistered = request.IsSocialSecurityRegistered.Value;
         if (request.SocialSecurityAccountNo != null) company.SocialSecurityAccountNo = request.SocialSecurityAccountNo;
-        if (request.Address != null) company.Address = request.Address;
+        if (request.BuildingNumber != null) company.BuildingNumber = request.BuildingNumber;
+        if (request.BuildingName != null) company.BuildingName = request.BuildingName;
+        if (request.StreetName != null) company.StreetName = request.StreetName;
         if (request.SubDistrict != null) company.SubDistrict = request.SubDistrict;
         if (request.District != null) company.District = request.District;
         if (request.Province != null) company.Province = request.Province;
         if (request.PostalCode != null) company.PostalCode = request.PostalCode;
+        company.Address = request.Address ?? ComposeAddress(company);
         if (request.Phone != null) company.Phone = request.Phone;
         if (request.Fax != null) company.Fax = request.Fax;
         if (request.Email != null) company.Email = request.Email;
@@ -255,8 +262,19 @@ public class CompanyService : ICompanyService
             c.BusinessType, c.IndustryType, c.Status, c.JuristicId,
             c.IsVatRegistered, c.VatRate, c.IsWhtRegistered,
             c.IsSocialSecurityRegistered, c.SocialSecurityAccountNo,
-            c.Address, c.SubDistrict, c.District, c.Province,
+            c.Address, c.BuildingNumber, c.BuildingName, c.StreetName,
+            c.SubDistrict, c.District, c.Province,
             c.PostalCode, c.Phone, c.Fax, c.Email, c.Website,
             c.FiscalYearStartMonth, c.IsSetupComplete, sub);
+    }
+
+    private static string? ComposeAddress(Company c)
+    {
+        var parts = new[] { c.BuildingNumber, c.BuildingName,
+            string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode }
+            .Where(s => !string.IsNullOrWhiteSpace(s));
+        var joined = string.Join(" ", parts);
+        return string.IsNullOrEmpty(joined) ? null : joined;
     }
 }

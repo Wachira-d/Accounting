@@ -596,7 +596,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // Tax IDs: ETDA Schematron requires TXID = 13-digit TaxID + 5-digit branch (18 total)
         // Detect if user entered 13 (need branch suffix) or 18 (already concatenated).
         var sellerTaxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId, isSeller: true);
-        var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId);
+        var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId,
+            contactType: doc.Contact.ContactType);
         var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode, sellerTaxIdSchemeId);
         var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode, buyerTaxIdSchemeId);
 
@@ -657,16 +658,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
 
         // Reference to original — REQUIRED for CN/DN per Schematron DCN-AdditionalReferencedDocument-001..002.
-        // IssuerAssignedID = original document number; ReferenceTypeCode = 388/T02/T03/T04 (TaxInvoice variants).
-        // We omit FormattedIssueDateTime since it requires a separate udt: namespace declaration
-        // that's not currently emitted — the simpler 2-element form passes our tested Schematron rules.
+        // IssuerAssignedID = original document number; ReferenceTypeCode = 388 (original tax invoice).
+        // FormattedIssueDateTime uses udt: namespace per ETDA reference samples.
+        XNamespace udt = "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:6";
         XElement? additionalRef = null;
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
             var origRef = originalDoc?.DocumentNumber ?? doc.Reference ?? "-";
+            var origDate = originalDoc?.DocumentDate ?? doc.DocumentDate;
             additionalRef = new XElement(ram + "AdditionalReferencedDocument",
                 new XElement(ram + "IssuerAssignedID", origRef),
-                new XElement(ram + "ReferenceTypeCode", "388"));
+                new XElement(ram + "ReferenceTypeCode", "388"),
+                new XElement(ram + "FormattedIssueDateTime",
+                    new XElement(udt + "DateTimeString",
+                        new XAttribute("format", "102"),
+                        origDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture))));
         }
 
         // Line items (last in CII per ETDA — after Settlement)
@@ -693,15 +699,20 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     new XElement(ram + "Subject", doc.Notes))
                 : null);
 
-        // Build full document
+        // Build full document — declare udt only when CN/DN (FormattedIssueDateTime present)
         XNamespace xsi = "http://www.w3.org/2001/XMLSchema-instance";
+        var rootAttrs = new List<object>
+        {
+            new XAttribute(XNamespace.Xmlns + "rsm", rsm),
+            new XAttribute(XNamespace.Xmlns + "ram", ram),
+            new XAttribute(XNamespace.Xmlns + "xsi", xsi)
+        };
+        if (additionalRef != null)
+            rootAttrs.Add(new XAttribute(XNamespace.Xmlns + "udt", udt));
         var xml = new XDocument(
             new XDeclaration("1.0", "UTF-8", null),
             new XElement(rsm + rootElementName,
-                new XAttribute(XNamespace.Xmlns + "rsm", rsm),
-                new XAttribute(XNamespace.Xmlns + "ram", ram),
-                new XAttribute(XNamespace.Xmlns + "xsi", xsi),
-                new XAttribute(xsi + "schemaLocation", $"urn:etda:uncefact:data:standard:{rootElementName}:2"),
+                rootAttrs,
 
                 new XElement(rsm + "ExchangedDocumentContext", contextParameter),
 
@@ -748,7 +759,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 if (raw.Length == 18 && raw.All(char.IsDigit)) return raw;
                 var digits = new string(raw.Where(char.IsDigit).ToArray());
                 var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadLeft(13, '0');
-                var bid = (branchCode ?? "00000").Trim();
+                // TIV-SellerTradeParty-013: branch must be all-numeric when schemeID=TXID
+                var branchDigits = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+                var bid = branchDigits.Length == 0 ? "00000" : branchDigits;
                 if (bid.Length > 5) bid = bid.Substring(0, 5);
                 if (bid.Length < 5) bid = bid.PadLeft(5, '0');
                 return tid + bid;
@@ -764,17 +777,34 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     }
 
     /// <summary>
-    /// Pick a Schematron-allowed schemeID based on what the user entered.
-    /// 13 digits → TXID (assume juristic — append branch for full 18); empty → OTHR (N/A).
+    /// Pick Schematron-allowed schemeID using ContactType when available.
+    ///   JuristicPerson / GovernmentAgency → TXID (13-digit tax + 5-digit branch = 18)
+    ///   Individual → NIDN (13-digit national ID)
+    ///   No tax ID → OTHR ("N/A")
+    /// Seller always falls back to TXID.
     /// </summary>
-    private static string DetermineTaxIdSchemeId(string? taxId, bool isSeller = false)
+    private static string DetermineTaxIdSchemeId(string? taxId, bool isSeller = false,
+        ContactType? contactType = null)
     {
         if (string.IsNullOrWhiteSpace(taxId))
             return isSeller ? "TXID" : "OTHR";
         var raw = taxId.Trim().Replace("-", "").Replace(" ", "").Replace(".", "");
+
+        // Use ContactType when explicitly set
+        if (contactType.HasValue)
+        {
+            return contactType.Value switch
+            {
+                ContactType.Individual => raw.All(char.IsDigit) && raw.Length == 13 ? "NIDN" : "OTHR",
+                ContactType.JuristicPerson => "TXID",
+                ContactType.GovernmentAgency => "TXID",
+                _ => "OTHR"
+            };
+        }
+
+        // Fallback: infer from digit pattern
         if (raw.All(char.IsDigit) && raw.Length == 13) return "TXID";
         if (raw.All(char.IsDigit) && raw.Length == 18) return "TXID";
-        // Schematron TIV-SellerTradeParty-004: seller must always be TXID or NIDN
         if (isSeller) return "TXID";
         return "OTHR";
     }

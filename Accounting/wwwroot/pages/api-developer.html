@@ -151,9 +151,9 @@
 <h2 class="section-title" id="errors">Error Codes</h2>
 <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
   <table class="status-table">
-    <thead><tr><th>HTTP Code</th><th>สถานะ</th><th>คำอธิบาย</th></tr></thead>
+    <thead><tr><th>HTTP Code</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead>
     <tbody>
-      <tr><td><span class="badge-sm" style="background:#dcfce7;color:#16a34a">200</span></td><td>OK</td><td>สำเร็จ</td></tr>
+      <tr><td><span class="badge-sm" style="background:#dcfce7;color:#16a34a">200</span></td><td>OK</td><td data-i18n="common.success">สำเร็จ</td></tr>
       <tr><td><span class="badge-sm" style="background:#dcfce7;color:#16a34a">201</span></td><td>Created</td><td>สร้างข้อมูลสำเร็จ</td></tr>
       <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">400</span></td><td>Bad Request</td><td>ข้อมูลไม่ถูกต้อง — ตรวจสอบ request body (เช่น field ที่ขาด, format ไม่ถูก)</td></tr>
       <tr><td><span class="badge-sm" style="background:#fee2e2;color:#dc2626">401</span></td><td>Unauthorized</td><td>API Key ไม่ถูกต้อง หรือไม่ได้ส่ง header <code>X-Integration-Key</code></td></tr>
@@ -208,12 +208,12 @@
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้างหรืออัปเดตข้อมูลลูกค้า/ผู้จำหน่าย (ค้นหาโดย TaxId หรือ Name ก่อน — ถ้ามีแล้วจะอัปเดต)</p>
     <h5 style="margin:12px 0 4px;font-size:13px">Request Body</h5>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">name</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ชื่อลูกค้า/ผู้จำหน่าย</td></tr>
       <tr><td class="field-name">externalId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ID จากระบบต้นทาง</td></tr>
       <tr><td class="field-name">taxId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>เลขประจำตัวผู้เสียภาษี (ใช้ค้นหา duplicate)</td></tr>
-      <tr><td class="field-name">phone</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>โทรศัพท์</td></tr>
-      <tr><td class="field-name">email</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>อีเมล</td></tr>
+      <tr><td class="field-name">phone</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td data-i18n="common.phone">โทรศัพท์</td></tr>
+      <tr><td class="field-name">email</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td data-i18n="common.email">อีเมล</td></tr>
       <tr><td class="field-name">address</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ที่อยู่</td></tr>
       <tr><td class="field-name">contactType</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>"Individual" | "JuristicPerson" | "GovernmentAgency"</td></tr>
       <tr><td class="field-name">branchCode</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รหัสสาขา (00000 = สำนักงานใหญ่)</td></tr>
@@ -243,7 +243,7 @@
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้างเอกสารใบแจ้งหนี้/ใบกำกับภาษี พร้อม auto-create journal entry ตาม account mapping</p>
     <h5 style="margin:12px 0 4px;font-size:13px">Request Body</h5>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">customerName</td><td><span class="field-type">string</span></td><td class="field-optional">*</td><td>ชื่อลูกค้า (สร้างอัตโนมัติถ้าไม่มี)</td></tr>
       <tr><td class="field-name">customerTaxId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>TaxId ลูกค้า (ใช้ค้นหา)</td></tr>
       <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่เอกสาร (yyyy-MM-dd)</td></tr>
@@ -252,10 +252,10 @@
       <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการสินค้า/บริการ (ดูด้านล่าง)</td></tr>
       <tr><td class="field-name">includeVat</td><td><span class="field-type">boolean</span></td><td class="field-optional">Default: true</td><td>ราคารวม VAT หรือไม่</td></tr>
       <tr><td class="field-name">vatRate</td><td><span class="field-type">decimal</span></td><td class="field-optional">Default: 7</td><td>อัตราภาษีมูลค่าเพิ่ม (%)</td></tr>
-      <tr><td class="field-name">notes</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>หมายเหตุ</td></tr>
+      <tr><td class="field-name">notes</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td data-i18n="common.note">หมายเหตุ</td></tr>
     </tbody></table></div>
     <h5 style="margin:12px 0 4px;font-size:13px">Line Item Fields</h5>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">itemName</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ชื่อสินค้า/บริการ</td></tr>
       <tr><td class="field-name">quantity</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>จำนวน</td></tr>
       <tr><td class="field-name">unitPrice</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>ราคาต่อหน่วย</td></tr>
@@ -290,11 +290,11 @@
   </div>
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">บันทึกการชำระเงินต่อเอกสารที่มีอยู่ พร้อม auto-create journal (Dr. เงินสด/ธนาคาร, Cr. ลูกหนี้)</p>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">invoiceExternalRef</td><td><span class="field-type">string</span></td><td class="field-required">*</td><td>เลขอ้างอิงใบแจ้งหนี้ (หรือใช้ documentId)</td></tr>
       <tr><td class="field-name">documentId</td><td><span class="field-type">uuid</span></td><td class="field-optional">*</td><td>ID ของเอกสารใน Next Acc (ทางเลือกแทน invoiceExternalRef)</td></tr>
       <tr><td class="field-name">paymentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่ชำระ</td></tr>
-      <tr><td class="field-name">amount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>จำนวนเงิน</td></tr>
+      <tr><td class="field-name">amount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td data-i18n="common.amount">จำนวนเงิน</td></tr>
       <tr><td class="field-name">paymentMethod</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>"Cash" | "BankTransfer" | "CreditCard" | "PromptPay" | "Cheque" | "EWallet"</td></tr>
       <tr><td class="field-name">referenceNo</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>เลขอ้างอิงการชำระ (เช่น เลข slip)</td></tr>
     </tbody></table></div>
@@ -319,7 +319,7 @@
   </div>
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">บันทึกค่าใช้จ่ายจากผู้จำหน่าย (สร้าง Contact อัตโนมัติถ้าไม่มี)</p>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">supplierName</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ชื่อผู้จำหน่าย</td></tr>
       <tr><td class="field-name">supplierTaxId</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>TaxId ผู้จำหน่าย</td></tr>
       <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่เอกสาร</td></tr>
@@ -347,9 +347,9 @@
     <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
   </div>
   <div class="endpoint-body">
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">customerName</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>ชื่อลูกค้า</td></tr>
-      <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่</td></tr>
+      <tr><td class="field-name">documentDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td data-i18n="common.date">วันที่</td></tr>
       <tr><td class="field-name">reason</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>เหตุผลที่ออกใบลดหนี้</td></tr>
       <tr><td class="field-name">originalInvoiceRef</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>อ้างอิงใบแจ้งหนี้เดิม</td></tr>
       <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการ (same format)</td></tr>
@@ -393,7 +393,7 @@
   </div>
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้างหรืออัปเดตสินค้า/บริการ (ค้นหาโดย Code — ถ้ามีแล้วจะอัปเดต)</p>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">code</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>รหัสสินค้า (unique)</td></tr>
       <tr><td class="field-name">name</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ชื่อสินค้า/บริการ</td></tr>
       <tr><td class="field-name">price</td><td><span class="field-type">decimal</span></td><td class="field-optional">Optional</td><td>ราคาขาย</td></tr>
@@ -421,14 +421,14 @@
   </div>
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">สร้าง journal entry ตรง (ยอดเดบิตต้องเท่ากับเครดิต)</p>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">entryDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่บันทึก</td></tr>
       <tr><td class="field-name">journalType</td><td><span class="field-type">string</span></td><td class="field-optional">Default: "General"</td><td>"General" | "Sales" | "Purchase" | "CashReceipts" | "CashPayments"</td></tr>
-      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>คำอธิบาย</td></tr>
+      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td data-i18n="common.description">คำอธิบาย</td></tr>
       <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการ (accountCode + debitAmount/creditAmount)</td></tr>
     </tbody></table></div>
     <h5 style="margin:8px 0 4px;font-size:13px">Journal Line Fields</h5>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">accountCode</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>รหัสผังบัญชี (ต้องมีอยู่ในระบบ)</td></tr>
       <tr><td class="field-name">debitAmount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>ยอดเดบิต</td></tr>
       <tr><td class="field-name">creditAmount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>ยอดเครดิต</td></tr>
@@ -458,13 +458,13 @@
   </div>
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">ส่งสรุปรายรับ/รายจ่ายประจำวัน → ระบบจะสร้าง Journal Entry อัตโนมัติตาม Account Mapping</p>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>Required</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">summaryDate</td><td><span class="field-type">date</span></td><td class="field-required">Required</td><td>วันที่สรุป</td></tr>
-      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>คำอธิบาย</td></tr>
+      <tr><td class="field-name">description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td data-i18n="common.description">คำอธิบาย</td></tr>
       <tr><td class="field-name">lines</td><td><span class="field-type">array</span></td><td class="field-required">Required</td><td>รายการแต่ละ category</td></tr>
       <tr><td class="field-name">lines[].category</td><td><span class="field-type">string</span></td><td class="field-required">Required</td><td>ต้องตรงกับ Account Mapping ที่ตั้งค่าไว้</td></tr>
-      <tr><td class="field-name">lines[].amount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td>จำนวนเงิน</td></tr>
-      <tr><td class="field-name">lines[].description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td>รายละเอียด</td></tr>
+      <tr><td class="field-name">lines[].amount</td><td><span class="field-type">decimal</span></td><td class="field-required">Required</td><td data-i18n="common.amount">จำนวนเงิน</td></tr>
+      <tr><td class="field-name">lines[].description</td><td><span class="field-type">string</span></td><td class="field-optional">Optional</td><td data-i18n="common.detail">รายละเอียด</td></tr>
     </tbody></table></div>
     <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre>{
   "summaryDate": "2024-04-02",
@@ -492,7 +492,7 @@
   </div>
   <div class="endpoint-body">
     <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px">ส่งข้อมูลหลายประเภทในครั้งเดียว — ลดจำนวน API calls (ไม่เกิน rate limit)</p>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Field</th><th>Type</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">customers</td><td><span class="field-type">array?</span></td><td>รายการลูกค้า (format เดียวกับ POST /customers)</td></tr>
       <tr><td class="field-name">invoices</td><td><span class="field-type">array?</span></td><td>รายการใบแจ้งหนี้</td></tr>
       <tr><td class="field-name">payments</td><td><span class="field-type">array?</span></td><td>รายการชำระเงิน</td></tr>
@@ -528,7 +528,7 @@
   </div>
   <div class="endpoint-body">
     <h5 style="margin:0 0 4px;font-size:13px">Query Parameters</h5>
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Type</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">fromDate</td><td><span class="field-type">date</span></td><td>กรองตั้งแต่วันที่</td></tr>
       <tr><td class="field-name">toDate</td><td><span class="field-type">date</span></td><td>กรองถึงวันที่</td></tr>
       <tr><td class="field-name">status</td><td><span class="field-type">string</span></td><td>"Draft" | "Approved" | "Paid" | "PartiallyPaid" | "Voided"</td></tr>
@@ -576,7 +576,7 @@
     <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
   </div>
   <div class="endpoint-body">
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Type</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">type</td><td><span class="field-type">string</span></td><td>"customer" | "supplier" (กรองตามประเภท)</td></tr>
       <tr><td class="field-name">page / pageSize</td><td><span class="field-type">int</span></td><td>pagination</td></tr>
     </tbody></table></div>
@@ -600,7 +600,7 @@
     <span style="font-size:18px;color:var(--gray-400)">&#9662;</span>
   </div>
   <div class="endpoint-body">
-    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Type</th><th>คำอธิบาย</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Type</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
       <tr><td class="field-name">fromDate / toDate</td><td><span class="field-type">date</span></td><td>กรองวันที่ชำระ</td></tr>
       <tr><td class="field-name">page / pageSize</td><td><span class="field-type">int</span></td><td>pagination</td></tr>
     </tbody></table></div>
@@ -736,7 +736,7 @@ print(f'Success: {batch["successCount"]}/{batch["totalProcessed"]}')</pre></div>
 <h2 class="section-title" id="pagination">Pagination</h2>
 <div class="card" style="padding:20px;margin-bottom:16px">
   <p style="font-size:14px;margin:0 0 12px">Outbound endpoints (GET) รองรับ pagination ผ่าน query parameters</p>
-  <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Default</th><th>คำอธิบาย</th></tr></thead><tbody>
+  <div style="overflow-x:auto"><table class="field-table"><thead><tr><th>Param</th><th>Default</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>
     <tr><td class="field-name">page</td><td>1</td><td>หน้าที่ต้องการ (เริ่มจาก 1)</td></tr>
     <tr><td class="field-name">pageSize</td><td>50</td><td>จำนวนรายการต่อหน้า (max 100)</td></tr>
   </tbody></table></div>
@@ -764,7 +764,9 @@ do {
   </div>
 
 <script src="/js/api.js"></script>
-<script src="/js/layout.js"></script>
+<script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
 <script>
 API.init();
 Layout.init('api-developer');

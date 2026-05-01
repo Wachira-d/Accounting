@@ -93,11 +93,13 @@
         <h3 class="card-title" style="margin:0">รายชื่อสมาชิก</h3>
         <input type="text" id="searchMember" class="form-input" placeholder="ค้นหาชื่อ/อีเมล..." style="width:220px;max-width:100%" oninput="Page.filterMembers()">
       </div>
-      <div id="memberList"><p style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</p></div>
+      <div id="memberList"><p style="text-align:center;padding:40px;color:#94a3b8" data-i18n="common.loading">กำลังโหลด...</p></div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     // Roles keyed by string (API returns enum as string via JsonStringEnumConverter)
@@ -203,7 +205,7 @@
               <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
                 ${editableRoles.map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
               </select>
-              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName}')">ลบ</button>
+              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName}')" data-i18n="common.delete">ลบ</button>
             `;
           }
 

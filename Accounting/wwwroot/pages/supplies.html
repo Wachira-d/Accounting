@@ -45,9 +45,9 @@
             <th>รหัส</th><th>ชื่อวัสดุ</th><th>หมวด</th><th>หน่วย</th>
             <th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th>
             <th class="text-right">มูลค่า</th><th class="text-right">ขั้นต่ำ</th>
-            <th>สถานะ</th><th>จัดการ</th>
+            <th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th>
           </tr></thead>
-          <tbody id="balanceBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <tbody id="balanceBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -60,7 +60,7 @@
         <span class="text-gray-400">ถึง</span>
         <input type="date" class="form-input" id="usageTo" style="min-width:120px;">
         <input type="text" class="form-input" id="usageDept" placeholder="แผนก" style="width:140px;">
-        <button class="btn btn-primary btn-sm" onclick="Page.loadUsageSummary()">ค้นหา</button>
+        <button class="btn btn-primary btn-sm" onclick="Page.loadUsageSummary()" data-i18n="common.search">ค้นหา</button>
       </div>
       <div id="usageSummaryCards" class="summary-cards"></div>
       <div class="table-container">
@@ -75,11 +75,11 @@
       <div style="display:flex;gap:24px;margin-top:16px;">
         <div style="flex:1;border:1px solid var(--gray-200);border-radius:10px;padding:16px;">
           <h4 style="font-size:14px;font-weight:600;margin-bottom:8px;">ตามแผนก</h4>
-          <div id="deptChartBody"><p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p></div>
+          <div id="deptChartBody"><p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p></div>
         </div>
         <div style="flex:1;border:1px solid var(--gray-200);border-radius:10px;padding:16px;">
           <h4 style="font-size:14px;font-weight:600;margin-bottom:8px;">ตามหมวดหมู่</h4>
-          <div id="catChartBody"><p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p></div>
+          <div id="catChartBody"><p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p></div>
         </div>
       </div>
     </div>
@@ -123,7 +123,7 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="Layout.closeModal('useModal')">ยกเลิก</button>
+        <button class="btn btn-secondary" onclick="Layout.closeModal('useModal')" data-i18n="common.cancel">ยกเลิก</button>
         <button class="btn btn-primary" onclick="Page.submitUse()">เบิกใช้</button>
       </div>
     </div>
@@ -140,7 +140,7 @@
         <div class="table-container">
           <table class="table">
             <thead><tr>
-              <th>วันที่</th><th>จำนวน</th><th>ต้นทุน</th><th>แผนก</th><th>วัตถุประสงค์</th><th>อ้างอิง</th>
+              <th data-i18n="common.date">วันที่</th><th>จำนวน</th><th>ต้นทุน</th><th>แผนก</th><th>วัตถุประสงค์</th><th data-i18n="common.reference">อ้างอิง</th>
             </tr></thead>
             <tbody id="historyBody"></tbody>
           </table>
@@ -150,6 +150,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
   const Page = {
@@ -188,7 +190,7 @@
           const sel = document.getElementById('balanceCategory');
           res.data.forEach(c => { const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; sel.appendChild(o); });
         }
-      } catch {}
+      } catch (e) { console.error('supplies:', e); }
     },
 
     async loadBalance() {
@@ -200,7 +202,7 @@
         const d = res.data;
 
         document.getElementById('balanceSummary').innerHTML = `
-          <div class="summary-card"><div class="summary-value">${d.totalItems}</div><div class="summary-label">รายการ</div></div>
+          <div class="summary-card"><div class="summary-value">${d.totalItems}</div><div class="summary-label" data-i18n="common.items">รายการ</div></div>
           <div class="summary-card"><div class="summary-value">${this.fmt(d.totalValue)}</div><div class="summary-label">มูลค่ารวม (บาท)</div></div>
           <div class="summary-card" style="border-color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">
             <div class="summary-value" style="color:${d.lowStockCount > 0 ? '#e74c3c' : '#27ae60'};">${d.lowStockCount}</div>
@@ -210,13 +212,13 @@
         document.getElementById('balanceBody').innerHTML = d.items.length === 0
           ? '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่พบวัสดุสิ้นเปลือง</td></tr>'
           : d.items.map(i => `<tr>
-            <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td><td>${i.unit}</td>
+            <td>${Layout.esc(i.productCode)}</td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.category || '-')}</td><td>${Layout.esc(i.unit)}</td>
             <td class="text-right">${this.fmtQty(i.currentStock)}</td>
             <td class="text-right">${this.fmt(i.averageCost)}</td>
             <td class="text-right">${this.fmt(i.totalValue)}</td>
             <td class="text-right">${this.fmtQty(i.minimumStock)}</td>
             <td>${i.isLow ? '<span class="badge badge-danger">ต่ำ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${i.productName}')">ประวัติ</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${Layout.esc(i.productName)}')">ประวัติ</button></td>
           </tr>`).join('');
       } catch (e) { console.error(e); }
     },
@@ -236,29 +238,29 @@
 
         document.getElementById('usageSummaryCards').innerHTML = `
           <div class="summary-card"><div class="summary-value">${this.fmt(d.grandTotal)}</div><div class="summary-label">ยอดเบิกรวม (บาท)</div></div>
-          <div class="summary-card"><div class="summary-value">${d.items?.length || 0}</div><div class="summary-label">รายการ</div></div>
+          <div class="summary-card"><div class="summary-value">${d.items?.length || 0}</div><div class="summary-label" data-i18n="common.items">รายการ</div></div>
           <div class="summary-card"><div class="summary-value">${d.byDepartment?.length || 0}</div><div class="summary-label">แผนก</div></div>`;
 
         document.getElementById('usageBody').innerHTML = (!d.items || d.items.length === 0)
           ? '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบข้อมูล</td></tr>'
           : d.items.map(i => `<tr>
-            <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td>
-            <td>${i.department || '-'}</td><td>${i.unit}</td>
+            <td>${Layout.esc(i.productCode)}</td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.category || '-')}</td>
+            <td>${Layout.esc(i.department || '-')}</td><td>${Layout.esc(i.unit)}</td>
             <td class="text-right">${this.fmtQty(i.totalQuantity)}</td>
             <td class="text-right">${this.fmt(i.totalCost)}</td>
           </tr>`).join('');
 
         document.getElementById('deptChartBody').innerHTML = (d.byDepartment || []).map(x =>
           `<div class="breakdown-row">
-            <span>${x.department}</span>
+            <span>${Layout.esc(x.department)}</span>
             <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
-          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p>';
+          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p>';
 
         document.getElementById('catChartBody').innerHTML = (d.byCategory || []).map(x =>
           `<div class="breakdown-row">
-            <span>${x.category}</span>
+            <span>${Layout.esc(x.category)}</span>
             <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
-          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px">ไม่มีข้อมูล</p>';
+          </div>`).join('') || '<p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p>';
       } catch (e) { console.error(e); }
     },
 
@@ -271,7 +273,7 @@
           res.data.items.filter(p => p.productType === 4 || p.productType === 'Supplies')
             .forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = `${p.code} - ${p.name} (คงเหลือ: ${p.currentStock} ${p.unit})`; o.dataset.stock = p.currentStock; o.dataset.unit = p.unit; sel.appendChild(o); });
         }
-      } catch {}
+      } catch (e) { console.error('supplies:', e); }
       document.getElementById('useQuantity').value = '';
       document.getElementById('useDepartment').value = '';
       document.getElementById('usePurpose').value = '';
@@ -320,14 +322,14 @@
             ? '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่พบข้อมูล</td></tr>'
             : res.data.map(u => `<tr>
               <td>${Layout.date(u.usageDate)}</td>
-              <td>${this.fmtQty(u.quantity)} ${u.unit}</td>
+              <td>${this.fmtQty(u.quantity)} ${Layout.esc(u.unit)}</td>
               <td>${this.fmt(u.totalCost)}</td>
-              <td>${u.department || '-'}</td>
-              <td>${u.purpose || '-'}</td>
-              <td>${u.reference || '-'}</td>
+              <td>${Layout.esc(u.department || '-')}</td>
+              <td>${Layout.esc(u.purpose || '-')}</td>
+              <td>${Layout.esc(u.reference || '-')}</td>
             </tr>`).join('');
         }
-      } catch {}
+      } catch (e) { console.error('supplies:', e); }
       Layout.openModal('historyModal');
     },
 

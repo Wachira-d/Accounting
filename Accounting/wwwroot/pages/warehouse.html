@@ -19,7 +19,7 @@
 
     <!-- Warehouse Cards -->
     <div id="warehouseCards" class="grid grid-3 gap-4" style="margin-bottom:24px">
-      <div class="card text-center" style="padding:40px"><div class="text-gray-400">กำลังโหลด...</div></div>
+      <div class="card text-center" style="padding:40px"><div class="text-gray-400" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- Tabs -->
@@ -33,7 +33,7 @@
       <div class="table-container" style="border:none">
         <table class="table">
           <thead><tr><th>คลัง</th><th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">จอง</th><th class="text-right">คงเหลือ</th><th>ตำแหน่ง</th></tr></thead>
-          <tbody id="stockBody"><tr><td colspan="6" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+          <tbody id="stockBody"><tr><td colspan="6" class="text-center text-gray-400" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -42,8 +42,8 @@
     <div id="tabTransfers" class="card hidden" style="border-top-left-radius:0">
       <div class="table-container" style="border:none">
         <table class="table">
-          <thead><tr><th>เลขที่</th><th>จากคลัง</th><th>ไปคลัง</th><th>วันที่</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="transferBody"><tr><td colspan="6" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>เลขที่</th><th>จากคลัง</th><th>ไปคลัง</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="transferBody"><tr><td colspan="6" class="text-center text-gray-400" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -63,8 +63,8 @@
           <div class="form-group form-checkbox"><input type="checkbox" id="fActive" checked><label for="fActive">เปิดใช้งาน</label></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -78,7 +78,7 @@
             <div class="form-group"><label class="form-label">จากคลัง *</label><select class="form-select" id="tFrom"></select></div>
             <div class="form-group"><label class="form-label">ไปคลัง *</label><select class="form-select" id="tTo"></select></div>
           </div>
-          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="tNotes"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="tNotes"></div>
           <div style="margin-top:12px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
               <label class="form-label" style="margin:0">รายการสินค้า</label>
@@ -91,7 +91,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('transferModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('transferModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.saveTransfer()">สร้างใบโอน</button>
         </div>
       </div>
@@ -99,6 +99,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -131,7 +133,7 @@
             <div class="card" style="cursor:pointer" onclick="Page.openEdit('${w.id}')">
               <div class="flex items-center justify-between">
                 <div class="font-semibold">${w.name}</div>
-                ${w.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}
+                ${w.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
               </div>
               <div class="text-xs text-gray-500">${w.code}</div>
               <div class="text-sm" style="margin-top:8px">${w.address || '-'}</div>

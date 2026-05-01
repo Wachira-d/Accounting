@@ -26,8 +26,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>เอกสารอ้างอิง</th><th>วันที่</th><th>ช่องทาง</th><th class="text-right">จำนวนเงิน</th><th>อ้างอิง</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>เอกสารอ้างอิง</th><th data-i18n="common.date">วันที่</th><th>ช่องทาง</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th data-i18n="common.reference">อ้างอิง</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -58,11 +58,11 @@
           <div class="form-group"><label class="form-label">บัญชีธนาคาร</label>
             <select class="form-select" id="fBankAcc"><option value="">-- ไม่ระบุ --</option></select>
           </div>
-          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2"></textarea></div>
         </div>
         <div class="modal-footer" id="formFooter">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -77,6 +77,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', Cheque:'เช็ค', PromptPay:'พร้อมเพย์', DirectDebit:'หักบัญชี', EWallet:'E-Wallet' };
@@ -98,7 +100,7 @@
           const res = await api.getPayments(q);
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           items.forEach(p => Page._cache[p.id] = p);
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.paymentNumber}</td>
@@ -107,7 +109,7 @@
             <td><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></td>
             <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
             <td class="text-gray-500">${p.reference || '-'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')">ดู</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button></td>
           </tr>`).join('');
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
@@ -121,11 +123,11 @@
             <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${p.paymentNumber}</div></div>
             <div><div class="text-xs text-gray-500">วันที่ชำระ</div><div>${Layout.date(p.paymentDate)}</div></div>
             <div><div class="text-xs text-gray-500">ช่องทาง</div><div><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></div></div>
-            <div><div class="text-xs text-gray-500">จำนวนเงิน</div><div class="font-semibold text-lg">${Layout.money(p.amount)}</div></div>
+            <div><div class="text-xs text-gray-500" data-i18n="common.amount">จำนวนเงิน</div><div class="font-semibold text-lg">${Layout.money(p.amount)}</div></div>
             <div><div class="text-xs text-gray-500">เอกสารอ้างอิง</div><div>${p.documentNumber || p.documentId || '-'}</div></div>
             <div><div class="text-xs text-gray-500">หมายเลขอ้างอิง</div><div>${p.reference || '-'}</div></div>
           </div>
-          ${p.notes ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500">หมายเหตุ</div><div class="text-sm">${p.notes}</div></div>` : ''}`;
+          ${p.notes ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${p.notes}</div></div>` : ''}`;
         Layout.openModal('detailModal');
       },
       async openCreate() {

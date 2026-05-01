@@ -29,7 +29,7 @@
       <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
       <div class="tab" onclick="Page.showTab('etax',this)">e-Tax</div>
-      <div class="tab" onclick="Page.showTab('email',this)">อีเมล</div>
+      <div class="tab" onclick="Page.showTab('email',this)" data-i18n="common.email">อีเมล</div>
       <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
@@ -142,15 +142,32 @@
         <input type="text" id="cSocialSecurityAccountNo" class="form-input" placeholder="เลขที่บัญชีนายจ้าง">
       </div>
       <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ที่อยู่ (ตามใบทะเบียน)</h4>
-      <div class="form-group"><label class="form-label">ที่อยู่</label><textarea class="form-textarea" id="cAddress" rows="2" placeholder="เลขที่ ซอย ถนน"></textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">แขวง/ตำบล</label><input type="text" id="cSubDistrict" class="form-input"></div>
-        <div class="form-group"><label class="form-label">เขต/อำเภอ</label><input type="text" id="cDistrict" class="form-input"></div>
-        <div class="form-group"><label class="form-label">จังหวัด</label><input type="text" id="cProvince" class="form-input"></div>
-        <div class="form-group"><label class="form-label">รหัสไปรษณีย์</label><input type="text" id="cPostalCode" class="form-input" maxlength="5"></div>
+      <div class="form-group">
+        <label class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="cAddressPaste" placeholder="วางที่อยู่เต็มแล้วกดแยก..." style="flex:1">
+          <button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="Page.parseAddressPaste()">แยกที่อยู่</button>
+        </div>
+      </div>
+      <input type="hidden" id="cAddress">
+      <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
+        <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="cBuildingNumber" placeholder="123/45"></div>
+          <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="cBuildingName"></div>
+        </div>
+        <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="cStreetName" placeholder="สุขุมวิท"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">แขวง/ตำบล *</label><input type="text" id="cSubDistrict" class="form-input"></div>
+          <div class="form-group"><label class="form-label">เขต/อำเภอ *</label><input type="text" id="cDistrict" class="form-input"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" id="cProvince" class="form-input"></div>
+          <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" id="cPostalCode" class="form-input" maxlength="5" inputmode="numeric"></div>
+        </div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
+        <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
         <div class="form-group"><label class="form-label">แฟกซ์</label><input type="text" id="cFax" class="form-input"></div>
       </div>
       <div class="form-row">
@@ -433,7 +450,7 @@
     <!-- ===== Numbering Tab ===== -->
     <div id="tabNumbering" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">ลำดับเลขที่เอกสาร</h3>
-      <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</div></div>
+      <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- ===== Signature Tab ===== -->
@@ -483,6 +500,8 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/dbd-lookup.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -503,12 +522,24 @@
           document.getElementById('cSocialSecurityGroup').style.display = this.checked ? 'block' : 'none';
         });
         // DBD Lookup: autocomplete on company name
+        const autoParseAddr = () => {
+          const raw = document.getElementById('cAddress').value;
+          if (!raw) return;
+          const api = Layout.api();
+          if (api) api.parseAddress(raw).then(j => {
+            const p = (j && j.data) || {};
+            if (p.buildingNumber && !document.getElementById('cBuildingNumber').value) document.getElementById('cBuildingNumber').value = p.buildingNumber;
+            if (p.buildingName && !document.getElementById('cBuildingName').value) document.getElementById('cBuildingName').value = p.buildingName;
+            if (p.streetName && !document.getElementById('cStreetName').value) document.getElementById('cStreetName').value = p.streetName;
+          }).catch(() => {});
+        };
         DbdLookup.attachNameSearch(document.getElementById('cName'), (result) => {
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'cName', nameEn: 'cNameEn', taxId: 'cTaxId', juristicId: 'cJuristicId',
             address: 'cAddress',
             addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
           });
+          autoParseAddr();
           Layout.toast('ดึงข้อมูล ' + result.nameTh + ' จาก DBD สำเร็จ');
         });
         // DBD Lookup: tax ID lookup (auto-triggers on 13 digits + button click)
@@ -518,6 +549,7 @@
             address: 'cAddress',
             addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
           });
+          autoParseAddr();
           // Also map registered capital and biz type if available
           if (result?.juristicType) {
             const sel = document.getElementById('cBizType');
@@ -816,6 +848,9 @@
           document.getElementById('cSocialSecurityAccountNo').value = c.socialSecurityAccountNo || '';
           if (c.isSocialSecurityRegistered) document.getElementById('cSocialSecurityGroup').style.display = 'block';
           document.getElementById('cAddress').value = c.address || '';
+          document.getElementById('cBuildingNumber').value = c.buildingNumber || '';
+          document.getElementById('cBuildingName').value = c.buildingName || '';
+          document.getElementById('cStreetName').value = c.streetName || '';
           document.getElementById('cSubDistrict').value = c.subDistrict || '';
           document.getElementById('cDistrict').value = c.district || '';
           document.getElementById('cProvince').value = c.province || '';
@@ -964,6 +999,37 @@
       _origBizType: 'JuristicPerson',
       _origIndustryType: 'General',
 
+      composeAddress() {
+        const parts = [
+          document.getElementById('cBuildingNumber').value,
+          document.getElementById('cBuildingName').value,
+          document.getElementById('cStreetName').value ? 'ถ.' + document.getElementById('cStreetName').value : '',
+          document.getElementById('cSubDistrict').value,
+          document.getElementById('cDistrict').value,
+          document.getElementById('cProvince').value,
+          document.getElementById('cPostalCode').value
+        ].filter(Boolean);
+        return parts.join(' ') || null;
+      },
+      async parseAddressPaste() {
+        const text = document.getElementById('cAddressPaste').value;
+        if (!text || !text.trim()) { Layout.toast('กรุณาวางที่อยู่ก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const j = await api.parseAddress(text);
+          if (!j || !j.success) throw new Error((j && j.message) || 'แยกที่อยู่ไม่สำเร็จ');
+          const p = j.data || {};
+          if (p.buildingNumber) document.getElementById('cBuildingNumber').value = p.buildingNumber;
+          if (p.buildingName) document.getElementById('cBuildingName').value = p.buildingName;
+          if (p.streetName) document.getElementById('cStreetName').value = p.streetName;
+          if (p.subDistrict) document.getElementById('cSubDistrict').value = p.subDistrict;
+          if (p.district) document.getElementById('cDistrict').value = p.district;
+          if (p.province) document.getElementById('cProvince').value = p.province;
+          if (p.postalCode) document.getElementById('cPostalCode').value = p.postalCode;
+          document.getElementById('cAddressPaste').value = '';
+          Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
+        } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
+      },
       async saveCompany() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         const name = document.getElementById('cName').value.trim();
@@ -983,7 +1049,10 @@
             isWhtRegistered: document.getElementById('cWhtRegistered').checked,
             isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
             socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
-            address: document.getElementById('cAddress').value || null,
+            address: Page.composeAddress(),
+            buildingNumber: document.getElementById('cBuildingNumber').value || null,
+            buildingName: document.getElementById('cBuildingName').value || null,
+            streetName: document.getElementById('cStreetName').value || null,
             subDistrict: document.getElementById('cSubDistrict').value || null,
             district: document.getElementById('cDistrict').value || null,
             province: document.getElementById('cProvince').value || null,
@@ -1097,14 +1166,14 @@
           const items = res.data?.items || res.data || [];
           document.getElementById('numberSeriesContent').innerHTML = items.length ?
             `<div class="table-container"><table class="table">
-              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th>รีเซ็ต</th><th>สถานะ</th></tr></thead>
+              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th data-i18n="common.reset">รีเซ็ต</th><th data-i18n="common.status">สถานะ</th></tr></thead>
               <tbody>${items.map(n => `<tr>
                 <td>${Layout.docTypeLabel(n.documentType)}</td>
                 <td>${n.prefix}</td><td>${n.format}</td>
                 <td>${n.currentNumber}</td><td>${n.resetPeriod}</td>
-                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
               </tr>`).join('')}</tbody>
-            </table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
+            </table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
         } catch (e) { document.getElementById('numberSeriesContent').innerHTML = '<p class="text-danger text-center">' + e.message + '</p>'; }
       },
       async save() {

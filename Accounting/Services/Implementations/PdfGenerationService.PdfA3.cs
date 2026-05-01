@@ -44,7 +44,7 @@ public partial class PdfGenerationService
                         FontManager.RegisterFont(stream);
                     }
                 }
-                catch { }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to register font from {path}: {ex.Message}"); }
             }
             _fontsRegistered = true;
         }
@@ -372,7 +372,7 @@ public partial class PdfGenerationService
         var data = s;
         var commaIdx = s.IndexOf(',');
         if (s.StartsWith("data:") && commaIdx > 0) data = s[(commaIdx + 1)..];
-        try { return Convert.FromBase64String(data); } catch { return null; }
+        try { return Convert.FromBase64String(data); } catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to parse base64 image data: {ex.Message}"); return null; }
     }
 
     private static void ComposeFooter(IContainer container, EtaxPdfMetadata m, string xmlFileName)

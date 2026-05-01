@@ -30,8 +30,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>รหัส</th><th>ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">มูลค่าสุทธิ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">มูลค่าสุทธิ</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -70,8 +70,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -103,7 +103,7 @@
           <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="rvReason" placeholder="เช่น ตีราคาตามราคาตลาด"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('revalueModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('revalueModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.confirmRevalue()">ตีราคาใหม่</button>
         </div>
       </div>
@@ -120,7 +120,7 @@
           <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="dReason" placeholder="เช่น ขาย, ชำรุด, บริจาค"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('disposeModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('disposeModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-danger" onclick="Page.confirmDispose()">จำหน่าย</button>
         </div>
       </div>
@@ -137,7 +137,7 @@
           <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="woReason" placeholder="เช่น ชำรุดไม่สามารถซ่อมได้"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('writeOffModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('writeOffModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-danger" onclick="Page.confirmWriteOff()">ตัดจำหน่าย</button>
         </div>
       </div>
@@ -153,8 +153,8 @@
           <div class="form-group"><label class="form-label">มูลค่าซากใหม่</label><input type="number" class="form-input" id="alSalvage" step="0.01" placeholder="ไม่เปลี่ยนแปลง"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustLifeModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.confirmAdjustLife()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustLifeModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.confirmAdjustLife()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -167,7 +167,7 @@
           <div id="reportKpis" style="margin-bottom:16px"></div>
           <div id="reportTable" style="max-height:400px;overflow-y:auto"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')">ปิด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
 
@@ -181,14 +181,16 @@
           <div id="importResult" style="margin-top:12px"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')">ปิด</button>
-          <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
         </div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ' };
@@ -212,7 +214,7 @@
           const data = res.data; const items = data?.items || data || [];
           this.allAssets = items;
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(a => `<tr>
             <td class="font-medium">${a.assetCode}</td>
             <td>${a.name}</td>
@@ -223,8 +225,8 @@
             <td class="text-right font-semibold">${Layout.money(a.netBookValue)}</td>
             <td>${Layout.statusBadge(a.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')">ดู</button>
-              ${a.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')">แก้ไข</button>` : ''}
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button>
+              ${a.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
             </td>
           </tr>`).join('');
           const totalPages = data?.totalPages || 1;
@@ -304,7 +306,7 @@
               <div><div class="text-xs text-gray-500">หมายเลขเครื่อง</div><div>${a.serialNumber || '-'}</div></div>
               <div><div class="text-xs text-gray-500">วิธีคิดค่าเสื่อม</div><div>${methodMap[a.depreciationMethod] || a.depreciationMethod}</div></div>
               <div><div class="text-xs text-gray-500">อายุใช้งาน</div><div>${a.usefulLifeMonths} เดือน</div></div>
-              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(a.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(a.status)}</div></div>
               ${a.disposalDate ? `<div><div class="text-xs text-gray-500">วันที่จำหน่าย</div><div>${Layout.date(a.disposalDate)}</div></div>` : ''}
             </div>
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
@@ -320,7 +322,7 @@
               </div>
             </div>`;
           this.showDepHistory();
-          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (a.status === 'Active') {
             footer += ` <button class="btn btn-ghost" onclick="Page.openAdjustLife('${a.id}',${a.usefulLifeMonths},${a.salvageValue})">ปรับอายุ</button>`;
             footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${a.id}',${a.netBookValue})">ตีราคาใหม่</button>`;
@@ -456,8 +458,8 @@
             </div>`;
           const items = r.items || [];
           document.getElementById('reportTable').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr>
-            <th>รหัส</th><th>ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th>วิธี</th>
-            <th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">NBV</th><th>สถานะ</th>
+            <th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th>วิธี</th>
+            <th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">NBV</th><th data-i18n="common.status">สถานะ</th>
           </tr></thead><tbody>${items.map(i => `<tr>
             <td>${i.assetCode}</td><td>${i.name}</td><td>${i.category||'-'}</td><td>${Layout.date(i.purchaseDate)}</td>
             <td>${methodMap[i.depreciationMethod]||i.depreciationMethod}</td>
@@ -465,7 +467,7 @@
             <td class="text-right">${Layout.money(i.accumulatedDepreciation)}</td>
             <td class="text-right font-semibold">${Layout.money(i.netBookValue)}</td>
             <td>${Layout.statusBadge(i.status)}</td>
-          </tr>`).join('')}</tbody></table></div>` : '<p class="text-center text-gray-400">ไม่มีข้อมูล</p>';
+          </tr>`).join('')}</tbody></table></div>` : '<p class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</p>';
           Layout.openModal('reportModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

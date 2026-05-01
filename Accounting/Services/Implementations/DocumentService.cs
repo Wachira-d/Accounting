@@ -109,6 +109,9 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+
             var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
             var docPrefix = $"{prefix}-{yearMonth}-";
             var maxNumber = await _db.Documents
@@ -145,11 +148,11 @@ public class DocumentService : IDocumentService
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2);
+                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2);
+                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
+                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
 
                 subTotal += afterDiscount;
                 totalDiscount += discountAmt;
@@ -311,11 +314,11 @@ public class DocumentService : IDocumentService
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2);
+                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
                 var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2);
+                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
+                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
 
                 subTotal += afterDiscount;
                 totalDiscount += discountAmt;
@@ -1075,7 +1078,6 @@ public class DocumentService : IDocumentService
             ContactType = request.ContactType ?? InferContactType(request.TaxId, request.BranchCode),
             IsCustomer = request.IsCustomer,
             IsSupplier = request.IsSupplier,
-            Address = request.Address,
             BuildingNumber = request.BuildingNumber ?? parsed?.BuildingNumber,
             BuildingName = request.BuildingName ?? parsed?.BuildingName,
             StreetName = request.StreetName ?? parsed?.StreetName,
@@ -1089,10 +1091,22 @@ public class DocumentService : IDocumentService
             ContactPerson = request.ContactPerson
         };
 
+        contact.Address = request.Address ?? ComposeAddress(contact);
+
         _db.Contacts.Add(contact);
         await _db.SaveChangesAsync();
 
         return MapContactToResponse(contact);
+    }
+
+    private static string? ComposeAddress(Contact c)
+    {
+        var parts = new[] { c.BuildingNumber, c.BuildingName,
+            string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode }
+            .Where(s => !string.IsNullOrWhiteSpace(s));
+        var joined = string.Join(" ", parts);
+        return string.IsNullOrEmpty(joined) ? null : joined;
     }
 
     private static bool NeedsAutoParse(CreateContactRequest r) =>
@@ -1100,14 +1114,53 @@ public class DocumentService : IDocumentService
         && string.IsNullOrEmpty(r.District) && string.IsNullOrEmpty(r.Province)
         && string.IsNullOrEmpty(r.PostalCode);
 
-    public async Task<List<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null)
+    public async Task<ContactResponse> GetContactAsync(Guid companyId, Guid contactId)
+    {
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        return MapContactToResponse(contact);
+    }
+
+    public async Task<PagedResponse<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null, string? search = null, PagedRequest? paging = null)
     {
         var query = _db.Contacts.Where(c => c.CompanyId == companyId);
         if (isCustomer.HasValue) query = query.Where(c => c.IsCustomer == isCustomer.Value);
         if (isSupplier.HasValue) query = query.Where(c => c.IsSupplier == isSupplier.Value);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(c => c.Name.ToLower().Contains(s)
+                || (c.TaxId != null && c.TaxId.Contains(s))
+                || (c.Email != null && c.Email.ToLower().Contains(s))
+                || (c.Phone != null && c.Phone.Contains(s)));
+        }
 
-        var contacts = await query.OrderBy(c => c.Name).ToListAsync();
-        return contacts.Select(MapContactToResponse).ToList();
+        var totalCount = await query.CountAsync();
+        var page = paging?.Page ?? 1;
+        var pageSize = paging?.PageSize ?? 50;
+        var contacts = await query.OrderBy(c => c.Name)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+        return new PagedResponse<ContactResponse>(
+            contacts.Select(MapContactToResponse).ToList(),
+            totalCount, page, pageSize, totalPages);
+    }
+
+    public async Task DeleteContactAsync(Guid companyId, Guid contactId)
+    {
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        var hasDocuments = await _db.Documents.AnyAsync(d => d.ContactId == contactId && d.CompanyId == companyId);
+        if (hasDocuments)
+        {
+            contact.IsActive = false;
+            await _db.SaveChangesAsync();
+            return;
+        }
+        _db.Contacts.Remove(contact);
+        await _db.SaveChangesAsync();
     }
 
     public async Task<ContactResponse> UpdateContactAsync(Guid companyId, Guid contactId, UpdateContactRequest request)
@@ -1124,7 +1177,6 @@ public class DocumentService : IDocumentService
             contact.ContactType = InferContactType(request.TaxId ?? contact.TaxId, request.BranchCode ?? contact.BranchCode);
         if (request.IsCustomer.HasValue) contact.IsCustomer = request.IsCustomer.Value;
         if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
-        if (request.Address != null) contact.Address = request.Address;
         if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
         if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
         if (request.StreetName != null) contact.StreetName = request.StreetName;
@@ -1133,6 +1185,7 @@ public class DocumentService : IDocumentService
         if (request.Province != null) contact.Province = request.Province;
         if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
         if (request.CountryCode != null) contact.CountryCode = request.CountryCode;
+        contact.Address = request.Address ?? ComposeAddress(contact);
         if (request.Phone != null) contact.Phone = request.Phone;
         if (request.Email != null) contact.Email = request.Email;
         if (request.ContactPerson != null) contact.ContactPerson = request.ContactPerson;
@@ -1656,7 +1709,7 @@ public class DocumentService : IDocumentService
         // Validate double-entry balance per Thai accounting standards (TAS 1)
         var totalDebit = pendingLines.Sum(l => l.Debit);
         var totalCredit = pendingLines.Sum(l => l.Credit);
-        if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
+        if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
@@ -1726,9 +1779,13 @@ public class DocumentService : IDocumentService
         }
     }
 
-    /// <summary>Generate next journal entry number for a given prefix (SV/UV/RV/PV/JV) per month.</summary>
+    /// <summary>Generate next journal entry number for a given prefix (SV/UV/RV/PV/JV) per month.
+    /// Uses PostgreSQL advisory lock to prevent race conditions on concurrent inserts.</summary>
     private async Task<string> GetNextJournalEntryNumberAsync(Guid companyId, string prefix)
     {
+        var lockKey = HashCode.Combine(companyId, prefix, "je-seq");
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+
         var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
         var pattern = $"{prefix}-{yearMonth}-";
         var lastEntry = await _db.JournalEntries
@@ -1781,7 +1838,7 @@ public class DocumentService : IDocumentService
 
         var totalDebit = pendingLines.Sum(l => l.Debit);
         var totalCredit = pendingLines.Sum(l => l.Credit);
-        if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
+        if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีชำระเงินไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 

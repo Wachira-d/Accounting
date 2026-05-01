@@ -49,7 +49,7 @@
 
       <!-- Dashboard Stats -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
-        <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700" id="statTotal">-</div><div class="text-sm text-gray-500">ทั้งหมด</div></div>
+        <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700" id="statTotal">-</div><div class="text-sm text-gray-500" data-i18n="common.all">ทั้งหมด</div></div>
         <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--green)" id="statActive">-</div><div class="text-sm text-gray-500">Active</div></div>
         <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--primary)" id="statSyncToday">-</div><div class="text-sm text-gray-500">Sync วันนี้</div></div>
         <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--red)" id="statErrors">-</div><div class="text-sm text-gray-500">Errors วันนี้</div></div>
@@ -60,7 +60,7 @@
         <!-- Left: Integration List -->
         <div>
           <div id="intList" style="display:grid;gap:8px">
-            <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</div>
+            <div class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</div>
           </div>
         </div>
 
@@ -69,8 +69,8 @@
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
             <h3 style="margin:0;font-size:18px" id="detailName">-</h3>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-sm btn-outline" onclick="Page.openEditModal()">แก้ไข</button>
-              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteSelected()">ลบ</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openEditModal()" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteSelected()" data-i18n="common.delete">ลบ</button>
             </div>
           </div>
 
@@ -99,7 +99,7 @@
           <div class="detail-section">
             <h4>ข้อมูลการเชื่อมต่อ</h4>
             <div class="info-grid">
-              <span class="info-label">ประเภท</span><span class="info-value" id="detailType">-</span>
+              <span class="info-label" data-i18n="common.type">ประเภท</span><span class="info-value" id="detailType">-</span>
               <span class="info-label">เวอร์ชัน</span><span class="info-value" id="detailVersion">-</span>
               <span class="info-label">Base URL</span><span class="info-value" id="detailUrl" style="word-break:break-all">-</span>
               <span class="info-label">API Key</span>
@@ -144,7 +144,7 @@
         </div>
       </div>
       <div class="table-container">
-        <table class="table"><thead><tr><th>External Category</th><th>Code</th><th>คำอธิบาย</th><th>Dr. Account</th><th>Cr. Account</th><th>Auto Journal</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+        <table class="table"><thead><tr><th>External Category</th><th>Code</th><th data-i18n="common.description">คำอธิบาย</th><th>Dr. Account</th><th>Cr. Account</th><th>Auto Journal</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
         <tbody id="mappingBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">เลือก Integration ด้านบนก่อน</td></tr></tbody></table>
       </div>
     </div>
@@ -159,8 +159,8 @@
         </div>
       </div>
       <div class="table-container">
-        <table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>Reference</th><th>สถานะ</th><th>Error</th><th>ms</th></tr></thead>
-        <tbody id="logsBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody></table>
+        <table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>Reference</th><th data-i18n="common.status">สถานะ</th><th>Error</th><th>ms</th></tr></thead>
+        <tbody id="logsBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -191,8 +191,8 @@
           <div class="form-group"><label><input type="checkbox" id="fWebhookEnabled"> เปิดใช้งาน Webhook</label></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-outline" onclick="Page.closeModal('intModal')">ยกเลิก</button>
-          <button class="btn btn-primary" id="btnSaveInt" onclick="Page.saveIntegration()">บันทึก</button>
+          <button class="btn btn-outline" onclick="Page.closeModal('intModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="btnSaveInt" onclick="Page.saveIntegration()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -218,7 +218,7 @@
           <div class="form-group"><label class="form-label">External Category <span style="color:red">*</span></label><input type="text" id="mCategory" class="form-input" placeholder="เช่น ROOM_REVENUE, PRODUCT_SALES"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">External Code</label><input type="text" id="mCode" class="form-input" placeholder="รหัสจากระบบภายนอก"></div>
-            <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" id="mDesc" class="form-input" placeholder="คำอธิบาย"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" id="mDesc" class="form-input" placeholder="คำอธิบาย"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">Dr. Account</label><select id="mDebit" class="form-input"><option value="">-- เลือก --</option></select></div>
@@ -227,7 +227,7 @@
           <div class="form-group"><label class="form-label">คำอธิบายบันทึกบัญชี</label><input type="text" id="mJournalDesc" class="form-input" placeholder="Template รายละเอียดบัญชี"></div>
           <div class="form-group"><label><input type="checkbox" id="mAutoJournal" checked> สร้างบันทึกบัญชีอัตโนมัติ</label></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-outline" onclick="Page.closeModal('mappingModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveMapping()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-outline" onclick="Page.closeModal('mappingModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveMapping()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -235,13 +235,15 @@
     <div class="modal-overlay" id="templateModal">
       <div class="modal" style="max-width:600px">
         <div class="modal-header"><h3>เลือก Template ตามประเภทธุรกิจ</h3><button class="modal-close" onclick="Page.closeModal('templateModal')">&times;</button></div>
-        <div class="modal-body"><div id="templateList" style="display:grid;gap:12px">กำลังโหลด...</div></div>
+        <div class="modal-body"><div id="templateList" style="display:grid;gap:12px" data-i18n="common.loading">กำลังโหลด...</div></div>
       </div>
     </div>
   </div>
 
 <script src="/js/api.js"></script>
-<script src="/js/layout.js"></script>
+<script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
 <script>
 const Page = {
   api: null, integrations: [], fullIntegrations: [], accounts: [], selectedId: null, editMappingId: null, editMode: false, recentSyncs: [],
@@ -483,8 +485,8 @@ const Page = {
         <td class="text-sm">${m.creditAccountCode?m.creditAccountCode+' '+m.creditAccountName:'-'}</td>
         <td>${m.autoCreateJournal?'<span class="badge badge-success">Auto</span>':'-'}</td>
         <td>${m.isActive?'<span class="badge badge-success">Active</span>':'<span class="badge badge-gray">Inactive</span>'}</td>
-        <td><button class="btn btn-sm btn-outline" onclick="Page.editMapping('${m.id}','${m.integrationId}')">แก้ไข</button>
-        <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteMapping('${m.id}','${m.integrationId}')">ลบ</button></td>
+        <td><button class="btn btn-sm btn-outline" onclick="Page.editMapping('${m.id}','${m.integrationId}')" data-i18n="common.edit">แก้ไข</button>
+        <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteMapping('${m.id}','${m.integrationId}')" data-i18n="common.delete">ลบ</button></td>
       </tr>`).join('');
     } catch(e) { Layout.toast(e.message, 'error'); }
   },

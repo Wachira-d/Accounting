@@ -115,7 +115,7 @@ public static class ThaiAdminCodes
                     AddressCode: parts[4].Trim()));
             }
         }
-        catch { /* fall through with empty list — system uses fallback codes */ }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to load Thai admin codes CSV — system will use fallback codes: {ex.Message}"); }
         return list;
     }
 

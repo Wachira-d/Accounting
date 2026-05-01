@@ -21,8 +21,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อแผน</th><th>ประเภท</th><th>อัตรา</th><th>พนักงานที่ใช้</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="planBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>ชื่อแผน</th><th data-i18n="common.type">ประเภท</th><th>อัตรา</th><th>พนักงานที่ใช้</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="planBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -59,9 +59,9 @@
             <div class="form-group"><label class="form-label">ยอดขายขั้นต่ำ</label><input type="number" class="form-input" id="planMinSales" step="0.01"></div>
             <div class="form-group"><label class="form-label">เพดานคอมมิชชัน</label><input type="number" class="form-input" id="planCap" step="0.01"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-input" id="planDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-input" id="planDesc" rows="2"></textarea></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('planModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.savePlan()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('planModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.savePlan()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -73,12 +73,14 @@
           <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="assignEmployee"></select></div>
           <div class="form-group"><label class="form-label">วันที่เริ่ม *</label><input type="date" class="form-input" id="assignStart"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('assignModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.doAssign()">กำหนด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('assignModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.doAssign()">กำหนด</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
 const Page = {
@@ -112,7 +114,7 @@ const Page = {
         <td>${p.assignedCount || p.employeeCount || 0} คน</td>
         <td>${Layout.statusBadge(p.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="Page.editPlan('${p.id}')">แก้ไข</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editPlan('${p.id}')" data-i18n="common.edit">แก้ไข</button>
           <button class="btn btn-sm btn-primary" onclick="Page.openAssign('${p.id}')">กำหนด</button>
         </td>
       </tr>`).join('');
@@ -168,9 +170,9 @@ const Page = {
       await api.calculateCommissions(y, m);
       const res = await api.getCommissionCalcs(y, m);
       const items = res.data?.items || res.data || [];
-      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ยอดขาย</th><th class="text-right">อัตรา</th><th class="text-right">คอมมิชชัน</th><th>สถานะ</th></tr></thead>
+      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ยอดขาย</th><th class="text-right">อัตรา</th><th class="text-right">คอมมิชชัน</th><th data-i18n="common.status">สถานะ</th></tr></thead>
       <tbody>${items.map(c => `<tr><td class="font-medium">${c.employeeName||'-'}</td><td class="text-right">${Layout.money(c.totalSales||c.salesAmount)}</td><td class="text-right">${c.rate||c.percentage||'-'}%</td><td class="text-right text-primary font-medium">${Layout.money(c.commissionAmount||c.amount)}</td><td>${Layout.statusBadge(c.status||'Pending')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูลคอมมิชชัน</p>';
-    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 
   async approve() {

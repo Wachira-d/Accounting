@@ -28,8 +28,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>วันที่</th><th>โปรเจค/ลูกค้า</th><th>รายละเอียด</th><th class="text-right">ชั่วโมง</th><th class="text-right">อัตรา</th><th class="text-right">ยอด</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody id="entryBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th data-i18n="common.date">วันที่</th><th>โปรเจค/ลูกค้า</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">ชั่วโมง</th><th class="text-right">อัตรา</th><th class="text-right">ยอด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="entryBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -41,8 +41,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อ</th><th>ประเภท</th><th class="text-right">อัตรา/ชม.</th><th>จัดการ</th></tr></thead>
-          <tbody id="rateBody"><tr><td colspan="4" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th data-i18n="common.name">ชื่อ</th><th data-i18n="common.type">ประเภท</th><th class="text-right">อัตรา/ชม.</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="rateBody"><tr><td colspan="4" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -54,14 +54,14 @@
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px" id="summaryCards"></div>
       <div class="card" style="padding:24px">
         <h3 style="margin-bottom:16px">Utilization Rate</h3>
-        <div id="utilizationContent"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
+        <div id="utilizationContent"><p class="text-gray-400 text-center" data-i18n="common.loading">กำลังโหลด...</p></div>
       </div>
       <div class="card" style="padding:24px;margin-top:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
           <h3>รายการพร้อมออกบิล</h3>
           <button class="btn btn-primary" onclick="Page.generateInvoice()">สร้างใบแจ้งหนี้</button>
         </div>
-        <div id="billableContent"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
+        <div id="billableContent"><p class="text-gray-400 text-center" data-i18n="common.loading">กำลังโหลด...</p></div>
       </div>
     </div>
 
@@ -81,7 +81,7 @@
           <div class="form-group"><label class="form-label">รายละเอียดงาน *</label><textarea class="form-input" id="eDesc" rows="2"></textarea></div>
           <div class="form-group"><label class="form-label"><input type="checkbox" id="eBillable" checked> Billable (เรียกเก็บได้)</label></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('entryModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEntry()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('entryModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEntry()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -92,18 +92,20 @@
         <div class="modal-body">
           <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="rName" placeholder="เช่น Senior Consultant"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภท</label>
+            <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
               <select class="form-select" id="rType"><option value="Standard">มาตรฐาน</option><option value="Premium">พรีเมียม</option><option value="Discount">ส่วนลด</option></select>
             </div>
             <div class="form-group"><label class="form-label">อัตรา/ชม. (บาท) *</label><input type="number" class="form-input" id="rRate" step="0.01"></div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
 const Page = {
@@ -162,7 +164,7 @@ const Page = {
       }
       if (cRes.status === 'fulfilled') {
         const contacts = cRes.value.data?.items || cRes.value.data || [];
-        document.getElementById('eContact').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + contacts.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        document.getElementById('eContact').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
       }
     } catch (err) { /* ignore */ }
     Layout.openModal('entryModal');
@@ -185,7 +187,7 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const tbody = document.getElementById('rateBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-400" style="padding:40px">ยังไม่มีอัตรา</td></tr>'; return; }
-      tbody.innerHTML = items.map(r => `<tr><td class="font-medium">${r.name||'-'}</td><td>${r.type||r.rateType||'Standard'}</td><td class="text-right">${Layout.money(r.rate||r.hourlyRate)}/ชม.</td><td><button class="btn btn-sm btn-secondary">แก้ไข</button></td></tr>`).join('');
+      tbody.innerHTML = items.map(r => `<tr><td class="font-medium">${r.name||'-'}</td><td>${r.type||r.rateType||'Standard'}</td><td class="text-right">${Layout.money(r.rate||r.hourlyRate)}/ชม.</td><td><button class="btn btn-sm btn-secondary" data-i18n="common.edit">แก้ไข</button></td></tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
@@ -213,7 +215,7 @@ const Page = {
       if (utilRes.status === 'fulfilled') {
         const items = utilRes.value.data?.items || utilRes.value.data || [];
         document.getElementById('utilizationContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ชม.ทั้งหมด</th><th class="text-right">Billable</th><th class="text-right">Utilization</th></tr></thead>
-        <tbody>${items.map(u => `<tr><td>${u.employeeName||u.name||'-'}</td><td class="text-right">${u.totalHours||0}</td><td class="text-right">${u.billableHours||0}</td><td class="text-right font-medium">${u.utilizationRate||0}%</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูล</p>';
+        <tbody>${items.map(u => `<tr><td>${u.employeeName||u.name||'-'}</td><td class="text-right">${u.totalHours||0}</td><td class="text-right">${u.billableHours||0}</td><td class="text-right font-medium">${u.utilizationRate||0}%</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
       }
     } catch (err) { /* ignore */ }
   },

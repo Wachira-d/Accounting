@@ -3,11 +3,11 @@ namespace Accounting.Models.DTOs.RevenueRecognition;
 public record CreateRevenueContractRequest(
     string ContractNumber, string Name, Guid ContactId,
     DateTime ContractDate, DateTime StartDate, DateTime EndDate,
-    decimal TotalContractValue);
+    decimal TotalContractValue, Guid? ProjectId = null);
 
 public record UpdateRevenueContractRequest(
     string? Name, DateTime? EndDate,
-    decimal? TotalContractValue, string? Status);
+    decimal? TotalContractValue, string? Status, Guid? ProjectId = null);
 
 public record RevenueContractResponse(
     Guid Id, string ContractNumber, string Name,
@@ -15,7 +15,8 @@ public record RevenueContractResponse(
     DateTime StartDate, DateTime EndDate,
     decimal TotalContractValue, string Status,
     decimal RecognizedRevenue, decimal DeferredRevenue,
-    List<PerformanceObligationResponse> Obligations);
+    List<PerformanceObligationResponse> Obligations,
+    Guid? ProjectId = null, string? ProjectName = null);
 
 public record CreateObligationRequest(
     string Name, string Description,

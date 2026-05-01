@@ -74,7 +74,7 @@ public partial class BankService
                 var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!);
                 if (ids != null) foreach (var id in ids) { matchedPaymentIds.Add(id); matchedJeIds.Add(id); }
             }
-            catch { }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Malformed MatchedEntryIdsJson in bank transaction {TransactionId}", t.Id); }
         }
 
         // Twin exclusion: Payment ↔ auto-generated JE (RV-xxxx entries)

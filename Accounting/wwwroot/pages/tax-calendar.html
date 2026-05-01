@@ -29,7 +29,7 @@
         <div class="text-2xl font-bold text-success" id="filedCount">0</div>
       </div>
       <div class="card" style="padding:20px;border-left:4px solid var(--gray-300)">
-        <div class="text-xs text-gray-500">ทั้งหมด</div>
+        <div class="text-xs text-gray-500" data-i18n="common.all">ทั้งหมด</div>
         <div class="text-2xl font-bold" id="totalCount">0</div>
       </div>
     </div>
@@ -55,8 +55,8 @@
     <!-- Events Table -->
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>แบบภาษี</th><th>รายละเอียด</th><th>กำหนดยื่น</th><th>วันที่ยื่น</th><th class="text-right">ยอดภาษี</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>แบบภาษี</th><th data-i18n="common.detail">รายละเอียด</th><th>กำหนดยื่น</th><th>วันที่ยื่น</th><th class="text-right">ยอดภาษี</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -66,7 +66,7 @@
         <div class="modal-header"><h3 class="modal-title" id="eventTitle">อัพเดตรายการภาษี</h3><button class="modal-close" onclick="Layout.closeModal('eventModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="eventId">
-          <div class="form-group"><label class="form-label">สถานะ</label>
+          <div class="form-group"><label class="form-label" data-i18n="common.status">สถานะ</label>
             <select class="form-select" id="eventStatus">
               <option value="Pending">รอยื่น</option>
               <option value="Filed">ยื่นแล้ว</option>
@@ -75,14 +75,16 @@
           <div class="form-group"><label class="form-label">วันที่ยื่น</label><input type="date" class="form-input" id="eventFiledDate"></div>
           <div class="form-group"><label class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="eventRef" placeholder="เลขอ้างอิงการยื่น"></div>
           <div class="form-group"><label class="form-label">ยอดภาษี</label><input type="number" class="form-input" id="eventAmount" step="0.01"></div>
-          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-input" id="eventNotes" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><textarea class="form-input" id="eventNotes" rows="2"></textarea></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('eventModal')">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEvent()">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('eventModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEvent()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
 const Page = {

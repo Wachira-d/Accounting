@@ -37,7 +37,7 @@
           <div id="templateLink" style="margin-bottom:16px"></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary" onclick="Page.validateImport()">ตรวจสอบข้อมูล</button>
-            <button class="btn btn-primary" onclick="Page.doImport()">นำเข้า</button>
+            <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
           </div>
         </div>
 
@@ -79,7 +79,7 @@
             <option value="xlsx">Excel (XLSX)</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="Page.doExport()">ส่งออก</button>
+        <button class="btn btn-primary" onclick="Page.doExport()" data-i18n="common.export">ส่งออก</button>
       </div>
     </div>
 
@@ -113,6 +113,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
 const Page = {
@@ -258,7 +260,7 @@ const Page = {
         <div class="text-sm"><strong>แถวทั้งหมด:</strong> ${d.totalRows || 0}</div>
         <div class="text-sm"><strong>ถูกต้อง:</strong> ${d.validRows || 0}</div>
         ${d.errors && d.errors.length ? `<div style="margin-top:12px"><strong class="text-sm">ข้อผิดพลาด:</strong><ul style="margin:8px 0;padding-left:20px">${d.errors.slice(0,10).map(e => `<li class="text-sm text-danger">${e.row ? 'แถว '+e.row+': ' : ''}${e.message || e}</li>`).join('')}</ul>${d.errors.length > 10 ? `<p class="text-sm text-gray-500">...และอีก ${d.errors.length-10} ข้อผิดพลาด</p>` : ''}</div>` : ''}`;
-    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 
   async doImport() {
@@ -283,7 +285,7 @@ const Page = {
         <div class="text-sm"><strong>ข้ามไป:</strong> ${d.skippedCount || 0} รายการ</div>
         ${d.errors && d.errors.length ? `<div class="text-sm text-danger" style="margin-top:8px"><strong>ข้อผิดพลาด:</strong> ${d.errors.length} รายการ</div>` : ''}`;
       Layout.toast('นำเข้าข้อมูลสำเร็จ');
-    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 
   async doExport() {
@@ -335,7 +337,7 @@ const Page = {
           <td><span class="badge ${(m.confidence||0)>0.7?'badge-success':'badge-warning'}">${Math.round((m.confidence||0)*100)}%</span></td>
         </tr>`).join('')}</tbody></table></div>
         <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button></div>`;
-    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 
   async confirmSmartImport() {

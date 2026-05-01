@@ -25,8 +25,8 @@
       <div class="grid grid-4 gap-4" style="margin-bottom:16px">
         <div class="card"><div class="text-gray-500 text-xs">รายการวันนี้</div><div class="text-2xl font-bold" id="statToday">-</div></div>
         <div class="card"><div class="text-gray-500 text-xs">สร้าง</div><div class="text-2xl font-bold text-success" id="statCreate">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">แก้ไข</div><div class="text-2xl font-bold text-warning" id="statUpdate">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ลบ</div><div class="text-2xl font-bold text-danger" id="statDelete">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.edit">แก้ไข</div><div class="text-2xl font-bold text-warning" id="statUpdate">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.delete">ลบ</div><div class="text-2xl font-bold text-danger" id="statDelete">-</div></div>
       </div>
 
       <div class="toolbar">
@@ -34,13 +34,13 @@
         <select class="filter-select" id="actionFilter" onchange="Page.load()">
           <option value="">ทุกการกระทำ</option>
           <option value="Create">สร้าง</option>
-          <option value="Update">แก้ไข</option>
-          <option value="Delete">ลบ</option>
+          <option value="Update" data-i18n="common.edit">แก้ไข</option>
+          <option value="Delete" data-i18n="common.delete">ลบ</option>
           <option value="Login">เข้าสู่ระบบ</option>
           <option value="Approve">อนุมัติ</option>
           <option value="Reject">ปฏิเสธ</option>
-          <option value="Export">ส่งออก</option>
-          <option value="Print">พิมพ์</option>
+          <option value="Export" data-i18n="common.export">ส่งออก</option>
+          <option value="Print" data-i18n="common.print">พิมพ์</option>
         </select>
         <select class="filter-select" id="entityFilter" onchange="Page.load()">
           <option value="">ทุกประเภท</option>
@@ -59,8 +59,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>ประเภท</th><th>รหัส</th><th>IP</th><th>จัดการ</th></tr></thead>
-          <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th data-i18n="common.type">ประเภท</th><th>รหัส</th><th>IP</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
       <div id="pagination"></div>
@@ -86,7 +86,7 @@
         <div class="modal-body" id="detailContent"></div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Page.viewEntityHistory()">ดูประวัติทั้งหมด</button>
-          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
         </div>
       </div>
     </div>
@@ -96,12 +96,14 @@
       <div class="modal" style="max-width:700px">
         <div class="modal-header"><h3 class="modal-title" id="historyTitle">ประวัติเอนทิตี้</h3><button class="modal-close" onclick="Layout.closeModal('historyModal')">&times;</button></div>
         <div class="modal-body" id="historyContent"></div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('historyModal')">ปิด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('historyModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -171,7 +173,7 @@
           <td>${a.entityType || '-'}</td>
           <td class="text-xs text-gray-500">${a.entityId ? a.entityId.substring(0,8) + '...' : '-'}</td>
           <td class="text-xs text-gray-400">${a.ipAddress || '-'}</td>
-          <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')">ดู</button></td>
+          <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button></td>
         </tr>`).join('');
       },
       goPage(p) { Page.page = p; Page.load(); },
@@ -183,12 +185,12 @@
             <div><span class="text-gray-500 text-xs">เวลา</span><div class="font-medium">${new Date(log.timestamp).toLocaleString('th-TH')}</div></div>
             <div><span class="text-gray-500 text-xs">ผู้ใช้</span><div class="font-medium">${log.userEmail || '-'}</div></div>
             <div><span class="text-gray-500 text-xs">การกระทำ</span><div>${this.actionMap[log.action] || log.action}</div></div>
-            <div><span class="text-gray-500 text-xs">ประเภท</span><div>${log.entityType || '-'}</div></div>
+            <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div>${log.entityType || '-'}</div></div>
             <div><span class="text-gray-500 text-xs">รหัส</span><div class="text-xs">${log.entityId || '-'}</div></div>
             <div><span class="text-gray-500 text-xs">IP</span><div class="text-xs">${log.ipAddress || '-'}</div></div>
           </div>`;
         if (log.description) {
-          html += `<div style="margin-bottom:12px"><span class="text-gray-500 text-xs">คำอธิบาย</span><div>${log.description}</div></div>`;
+          html += `<div style="margin-bottom:12px"><span class="text-gray-500 text-xs" data-i18n="common.description">คำอธิบาย</span><div>${log.description}</div></div>`;
         }
         if (log.oldValues || log.newValues) {
           html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">การเปลี่ยนแปลง</h4>';
@@ -221,7 +223,7 @@
           if (!items.length) {
             document.getElementById('historyContent').innerHTML = '<div class="text-center text-gray-400" style="padding:40px">ไม่พบประวัติ</div>';
           } else {
-            let html = '<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>คำอธิบาย</th></tr></thead><tbody>';
+            let html = '<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead><tbody>';
             html += items.map(h => `<tr>
               <td class="text-xs">${new Date(h.timestamp).toLocaleString('th-TH')}</td>
               <td>${h.userEmail || '-'}</td>

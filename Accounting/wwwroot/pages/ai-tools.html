@@ -28,12 +28,12 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
         <div class="card" style="padding:24px">
           <h3 style="margin-bottom:16px">กฎการจัดหมวดหมู่</h3>
-          <div id="rulesContent"><p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p></div>
+          <div id="rulesContent"><p class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</p></div>
         </div>
         <div class="card" style="padding:24px">
           <h3 style="margin-bottom:16px">จัดหมวดหมู่รายการเดี่ยว</h3>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภท</label>
+            <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
               <select class="form-select" id="catEntityType"><option value="Transaction">ธุรกรรม</option><option value="Document">เอกสาร</option><option value="Expense">ค่าใช้จ่าย</option></select>
             </div>
             <div class="form-group"><label class="form-label">ID</label><input type="text" class="form-input" id="catEntityId" placeholder="Entity ID"></div>
@@ -52,7 +52,7 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ประเภท</th><th>รายการ</th><th>รายละเอียด</th><th>ความรุนแรง</th><th>วันที่</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th data-i18n="common.type">ประเภท</th><th data-i18n="common.items">รายการ</th><th data-i18n="common.detail">รายละเอียด</th><th>ความรุนแรง</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
           <tbody id="anomalyBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กดปุ่มสแกนเพื่อตรวจจับ</td></tr></tbody>
         </table>
       </div>
@@ -75,7 +75,7 @@
         </div>
         <div class="card" style="padding:24px">
           <h3 style="margin-bottom:16px">ผลการสแกนล่าสุด</h3>
-          <div id="ocrResults"><p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p></div>
+          <div id="ocrResults"><p class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</p></div>
         </div>
       </div>
     </div>
@@ -86,11 +86,13 @@
         <div><h2 class="page-title">พยากรณ์กระแสเงินสด</h2><p class="page-subtitle">AI พยากรณ์กระแสเงินสดล่วงหน้าจากข้อมูลในอดีต</p></div>
         <button class="btn btn-primary" onclick="Page.createForecast()">สร้างการพยากรณ์ใหม่</button>
       </div>
-      <div id="forecastContent"><p class="text-gray-400 text-center" style="padding:40px">กำลังโหลด...</p></div>
+      <div id="forecastContent"><p class="text-gray-400 text-center" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</p></div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
 const Page = {
@@ -118,7 +120,7 @@ const Page = {
         <div class="text-sm font-medium">${r.pattern || r.name || '-'}</div>
         <div class="text-xs text-gray-500">${r.category || r.accountName || '-'} | ความแม่นยำ: ${r.confidence ? Math.round(r.confidence*100)+'%' : '-'}</div>
       </div>`).join('')}</div>` : '<p class="text-gray-400 text-center">ยังไม่มีกฎ กดปุ่ม "เรียนรู้จากประวัติ" เพื่อสร้างกฎอัตโนมัติ</p>';
-    } catch (err) { document.getElementById('rulesContent').innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+    } catch (err) { document.getElementById('rulesContent').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
   },
 
   async learnRules() {
@@ -149,7 +151,7 @@ const Page = {
         <div class="text-sm"><strong>ความมั่นใจ:</strong> ${d.confidence ? Math.round(d.confidence*100)+'%' : '-'}</div>
         <button class="btn btn-sm btn-success" style="margin-top:8px" onclick="Page.acceptCategory('${d.resultId || d.id}')">ยอมรับ</button>
       </div>`;
-    } catch (err) { document.getElementById('catResult').innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+    } catch (err) { document.getElementById('catResult').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
   },
 
   async acceptCategory(id) {
@@ -203,7 +205,7 @@ const Page = {
         ${r.extractedData ? `<div class="text-xs" style="margin-top:4px">ยอด: ${Layout.money(r.extractedData.totalAmount || r.extractedData.amount)} | ผู้ขาย: ${r.extractedData.vendorName || '-'}</div>` : ''}
         ${r.status === 'Completed' ? `<button class="btn btn-sm btn-primary" style="margin-top:4px" onclick="Page.createDocFromOcr('${r.id}')">สร้างเอกสาร</button>` : ''}
       </div>`).join('')}</div>`;
-    } catch (err) { document.getElementById('ocrResults').innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+    } catch (err) { document.getElementById('ocrResults').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
   },
 
   async uploadAndScan() {
@@ -232,7 +234,7 @@ const Page = {
         </div>`;
         this.loadOcrResults();
       }
-    } catch (err) { result.innerHTML = `<p class="text-danger text-sm">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
   },
 
   async createDocFromOcr(id) {
@@ -261,7 +263,7 @@ const Page = {
           <td class="text-right font-medium">${Layout.money((p.predictedInflow||p.income||0)-(p.predictedOutflow||p.expense||0))}</td>
         </tr>`).join('')}</tbody></table></div>` : ''}
       </div>`).join('');
-    } catch (err) { document.getElementById('forecastContent').innerHTML = `<div class="card" style="padding:24px"><p class="text-danger text-center">${err.message}</p></div>`; }
+    } catch (err) { document.getElementById('forecastContent').innerHTML = `<div class="card" style="padding:24px"><p class="text-danger text-center">${Layout.esc(err.message)}</p></div>`; }
   },
 
   async createForecast() {

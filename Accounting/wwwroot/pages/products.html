@@ -29,8 +29,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>รหัส</th><th>ชื่อ</th><th>ประเภท</th><th>หมวด</th><th>หน่วย</th><th class="text-right">ราคาขาย</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th data-i18n="common.type">ประเภท</th><th>หมวด</th><th>หน่วย</th><th class="text-right">ราคาขาย</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -70,11 +70,11 @@
             <div class="form-group form-checkbox"><input type="checkbox" id="fTrackStock" checked><label for="fTrackStock">ติดตามสต็อก</label></div>
             <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ</label><input type="number" class="form-input" id="fMinStock" value="0"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -85,7 +85,7 @@
         <div class="modal-header"><h3 class="modal-title" id="dtTitle">รายละเอียดสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body" id="dtBody"></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
           <button class="btn btn-ghost" onclick="Page.openAdjustStock()">ปรับสต็อก</button>
           <button class="btn btn-ghost" onclick="Page.openAddConversion()">เพิ่มหน่วยแปลง</button>
         </div>
@@ -97,17 +97,17 @@
       <div class="modal" style="max-width:450px">
         <div class="modal-header"><h3 class="modal-title">ปรับสต็อก</h3><button class="modal-close" onclick="Layout.closeModal('adjustModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">ประเภท</label>
+          <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
             <select class="form-select" id="adjType"><option value="IN">รับเข้า (IN)</option><option value="OUT">จ่ายออก (OUT)</option><option value="ADJUST">ปรับยอด (ADJUST)</option></select>
           </div>
           <div class="form-group"><label class="form-label">จำนวน *</label><input type="number" class="form-input" id="adjQty" step="0.01"></div>
           <div class="form-group"><label class="form-label">ต้นทุน/หน่วย</label><input type="number" class="form-input" id="adjCost" step="0.01"></div>
-          <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="adjRef"></div>
-          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="adjNote"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="adjRef"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="adjNote"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveAdjustStock()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveAdjustStock()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -130,8 +130,8 @@
           <div class="form-group"><label class="form-label">Barcode หน่วยนี้</label><input type="text" class="form-input" id="cvBarcode"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('convModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveConversion()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('convModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveConversion()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -144,11 +144,11 @@
           <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
             <input type="text" class="form-input" id="catCode" placeholder="รหัส" style="width:100px">
             <input type="text" class="form-input" id="catName" placeholder="ชื่อหมวดหมู่" style="flex:1">
-            <button class="btn btn-primary btn-sm" onclick="Page.saveCategory()">เพิ่ม</button>
+            <button class="btn btn-primary btn-sm" onclick="Page.saveCategory()" data-i18n="common.add">เพิ่ม</button>
           </div>
           <div id="catList"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('catModal')">ปิด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('catModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
 
@@ -166,12 +166,14 @@
       <div class="modal" style="max-width:900px">
         <div class="modal-header"><h3 class="modal-title">มูลค่าสินค้าคงเหลือ (Weighted Average)</h3><button class="modal-close" onclick="Layout.closeModal('valModal')">&times;</button></div>
         <div class="modal-body" id="valBody"></div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('valModal')">ปิด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('valModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const typeMap = {Product:'สินค้า',Service:'บริการ',NonStock:'อื่นๆ'};
@@ -193,7 +195,7 @@
           const res = await api.getProducts(q);
           const data = res.data; const items = data?.items || data || [];
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           items.forEach(p => Page._cache[p.id] = p);
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.code}</td>
@@ -205,8 +207,8 @@
             <td class="text-right">${Layout.money(p.costPrice)}</td>
             <td class="text-right ${(p.currentStock<=p.minimumStock&&p.trackStock)?'text-danger font-semibold':''}">${p.trackStock?p.currentStock:'-'}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')">ดู</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>
             </td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages||1, 'Page.goPage');
@@ -257,7 +259,7 @@
           document.getElementById('dtTitle').textContent=`${p.code} - ${p.name}`;
           document.getElementById('dtBody').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
-              <div><span class="text-xs text-gray-500">ประเภท</span><div>${typeMap[p.productType]}</div></div>
+              <div><span class="text-xs text-gray-500" data-i18n="common.type">ประเภท</span><div>${typeMap[p.productType]}</div></div>
               <div><span class="text-xs text-gray-500">หน่วยหลัก</span><div class="font-medium">${p.unit}</div></div>
               <div><span class="text-xs text-gray-500">หมวดหมู่</span><div>${p.category||'-'}</div></div>
             </div>
@@ -269,10 +271,10 @@
             </div>
             ${ucs.length ? `<h4 style="margin-bottom:8px">การแปลงหน่วย</h4>
             <div class="table-container"><table class="table" style="margin-bottom:16px"><thead><tr><th>จากหน่วย</th><th>เป็นหน่วย</th><th class="text-right">อัตรา</th><th class="text-right">ราคาขาย</th><th class="text-right">ต้นทุน</th><th></th></tr></thead>
-            <tbody>${ucs.map(u=>`<tr><td>${u.fromUnit}</td><td>${u.toUnit}</td><td class="text-right">${u.conversionRate}</td><td class="text-right">${u.sellingPrice!=null?Layout.money(u.sellingPrice):'-'}</td><td class="text-right">${u.costPrice!=null?Layout.money(u.costPrice):'-'}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteConversion('${u.id}')">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+            <tbody>${ucs.map(u=>`<tr><td>${u.fromUnit}</td><td>${u.toUnit}</td><td class="text-right">${u.conversionRate}</td><td class="text-right">${u.sellingPrice!=null?Layout.money(u.sellingPrice):'-'}</td><td class="text-right">${u.costPrice!=null?Layout.money(u.costPrice):'-'}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteConversion('${u.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : ''}
             <h4 style="margin-bottom:8px">ประวัติเคลื่อนไหวสต็อก (ล่าสุด)</h4>
-            ${mvs.length ? `<div style="max-height:250px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>วันที่</th><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th>อ้างอิง</th></tr></thead>
-            <tbody>${mvs.slice(0,30).map(m=>`<tr><td>${Layout.date(m.movementDate)}</td><td>${m.movementType}</td><td class="text-right ${m.movementType==='OUT'?'text-danger':'text-success'}">${m.quantity}</td><td class="text-right">${Layout.money(m.unitCost)}</td><td class="text-right font-semibold">${m.balanceAfter}</td><td>${m.reference||'-'}</td></tr>`).join('')}</tbody></table></div></div>` : '<div class="text-center text-gray-400">ไม่มีรายการ</div>'}`;
+            ${mvs.length ? `<div style="max-height:250px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th data-i18n="common.reference">อ้างอิง</th></tr></thead>
+            <tbody>${mvs.slice(0,30).map(m=>`<tr><td>${Layout.date(m.movementDate)}</td><td>${m.movementType}</td><td class="text-right ${m.movementType==='OUT'?'text-danger':'text-success'}">${m.quantity}</td><td class="text-right">${Layout.money(m.unitCost)}</td><td class="text-right font-semibold">${m.balanceAfter}</td><td>${m.reference||'-'}</td></tr>`).join('')}</tbody></table></div></div>` : '<div class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</div>'}`;
           Layout.openModal('detailModal');
         } catch(e) { Layout.toast(e.message,'error'); }
       },
@@ -319,8 +321,8 @@
         try {
           const res=await api.getProductCategories();
           const cats=res.data?.items||res.data||[];
-          document.getElementById('catList').innerHTML = cats.length ? `<div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th class="text-right">สินค้า</th><th></th></tr></thead>
-          <tbody>${cats.map(c=>`<tr><td class="font-medium">${c.code}</td><td>${c.name}</td><td class="text-right">${c.productCount}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteCategory('${c.id}')">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ยังไม่มีหมวดหมู่</div>';
+          document.getElementById('catList').innerHTML = cats.length ? `<div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th class="text-right">สินค้า</th><th></th></tr></thead>
+          <tbody>${cats.map(c=>`<tr><td class="font-medium">${c.code}</td><td>${c.name}</td><td class="text-right">${c.productCount}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteCategory('${c.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ยังไม่มีหมวดหมู่</div>';
           Layout.openModal('catModal');
         } catch(e) { Layout.toast(e.message,'error'); }
       },
@@ -347,9 +349,9 @@
           document.getElementById('scTitle').textContent='ตรวจนับสต็อก';
           document.getElementById('scBody').innerHTML = `
             <button class="btn btn-primary btn-sm" style="margin-bottom:12px" onclick="Page.createStockCount()">+ สร้างใบตรวจนับ</button>
-            ${counts.length ? `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่</th><th>สถานะ</th><th class="text-right">รายการ</th><th class="text-right">ผลต่างรวม</th><th></th></tr></thead>
-            <tbody>${counts.map(c=>`<tr><td class="font-medium">${c.countNumber}</td><td>${Layout.date(c.countDate)}</td><td>${Layout.statusBadge(c.status)}</td><td class="text-right">${c.lineCount}</td><td class="text-right ${c.totalVariance>0?'text-warning':''}">${c.totalVariance.toFixed(2)}</td><td><button class="btn btn-sm btn-ghost" onclick="Page.openStockCount('${c.id}')">ดู</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ยังไม่มีใบตรวจนับ</div>'}`;
-          document.getElementById('scFooter').innerHTML='<button class="btn btn-secondary" onclick="Layout.closeModal(\'scModal\')">ปิด</button>';
+            ${counts.length ? `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.status">สถานะ</th><th class="text-right" data-i18n="common.items">รายการ</th><th class="text-right">ผลต่างรวม</th><th></th></tr></thead>
+            <tbody>${counts.map(c=>`<tr><td class="font-medium">${c.countNumber}</td><td>${Layout.date(c.countDate)}</td><td>${Layout.statusBadge(c.status)}</td><td class="text-right">${c.lineCount}</td><td class="text-right ${c.totalVariance>0?'text-warning':''}">${c.totalVariance.toFixed(2)}</td><td><button class="btn btn-sm btn-ghost" onclick="Page.openStockCount('${c.id}')" data-i18n="common.view">ดู</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ยังไม่มีใบตรวจนับ</div>'}`;
+          document.getElementById('scFooter').innerHTML='<button class="btn btn-secondary" onclick="Layout.closeModal(\'scModal\')" data-i18n="common.close">ปิด</button>';
           Layout.openModal('scModal');
         } catch(e) { Layout.toast(e.message,'error'); }
       },
@@ -369,7 +371,7 @@
           const lines=c.lines||[];
           document.getElementById('scBody').innerHTML = `
             <div style="margin-bottom:12px"><span class="text-sm text-gray-500">วันที่: ${Layout.date(c.countDate)}</span> | <span class="text-sm">${Layout.statusBadge(c.status)}</span></div>
-            <div style="max-height:400px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>หน่วย</th><th class="text-right">ระบบ</th><th class="text-right">นับได้</th><th class="text-right">ผลต่าง</th></tr></thead>
+            <div style="max-height:400px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หน่วย</th><th class="text-right">ระบบ</th><th class="text-right">นับได้</th><th class="text-right">ผลต่าง</th></tr></thead>
             <tbody>${lines.map(l=>`<tr><td>${l.productCode}</td><td>${l.productName}</td><td>${l.unit}</td><td class="text-right">${l.systemQty}</td><td class="text-right">${c.status!=='Completed' ? `<input type="number" class="form-input" style="width:80px;text-align:right;padding:2px 6px" value="${l.countedQty}" data-pid="${l.productId}" onchange="Page.updateCountLine(this)">` : l.countedQty}</td><td class="text-right ${l.variance!==0?'text-danger font-semibold':''}">${l.variance}</td></tr>`).join('')}</tbody></table></div></div>`;
           let footer='<button class="btn btn-secondary" onclick="Page.showStockCount()">กลับ</button>';
           if(c.status!=='Completed'&&c.status!=='Cancelled') {
@@ -405,7 +407,7 @@
               <div class="kpi-card"><div class="kpi-label">จำนวนสินค้า</div><div class="kpi-value">${d.totalProducts} รายการ</div></div>
               <div class="kpi-card"><div class="kpi-label">วิธีคำนวณ</div><div class="kpi-value">Weighted Average</div></div>
             </div>
-            ${d.items?.length ? `<div style="max-height:400px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>หมวด</th><th>หน่วย</th><th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th><th class="text-right">มูลค่า</th></tr></thead>
+            ${d.items?.length ? `<div style="max-height:400px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หมวด</th><th>หน่วย</th><th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th><th class="text-right">มูลค่า</th></tr></thead>
             <tbody>${d.items.map(i=>`<tr><td class="font-medium">${i.productCode}</td><td>${i.productName}</td><td>${i.category||'-'}</td><td>${i.unit}</td><td class="text-right">${i.currentStock}</td><td class="text-right">${Layout.money(i.averageCost)}</td><td class="text-right font-semibold">${Layout.money(i.totalValue)}</td></tr>`).join('')}</tbody>
             <tfoot><tr style="background:var(--gray-100)"><td colspan="6" class="font-bold">รวมทั้งสิ้น</td><td class="text-right font-bold">${Layout.money(d.totalValue)}</td></tr></tfoot></table></div></div>` : '<div class="text-center text-gray-400">ไม่มีสินค้าคงเหลือ</div>'}`;
           Layout.openModal('valModal');

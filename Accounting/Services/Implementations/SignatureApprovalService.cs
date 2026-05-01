@@ -382,7 +382,7 @@ public class SignatureApprovalService : ISignatureApprovalService
                     convertedDocType = targetType.Value.ToString();
                 }
             }
-            catch { /* conversion is best-effort */ }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Best-effort document conversion failed for document {documentId}: {ex.Message}"); }
         }
 
         return new QuotationApprovalResult(
@@ -444,7 +444,7 @@ public class SignatureApprovalService : ISignatureApprovalService
                 if (targetType.HasValue)
                     await _docService.ConvertDocumentAsync(companyId, documentId, targetType.Value, userId);
             }
-            catch { /* best-effort */ }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Best-effort post-approval document conversion failed for document {documentId}: {ex.Message}"); }
         }
     }
 

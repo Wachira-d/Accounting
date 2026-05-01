@@ -126,10 +126,10 @@
       <div class="table-container" style="margin-top:16px">
         <table class="data-table">
           <thead>
-            <tr><th>วันที่</th><th>รายละเอียด</th><th>สถานะ</th><th style="text-align:right">จำนวนรายการ</th><th style="text-align:right">มูลค่ารวม</th><th>บันทึกบัญชี</th><th>วันที่สร้าง</th><th></th></tr>
+            <tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.detail">รายละเอียด</th><th data-i18n="common.status">สถานะ</th><th style="text-align:right">จำนวนรายการ</th><th style="text-align:right">มูลค่ารวม</th><th>บันทึกบัญชี</th><th>วันที่สร้าง</th><th></th></tr>
           </thead>
           <tbody id="snapshotsBody">
-            <tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr>
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8" data-i18n="common.loading">กำลังโหลด...</td></tr>
           </tbody>
         </table>
       </div>
@@ -140,13 +140,13 @@
       <div class="modal-content" style="max-width:500px">
         <h3 class="modal-title">สร้าง Inventory Snapshot</h3>
         <div class="form-group"><label class="form-label">วันที่สิ้นงวด</label><input type="date" class="form-input" id="snapDate"></div>
-        <div class="form-group"><label class="form-label">รายละเอียด</label><input type="text" class="form-input" id="snapDesc" placeholder="เช่น ปิดงวดประจำปี 2567"></div>
+        <div class="form-group"><label class="form-label" data-i18n="common.detail">รายละเอียด</label><input type="text" class="form-input" id="snapDesc" placeholder="เช่น ปิดงวดประจำปี 2567"></div>
         <div class="form-group form-checkbox">
           <input type="checkbox" id="snapAutoJournal" checked>
           <label for="snapAutoJournal">สร้างบันทึกบัญชีปรับปรุงสินค้าคงเหลืออัตโนมัติ</label>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" onclick="Page.closeModal('snapshotModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Page.closeModal('snapshotModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.createSnapshot()">สร้าง Snapshot</button>
         </div>
       </div>
@@ -164,12 +164,14 @@
             <tbody id="snapDetailBody"></tbody>
           </table>
         </div>
-        <div class="modal-actions"><button class="btn btn-secondary" onclick="Page.closeModal('snapshotDetailModal')">ปิด</button></div>
+        <div class="modal-actions"><button class="btn btn-secondary" onclick="Page.closeModal('snapshotDetailModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -203,7 +205,7 @@
         const cat = document.getElementById('balanceCategory').value;
         const zero = document.getElementById('balanceIncludeZero').checked;
         const tbody = document.getElementById('balanceBody');
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px" data-i18n="common.loading">กำลังโหลด...</td></tr>';
         try {
           const q = `?asOfDate=${date}&includeZero=${zero}${cat ? '&category=' + encodeURIComponent(cat) : ''}`;
           const res = await api.getStockBalance(q);
@@ -223,7 +225,7 @@
             <td style="text-align:right">${this._fmt(i.quantityAsOfDate)}</td><td style="text-align:right">${this._fmt(i.averageCost)}</td>
             <td style="text-align:right;font-weight:600">${this._fmt(i.totalValue)}</td></tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="7" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 
@@ -233,7 +235,7 @@
         const from = document.getElementById('mvFromDate').value;
         const to = document.getElementById('mvToDate').value;
         const tbody = document.getElementById('movementBody');
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px" data-i18n="common.loading">กำลังโหลด...</td></tr>';
         try {
           const q = `?fromDate=${from}&toDate=${to}`;
           const res = await api.getMovementSummary(q);
@@ -254,7 +256,7 @@
             <td style="text-align:right;color:#f59e0b">${i.totalAdjust !== 0 ? this._fmt(i.totalAdjust) : '-'}</td>
             <td style="text-align:right;font-weight:600">${this._fmt(i.closingStock)}</td></tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 
@@ -262,7 +264,7 @@
       async loadAging() {
         const api = Layout.api(); if (!api) return;
         const tbody = document.getElementById('agingBody');
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px" data-i18n="common.loading">กำลังโหลด...</td></tr>';
         try {
           const res = await api.getStockAging();
           const d = res.data;
@@ -290,7 +292,7 @@
               <td>${this._fmtDate(i.lastMovementDate)}</td></tr>`;
           }).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 
@@ -314,7 +316,7 @@
             <td>${this._fmtDate(s.createdAt)}</td>
             <td><button class="btn btn-sm" onclick="Page.viewSnapshot('${s.id}')">ดูรายละเอียด</button></td></tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 

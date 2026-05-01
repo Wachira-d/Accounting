@@ -382,37 +382,41 @@ public class PortalService : IPortalService
 
     private static string HashPassword(string password)
     {
-        using var sha256 = SHA256.Create();
-        var salt = RandomNumberGenerator.GetBytes(16);
-        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(Convert.ToBase64String(salt) + password));
-        var result = new byte[salt.Length + hash.Length];
-        Buffer.BlockCopy(salt, 0, result, 0, salt.Length);
-        Buffer.BlockCopy(hash, 0, result, salt.Length, hash.Length);
-        return Convert.ToBase64String(result);
+        return BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
     }
 
     private static bool VerifyPassword(string password, string storedHash)
     {
         try
         {
-            var storedBytes = Convert.FromBase64String(storedHash);
-            if (storedBytes.Length < 17) return false;
-
-            var salt = new byte[16];
-            Buffer.BlockCopy(storedBytes, 0, salt, 0, 16);
-
-            using var sha256 = SHA256.Create();
-            var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(Convert.ToBase64String(salt) + password));
-
-            var storedHashBytes = new byte[storedBytes.Length - 16];
-            Buffer.BlockCopy(storedBytes, 16, storedHashBytes, 0, storedHashBytes.Length);
-
-            return CryptographicOperations.FixedTimeEquals(hash, storedHashBytes);
+            // Support legacy SHA256 hashes during migration period
+            if (!storedHash.StartsWith("$2"))
+            {
+                return VerifyLegacySha256(password, storedHash);
+            }
+            return BCrypt.Net.BCrypt.Verify(password, storedHash);
         }
         catch
         {
             return false;
         }
+    }
+
+    private static bool VerifyLegacySha256(string password, string storedHash)
+    {
+        try
+        {
+            var storedBytes = Convert.FromBase64String(storedHash);
+            if (storedBytes.Length < 17) return false;
+            var salt = new byte[16];
+            Buffer.BlockCopy(storedBytes, 0, salt, 0, 16);
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(Convert.ToBase64String(salt) + password));
+            var storedHashBytes = new byte[storedBytes.Length - 16];
+            Buffer.BlockCopy(storedBytes, 16, storedHashBytes, 0, storedHashBytes.Length);
+            return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(hash, storedHashBytes);
+        }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Portal password verification failed: {ex.Message}"); return false; }
     }
 
     private static PortalAccessResponse MapToAccessResponse(PortalAccess p, string contactName) => new(

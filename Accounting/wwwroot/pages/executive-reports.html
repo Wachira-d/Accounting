@@ -76,11 +76,13 @@
     </div>
 
     <div id="tabContent">
-      <div class="text-center text-gray-400" style="padding:60px">กำลังโหลด...</div>
+      <div class="text-center text-gray-400" style="padding:60px" data-i18n="common.loading">กำลังโหลด...</div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     Layout.init('executive-reports');
@@ -112,14 +114,14 @@
       },
       async loadTab(tab) {
         const c = document.getElementById('tabContent');
-        c.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">กำลังโหลด...</div>';
+        c.innerHTML = '<div class="text-center text-gray-400" style="padding:60px" data-i18n="common.loading">กำลังโหลด...</div>';
         const api = Layout.api(); if (!api) return;
         try {
           const handler = this.handlers[tab];
           if (!handler) { c.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">ยังไม่มีรายงาน</div>'; return; }
           await handler.call(this, api, c);
         } catch (e) {
-          c.innerHTML = `<div class="er-section" style="color:#dc2626">เกิดข้อผิดพลาด: ${e.message || e}</div>`;
+          c.innerHTML = `<div class="er-section" style="color:#dc2626">เกิดข้อผิดพลาด: ${Layout.esc(e.message || String(e))}</div>`;
         }
       },
       handlers: {},
@@ -169,11 +171,11 @@
         this.kpiCard('เกินกำหนด', k.overdueInvoiceCount),
         this.kpiCard('ยอดเกินกำหนด', k.overdueReceivables, null),
       ].join('');
-      let topCust = '<tr><td colspan="3" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      let topCust = '<tr><td colspan="3" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       if (r.topCustomers && r.topCustomers.length) {
         topCust = r.topCustomers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('');
       }
-      let topSupp = '<tr><td colspan="3" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      let topSupp = '<tr><td colspan="3" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       if (r.topSuppliers && r.topSuppliers.length) {
         topSupp = r.topSuppliers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('');
       }
@@ -191,8 +193,8 @@
         <div class="er-section"><h3>การวางบิล</h3><div class="er-grid er-grid-4">${inv}</div></div>
         <div class="er-section"><h3>อัตราส่วนสำคัญ</h3><div class="er-grid er-grid-4">${ratioCards}</div></div>
         <div class="er-grid er-grid-2">
-          <div class="er-section"><h3>ลูกค้าหลัก (Top 5)</h3><table class="table er-table"><thead><tr><th>ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${topCust}</tbody></table></div>
-          <div class="er-section"><h3>ผู้ขายหลัก (Top 5)</h3><table class="table er-table"><thead><tr><th>ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${topSupp}</tbody></table></div>
+          <div class="er-section"><h3>ลูกค้าหลัก (Top 5)</h3><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${topCust}</tbody></table></div>
+          <div class="er-section"><h3>ผู้ขายหลัก (Top 5)</h3><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${topSupp}</tbody></table></div>
         </div>
       `;
     };
@@ -211,7 +213,7 @@
         sec('ความสามารถในการทำกำไร', [['Gross Margin', x.grossProfitMargin, true], ['Operating Margin', x.operatingMargin, true], ['Net Profit Margin', x.netProfitMargin, true], ['ROA', x.returnOnAssets, true], ['ROE', x.returnOnEquity, true]]) +
         sec('ประสิทธิภาพ', [['Asset Turnover', x.assetTurnover], ['Inventory Turnover', x.inventoryTurnover], ['AR Turnover', x.receivablesTurnover], ['AP Turnover', x.payablesTurnover], ['DSO (วัน)', x.daysSalesOutstanding], ['DPO (วัน)', x.daysPayablesOutstanding], ['DIO (วัน)', x.daysInventoryOutstanding], ['Cash Conversion Cycle', x.cashConversionCycle]]) +
         sec('โครงสร้างทุน', [['Debt to Assets', x.debtToAssets], ['Debt to Equity', x.debtToEquity], ['Equity Multiplier', x.equityMultiplier]]) +
-        `<div class="er-section"><h3>ค่าฐานที่ใช้คำนวณ</h3><table class="table er-table"><thead><tr><th>รายการ</th><th class="text-right">มูลค่า</th></tr></thead><tbody>${raw}</tbody></table></div>`;
+        `<div class="er-section"><h3>ค่าฐานที่ใช้คำนวณ</h3><table class="table er-table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">มูลค่า</th></tr></thead><tbody>${raw}</tbody></table></div>`;
     };
 
     Page.handlers.trends = async function(api, c) {
@@ -242,22 +244,22 @@
         this.kpiCard('เฉลี่ย/ลูกค้า', r.averageRevenuePerCustomer, null),
       ].join('');
       const abc = r.abcSegments.map(s => `<tr><td><span class="pill pill-${s.class}">Class ${s.class}</span></td><td class="text-right">${fmtInt(s.customerCount)}</td><td class="text-right">${fmt(s.totalRevenue)}</td><td class="text-right">${fmtPct(s.sharePercent)}</td></tr>`).join('');
-      const top = r.topCustomers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.count)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      const top = r.topCustomers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.count)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       const churn = r.churnRisk.map(x => `<tr><td>${x.name}</td><td>${x.lastInvoiceDate ? x.lastInvoiceDate.slice(0,10) : '-'}</td><td class="text-right">${x.daysSinceLastInvoice}</td><td class="text-right">${fmt(x.historicRevenue)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีลูกค้าที่เสี่ยงสูญเสีย</td></tr>';
-      const all = r.customers.slice(0, 50).map(x => `<tr><td>${x.name}</td><td>${x.taxId || '-'}</td><td class="text-right">${fmt(x.totalRevenue)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.invoiceCount)}</td><td class="text-right">${fmt(x.outstandingBalance)}</td><td class="text-right">${fmt(x.overdueBalance)}</td><td>${x.lastInvoiceDate ? x.lastInvoiceDate.slice(0,10) : '-'}</td></tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      const all = r.customers.slice(0, 50).map(x => `<tr><td>${x.name}</td><td>${x.taxId || '-'}</td><td class="text-right">${fmt(x.totalRevenue)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.invoiceCount)}</td><td class="text-right">${fmt(x.outstandingBalance)}</td><td class="text-right">${fmt(x.overdueBalance)}</td><td>${x.lastInvoiceDate ? x.lastInvoiceDate.slice(0,10) : '-'}</td></tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
         <div class="er-section"><h3>การวิเคราะห์ ABC (Pareto 80/20)</h3>
           <table class="table er-table"><thead><tr><th>กลุ่ม</th><th class="text-right">จำนวนลูกค้า</th><th class="text-right">รายได้รวม</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${abc}</tbody></table>
         </div>
         <div class="er-section"><h3>ลูกค้าหลัก (Top)</h3>
-          <table class="table er-table"><thead><tr><th>ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th><th class="text-right">จำนวนใบ</th></tr></thead><tbody>${top}</tbody></table>
+          <table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th><th class="text-right">จำนวนใบ</th></tr></thead><tbody>${top}</tbody></table>
         </div>
         <div class="er-section"><h3>ลูกค้าเสี่ยงสูญเสีย (Churn Risk)</h3>
-          <table class="table er-table"><thead><tr><th>ชื่อ</th><th>ใบล่าสุด</th><th class="text-right">วันห่าง</th><th class="text-right">ยอดสะสม</th></tr></thead><tbody>${churn}</tbody></table>
+          <table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>ใบล่าสุด</th><th class="text-right">วันห่าง</th><th class="text-right">ยอดสะสม</th></tr></thead><tbody>${churn}</tbody></table>
         </div>
         <div class="er-section"><h3>รายชื่อลูกค้าทั้งหมด (50 รายแรก)</h3>
-          <div class="table-container"><table class="table er-table"><thead><tr><th>ชื่อ</th><th>เลขผู้เสียภาษี</th><th class="text-right">รายได้</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th><th class="text-right">คงค้าง</th><th class="text-right">เกินกำหนด</th><th>ใบล่าสุด</th></tr></thead><tbody>${all}</tbody></table></div>
+          <div class="table-container"><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th class="text-right">รายได้</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th><th class="text-right">คงค้าง</th><th class="text-right">เกินกำหนด</th><th>ใบล่าสุด</th></tr></thead><tbody>${all}</tbody></table></div>
         </div>
       `;
     };
@@ -271,15 +273,15 @@
         this.kpiCard('เฉลี่ย/ผู้ขาย', r.averagePurchasePerSupplier, null),
         this.kpiCard('Top-3 ครองสัดส่วน', r.supplierConcentrationPercent, null, true),
       ].join('');
-      const top = r.topSuppliers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.count)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
-      const all = r.suppliers.slice(0, 50).map(x => `<tr><td>${x.name}</td><td>${x.taxId || '-'}</td><td class="text-right">${fmt(x.totalPurchases)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.invoiceCount)}</td><td class="text-right">${fmt(x.outstandingPayables)}</td><td>${x.lastPurchaseDate ? x.lastPurchaseDate.slice(0,10) : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      const top = r.topSuppliers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.count)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      const all = r.suppliers.slice(0, 50).map(x => `<tr><td>${x.name}</td><td>${x.taxId || '-'}</td><td class="text-right">${fmt(x.totalPurchases)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.invoiceCount)}</td><td class="text-right">${fmt(x.outstandingPayables)}</td><td>${x.lastPurchaseDate ? x.lastPurchaseDate.slice(0,10) : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
         <div class="er-section"><h3>ผู้ขายหลัก (Top)</h3>
-          <table class="table er-table"><thead><tr><th>ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th></tr></thead><tbody>${top}</tbody></table>
+          <table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th></tr></thead><tbody>${top}</tbody></table>
         </div>
         <div class="er-section"><h3>รายชื่อผู้ขายทั้งหมด (50 รายแรก)</h3>
-          <div class="table-container"><table class="table er-table"><thead><tr><th>ชื่อ</th><th>เลขผู้เสียภาษี</th><th class="text-right">ยอดซื้อ</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th><th class="text-right">คงค้าง</th><th>ใบล่าสุด</th></tr></thead><tbody>${all}</tbody></table></div>
+          <div class="table-container"><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th class="text-right">ยอดซื้อ</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th><th class="text-right">คงค้าง</th><th>ใบล่าสุด</th></tr></thead><tbody>${all}</tbody></table></div>
         </div>
       `;
     };
@@ -292,8 +294,8 @@
         this.kpiCard('สินค้าที่ขาย', r.uniqueProductsSold),
       ].join('');
       const tbl = (title, rows, showQty) => {
-        const body = rows.map(x => `<tr><td>${x.productCode || '-'}</td><td>${x.productName}</td><td class="text-right">${fmt(x.quantitySold)}</td><td class="text-right">${fmt(x.revenue)}</td><td class="text-right">${fmt(x.grossProfit)}</td><td class="text-right">${fmtPct(x.marginPercent)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('') || '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
-        return `<div class="er-section"><h3>${title}</h3><div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th class="text-right">จำนวน</th><th class="text-right">รายได้</th><th class="text-right">กำไร</th><th class="text-right">Margin</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+        const body = rows.map(x => `<tr><td>${x.productCode || '-'}</td><td>${x.productName}</td><td class="text-right">${fmt(x.quantitySold)}</td><td class="text-right">${fmt(x.revenue)}</td><td class="text-right">${fmt(x.grossProfit)}</td><td class="text-right">${fmtPct(x.marginPercent)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('') || '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+        return `<div class="er-section"><h3>${title}</h3><div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th class="text-right">จำนวน</th><th class="text-right">รายได้</th><th class="text-right">กำไร</th><th class="text-right">Margin</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
       };
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
@@ -321,10 +323,10 @@
         this.kpiCard('กำไรตามงบ', s.netIncomeBudget, null),
         this.kpiCard('กำไรจริง', s.netIncomeActual, null),
       ].join('');
-      const lines = r.lines.map(x => `<tr><td>${x.accountCode}</td><td>${x.accountName}</td><td>${x.accountType}</td><td class="text-right">${fmt(x.budget)}</td><td class="text-right">${fmt(x.actual)}</td><td class="text-right">${fmt(x.variance)}</td><td class="text-right">${fmtPct(x.variancePercent)}</td><td><span class="pill pill-${x.status}">${x.status}</span></td></tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400">ไม่มีรายการ</td></tr>';
+      const lines = r.lines.map(x => `<tr><td>${x.accountCode}</td><td>${x.accountName}</td><td>${x.accountType}</td><td class="text-right">${fmt(x.budget)}</td><td class="text-right">${fmt(x.actual)}</td><td class="text-right">${fmt(x.variance)}</td><td class="text-right">${fmtPct(x.variancePercent)}</td><td><span class="pill pill-${x.status}">${x.status}</span></td></tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</td></tr>';
       c.innerHTML = `
         <div class="er-section"><h3>${r.budgetName || 'งบประมาณ'} (ปี ${r.fiscalYear})</h3><div class="er-grid er-grid-4">${summary}</div></div>
-        <div class="er-section"><h3>รายละเอียดตามบัญชี</h3><div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th>ประเภท</th><th class="text-right">งบ</th><th class="text-right">จริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th>สถานะ</th></tr></thead><tbody>${lines}</tbody></table></div></div>
+        <div class="er-section"><h3>รายละเอียดตามบัญชี</h3><div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th data-i18n="common.type">ประเภท</th><th class="text-right">งบ</th><th class="text-right">จริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>${lines}</tbody></table></div></div>
       `;
     };
 
@@ -335,7 +337,7 @@
         this.kpiCard('คาดการณ์ ณ สิ้นช่วง', r.projectedClosingCash, null),
         this.kpiCard('ระยะเวลา (วัน)', r.days),
       ].join('');
-      const weeks = r.weeks.map(w => `<tr><td>W${w.weekNumber}</td><td>${w.weekStart.slice(0,10)}</td><td>${w.weekEnd.slice(0,10)}</td><td class="text-right">${fmt(w.openingBalance)}</td><td class="text-right" style="color:#10b981">+${fmt(w.expectedInflows)}</td><td class="text-right" style="color:#ef4444">-${fmt(w.expectedOutflows)}</td><td class="text-right">${fmt(w.netChange)}</td><td class="text-right">${fmt(w.closingBalance)}</td><td class="text-right">${fmtPct(w.confidenceLevel)}</td></tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      const weeks = r.weeks.map(w => `<tr><td>W${w.weekNumber}</td><td>${w.weekStart.slice(0,10)}</td><td>${w.weekEnd.slice(0,10)}</td><td class="text-right">${fmt(w.openingBalance)}</td><td class="text-right" style="color:#10b981">+${fmt(w.expectedInflows)}</td><td class="text-right" style="color:#ef4444">-${fmt(w.expectedOutflows)}</td><td class="text-right">${fmt(w.netChange)}</td><td class="text-right">${fmt(w.closingBalance)}</td><td class="text-right">${fmtPct(w.confidenceLevel)}</td></tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม (พยากรณ์ 90 วัน)</h3><div class="er-grid er-grid-4">${summary}</div></div>
         <div class="er-section"><h3>ตามสัปดาห์</h3>
@@ -372,12 +374,12 @@
         this.kpiCard('Quote→Invoice', r.quotationToInvoiceRatio, null, true),
         this.kpiCard('ประสิทธิภาพการเก็บเงิน', r.collectionEfficiencyPercent, null, true),
       ].join('');
-      const byMonth = r.byMonth.map(m => `<tr><td>${m.year}-${String(m.month).padStart(2,'0')}</td><td>${m.monthName}</td><td class="text-right">${fmt(m.revenue)}</td><td class="text-right">${fmtInt(m.invoiceCount)}</td><td class="text-right">${fmt(m.averageInvoice)}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
-      const byType = r.byDocumentType.map(t => `<tr><td>${t.label}</td><td class="text-right">${fmtInt(t.count)}</td><td class="text-right">${fmt(t.amount)}</td><td class="text-right">${fmtPct(t.sharePercent)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+      const byMonth = r.byMonth.map(m => `<tr><td>${m.year}-${String(m.month).padStart(2,'0')}</td><td>${m.monthName}</td><td class="text-right">${fmt(m.revenue)}</td><td class="text-right">${fmtInt(m.invoiceCount)}</td><td class="text-right">${fmt(m.averageInvoice)}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      const byType = r.byDocumentType.map(t => `<tr><td>${t.label}</td><td class="text-right">${fmtInt(t.count)}</td><td class="text-right">${fmt(t.amount)}</td><td class="text-right">${fmtPct(t.sharePercent)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
         <div class="er-section"><h3>รายเดือน</h3><table class="table er-table"><thead><tr><th>ปี-เดือน</th><th>เดือน</th><th class="text-right">รายได้</th><th class="text-right">ใบ</th><th class="text-right">เฉลี่ย</th></tr></thead><tbody>${byMonth}</tbody></table></div>
-        <div class="er-section"><h3>ตามประเภทเอกสาร</h3><table class="table er-table"><thead><tr><th>ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${byType}</tbody></table></div>
+        <div class="er-section"><h3>ตามประเภทเอกสาร</h3><table class="table er-table"><thead><tr><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${byType}</tbody></table></div>
       `;
     };
 
@@ -392,7 +394,7 @@
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-3">${summary}</div></div>
         <div class="er-section"><h3>รายโครงการ</h3>
-          <div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>สถานะ</th><th class="text-right">งบ</th><th class="text-right">รายได้</th><th class="text-right">ต้นทุน</th><th class="text-right">กำไร</th><th class="text-right">Margin</th><th class="text-right">% เสร็จ</th><th class="text-right">ผลต่างงบ</th></tr></thead><tbody>${rows}</tbody></table></div>
+          <div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th data-i18n="common.status">สถานะ</th><th class="text-right">งบ</th><th class="text-right">รายได้</th><th class="text-right">ต้นทุน</th><th class="text-right">กำไร</th><th class="text-right">Margin</th><th class="text-right">% เสร็จ</th><th class="text-right">ผลต่างงบ</th></tr></thead><tbody>${rows}</tbody></table></div>
         </div>
       `;
     };

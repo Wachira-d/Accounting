@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Bank;
@@ -133,7 +134,7 @@ public record ReconciliationSummaryDto(
     decimal UnmatchedWithdrawals);
 
 public record BatchReconcileRequest(
-    List<BatchReconcileItem> Items);
+    [property: MaxLength(500)] List<BatchReconcileItem> Items);
 
 public record BatchReconcileItem(
     Guid BankTransactionId,

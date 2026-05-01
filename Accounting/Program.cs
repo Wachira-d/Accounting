@@ -380,7 +380,7 @@ app.MapPost("/api/error-log/client", async (HttpContext ctx, IConfiguration conf
         await cmd.ExecuteNonQueryAsync();
         return Results.Ok(new { logged = true });
     }
-    catch { return Results.Ok(new { logged = false }); }
+    catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to log client-side error: {ex.Message}"); return Results.Ok(new { logged = false }); }
 });
 
 // Health check endpoint
@@ -1017,7 +1017,7 @@ app.MapFallback(context =>
                     using var cmd = new Npgsql.NpgsqlCommand(sql, rawConn);
                     cmd.ExecuteNonQuery();
                 }
-                catch { /* table/column already exists or FK target missing — safe to skip */ }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Schema migration statement skipped (table/column already exists or FK target missing): {ex.Message}"); }
             }
 
             // Fix timestamp column types: convert any 'timestamptz' to 'timestamp without time zone'
@@ -1128,7 +1128,7 @@ catch (Exception ex)
         var retryDb = retryScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         DatabaseMigrationHelper.ApplyMissingColumns(retryDb);
     }
-    catch { /* DB itself may be unavailable */ }
+    catch (Exception retryEx) { logger.LogWarning(retryEx, "Last-resort ApplyMissingColumns also failed — DB may be unavailable"); }
 
     // Try to log startup error to DB if possible
     try
@@ -1138,7 +1138,7 @@ catch (Exception ex)
         if (errorLogService != null)
             await errorLogService.LogErrorAsync(ex, "Program.DatabaseInitialization");
     }
-    catch { /* DB itself may be unavailable */ }
+    catch (Exception logEx) { logger.LogWarning(logEx, "Failed to log startup error to DB — DB may be unavailable"); }
 }
 
 app.Run();

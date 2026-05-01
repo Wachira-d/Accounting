@@ -346,7 +346,7 @@ public class SettingsService : ISettingsService
                     settings.LandingServicesJson,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
             }
-            catch { /* invalid JSON */ }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to deserialize LandingServicesJson: {ex.Message}"); }
         }
 
         return new LandingServicesResponse(

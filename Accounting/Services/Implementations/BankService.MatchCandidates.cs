@@ -75,7 +75,7 @@ public partial class BankService
                 // tables and never collide.
                 foreach (var id in ids) { usedPaymentIds.Add(id); usedJeIds.Add(id); }
             }
-            catch { /* malformed JSON — ignore */ }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Malformed MatchedEntryIdsJson in bank transaction {TransactionId}", t.Id); }
         }
 
         // ===== Cross-reference: hide "twin" entries =====

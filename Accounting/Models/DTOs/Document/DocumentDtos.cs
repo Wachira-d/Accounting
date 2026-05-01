@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Document;
@@ -85,9 +86,9 @@ public record ApproveDocumentRequest(string? Notes);
 
 // ===== Contact =====
 public record CreateContactRequest(
-    string Name,
-    string? TaxId,
-    string? BranchCode,
+    [property: Required, StringLength(200)] string Name,
+    [property: RegularExpression(@"^\d{13}$", ErrorMessage = "เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก")] string? TaxId,
+    [property: RegularExpression(@"^\d{5}$", ErrorMessage = "รหัสสาขาต้องเป็นตัวเลข 5 หลัก")] string? BranchCode,
     ContactType? ContactType,
     bool IsCustomer,
     bool IsSupplier,
@@ -107,9 +108,9 @@ public record CreateContactRequest(
     string? CountryCode = null);
 
 public record UpdateContactRequest(
-    string? Name,
-    string? TaxId,
-    string? BranchCode,
+    [property: StringLength(200)] string? Name,
+    [property: RegularExpression(@"^\d{13}$", ErrorMessage = "เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก")] string? TaxId,
+    [property: RegularExpression(@"^\d{5}$", ErrorMessage = "รหัสสาขาต้องเป็นตัวเลข 5 หลัก")] string? BranchCode,
     ContactType? ContactType,
     bool? IsCustomer,
     bool? IsSupplier,

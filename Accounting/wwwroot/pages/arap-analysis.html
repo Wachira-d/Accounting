@@ -56,14 +56,16 @@
     <!-- Contact Detail Modal -->
     <div class="modal-overlay" id="contactModal">
       <div class="modal" style="max-width:900px">
-        <div class="modal-header"><h3 class="modal-title" id="cmTitle">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('contactModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title" id="cmTitle" data-i18n="common.detail">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('contactModal')">&times;</button></div>
         <div class="modal-body" id="cmBody"></div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('contactModal')">ปิด</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('contactModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
   const Page = {
@@ -138,14 +140,14 @@
       const renderTop = (items, title, type) => `
         <div class="card-header"><h3 class="card-title">${title}</h3></div>
         <div class="table-container" style="border:none">
-          <table class="table"><thead><tr><th>ชื่อ</th><th class="text-right">ยอดค้าง</th><th class="text-right">เกินกำหนด</th><th class="text-right">เอกสาร</th><th></th></tr></thead>
+          <table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอดค้าง</th><th class="text-right">เกินกำหนด</th><th class="text-right">เอกสาร</th><th></th></tr></thead>
           <tbody>${items.length ? items.map(c => `<tr>
             <td class="font-medium">${c.contactName}</td>
             <td class="text-right">${Layout.money(c.totalBalance)}</td>
             <td class="text-right ${c.overdueAmount>0?'text-danger':''}">${Layout.money(c.overdueAmount)}</td>
             <td class="text-right">${c.documentCount}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.openContactModal('${c.contactId}','${type}')">ดู</button></td>
-          </tr>`).join('') : '<tr><td colspan="5" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody></table>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openContactModal('${c.contactId}','${type}')" data-i18n="common.view">ดู</button></td>
+          </tr>`).join('') : '<tr><td colspan="5" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'}</tbody></table>
         </div>`;
       document.getElementById('topArCard').innerHTML = renderTop(d.topReceivables, 'Top 10 ลูกหนี้', 'ar');
       document.getElementById('topApCard').innerHTML = renderTop(d.topPayables, 'Top 10 เจ้าหนี้', 'ap');
@@ -204,7 +206,7 @@
               <td class="text-right">${b.documentCount}</td>
             </tr>`).join('')}</tbody>
             <tfoot><tr style="background:var(--gray-100)">
-              <td class="font-bold">รวม</td>
+              <td class="font-bold" data-i18n="common.total">รวม</td>
               <td class="text-right font-bold">${Layout.money(buckets.reduce((s,b)=>s+b.amount,0))}</td>
               <td></td>
               <td class="text-right font-bold text-danger">${Layout.money(d.estimatedBadDebt)}</td>
@@ -224,7 +226,7 @@
               <td class="text-right">${c.maxAgingDays} วัน</td>
               <td><span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;color:#fff;background:${riskColor[c.riskLevel]||'gray'}">${c.riskLevel}</span></td>
               <td class="text-right font-semibold text-danger">${Layout.money(c.estimatedLoss)}</td>
-              <td><button class="btn btn-sm btn-ghost" onclick="Page.openContactModal('${c.contactId}','ar')">ดู</button></td>
+              <td><button class="btn btn-sm btn-ghost" onclick="Page.openContactModal('${c.contactId}','ar')" data-i18n="common.view">ดู</button></td>
             </tr>`).join('') : '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีลูกค้าเสี่ยง</td></tr>'}</tbody></table>
           </div>`;
       } catch (e) { Layout.toast(e.message, 'error'); }
@@ -251,7 +253,7 @@
       await this._renderContactDetail(contactId, type, 'contactDetailContent');
     },
     async openContactModal(contactId, type) {
-      document.getElementById('cmBody').innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</div>';
+      document.getElementById('cmBody').innerHTML = '<div class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</div>';
       Layout.openModal('contactModal');
       await this._renderContactDetail(contactId, type, 'cmBody');
     },
@@ -308,7 +310,7 @@
           <div style="margin-bottom:20px">
             <h4 style="margin-bottom:8px">เอกสารค้างชำระ (${d.outstandingDocuments?.length || 0})</h4>
             ${d.outstandingDocuments?.length ? `<div style="max-height:250px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr>
-              <th>เลขที่</th><th>วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดรวม</th><th class="text-right">ชำระแล้ว</th><th class="text-right">คงค้าง</th><th class="text-right">วันเกิน</th><th>สถานะ</th>
+              <th>เลขที่</th><th data-i18n="common.date">วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดรวม</th><th class="text-right">ชำระแล้ว</th><th class="text-right">คงค้าง</th><th class="text-right">วันเกิน</th><th data-i18n="common.status">สถานะ</th>
             </tr></thead><tbody>${d.outstandingDocuments.map(doc => `<tr>
               <td class="font-medium">${doc.documentNumber}</td>
               <td>${Layout.date(doc.documentDate)}</td>
@@ -325,7 +327,7 @@
           <div style="margin-bottom:20px">
             <h4 style="margin-bottom:8px">การชำระเงินล่าสุด</h4>
             ${d.recentPayments?.length ? `<div style="max-height:200px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr>
-              <th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>อ้างอิง</th><th>วิธี</th>
+              <th>เลขที่</th><th data-i18n="common.date">วันที่</th><th class="text-right">จำนวน</th><th data-i18n="common.reference">อ้างอิง</th><th>วิธี</th>
             </tr></thead><tbody>${d.recentPayments.map(p => `<tr>
               <td class="font-medium">${p.paymentNumber}</td>
               <td>${Layout.date(p.paymentDate)}</td>
@@ -345,7 +347,7 @@
               <td class="text-right">${Layout.money(m.invoiced)}</td>
               <td class="text-right">${Layout.money(m.paid)}</td>
               <td class="text-right font-semibold">${Layout.money(m.balance)}</td>
-            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ไม่มีข้อมูล</div>'}
+            </tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</div>'}
           </div>`;
       } catch (e) { Layout.toast(e.message, 'error'); }
     }

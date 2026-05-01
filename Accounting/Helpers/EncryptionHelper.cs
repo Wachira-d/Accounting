@@ -81,7 +81,7 @@ public static class EncryptionHelper
             var bytes = Convert.FromBase64String(value);
             return bytes.Length >= NonceSize + TagSize;
         }
-        catch { return false; }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Encrypted-value format check failed: {ex.Message}"); return false; }
     }
 
     /// <summary>

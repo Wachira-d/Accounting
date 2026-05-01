@@ -31,7 +31,7 @@
 
     <!-- Summary Cards -->
     <div class="grid grid-4 gap-4" style="margin-bottom:16px">
-      <div class="card"><div class="text-gray-500 text-xs">ทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.all">ทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">รอลงนาม</div><div class="text-2xl font-bold text-warning" id="statGenerated">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">ส่งแล้ว</div><div class="text-2xl font-bold text-info" id="statSubmitted">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">ตอบรับแล้ว</div><div class="text-2xl font-bold text-success" id="statAccepted">0</div></div>
@@ -39,7 +39,7 @@
 
     <!-- Status Tabs -->
     <div class="tabs" style="margin-bottom:16px">
-      <div class="tab active" data-status="" onclick="Page.setStatus(this)">ทั้งหมด</div>
+      <div class="tab active" data-status="" onclick="Page.setStatus(this)" data-i18n="common.all">ทั้งหมด</div>
       <div class="tab" data-status="Generated" onclick="Page.setStatus(this)">รอลงนาม</div>
       <div class="tab" data-status="Signed" onclick="Page.setStatus(this)">ลงนามแล้ว</div>
       <div class="tab" data-status="Submitted" onclick="Page.setStatus(this)">ส่งแล้ว</div>
@@ -56,7 +56,7 @@
               <th>เลขอ้างอิง</th>
               <th>ผู้ซื้อ</th>
               <th>เลขประจำตัวผู้เสียภาษี</th>
-              <th>สถานะ</th>
+              <th data-i18n="common.status">สถานะ</th>
               <th>วันที่สร้าง</th>
               <th>วันที่ส่ง</th>
               <th>การดำเนินการ</th>
@@ -95,7 +95,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-outline" onclick="Page.closeModal('generateModal')">ยกเลิก</button>
+          <button class="btn btn-outline" onclick="Page.closeModal('generateModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.doGenerate()">สร้าง e-Tax</button>
         </div>
       </div>
@@ -131,7 +131,7 @@
           </div>
         </div>
         <div class="modal-footer" style="padding:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px">
-          <button class="btn btn-outline" onclick="Page.closeModal('sendEmailModal')">ยกเลิก</button>
+          <button class="btn btn-outline" onclick="Page.closeModal('sendEmailModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.doSendByEmail()">ส่งอีเมล</button>
         </div>
       </div>
@@ -193,6 +193,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
   const Page = {
@@ -278,7 +280,7 @@
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-success" onclick="Page.signAndSubmit('${e.id}')">ลงนาม+ส่ง</button>` : ''}
               ${(e.status === 'Signed' || e.status === 'Submitted' || e.status === 'Accepted') ? `<button class="btn btn-xs btn-info" onclick="Page.openSendByEmail('${e.id}')">📧 ส่งทางอีเมล</button>` : ''}
               ${e.status === 'Error' ? `<button class="btn btn-xs btn-warning" onclick="Page.sign('${e.id}')">ลองใหม่</button>` : ''}
-              ${e.status !== 'Accepted' ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')">ยกเลิก</button>` : ''}
+              ${e.status !== 'Accepted' ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')" data-i18n="common.cancel">ยกเลิก</button>` : ''}
             </div>
             ${e.errorMessage ? `<div class="text-danger text-xs" style="margin-top:4px">${this.esc(e.errorMessage)}</div>` : ''}
             ${e.acceptanceNumber ? `<div class="text-success text-xs" style="margin-top:4px">เลขตอบรับ: ${this.esc(e.acceptanceNumber)}</div>` : ''}

@@ -23,7 +23,7 @@
     </div>
 
     <div class="tabs">
-      <div class="tab active" data-type="" onclick="Page.setType(this)">ทั้งหมด</div>
+      <div class="tab active" data-type="" onclick="Page.setType(this)" data-i18n="common.all">ทั้งหมด</div>
       <div class="tab" data-type="VAT" onclick="Page.setType(this)">ภาษีมูลค่าเพิ่ม</div>
       <div class="tab" data-type="WithholdingTax3" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.3)</div>
       <div class="tab" data-type="WithholdingTax53" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.53)</div>
@@ -46,13 +46,13 @@
     <div id="taxSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
       <span>เลือกแล้ว <b id="taxSelCount">0</b> รายงาน</span>
       <span id="taxSelExportSlot"></span>
-      <button class="btn btn-secondary btn-sm" onclick="Page.clearTaxSelection()">ยกเลิกการเลือก</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearTaxSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th style="width:36px"><input type="checkbox" id="taxCheckAll" onchange="Page.toggleAllTax(this.checked)"></th><th>ประเภท</th><th>ปี</th><th>เดือน</th><th class="text-right">ภาษีขาย</th><th class="text-right">ภาษีซื้อ</th><th class="text-right">ภาษีสุทธิ</th><th>สถานะ</th><th>วันที่ยื่น</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="taxCheckAll" onchange="Page.toggleAllTax(this.checked)"></th><th data-i18n="common.type">ประเภท</th><th>ปี</th><th>เดือน</th><th class="text-right">ภาษีขาย</th><th class="text-right">ภาษีซื้อ</th><th class="text-right">ภาษีสุทธิ</th><th data-i18n="common.status">สถานะ</th><th>วันที่ยื่น</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -85,7 +85,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('genModal')">ยกเลิก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('genModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.generate()">สร้างรายงาน</button>
         </div>
       </div>
@@ -102,6 +102,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/export.js"></script>
   <script>
@@ -170,7 +172,7 @@
         sel.value = String(curYear);
         const api = Layout.api();
         if (api) {
-          try { await api.autoRefreshTaxReports(2); } catch {}
+          try { await api.autoRefreshTaxReports(2); } catch (e) { console.error('autoRefresh:', e); }
         }
         await this.load();
       },
@@ -241,10 +243,10 @@
           <td>${Layout.statusBadge(r.status)}</td>
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
           <td class="flex gap-1">
-            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')">ดู</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')" data-i18n="common.view">ดู</button>
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${r.id}')">สร้างใหม่</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
-            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')">ลบ</button>` : ''}
+            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
           </td>
         </tr>`).join('');
         this._updateTaxSelectionBar();
@@ -260,8 +262,8 @@
           const editable = d.status !== 'Filed';
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
-              <div><span class="text-gray-500 text-xs">ประเภท</span><div class="font-semibold">${this.typeMap[d.taxType] || d.taxType}</div></div>
-              <div><span class="text-gray-500 text-xs">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div class="font-semibold">${this.typeMap[d.taxType] || d.taxType}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.status">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
               <div><span class="text-gray-500 text-xs">ปี/เดือน</span><div>${d.year} / ${this.monthNames[d.month]}</div></div>
               <div><span class="text-gray-500 text-xs">วันที่ยื่น</span><div>${d.filedDate ? Layout.date(d.filedDate) : 'ยังไม่ยื่น'}</div></div>
             </div>
@@ -274,7 +276,7 @@
             </div>
             <div id="vatDebugBox"></div>`;
           if (d.lines && d.lines.length) {
-            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>#</th><th>รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
+            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px" data-i18n="common.detail">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>#</th><th data-i18n="common.items">รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
             html += d.lines.map((ln, i) => `<tr>
               <td>${ln.lineOrder}</td>
               <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${(ln.description||'').replace(/"/g,'&quot;')}" style="min-width:120px">` : (ln.description || '-')}</td>
@@ -285,14 +287,14 @@
             </tr>`).join('');
             html += '</tbody></table></div>';
           }
-          html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${d.notes || ''}</textarea>` : `<div>${d.notes || '-'}</div>`}</div>`;
+          html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${d.notes || ''}</textarea>` : `<div>${d.notes || '-'}</div>`}</div>`;
           if (d.filingReference) {
             html += `<div style="margin-top:12px"><span class="text-gray-500 text-xs">เลขอ้างอิงการยื่น</span><div class="font-medium">${d.filingReference}</div></div>`;
           }
           document.getElementById('detailContent').innerHTML = html;
-          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (editable) {
-            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px">ลบ</button><button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
+            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button><button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');

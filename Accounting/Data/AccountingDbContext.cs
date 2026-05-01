@@ -981,6 +981,7 @@ public class AccountingDbContext : DbContext
             e.Property(rc => rc.Name).HasMaxLength(500);
             e.Property(rc => rc.TotalContractValue).HasPrecision(18, 2);
             e.HasOne(rc => rc.Contact).WithMany().HasForeignKey(rc => rc.ContactId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(rc => rc.Project).WithMany(p => p.RevenueContracts).HasForeignKey(rc => rc.ProjectId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(rc => !rc.IsDeleted);
         });
 

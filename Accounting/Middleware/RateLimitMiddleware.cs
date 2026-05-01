@@ -2,48 +2,55 @@ using System.Collections.Concurrent;
 
 namespace Accounting.Middleware;
 
-/// <summary>
-/// Rate Limiting Middleware (ป้องกัน abuse)
-/// Only applies to /api/ requests WITHOUT Authorization header
-/// Static files, pages, authenticated API calls are NOT rate limited
-/// </summary>
 public class RateLimitMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly int _maxRequestsPerMinute;
+    private readonly int _anonymousMaxPerMinute;
+    private readonly int _authenticatedMaxPerMinute;
     private static readonly ConcurrentDictionary<string, SlidingWindow> Windows = new();
 
     public RateLimitMiddleware(RequestDelegate next, IConfiguration config)
     {
         _next = next;
-        _maxRequestsPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "600");
+        _anonymousMaxPerMinute = int.Parse(config["RateLimit:MaxPerMinute"] ?? "600");
+        _authenticatedMaxPerMinute = int.Parse(config["RateLimit:AuthenticatedMaxPerMinute"] ?? "3000");
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
         var path = context.Request.Path.Value ?? "";
 
-        // Only rate limit API endpoints — skip static files, pages, SignalR, health
         if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
         }
 
-        // Skip rate limiting for authenticated requests (JWT token or API Key)
-        if (context.Request.Headers.ContainsKey("Authorization") ||
-            context.Request.Headers.ContainsKey("X-Api-Key") ||
-            context.Request.Headers.ContainsKey("X-Integration-Key"))
+        var isAuthenticated = context.Request.Headers.ContainsKey("Authorization") ||
+                              context.Request.Headers.ContainsKey("X-Api-Key") ||
+                              context.Request.Headers.ContainsKey("X-Integration-Key");
+
+        string clientKey;
+        int limit;
+
+        if (isAuthenticated)
         {
-            await _next(context);
-            return;
+            var userId = context.User?.FindFirst("sub")?.Value
+                      ?? context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            clientKey = !string.IsNullOrEmpty(userId)
+                ? $"user:{userId}"
+                : $"key:{context.Request.Headers["X-Api-Key"].FirstOrDefault() ?? context.Request.Headers["X-Integration-Key"].FirstOrDefault() ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+            limit = _authenticatedMaxPerMinute;
+        }
+        else
+        {
+            clientKey = $"ip:{context.Connection.RemoteIpAddress}";
+            limit = _anonymousMaxPerMinute;
         }
 
-        // Only rate limit anonymous API calls (login, register, contact, public endpoints)
-        var clientKey = $"ip:{context.Connection.RemoteIpAddress}";
         var window = Windows.GetOrAdd(clientKey, _ => new SlidingWindow());
 
-        if (!window.TryAdd(_maxRequestsPerMinute))
+        if (!window.TryAdd(limit))
         {
             context.Response.StatusCode = 429;
             context.Response.Headers.Append("Retry-After", "10");

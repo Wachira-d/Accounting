@@ -67,9 +67,9 @@ public partial class FinancialManagementService
             CompanyId = companyId, TaxYear = request.TaxYear, TaxPeriod = request.TaxPeriod,
             TotalRevenue = revenue, TotalExpenses = expenses, AccountingProfit = accountingProfit,
             AddBackItems = addBack, DeductionItems = deductions, TaxableProfit = taxableProfit,
-            TaxRate = taxRate, TaxAmount = Math.Round(taxAmount, 2),
+            TaxRate = taxRate, TaxAmount = Math.Round(taxAmount, 2, MidpointRounding.AwayFromZero),
             WithholdingTaxCredit = whtCredit, PrepaidTaxCredit = prepaidCredit,
-            NetTaxPayable = Math.Round(netPayable, 2),
+            NetTaxPayable = Math.Round(netPayable, 2, MidpointRounding.AwayFromZero),
             Notes = request.Notes, CreatedBy = userId
         };
 

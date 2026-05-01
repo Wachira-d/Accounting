@@ -2017,7 +2017,10 @@ public class IntegrationService : IIntegrationService
             .Select(c => new OutboundContactResponse(
                 c.Id, c.Name, c.TaxId, c.BranchCode,
                 c.ContactType.ToString(), c.IsCustomer, c.IsSupplier,
-                c.Address, c.Phone, c.Email, c.CreatedAt))
+                c.Address, c.Phone, c.Email, c.CreatedAt,
+                c.BranchName, c.BuildingNumber, c.BuildingName, c.StreetName,
+                c.SubDistrict, c.District, c.Province, c.PostalCode,
+                c.CountryCode, c.ContactPerson, c.IsActive))
             .ToListAsync();
 
         var totalPages = (int)Math.Ceiling((double)total / query.PageSize);

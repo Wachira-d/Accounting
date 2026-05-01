@@ -25,8 +25,8 @@
     <div id="tab-scenarios">
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อ Scenario</th><th>ประเภท</th><th>ปีงบ</th><th>สมมติฐาน</th><th>จัดการ</th></tr></thead>
-          <tbody id="scenarioTable"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>ชื่อ Scenario</th><th data-i18n="common.type">ประเภท</th><th>ปีงบ</th><th>สมมติฐาน</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="scenarioTable"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -66,16 +66,16 @@
           <input type="hidden" id="sId">
           <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="sName" placeholder="เช่น Best Case"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภท</label>
+            <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
               <select class="form-select" id="sType"><option value="BestCase">Best Case</option><option value="WorstCase">Worst Case</option><option value="MostLikely">Most Likely</option><option value="Custom">Custom</option></select>
             </div>
             <div class="form-group"><label class="form-label">ปีงบ *</label><input type="number" class="form-input" id="sYear" value="2026"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-input" id="sDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-input" id="sDesc" rows="2"></textarea></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('scenarioModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveScenario()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('scenarioModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveScenario()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -87,17 +87,17 @@
         <div class="modal-body">
           <input type="hidden" id="aScenarioId">
           <div class="form-group"><label class="form-label">หมวด</label><input type="text" class="form-input" id="aCategory" placeholder="เช่น Revenue, Cost"></div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><input type="text" class="form-input" id="aDescription" placeholder="เช่น Revenue growth +10%"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="aDescription" placeholder="เช่น Revenue growth +10%"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทการปรับ</label>
-              <select class="form-select" id="aAdjType"><option value="Percentage">เปอร์เซ็นต์</option><option value="FixedAmount">จำนวนเงิน</option></select>
+              <select class="form-select" id="aAdjType"><option value="Percentage">เปอร์เซ็นต์</option><option value="FixedAmount" data-i18n="common.amount">จำนวนเงิน</option></select>
             </div>
             <div class="form-group"><label class="form-label">ค่า</label><input type="number" class="form-input" id="aValue" step="0.01" placeholder="10"></div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('assumptionModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveAssumption()">เพิ่ม</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('assumptionModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveAssumption()" data-i18n="common.add">เพิ่ม</button>
         </div>
       </div>
     </div>
@@ -119,8 +119,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('kpiModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveKpi()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('kpiModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveKpi()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -131,7 +131,7 @@
         <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียด Scenario</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body" id="detailContent"></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
           <button class="btn btn-primary" id="calcBtn" onclick="Page.calculateCurrentScenario()">คำนวณ</button>
         </div>
       </div>
@@ -139,6 +139,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -177,9 +179,9 @@
             <td>${s.fiscalYear}</td>
             <td>${(s.assumptions || []).length} รายการ</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewScenario('${s.id}')">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewScenario('${s.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.openAddAssumption('${s.id}')">+สมมติฐาน</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteScenario('${s.id}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteScenario('${s.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -216,15 +218,15 @@
           this.currentDetailId = id;
           document.getElementById('detailTitle').textContent = s.name;
           let html = `<div class="grid grid-3 gap-4" style="margin-bottom:16px">
-            <div><div class="text-xs text-gray-500">ประเภท</div><div class="font-medium">${s.scenarioType||'-'}</div></div>
+            <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${s.scenarioType||'-'}</div></div>
             <div><div class="text-xs text-gray-500">ปีงบ</div><div class="font-medium">${s.fiscalYear}</div></div>
-            <div><div class="text-xs text-gray-500">คำอธิบาย</div><div>${s.description||'-'}</div></div>
+            <div><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${s.description||'-'}</div></div>
           </div>`;
           const assumptions = s.assumptions || [];
           html += `<h4 style="margin-bottom:8px">สมมติฐาน (${assumptions.length})</h4>`;
           if (assumptions.length) {
-            html += '<div class="table-container"><table class="table"><thead><tr><th>หมวด</th><th>คำอธิบาย</th><th>ประเภท</th><th class="text-right">ค่า</th><th></th></tr></thead><tbody>';
-            html += assumptions.map(a => `<tr><td>${a.category||'-'}</td><td>${a.description||'-'}</td><td>${a.adjustmentType}</td><td class="text-right">${a.adjustmentValue}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeAssumption('${a.id}')">ลบ</button></td></tr>`).join('');
+            html += '<div class="table-container"><table class="table"><thead><tr><th>หมวด</th><th data-i18n="common.description">คำอธิบาย</th><th data-i18n="common.type">ประเภท</th><th class="text-right">ค่า</th><th></th></tr></thead><tbody>';
+            html += assumptions.map(a => `<tr><td>${a.category||'-'}</td><td>${a.description||'-'}</td><td>${a.adjustmentType}</td><td class="text-right">${a.adjustmentValue}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.removeAssumption('${a.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('');
             html += '</tbody></table></div>';
           } else html += '<p class="text-gray-400 text-sm">ยังไม่มีสมมติฐาน</p>';
           const results = s.results || [];
@@ -321,7 +323,7 @@
           const items = res.data?.items || res.data || [];
           let html = '<h4>ประวัติ KPI</h4>';
           if (items.length) {
-            html += '<div class="table-container"><table class="table"><thead><tr><th>ปี</th><th>เดือน</th><th class="text-right">ค่า</th><th>สถานะ</th></tr></thead><tbody>';
+            html += '<div class="table-container"><table class="table"><thead><tr><th>ปี</th><th>เดือน</th><th class="text-right">ค่า</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>';
             html += items.map(h => `<tr><td>${h.year}</td><td>${h.month}</td><td class="text-right">${h.value?.toFixed(2)||'-'}</td><td>${Layout.statusBadge(h.status||'Pending')}</td></tr>`).join('');
             html += '</tbody></table></div>';
           } else html = '<p class="text-gray-400">ยังไม่มีประวัติ</p>';
@@ -336,9 +338,9 @@
         const api = Layout.api(); if (!api) return;
         const y = document.getElementById('ratioYear').value;
         try {
-          const res = await api.getFinancialRatios(`?fiscalYear=${y}`);
+          const res = await api.getFpaFinancialRatios(`?fiscalYear=${y}`);
           const d = res.data;
-          if (!d) { document.getElementById('ratioGrid').innerHTML = '<p class="text-gray-400" style="grid-column:1/-1;text-align:center;padding:40px">ไม่มีข้อมูล</p>'; return; }
+          if (!d) { document.getElementById('ratioGrid').innerHTML = '<p class="text-gray-400" style="grid-column:1/-1;text-align:center;padding:40px" data-i18n="common.noData">ไม่มีข้อมูล</p>'; return; }
           const render = (title, items) => `<div class="card" style="padding:20px"><h4 style="margin-bottom:12px">${title}</h4>${items.map(([label, val]) => `<div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-100)"><span class="text-sm">${label}</span><span class="font-semibold">${val != null ? (typeof val === 'number' ? val.toFixed(2) : val) : '-'}</span></div>`).join('')}</div>`;
           document.getElementById('ratioGrid').innerHTML =
             render('Liquidity', [['Current Ratio', d.currentRatio], ['Quick Ratio', d.quickRatio], ['Cash Ratio', d.cashRatio]]) +
@@ -354,7 +356,7 @@
         try {
           const res = await api.getBreakEven(y);
           const d = res.data;
-          if (!d) { document.getElementById('breakEvenContent').innerHTML = '<p class="text-gray-400 text-center" style="padding:40px">ไม่มีข้อมูล</p>'; return; }
+          if (!d) { document.getElementById('breakEvenContent').innerHTML = '<p class="text-gray-400 text-center" style="padding:40px" data-i18n="common.noData">ไม่มีข้อมูล</p>'; return; }
           document.getElementById('breakEvenContent').innerHTML = `
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
               <div class="kpi-card"><div class="kpi-label">จุดคุ้มทุน (บาท)</div><div class="kpi-value">${Layout.money(d.breakEvenRevenue)}</div></div>

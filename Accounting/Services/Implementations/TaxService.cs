@@ -58,6 +58,9 @@ public class TaxService : ITaxService
             var startDate = new DateTime(request.Year, request.TaxType == TaxType.CorporateIncomeTax ? 1 : request.Month, 1);
             var endDate = startDate.AddMonths(1).AddDays(-1);
 
+            var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+            var companyVatRate = company?.VatRate ?? 7m;
+
             var report = new TaxReport
             {
                 CompanyId = companyId,
@@ -213,8 +216,9 @@ public class TaxService : ITaxService
                 var outputVatAmt = outputVatLines.Sum(l => l.CreditAmount - l.DebitAmount);
                 if (outputVatAmt > 0)
                 {
-                    // Base amount = VAT / 0.07 (assuming 7% VAT)
-                    var baseAmount = Math.Round(outputVatAmt / 0.07m, 2);
+                    var baseAmount = companyVatRate > 0
+                        ? Math.Round(outputVatAmt / (companyVatRate / 100m), 2, MidpointRounding.AwayFromZero)
+                        : 0m;
                     outputVat += outputVatAmt;
                     report.Lines.Add(new TaxReportLine
                     {
@@ -223,7 +227,7 @@ public class TaxService : ITaxService
                         TransactionDate = je.EntryDate,
                         Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
                         IncomeAmount = baseAmount,
-                        TaxRate = 7,
+                        TaxRate = companyVatRate,
                         TaxAmount = outputVatAmt,
                         IncomeTypeCode = "JE_OUTPUT"
                     });
@@ -233,7 +237,9 @@ public class TaxService : ITaxService
                 var inputVatAmt = inputVatLines.Sum(l => l.DebitAmount - l.CreditAmount);
                 if (inputVatAmt > 0)
                 {
-                    var baseAmount = Math.Round(inputVatAmt / 0.07m, 2);
+                    var baseAmount = companyVatRate > 0
+                        ? Math.Round(inputVatAmt / (companyVatRate / 100m), 2, MidpointRounding.AwayFromZero)
+                        : 0m;
                     inputVat += inputVatAmt;
                     report.Lines.Add(new TaxReportLine
                     {
@@ -242,7 +248,7 @@ public class TaxService : ITaxService
                         TransactionDate = je.EntryDate,
                         Description = $"[ภาษีซื้อ-JE] {je.EntryNumber} {je.Description}".Trim(),
                         IncomeAmount = baseAmount,
-                        TaxRate = 7,
+                        TaxRate = companyVatRate,
                         TaxAmount = inputVatAmt,
                         IncomeTypeCode = "JE_INPUT"
                     });
@@ -394,10 +400,10 @@ public class TaxService : ITaxService
                     .SumAsync(l => l.DebitAmount);
                 var expenseTotal = allLinesInJe - whtAmount;
                 var estimatedRate = expenseTotal > 0
-                    ? Math.Round(whtAmount / expenseTotal * 100, 2)
+                    ? Math.Round(whtAmount / expenseTotal * 100, 2, MidpointRounding.AwayFromZero)
                     : 3m;
                 var baseAmount = estimatedRate > 0
-                    ? Math.Round(whtAmount / (estimatedRate / 100), 2)
+                    ? Math.Round(whtAmount / (estimatedRate / 100), 2, MidpointRounding.AwayFromZero)
                     : 0m;
 
                 report.Lines.Add(new TaxReportLine
@@ -672,7 +678,7 @@ public class TaxService : ITaxService
             previousBound = upperBound;
         }
 
-        return Math.Round(tax, 2);
+        return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
     }
 
     /// <summary>
@@ -703,7 +709,7 @@ public class TaxService : ITaxService
                 + (netProfit - 3_000_000m) * 0.20m; // 20% tier
         }
 
-        return Math.Round(tax, 2);
+        return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
     }
 
     private static decimal GetWhtRate(string? incomeTypeCode)
@@ -949,7 +955,7 @@ public class TaxService : ITaxService
                     await GenerateTaxReportAsync(companyId, new CreateTaxReportRequest(taxType, year, month));
                     refreshed++;
                 }
-                catch { }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to regenerate tax report for {taxType} {year}/{month}: {ex.Message}"); }
             }
         }
 

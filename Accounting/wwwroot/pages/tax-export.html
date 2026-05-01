@@ -120,14 +120,16 @@
           <pre id="previewData" style="background:var(--bg-secondary);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;max-height:400px;white-space:pre-wrap;word-break:break-all"></pre>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('previewModal')">ปิด</button>
-          <button class="btn btn-primary" id="previewDownloadBtn">ดาวน์โหลด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('previewModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-primary" id="previewDownloadBtn" data-i18n="common.download">ดาวน์โหลด</button>
         </div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -150,7 +152,7 @@
             const d = res.data;
             document.getElementById(`preview${code}`).innerHTML = d.summary || `${d.recordCount} รายการ | รายได้ ${Layout.money(d.totalIncome)} | ภาษี ${Layout.money(d.totalTax)}`;
           } catch (e) {
-            document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${e.message || 'ไม่มีข้อมูล'}</span>`;
+            document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
           }
         }
         // PND1K is annual
@@ -159,7 +161,7 @@
           const d = res.data;
           document.getElementById('previewPND1K').innerHTML = d.summary || `${d.recordCount} รายการ`;
         } catch(e) {
-          document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${e.message || 'ไม่มีข้อมูล'}</span>`;
+          document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
         }
       },
       download(formCode) {

@@ -20,10 +20,10 @@
 
     <!-- Summary Cards -->
     <div class="grid grid-4 gap-4" style="margin-bottom:16px">
-      <div class="card"><div class="text-gray-500 text-xs">ทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.all">ทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">ร่าง</div><div class="text-2xl font-bold text-warning" id="statDraft">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">ออกแล้ว</div><div class="text-2xl font-bold text-success" id="statIssued">0</div></div>
-      <div class="card"><div class="text-gray-500 text-xs">ยกเลิก</div><div class="text-2xl font-bold text-danger" id="statVoid">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.cancel">ยกเลิก</div><div class="text-2xl font-bold text-danger" id="statVoid">0</div></div>
     </div>
 
     <!-- Filters -->
@@ -39,7 +39,7 @@
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
         <option value="Issued">ออกแล้ว</option>
-        <option value="Voided">ยกเลิก</option>
+        <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
       </select>
       <input type="number" class="form-input" id="yearFilter" placeholder="ปี" style="width:80px" onchange="Page.load()">
       <input type="number" class="form-input" id="monthFilter" placeholder="เดือน" min="1" max="12" style="width:80px" onchange="Page.load()">
@@ -47,8 +47,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>ผู้ถูกหัก</th><th>แบบ</th><th>ปี/เดือน</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>ผู้ถูกหัก</th><th>แบบ</th><th>ปี/เดือน</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -81,8 +81,8 @@
           <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.addLine()">+ เพิ่มรายการ</button>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -104,13 +104,13 @@
           <p class="text-gray-500 text-sm" style="margin-bottom:12px">เอกสารซื้อ/ค่าใช้จ่ายที่มีภาษีหัก ณ ที่จ่าย แต่ยังไม่ได้ออกใบหนังสือรับรอง</p>
           <div class="table-container">
             <table class="table">
-              <thead><tr><th><input type="checkbox" id="pendingCheckAll" onchange="Page.toggleCheckAll(this)"></th><th>เลขที่เอกสาร</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดก่อน VAT</th><th class="text-right">ภาษีหัก</th><th>จัดการ</th></tr></thead>
-              <tbody id="pendingBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</td></tr></tbody>
+              <thead><tr><th><input type="checkbox" id="pendingCheckAll" onchange="Page.toggleCheckAll(this)"></th><th>เลขที่เอกสาร</th><th data-i18n="common.date">วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดก่อน VAT</th><th class="text-right">ภาษีหัก</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+              <tbody id="pendingBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:30px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
             </table>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('pendingModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('pendingModal')" data-i18n="common.close">ปิด</button>
           <button class="btn btn-primary" onclick="Page.generateSelected()">สร้างใบที่เลือก</button>
         </div>
       </div>
@@ -130,7 +130,7 @@
           <div id="bulkResult" style="display:none;margin-top:12px"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkModal')" data-i18n="common.close">ปิด</button>
           <button class="btn btn-primary" id="bulkBtn" onclick="Page.bulkGenerate()">สร้างทั้งหมด</button>
         </div>
       </div>
@@ -141,12 +141,14 @@
       <div class="modal" style="max-width:900px;height:90vh">
         <div class="modal-header"><h3 class="modal-title">พิมพ์หนังสือรับรอง</h3><button class="modal-close" onclick="Layout.closeModal('pdfModal')">&times;</button></div>
         <div class="modal-body" id="pdfContent" style="overflow:auto;flex:1"></div>
-        <div class="modal-footer"><button class="btn btn-primary" onclick="window.print()">พิมพ์</button></div>
+        <div class="modal-footer"><button class="btn btn-primary" onclick="window.print()" data-i18n="common.print">พิมพ์</button></div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -161,7 +163,7 @@
           const r = await api.getContacts('?pageSize=500');
           this.contacts = r.data?.items || r.data || [];
           const sel = document.getElementById('fContact');
-          this.contacts.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.name} ${c.taxId ? '('+c.taxId+')' : ''}</option>`; });
+          this.contacts.forEach(c => { sel.innerHTML += `<option value="${c.id}">${Layout.esc(c.name)} ${c.taxId ? '('+Layout.esc(c.taxId)+')' : ''}</option>`; });
         } catch(e){}
         await this.load();
       },
@@ -198,7 +200,7 @@
         if (search) items = items.filter(w => (w.certificateNumber || '').toLowerCase().includes(search) || (w.payeeName || '').toLowerCase().includes(search));
         if (statusF) items = items.filter(w => w.status === statusF);
         const tbody = document.getElementById('tableBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</td></tr>'; return; }
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
         const formMap = { PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', PND1: 'ภ.ง.ด.1' };
         tbody.innerHTML = items.map(w => `<tr>
           <td class="font-medium">${w.certificateNumber || '-'}</td>
@@ -209,8 +211,8 @@
           <td class="text-right font-semibold">${Layout.money(w.totalTaxAmount)}</td>
           <td>${Layout.statusBadge(w.status)}</td>
           <td class="flex gap-1">
-            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')">ดู</button>
-            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')">พิมพ์</button>` : ''}
+            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
+            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" data-i18n="common.print">พิมพ์</button>` : ''}
           </td>
         </tr>`).join('');
       },
@@ -225,17 +227,17 @@
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
               <div><span class="text-gray-500 text-xs">เลขที่</span><div class="font-semibold">${d.certificateNumber || '-'}</div></div>
-              <div><span class="text-gray-500 text-xs">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.status">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
               <div><span class="text-gray-500 text-xs">ผู้ถูกหักภาษี</span><div>${d.payeeName || '-'}</div></div>
               <div><span class="text-gray-500 text-xs">เลขประจำตัวผู้เสียภาษี</span><div>${d.payeeTaxId || '-'}</div></div>
               <div><span class="text-gray-500 text-xs">แบบ</span><div>${formMap[d.taxFormType] || d.taxFormType}</div></div>
-              <div><span class="text-gray-500 text-xs">ประเภท</span><div>${certTypeMap[d.certificateType] || d.certificateType || '-'}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div>${certTypeMap[d.certificateType] || d.certificateType || '-'}</div></div>
               <div><span class="text-gray-500 text-xs">ปี/เดือน</span><div>${d.taxYear}/${String(d.taxMonth).padStart(2,'0')}</div></div>
               <div><span class="text-gray-500 text-xs">วันที่ออก</span><div>${d.issuedDate ? Layout.date(d.issuedDate) : '-'}</div></div>
             </div>`;
           if (d.lines && d.lines.length) {
             const incMap = {'1':'40(1) เงินเดือน','2':'40(2) รับจ้าง','3':'40(3) ค่าลิขสิทธิ์','5':'40(5) ค่าเช่า','6':'40(6) วิชาชีพ','8':'40(8) อื่นๆ'};
-            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายการเงินได้</h4><div class="table-container"><table class="table"><thead><tr><th>ประเภท</th><th>วันจ่าย</th><th class="text-right">เงินได้</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
+            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายการเงินได้</h4><div class="table-container"><table class="table"><thead><tr><th data-i18n="common.type">ประเภท</th><th>วันจ่าย</th><th class="text-right">เงินได้</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
             html += d.lines.map(l => `<tr>
               <td>${incMap[l.incomeTypeCode] || l.incomeTypeCode}</td>
               <td>${Layout.date(l.paymentDate)}</td>
@@ -250,13 +252,13 @@
             <div><span class="text-gray-500 text-xs">รวมภาษี</span><div class="text-lg font-bold text-danger">${Layout.money(d.totalTaxAmount)}</div></div>
           </div>`;
           document.getElementById('detailContent').innerHTML = html;
-          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (d.status === 'Draft') {
-            footer = `<button class="btn btn-danger" onclick="Page.voidCert('${d.id}')">ยกเลิก</button>
+            footer = `<button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>
               <button class="btn btn-success" onclick="Page.issueCert('${d.id}')">ออกหนังสือรับรอง</button>` + footer;
           } else if (d.status === 'Issued') {
-            footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')">พิมพ์</button>
-              <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')">ยกเลิก</button>` + footer;
+            footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" data-i18n="common.print">พิมพ์</button>
+              <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
@@ -429,7 +431,7 @@
                 <span>${taxIdBoxes(d.payerTaxId)}</span>
               </div>
               <div class="wf-row">
-                <span class="wf-lbl">ชื่อ</span>
+                <span class="wf-lbl" data-i18n="common.name">ชื่อ</span>
                 <span class="wf-val">${d.payerName || ''}</span>
               </div>
               <div class="wf-row">
@@ -446,7 +448,7 @@
                 <span>${taxIdBoxes(d.payeeTaxId)}</span>
               </div>
               <div class="wf-row">
-                <span class="wf-lbl">ชื่อ</span>
+                <span class="wf-lbl" data-i18n="common.name">ชื่อ</span>
                 <span class="wf-val">${d.payeeName || ''}</span>
                 ${d.payeeBranchCode ? `<span class="wf-lbl" style="margin-left:8px">สาขาที่</span><span class="wf-val" style="max-width:80px">${d.payeeBranchCode}</span>` : ''}
               </div>

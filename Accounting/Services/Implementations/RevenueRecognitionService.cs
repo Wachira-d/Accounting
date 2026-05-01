@@ -36,6 +36,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
             ContractNumber = request.ContractNumber,
             Name = request.Name,
             ContactId = request.ContactId,
+            ProjectId = request.ProjectId,
             ContractDate = request.ContractDate,
             StartDate = request.StartDate,
             EndDate = request.EndDate,
@@ -54,6 +55,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
         var contract = await _db.RevenueContracts
             .Include(c => c.Contact)
             .Include(c => c.Obligations)
+            .Include(c => c.Project)
             .FirstOrDefaultAsync(c => c.Id == contractId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสัญญา");
 
@@ -66,6 +68,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
         var query = _db.RevenueContracts
             .Include(c => c.Contact)
             .Include(c => c.Obligations)
+            .Include(c => c.Project)
             .Where(c => c.CompanyId == companyId);
 
         if (!string.IsNullOrEmpty(status))
@@ -98,6 +101,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
         var contract = await _db.RevenueContracts
             .Include(c => c.Contact)
             .Include(c => c.Obligations)
+            .Include(c => c.Project)
             .FirstOrDefaultAsync(c => c.Id == contractId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสัญญา");
 
@@ -105,6 +109,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
         if (request.EndDate.HasValue) contract.EndDate = request.EndDate.Value;
         if (request.TotalContractValue.HasValue) contract.TotalContractValue = request.TotalContractValue.Value;
         if (request.Status != null) contract.Status = request.Status;
+        if (request.ProjectId.HasValue) contract.ProjectId = request.ProjectId;
 
         await _db.SaveChangesAsync();
 
@@ -415,7 +420,8 @@ public class RevenueRecognitionService : IRevenueRecognitionService
         return new RevenueContractResponse(
             c.Id, c.ContractNumber, c.Name, contactName,
             c.ContractDate, c.StartDate, c.EndDate, c.TotalContractValue,
-            c.Status, recognized, deferred, obligations);
+            c.Status, recognized, deferred, obligations,
+            c.ProjectId, c.Project?.Name);
     }
 
     private static PerformanceObligationResponse MapObligationToResponse(PerformanceObligation o) => new(

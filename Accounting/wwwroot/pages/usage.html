@@ -53,14 +53,14 @@
 
     <!-- Overview Cards -->
     <div id="overviewCards" class="grid grid-4 gap-4" style="margin-bottom:24px">
-      <div class="usage-card"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+      <div class="usage-card"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- Usage Bars -->
     <div class="card" style="margin-bottom:24px">
       <div class="card-header"><h3 class="card-title">โควต้าการใช้งาน</h3></div>
       <div id="usageBars" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:4px 0">
-        <div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1">กำลังโหลด...</div>
+        <div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1" data-i18n="common.loading">กำลังโหลด...</div>
       </div>
     </div>
 
@@ -68,7 +68,7 @@
       <!-- Storage Breakdown -->
       <div class="card">
         <div class="card-header"><h3 class="card-title">พื้นที่เก็บข้อมูลแยกประเภท</h3></div>
-        <div id="storageBreakdown"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+        <div id="storageBreakdown"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
       </div>
 
       <!-- User Accounts -->
@@ -77,14 +77,14 @@
           <h3 class="card-title">บัญชีผู้ใช้</h3>
           <span id="userCount" class="badge badge-primary"></span>
         </div>
-        <div id="userList"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+        <div id="userList"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
       </div>
     </div>
 
     <!-- Largest Files -->
     <div class="card" style="margin-bottom:24px">
       <div class="card-header"><h3 class="card-title">ไฟล์ขนาดใหญ่ที่สุด</h3></div>
-      <div id="largestFiles"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+      <div id="largestFiles"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
     <!-- Quick Actions -->
@@ -134,7 +134,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('cleanupModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('cleanupModal')" data-i18n="common.close">ปิด</button>
           <button class="btn btn-primary" onclick="location.href='/pages/subscription.html'">อัปเกรดแพ็กเกจ</button>
         </div>
       </div>
@@ -142,6 +142,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -307,7 +309,7 @@
         }
         const catMap = { Document:'เอกสาร', JournalEntry:'รายการบัญชี', Contact:'ผู้ติดต่อ', Product:'สินค้า', ExpenseClaim:'เบิกค่าใช้จ่าย', FixedAsset:'สินทรัพย์', Logo:'โลโก้' };
         el.innerHTML = `<div class="table-container"><table class="table" style="font-size:13px">
-          <thead><tr><th>ชื่อไฟล์</th><th>ประเภท</th><th class="text-right">ขนาด</th><th>อัปโหลดโดย</th><th>วันที่</th></tr></thead>
+          <thead><tr><th>ชื่อไฟล์</th><th data-i18n="common.type">ประเภท</th><th class="text-right">ขนาด</th><th>อัปโหลดโดย</th><th data-i18n="common.date">วันที่</th></tr></thead>
           <tbody>${files.map(f => `<tr>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f.fileName}">${f.fileName}</td>
             <td><span class="badge badge-gray">${catMap[f.entityType] || f.entityType}</span></td>

@@ -41,7 +41,7 @@
     </div>
 
     <div class="tabs" id="docTabs">
-      <div class="tab active" data-type="" onclick="Page.setType(this)">ทั้งหมด</div>
+      <div class="tab active" data-type="" onclick="Page.setType(this)" data-i18n="common.all">ทั้งหมด</div>
       <div class="tab" data-type="PurchaseRequisition" onclick="Page.setType(this)">ใบขอซื้อ</div>
       <div class="tab" data-type="PurchaseOrder" onclick="Page.setType(this)">ใบสั่งซื้อ</div>
       <div class="tab" data-type="PurchaseInvoice" onclick="Page.setType(this)">บันทึกซื้อสินค้า</div>
@@ -57,20 +57,20 @@
         <option value="Sent">ส่งแล้ว</option>
         <option value="Paid">ชำระแล้ว</option>
         <option value="PartiallyPaid">ชำระบางส่วน</option>
-        <option value="Voided">ยกเลิก</option>
+        <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
       </select>
     </div>
 
     <div id="purSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
       <span>เลือกแล้ว <b id="purSelCount">0</b> เอกสาร</span>
       <span id="purSelExportSlot"></span>
-      <button class="btn btn-secondary btn-sm" onclick="Page.clearPurSelection()">ยกเลิกการเลือก</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearPurSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th style="width:36px"><input type="checkbox" id="purCheckAll" onchange="Page.toggleAllPur(this.checked)"></th><th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ผู้จำหน่าย</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="purCheckAll" onchange="Page.toggleAllPur(this.checked)"></th><th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.date">วันที่</th><th>ผู้จำหน่าย</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -103,7 +103,7 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">เลขที่ใบกำกับภาษีซื้อ</label><input type="text" class="form-input" id="fRef" placeholder="เลขที่เอกสารจากผู้จำหน่าย"></div>
-            <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
           <div style="margin-top:16px">
@@ -113,7 +113,7 @@
             </div>
             <div class="table-container">
               <table class="table">
-                <thead><tr><th>รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
             </div>
@@ -127,8 +127,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -136,7 +136,7 @@
     <!-- Detail Modal -->
     <div class="modal-overlay" id="detailModal">
       <div class="modal" style="max-width:800px">
-        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle" data-i18n="common.detail">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body" id="detailContent"></div>
         <div class="modal-footer" id="detailActions"></div>
       </div>
@@ -144,6 +144,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/export.js"></script>
   <script>
@@ -263,7 +265,7 @@
             <td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
             </td>
           </tr>`).join('');
           this._updatePurSelectionBar();
@@ -290,7 +292,7 @@
       populateContacts() {
         const sel = document.getElementById('fContact');
         sel.innerHTML = '<option value="">เลือกผู้จำหน่าย</option>' +
-          this.contacts.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ` (${c.taxId})` : ''}</option>`).join('');
+          this.contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}${c.taxId ? ` (${Layout.esc(c.taxId)})` : ''}</option>`).join('');
       },
       setType(el) {
         document.querySelectorAll('#docTabs .tab').forEach(t => t.classList.remove('active'));
@@ -395,8 +397,8 @@
           document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
           document.getElementById('detailContent').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
-              <div><div class="text-xs text-gray-500">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
-              <div><div class="text-xs text-gray-500">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
@@ -405,7 +407,7 @@
               ${d.reference ? `<div><div class="text-xs text-gray-500">เลขที่ใบกำกับภาษีซื้อ</div><div>${d.reference}</div></div>` : ''}
             </div>
             <div class="table-container">
-              <table class="table"><thead><tr><th>#</th><th>รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">VAT</th><th class="text-right">WHT</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">VAT</th><th class="text-right">WHT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.withholdingTaxAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
             </div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
@@ -415,14 +417,14 @@
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
-            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
-          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')">ปิด</button>';
+            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (d.status === 'Draft') {
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')">ยกเลิก</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');

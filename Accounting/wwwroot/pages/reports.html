@@ -45,8 +45,8 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>ชื่อรายงาน</th><th>ประเภท</th><th>Data Source</th><th>หมวด</th><th>จัดการ</th></tr></thead>
-          <tbody id="customReportList"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>ชื่อรายงาน</th><th data-i18n="common.type">ประเภท</th><th>Data Source</th><th>หมวด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="customReportList"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -62,7 +62,7 @@
             <div class="form-group"><label class="form-label">Data Source *</label><select class="form-select" id="rDataSource" onchange="Page.loadDataSourceColumns()"></select></div>
             <div class="form-group"><label class="form-label">หมวด</label><input type="text" class="form-input" id="rCategory" placeholder="เช่น Finance"></div>
           </div>
-          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-input" id="rDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-input" id="rDesc" rows="2"></textarea></div>
           <div class="form-group"><label class="form-label">คอลัมน์ที่แสดง</label><div id="rColumnsSelect" class="flex gap-2" style="flex-wrap:wrap"></div></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">Group By</label><select class="form-select" id="rGroupBy"><option value="">ไม่ group</option></select></div>
@@ -73,8 +73,8 @@
           <div class="form-group"><label class="form-label"><input type="checkbox" id="rTotals"> แสดงผลรวม</label></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveReport()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveReport()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -85,13 +85,15 @@
         <div class="modal-header"><h3 class="modal-title" id="resultTitle">ผลลัพธ์รายงาน</h3><button class="modal-close" onclick="Layout.closeModal('resultModal')">&times;</button></div>
         <div class="modal-body" id="resultContent" style="max-height:500px;overflow:auto"></div>
         <div class="modal-footer" id="resultFooter">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('resultModal')">ปิด</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('resultModal')" data-i18n="common.close">ปิด</button>
         </div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -146,7 +148,7 @@
             case 'pnl': await this.loadPnl(api, content); break;
             case 'cashflow': await this.loadCashFlow(api, content); break;
           }
-        } catch (e) { content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${e.message}</div>`; }
+        } catch (e) { content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message)}</div>`; }
       },
       async loadTrial(api, el) {
         const date = document.getElementById('asOfDate').value;
@@ -157,7 +159,7 @@
           <p class="text-sm text-gray-500" style="margin-bottom:16px">ณ วันที่ ${Layout.date(d.asOfDate)}</p>
           <div class="table-container">
             <table class="table">
-              <thead><tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th>ประเภท</th><th class="text-right">ยอดเดบิต</th><th class="text-right">ยอดเครดิต</th></tr></thead>
+              <thead><tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th data-i18n="common.type">ประเภท</th><th class="text-right">ยอดเดบิต</th><th class="text-right">ยอดเครดิต</th></tr></thead>
               <tbody>${(d.items||[]).map(i => `<tr>
                 <td>${i.accountCode}</td><td>${i.accountName}</td>
                 <td>${Layout.accountTypeLabel(i.accountType)}</td>
@@ -213,7 +215,7 @@
           <p class="text-sm text-gray-500" style="margin-bottom:16px">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p>
           <div class="table-container">
             <table class="table">
-              <thead><tr><th>รหัส</th><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+              <thead><tr><th>รหัส</th><th data-i18n="common.items">รายการ</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>
                 <tr style="background:#ECFDF5"><td colspan="3" class="font-semibold">รายได้</td></tr>
                 ${renderItems(d.revenue)}
@@ -234,14 +236,14 @@
         const renderSection = (section) => section ? `
           <tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold">${section.sectionName}</td><td></td></tr>
           ${(section.items||[]).map(i => `<tr><td></td><td>${i.description}</td><td class="text-right">${Layout.money(i.amount)}</td></tr>`).join('')}
-          <tr><td></td><td class="font-medium">รวม</td><td class="text-right font-medium">${Layout.money(section.subTotal)}</td></tr>
+          <tr><td></td><td class="font-medium" data-i18n="common.total">รวม</td><td class="text-right font-medium">${Layout.money(section.subTotal)}</td></tr>
         ` : '';
         el.innerHTML = `
           <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบกระแสเงินสด</h3>
           <p class="text-sm text-gray-500" style="margin-bottom:16px">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p>
           <div class="table-container">
             <table class="table">
-              <thead><tr><th></th><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+              <thead><tr><th></th><th data-i18n="common.items">รายการ</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>
                 ${renderSection(d.operatingActivities)}
                 ${renderSection(d.investingActivities)}
@@ -270,9 +272,9 @@
             <td>${r.category||'-'}</td>
             <td>
               <button class="btn btn-sm btn-primary" onclick="Page.executeReport('${r.id}','${r.name}')">ดูผล</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.editReport('${r.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.duplicateReport('${r.id}')">สำเนา</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteReport('${r.id}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.editReport('${r.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.duplicateReport('${r.id}')" data-i18n="common.copy">สำเนา</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>
             </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -354,7 +356,7 @@
           const sel = document.getElementById('rDataSource');
           sel.innerHTML = sources.map(s => `<option value="${s.type||s.name}" ${(s.type||s.name)===r.dataSourceType?'selected':''}>${s.displayName||s.name}</option>`).join('');
           await this.loadDataSourceColumns();
-          if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch {} }
+          if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch (e) { console.error('parseGrouping:', e); } }
           Layout.openModal('reportModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -366,14 +368,14 @@
         try {
           const res = await api.executeCustomReport(id, {});
           const d = res.data;
-          if (!d || (!d.rows?.length && !d.columns?.length)) { document.getElementById('resultContent').innerHTML = '<p class="text-center text-gray-400" style="padding:40px">ไม่มีข้อมูล</p>'; return; }
+          if (!d || (!d.rows?.length && !d.columns?.length)) { document.getElementById('resultContent').innerHTML = '<p class="text-center text-gray-400" style="padding:40px" data-i18n="common.noData">ไม่มีข้อมูล</p>'; return; }
           const cols = d.columns || Object.keys(d.rows?.[0] || {});
           let html = '<div class="table-container"><table class="table"><thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
           (d.rows || []).forEach(row => { html += '<tr>' + cols.map(c => `<td>${row[c] != null ? row[c] : '-'}</td>`).join('') + '</tr>'; });
           if (d.totals) { html += '<tr style="background:var(--gray-100);font-weight:bold">' + cols.map(c => `<td>${d.totals[c] != null ? d.totals[c] : ''}</td>`).join('') + '</tr>'; }
           html += '</tbody></table></div>';
           document.getElementById('resultContent').innerHTML = html;
-        } catch (e) { document.getElementById('resultContent').innerHTML = `<p class="text-center text-danger">${e.message}</p>`; }
+        } catch (e) { document.getElementById('resultContent').innerHTML = `<p class="text-center text-danger">${Layout.esc(e.message)}</p>`; }
       },
       async duplicateReport(id) {
         const api = Layout.api(); if (!api) return;

@@ -15,7 +15,7 @@
     </div>
 
     <div class="tabs">
-      <div class="tab active" onclick="Page.setFilter('all',this)">ทั้งหมด</div>
+      <div class="tab active" onclick="Page.setFilter('all',this)" data-i18n="common.all">ทั้งหมด</div>
       <div class="tab" onclick="Page.setFilter('customer',this)">ลูกค้า</div>
       <div class="tab" onclick="Page.setFilter('supplier',this)">ผู้จำหน่าย</div>
     </div>
@@ -26,8 +26,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่อ</th><th>เลขผู้เสียภาษี</th><th>ประเภท</th><th>โทรศัพท์</th><th>อีเมล</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.phone">โทรศัพท์</th><th data-i18n="common.email">อีเมล</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -38,27 +38,49 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มผู้ติดต่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="editId">
-          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
-          <div class="form-row">
-            <div class="form-group" style="flex:2"><label class="form-label">เลขผู้เสียภาษี</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
-            <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000"></div>
+          <!-- ประเภทผู้ติดต่อ -->
+          <div class="form-group">
+            <label class="form-label">ประเภทผู้ติดต่อ *</label>
+            <select class="form-input" id="fContactType" onchange="Page.onContactTypeChange()">
+              <option value="2">นิติบุคคล (บริษัท/ห้างหุ้นส่วน)</option>
+              <option value="1">บุคคลธรรมดา</option>
+              <option value="3">หน่วยงานราชการ</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
+          <div class="form-row" id="taxIdRow">
+            <div class="form-group" style="flex:2"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
+            <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+          </div>
+          <!-- ฟิลด์เฉพาะนิติบุคคล -->
+          <div id="juristicFields" style="margin-bottom:12px">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fJuristicId" maxlength="13" placeholder="เลข 13 หลักจาก DBD"></div>
+              <div class="form-group"><label class="form-label">ประเภทนิติบุคคล</label><input type="text" class="form-input" id="fJuristicType" placeholder="เช่น บริษัทจำกัด" readonly style="background:#f8fafc"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ทุนจดทะเบียน</label><input type="text" class="form-input" id="fRegisteredCapital" readonly style="background:#f8fafc"></div>
+              <div class="form-group"><label class="form-label">สถานะนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fDbdStatus" readonly style="background:#f8fafc"></div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked><label for="fIsCustomer">ลูกค้า</label></div>
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier"><label for="fIsSupplier">ผู้จำหน่าย</label></div>
           </div>
+          <!-- วางที่อยู่เต็มเพื่อแยกอัตโนมัติ -->
           <div class="form-group">
-            <label class="form-label">
-              ที่อยู่ (เต็ม)
-              <span style="font-weight:normal;color:#64748b;font-size:12px">— วาง/พิมพ์ที่นี่ ระบบจะแยกส่วนข้างล่างให้อัตโนมัติ</span>
-            </label>
-            <textarea class="form-textarea" id="fAddress" rows="2" placeholder="เช่น 123/45 ถ.สุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพฯ 10110" onblur="Page.parseAddressIfEmpty()"></textarea>
-            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="Page.parseAddress()">🔍 แยกที่อยู่อัตโนมัติ</button>
+            <label class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="form-input" id="fAddressPaste" placeholder="วางที่อยู่เต็มแล้วกดแยก..." style="flex:1">
+              <button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="Page.parseFromPaste()">แยกที่อยู่</button>
+            </div>
           </div>
+          <input type="hidden" id="fAddress">
 
-          <details style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:10px" open>
-            <summary style="cursor:pointer;font-weight:600">รายละเอียดที่อยู่ (โครงสร้าง — สำหรับ e-Tax XML)</summary>
-            <div class="form-row" style="margin-top:8px">
+          <!-- ที่อยู่แบบแยกส่วน (หลัก) -->
+          <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
+            <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
+            <div class="form-row">
               <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
               <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
             </div>
@@ -72,17 +94,17 @@
               <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric"></div>
             </div>
             <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
-          </details>
+          </div>
 
           <div class="form-row">
-            <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
-            <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
           </div>
           <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="text" class="form-input" id="fContactPerson"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -90,6 +112,8 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/dbd-lookup.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -120,14 +144,15 @@
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีผู้ติดต่อ</td></tr>'; return; }
           items.forEach(c => Page._cache[c.id] = c);
+          const ctLabel = (ct) => ({1:'บุคคลธรรมดา',2:'นิติบุคคล',3:'หน่วยงานราชการ'}[ct] || '-');
           tbody.innerHTML = items.map(c => `<tr>
-            <td class="font-medium">${c.name}</td>
-            <td>${c.taxId || '-'}</td>
-            <td>${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
+            <td class="font-medium">${Layout.esc(c.name)}</td>
+            <td>${Layout.esc(c.taxId || '-')}${c.branchCode && c.contactType === 2 ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
+            <td><span class="badge ${c.contactType===2?'badge-info':c.contactType===3?'badge-warning':'badge-gray'}">${ctLabel(c.contactType)}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
-            <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')">แก้ไข</button></td>
+            <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -139,6 +164,9 @@
         this._dbdAttached = true;
         const fillFromDbd = (result) => {
           if (!result) return;
+          // DBD returns juristic person data → auto-set type
+          document.getElementById('fContactType').value = '2';
+          Page.onContactTypeChange();
           // Fill name + taxId + free-text address + structured address parts
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'fName',
@@ -154,8 +182,25 @@
           if (result.juristicId && !document.getElementById('fTaxId').value) {
             document.getElementById('fTaxId').value = result.juristicId;
           }
-          // After DBD fills the free-text Address, auto-parse to extract building number + street
-          setTimeout(() => Page.parseAddressIfEmpty(), 50);
+          // Fill juristic-specific fields from DBD
+          if (result.juristicId) document.getElementById('fJuristicId').value = result.juristicId;
+          if (result.juristicType) document.getElementById('fJuristicType').value = result.juristicType;
+          if (result.registeredCapital) document.getElementById('fRegisteredCapital').value = Number(result.registeredCapital).toLocaleString('th-TH') + ' บาท';
+          if (result.status) document.getElementById('fDbdStatus').value = result.status;
+          // Default branch to 00000 (head office) for juristic
+          if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
+          if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
+          // Auto-parse the DBD address to extract building number + street into structured fields
+          const rawAddr = document.getElementById('fAddress').value;
+          if (rawAddr) {
+            const api = Layout.api();
+            if (api) api.parseAddress(rawAddr).then(j => {
+              const p = (j && j.data) || {};
+              if (p.buildingNumber && !document.getElementById('fBuildingNumber').value) document.getElementById('fBuildingNumber').value = p.buildingNumber;
+              if (p.buildingName && !document.getElementById('fBuildingName').value) document.getElementById('fBuildingName').value = p.buildingName;
+              if (p.streetName && !document.getElementById('fStreetName').value) document.getElementById('fStreetName').value = p.streetName;
+            }).catch(() => {});
+          }
         };
         DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd);
         DbdLookup.attachTaxIdLookup(
@@ -165,17 +210,31 @@
         );
       },
       _allFieldIds: [
-        'fName','fTaxId','fBranch','fBranchName','fAddress',
+        'fName','fTaxId','fBranch','fBranchName','fAddressPaste',
         'fBuildingNumber','fBuildingName','fStreetName',
         'fSubDistrict','fDistrict','fProvince','fPostalCode',
-        'fPhone','fEmail','fContactPerson'
+        'fPhone','fEmail','fContactPerson',
+        'fJuristicId','fJuristicType','fRegisteredCapital','fDbdStatus'
       ],
+      onContactTypeChange() {
+        const ct = parseInt(document.getElementById('fContactType').value);
+        const isJuristic = ct === 2;
+        const isGov = ct === 3;
+        document.getElementById('juristicFields').style.display = isJuristic ? '' : 'none';
+        document.getElementById('branchCodeGroup').style.display = (isJuristic || isGov) ? '' : 'none';
+        document.getElementById('fDbdBtn').style.display = isJuristic ? '' : 'none';
+        document.getElementById('fNameHint').style.display = isJuristic ? '' : 'none';
+        document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ-นามสกุล';
+        document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
+      },
       openCreate() {
         document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
         document.getElementById('editId').value = '';
-        this._allFieldIds.forEach(id => document.getElementById(id).value = '');
+        this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+        document.getElementById('fContactType').value = '2';
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
+        this.onContactTypeChange();
         Layout.openModal('formModal');
         setTimeout(() => this._attachDbd(), 100);
       },
@@ -183,6 +242,7 @@
         const c = this._cache[id]; if (!c) return;
         document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
         document.getElementById('editId').value = c.id;
+        document.getElementById('fContactType').value = String(c.contactType || 2);
         document.getElementById('fName').value = c.name;
         document.getElementById('fTaxId').value = c.taxId || '';
         document.getElementById('fBranch').value = c.branchCode || '';
@@ -200,15 +260,17 @@
         document.getElementById('fPhone').value = c.phone || '';
         document.getElementById('fEmail').value = c.email || '';
         document.getElementById('fContactPerson').value = c.contactPerson || '';
+        document.getElementById('fJuristicId').value = '';
+        document.getElementById('fJuristicType').value = '';
+        document.getElementById('fRegisteredCapital').value = '';
+        document.getElementById('fDbdStatus').value = '';
+        this.onContactTypeChange();
         Layout.openModal('formModal');
         setTimeout(() => this._attachDbd(), 100);
       },
-      async parseAddress() {
-        const text = document.getElementById('fAddress').value;
-        if (!text || !text.trim()) {
-          Layout.toast('กรุณาพิมพ์ที่อยู่ก่อน', 'error');
-          return;
-        }
+      async parseFromPaste() {
+        const text = document.getElementById('fAddressPaste').value;
+        if (!text || !text.trim()) { Layout.toast('กรุณาวางที่อยู่ก่อน', 'error'); return; }
         const api = Layout.api(); if (!api) return;
         try {
           const j = await api.parseAddress(text);
@@ -221,30 +283,35 @@
           if (p.district) document.getElementById('fDistrict').value = p.district;
           if (p.province) document.getElementById('fProvince').value = p.province;
           if (p.postalCode) document.getElementById('fPostalCode').value = p.postalCode;
+          document.getElementById('fAddressPaste').value = '';
           Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
-        } catch (e) {
-          Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error');
-        }
+        } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
       },
-      parseAddressIfEmpty() {
-        // Auto-trigger parse on blur only if structured fields are empty
-        const empty = ['fBuildingNumber','fSubDistrict','fDistrict','fProvince','fPostalCode']
-          .every(id => !document.getElementById(id).value);
-        if (empty && document.getElementById('fAddress').value.trim()) {
-          this.parseAddress();
-        }
+      composeAddress() {
+        const parts = [
+          document.getElementById('fBuildingNumber').value,
+          document.getElementById('fBuildingName').value,
+          document.getElementById('fStreetName').value ? 'ถ.' + document.getElementById('fStreetName').value : '',
+          document.getElementById('fSubDistrict').value,
+          document.getElementById('fDistrict').value,
+          document.getElementById('fProvince').value,
+          document.getElementById('fPostalCode').value
+        ].filter(Boolean);
+        return parts.join(' ') || null;
       },
       async save() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('editId').value;
+        const ct = parseInt(document.getElementById('fContactType').value);
         const data = {
           name: document.getElementById('fName').value,
           taxId: document.getElementById('fTaxId').value || null,
-          branchCode: document.getElementById('fBranch').value || null,
+          branchCode: (ct === 2 || ct === 3) ? (document.getElementById('fBranch').value || '00000') : null,
           branchName: document.getElementById('fBranchName').value || null,
+          contactType: ct,
           isCustomer: document.getElementById('fIsCustomer').checked,
           isSupplier: document.getElementById('fIsSupplier').checked,
-          address: document.getElementById('fAddress').value || null,
+          address: this.composeAddress(),
           buildingNumber: document.getElementById('fBuildingNumber').value || null,
           buildingName: document.getElementById('fBuildingName').value || null,
           streetName: document.getElementById('fStreetName').value || null,
@@ -260,6 +327,15 @@
           if (id) await api.updateContact(id, data); else await api.createContact(data);
           Layout.closeModal('formModal');
           Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มผู้ติดต่อสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteContact(id) {
+        if (!confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteContact(id);
+          Layout.toast('ลบผู้ติดต่อสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }

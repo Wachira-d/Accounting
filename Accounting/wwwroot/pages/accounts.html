@@ -64,7 +64,7 @@
     </div>
 
     <div id="treeContainer" class="card" style="padding:0;overflow:hidden">
-      <div style="padding:40px;text-align:center;color:var(--gray-400)">กำลังโหลด...</div>
+      <div style="padding:40px;text-align:center;color:var(--gray-400)" data-i18n="common.loading">กำลังโหลด...</div>
     </div>
 
     <!-- Create/Edit Modal -->
@@ -105,19 +105,21 @@
             <select class="form-select" id="fParent"><option value="">-- ไม่มี (บัญชีหลัก) --</option></select>
           </div>
           <div class="form-group">
-            <label class="form-label">คำอธิบาย</label>
+            <label class="form-label" data-i18n="common.description">คำอธิบาย</label>
             <textarea class="form-textarea" id="fDesc" rows="2"></textarea>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -144,7 +146,7 @@
         const labels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
         document.getElementById('summaryCards').innerHTML = Object.entries(counts).map(([k, v]) =>
           `<div class="coa-summary-card"><div class="count">${v}</div><div class="label">${labels[k]}</div></div>`
-        ).join('') + `<div class="coa-summary-card"><div class="count">${this.accounts.length}</div><div class="label">ทั้งหมด</div></div>`;
+        ).join('') + `<div class="coa-summary-card"><div class="count">${this.accounts.length}</div><div class="label" data-i18n="common.all">ทั้งหมด</div></div>`;
       },
       filter() {
         const q = document.getElementById('searchInput').value.toLowerCase();
@@ -167,8 +169,8 @@
             <span class="coa-name">${a.accountName}${a.accountNameEn ? `<span class="coa-name-en">${a.accountNameEn}</span>` : ''}</span>
             <span class="coa-meta">
               <span class="badge badge-${this._typeBadge(a.accountType)}">${Layout.accountTypeLabel(a.accountType)}</span>
-              ${a.isActive ? '' : '<span class="badge badge-gray">ปิด</span>'}
-              ${a.isSystemAccount ? '' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')">แก้ไข</button>`}
+              ${a.isActive ? '' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
+              ${a.isSystemAccount ? '' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>`}
             </span>
           </div>
         `).join('');
@@ -209,8 +211,8 @@
             <span class="coa-code">${node.accountCode}</span>
             <span class="coa-name">${node.accountName}${node.accountNameEn ? `<span class="coa-name-en">${node.accountNameEn}</span>` : ''}</span>
             <span class="coa-meta">
-              ${!node.isActive ? '<span class="badge badge-gray">ปิด</span>' : ''}
-              ${!node.isSystemAccount ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${node.id}')">แก้ไข</button>` : ''}
+              ${!node.isActive ? '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>' : ''}
+              ${!node.isSystemAccount ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${node.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
             </span>
           </div>`;
           if (hasChildren) {
