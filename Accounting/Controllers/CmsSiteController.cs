@@ -1,6 +1,8 @@
 using Accounting.Helpers;
+using Accounting.Middleware;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,10 +15,12 @@ namespace Accounting.Controllers;
 public class CmsSiteController : ControllerBase
 {
     private readonly ICmsSiteService _siteService;
+    private readonly ICmsQuotaService _quotaService;
 
-    public CmsSiteController(ICmsSiteService siteService)
+    public CmsSiteController(ICmsSiteService siteService, ICmsQuotaService quotaService)
     {
         _siteService = siteService;
+        _quotaService = quotaService;
     }
 
     // ===== Sites =====
@@ -190,6 +194,16 @@ public class CmsSiteController : ControllerBase
         var result = await _siteService.RevokeStaffAccessAsync(companyId, siteId, accessId);
         if (!result) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบสิทธิ์เข้าถึง"));
         return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสิทธิ์เข้าถึงสำเร็จ"));
+    }
+
+    // ===== Quotas =====
+
+    [HttpGet("{siteId:guid}/quotas")]
+    [RequireSiteRole(SiteStaffRole.Admin)]
+    public async Task<ActionResult<ApiResponse<CmsQuotaStatus>>> GetQuotas(Guid companyId, Guid siteId)
+    {
+        var result = await _quotaService.GetQuotaStatusAsync(companyId, siteId);
+        return Ok(new ApiResponse<CmsQuotaStatus>(true, result));
     }
 
     // ===== Public Resolution (no auth required) =====

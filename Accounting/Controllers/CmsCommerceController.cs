@@ -1,6 +1,8 @@
 using Accounting.Helpers;
+using Accounting.Middleware;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +24,7 @@ public class CmsCommerceController : ControllerBase
     // ===== Products =====
 
     [HttpPost("products")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<SiteProductResponse>>> AddProduct(
         Guid companyId, Guid siteId, [FromBody] CreateSiteProductRequest request)
     {
@@ -188,6 +191,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpPut("orders/{orderId:guid}/status")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateOrderStatus(
         Guid companyId, Guid siteId, Guid orderId, [FromBody] UpdateOrderStatusRequest request)
     {
@@ -197,6 +201,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpPost("orders/{orderId:guid}/sync-erp")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<Guid?>>> SyncOrderToErp(Guid companyId, Guid siteId, Guid orderId)
     {
         var documentId = await _commerceService.SyncOrderToErpAsync(companyId, siteId, orderId);

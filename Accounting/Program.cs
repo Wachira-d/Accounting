@@ -184,6 +184,7 @@ builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
+builder.Services.AddScoped<ICmsQuotaService, CmsQuotaService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
@@ -350,6 +351,9 @@ app.UseAuthorization();
 
 // 7. Tenant access control (after auth)
 app.UseMiddleware<TenantAccessMiddleware>();
+
+// 7.5 CMS RBAC (site-level staff access check)
+app.UseCmsRbac();
 
 // 8. Subscription check
 app.UseMiddleware<SubscriptionCheckMiddleware>();

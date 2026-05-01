@@ -1,6 +1,8 @@
 using Accounting.Helpers;
+using Accounting.Middleware;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +24,7 @@ public class CmsContentController : ControllerBase
     // ===== Pages =====
 
     [HttpPost("pages")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<PageResponse>>> CreatePage(Guid companyId, Guid siteId, [FromBody] CreatePageRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -56,6 +59,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpPut("pages/{pageId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<PageResponse>>> UpdatePage(Guid companyId, Guid siteId, Guid pageId, [FromBody] UpdatePageRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -64,6 +68,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpDelete("pages/{pageId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<bool>>> DeletePage(Guid companyId, Guid siteId, Guid pageId)
     {
         var result = await _contentService.DeletePageAsync(companyId, siteId, pageId);
@@ -72,6 +77,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpPost("pages/{pageId:guid}/publish")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<PageResponse>>> PublishPage(Guid companyId, Guid siteId, Guid pageId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();

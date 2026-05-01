@@ -1,6 +1,8 @@
 using Accounting.Helpers;
+using Accounting.Middleware;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -135,6 +137,7 @@ public class CmsBookingController : ControllerBase
     }
 
     [HttpPut("bookings/{bookingId:guid}/status")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<BookingResponse>>> UpdateBookingStatus(
         Guid companyId, Guid siteId, Guid bookingId, [FromBody] UpdateBookingStatusRequest request)
     {
@@ -144,6 +147,7 @@ public class CmsBookingController : ControllerBase
     }
 
     [HttpPost("bookings/{bookingId:guid}/sync-erp")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<Guid?>>> SyncBookingToErp(Guid companyId, Guid siteId, Guid bookingId)
     {
         var documentId = await _bookingService.SyncBookingToErpAsync(companyId, siteId, bookingId);
