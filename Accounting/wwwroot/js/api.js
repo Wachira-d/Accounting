@@ -168,6 +168,8 @@ const API = {
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
       updateContact: (id, d) => API.put(`${base}/document/contacts/${id}`, d),
+      getContact: (id) => API.get(`${base}/document/contacts/${id}`),
+      deleteContact: (id) => API.del(`${base}/document/contacts/${id}`),
       getContactSmartDefaults: (id) => API.get(`${base}/document/contacts/${id}/smart-defaults`),
       parseAddress: (text) => API.post(`${base}/document/contacts/parse-address`, { address: text }),
       // Payments

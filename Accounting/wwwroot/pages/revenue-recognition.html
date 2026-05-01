@@ -116,7 +116,7 @@ const Page = {
     try {
       const res = await api.getContacts('?pageSize=200');
       const items = res.data?.items || res.data || [];
-      document.getElementById('fContact').innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      document.getElementById('fContact').innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
     } catch (err) { /* ignore */ }
     ['fNumber','fStart','fEnd','fAmount','fDesc'].forEach(id => document.getElementById(id).value = '');
     Layout.openModal('formModal');

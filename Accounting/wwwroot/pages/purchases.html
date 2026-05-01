@@ -292,7 +292,7 @@
       populateContacts() {
         const sel = document.getElementById('fContact');
         sel.innerHTML = '<option value="">เลือกผู้จำหน่าย</option>' +
-          this.contacts.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ` (${c.taxId})` : ''}</option>`).join('');
+          this.contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}${c.taxId ? ` (${Layout.esc(c.taxId)})` : ''}</option>`).join('');
       },
       setType(el) {
         document.querySelectorAll('#docTabs .tab').forEach(t => t.classList.remove('active'));

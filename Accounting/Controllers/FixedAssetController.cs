@@ -128,6 +128,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<ImportFixedAssetsResult>>> Import(
         Guid companyId, [FromBody] List<ImportFixedAssetRow> rows)
     {
+        if (rows.Count > 1000) return BadRequest(new ApiResponse<object>(false, null, "สูงสุด 1,000 รายการต่อครั้ง"));
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.ImportAsync(companyId, rows, userId);
         return Ok(new ApiResponse<ImportFixedAssetsResult>(true, result,

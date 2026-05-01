@@ -163,7 +163,7 @@
           const r = await api.getContacts('?pageSize=500');
           this.contacts = r.data?.items || r.data || [];
           const sel = document.getElementById('fContact');
-          this.contacts.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.name} ${c.taxId ? '('+c.taxId+')' : ''}</option>`; });
+          this.contacts.forEach(c => { sel.innerHTML += `<option value="${c.id}">${Layout.esc(c.name)} ${c.taxId ? '('+Layout.esc(c.taxId)+')' : ''}</option>`; });
         } catch(e){}
         await this.load();
       },

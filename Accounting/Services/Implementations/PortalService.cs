@@ -416,7 +416,7 @@ public class PortalService : IPortalService
             Buffer.BlockCopy(storedBytes, 16, storedHashBytes, 0, storedHashBytes.Length);
             return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(hash, storedHashBytes);
         }
-        catch { return false; }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Portal password verification failed: {ex.Message}"); return false; }
     }
 
     private static PortalAccessResponse MapToAccessResponse(PortalAccess p, string contactName) => new(

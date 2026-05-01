@@ -305,8 +305,8 @@ const Page = {
       const tbody = document.getElementById('webhookBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มี Webhook</td></tr>'; return; }
       tbody.innerHTML = items.map(w => `<tr>
-        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis"><span class="font-medium text-sm" style="font-family:monospace">${w.url || '-'}</span></td>
-        <td><span class="text-sm">${(w.events || w.eventTypes || []).slice(0,3).join(', ')}${(w.events||w.eventTypes||[]).length > 3 ? '...' : ''}</span></td>
+        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis"><span class="font-medium text-sm" style="font-family:monospace">${Layout.esc(w.url || '-')}</span></td>
+        <td><span class="text-sm">${Layout.esc((w.events || w.eventTypes || []).slice(0,3).join(', '))}${(w.events||w.eventTypes||[]).length > 3 ? '...' : ''}</span></td>
         <td>${Layout.statusBadge(w.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td class="text-sm">${w.lastDeliveryAt ? Layout.date(w.lastDeliveryAt) : 'ยังไม่เคยส่ง'}</td>
         <td>
@@ -326,7 +326,7 @@ const Page = {
     document.getElementById('whSecret').value = '';
     document.getElementById('whActive').checked = true;
     const events = this.eventTypes.length ? this.eventTypes : ['document.created','document.approved','payment.received'];
-    document.getElementById('whEvents').innerHTML = events.map(e => `<label class="text-sm"><input type="checkbox" value="${e.name||e}" checked> ${e.displayName||e.name||e}</label>`).join('');
+    document.getElementById('whEvents').innerHTML = events.map(e => `<label class="text-sm"><input type="checkbox" value="${Layout.esc(e.name||e)}" checked> ${Layout.esc(e.displayName||e.name||e)}</label>`).join('');
     Layout.openModal('webhookModal');
   },
 
@@ -368,7 +368,7 @@ const Page = {
       document.getElementById('deliveryContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>HTTP Status</th><th>Response Time</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
       <tbody>${items.map(d => `<tr>
         <td class="text-sm">${new Date(d.timestamp || d.createdAt).toLocaleString('th-TH')}</td>
-        <td class="text-sm">${d.eventType || '-'}</td>
+        <td class="text-sm">${Layout.esc(d.eventType || '-')}</td>
         <td><span class="badge ${d.statusCode >= 200 && d.statusCode < 300 ? 'badge-success' : 'badge-danger'}">${d.statusCode || '-'}</span></td>
         <td class="text-sm">${d.responseTime || d.duration || '-'}ms</td>
         <td>${d.statusCode >= 400 || !d.statusCode ? `<button class="btn btn-sm btn-secondary" onclick="Page.retryDelivery('${d.id}')">ส่งใหม่</button>` : ''}</td>
@@ -391,8 +391,8 @@ const Page = {
       const tbody = document.getElementById('apikeyBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มี API Key</td></tr>'; return; }
       tbody.innerHTML = items.map(k => `<tr>
-        <td class="font-medium">${k.name || '-'}</td>
-        <td><code style="background:var(--gray-100);padding:2px 6px;border-radius:4px;font-size:12px">${k.keyPrefix || k.key?.substring(0,12) || '***'}...</code></td>
+        <td class="font-medium">${Layout.esc(k.name || '-')}</td>
+        <td><code style="background:var(--gray-100);padding:2px 6px;border-radius:4px;font-size:12px">${Layout.esc(k.keyPrefix || k.key?.substring(0,12) || '***')}...</code></td>
         <td>${Layout.date(k.createdAt)}</td>
         <td>${k.lastUsedAt ? Layout.date(k.lastUsedAt) : 'ยังไม่เคยใช้'}</td>
         <td>${Layout.statusBadge(k.isActive !== false && !k.isRevoked ? 'Active' : 'Inactive')}</td>

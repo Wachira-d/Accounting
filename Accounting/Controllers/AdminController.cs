@@ -817,7 +817,7 @@ public class AdminController : ControllerBase
             return JsonSerializer.Deserialize<List<LandingServiceItem>>(json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
         }
-        catch { return new(); }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to deserialize landing services JSON: {ex.Message}"); return new(); }
     }
 
     // ===== Integration Overview (Admin) =====

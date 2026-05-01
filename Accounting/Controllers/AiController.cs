@@ -22,7 +22,10 @@ public class AiController : ControllerBase
 
     [HttpPost("categorize/batch")]
     public async Task<ActionResult<ApiResponse<List<CategorizationResultResponse>>>> BatchCategorize(Guid companyId, [FromQuery] string entityType, [FromBody] List<Guid> entityIds)
-        => Ok(new ApiResponse<List<CategorizationResultResponse>>(true, await _service.BatchCategorizeAsync(companyId, entityType, entityIds)));
+    {
+        if (entityIds.Count > 500) return BadRequest(new ApiResponse<object>(false, null, "สูงสุด 500 รายการต่อครั้ง"));
+        return Ok(new ApiResponse<List<CategorizationResultResponse>>(true, await _service.BatchCategorizeAsync(companyId, entityType, entityIds)));
+    }
 
     [HttpPost("categorize/{resultId:guid}/accept")]
     public async Task<ActionResult<ApiResponse<bool>>> Accept(Guid companyId, Guid resultId)

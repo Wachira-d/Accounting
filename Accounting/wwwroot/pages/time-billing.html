@@ -164,7 +164,7 @@ const Page = {
       }
       if (cRes.status === 'fulfilled') {
         const contacts = cRes.value.data?.items || cRes.value.data || [];
-        document.getElementById('eContact').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + contacts.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        document.getElementById('eContact').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
       }
     } catch (err) { /* ignore */ }
     Layout.openModal('entryModal');

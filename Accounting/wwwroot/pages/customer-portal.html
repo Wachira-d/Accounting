@@ -143,7 +143,7 @@ const Page = {
       const contacts = res.data?.items || res.data || [];
       const sel = document.getElementById('accessContact');
       sel.innerHTML = '<option value="">-- เลือกลูกค้า --</option>' +
-        contacts.map(c => `<option value="${c.id}" data-email="${c.email||''}">${c.name}</option>`).join('');
+        contacts.map(c => `<option value="${c.id}" data-email="${Layout.esc(c.email||'')}">${Layout.esc(c.name)}</option>`).join('');
       sel.onchange = function() {
         const opt = this.options[this.selectedIndex];
         const email = opt?.dataset?.email;

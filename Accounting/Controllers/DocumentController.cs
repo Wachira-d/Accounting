@@ -148,11 +148,20 @@ public class DocumentController : ControllerBase
     // ===== Contacts =====
 
     [HttpGet("contacts")]
-    public async Task<ActionResult<ApiResponse<List<ContactResponse>>>> GetContacts(
-        Guid companyId, [FromQuery] bool? isCustomer = null, [FromQuery] bool? isSupplier = null)
+    public async Task<ActionResult<ApiResponse<PagedResponse<ContactResponse>>>> GetContacts(
+        Guid companyId, [FromQuery] bool? isCustomer = null, [FromQuery] bool? isSupplier = null,
+        [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        var result = await _documentService.GetContactsAsync(companyId, isCustomer, isSupplier);
-        return Ok(new ApiResponse<List<ContactResponse>>(true, result));
+        var paging = new PagedRequest(page, pageSize);
+        var result = await _documentService.GetContactsAsync(companyId, isCustomer, isSupplier, search, paging);
+        return Ok(new ApiResponse<PagedResponse<ContactResponse>>(true, result));
+    }
+
+    [HttpGet("contacts/{contactId:guid}")]
+    public async Task<ActionResult<ApiResponse<ContactResponse>>> GetContact(Guid companyId, Guid contactId)
+    {
+        var result = await _documentService.GetContactAsync(companyId, contactId);
+        return Ok(new ApiResponse<ContactResponse>(true, result));
     }
 
     [HttpPost("contacts")]
@@ -167,6 +176,13 @@ public class DocumentController : ControllerBase
     {
         var result = await _documentService.UpdateContactAsync(companyId, contactId, request);
         return Ok(new ApiResponse<ContactResponse>(true, result));
+    }
+
+    [HttpDelete("contacts/{contactId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteContact(Guid companyId, Guid contactId)
+    {
+        await _documentService.DeleteContactAsync(companyId, contactId);
+        return Ok(new ApiResponse<object>(true, null, "ลบผู้ติดต่อสำเร็จ"));
     }
 
     /// <summary>

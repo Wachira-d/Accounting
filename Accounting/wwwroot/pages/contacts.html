@@ -152,7 +152,7 @@
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -327,6 +327,15 @@
           if (id) await api.updateContact(id, data); else await api.createContact(data);
           Layout.closeModal('formModal');
           Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มผู้ติดต่อสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteContact(id) {
+        if (!confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteContact(id);
+          Layout.toast('ลบผู้ติดต่อสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }

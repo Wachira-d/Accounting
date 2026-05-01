@@ -97,10 +97,10 @@
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(e => `<tr>
-            <td class="font-medium">${e.claimNumber}</td>
-            <td>${e.title}</td>
+            <td class="font-medium">${Layout.esc(e.claimNumber)}</td>
+            <td>${Layout.esc(e.title)}</td>
             <td>${Layout.date(e.expenseDate)}</td>
-            <td>${e.submittedByName || '-'}</td>
+            <td>${Layout.esc(e.submittedByName || '-')}</td>
             <td class="text-right font-semibold">${Layout.money(e.totalAmount)}</td>
             <td>${Layout.statusBadge(e.status)}</td>
             <td>
@@ -205,25 +205,25 @@
           const e = res.data;
           document.getElementById('detailContent').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-              <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${e.claimNumber}</div></div>
+              <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${Layout.esc(e.claimNumber)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(e.status)}</div></div>
-              <div><div class="text-xs text-gray-500">หัวข้อ</div><div>${e.title}</div></div>
+              <div><div class="text-xs text-gray-500">หัวข้อ</div><div>${Layout.esc(e.title)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.date">วันที่</div><div>${Layout.date(e.expenseDate)}</div></div>
-              <div><div class="text-xs text-gray-500">ผู้เบิก</div><div>${e.submittedByName || '-'}</div></div>
+              <div><div class="text-xs text-gray-500">ผู้เบิก</div><div>${Layout.esc(e.submittedByName || '-')}</div></div>
               <div><div class="text-xs text-gray-500">ยอดรวม</div><div class="font-semibold text-lg">${Layout.money(e.totalAmount)}</div></div>
             </div>
-            ${e.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px;margin-bottom:16px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${e.description}</div></div>` : ''}
+            ${e.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px;margin-bottom:16px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${Layout.esc(e.description)}</div></div>` : ''}
             <div class="table-container"><table class="table">
               <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th class="text-right">VAT</th><th class="text-right">WHT</th><th class="text-right">สุทธิ</th></tr></thead>
               <tbody>${(e.lines || []).map(l => `<tr>
-                <td>${l.description}</td>
+                <td>${Layout.esc(l.description)}</td>
                 <td class="text-right">${Layout.money(l.amount)}</td>
                 <td class="text-right">${Layout.money(l.vatAmount)}</td>
                 <td class="text-right">${Layout.money(l.withholdingTaxAmount)}</td>
                 <td class="text-right font-semibold">${Layout.money(l.netAmount)}</td>
               </tr>`).join('')}</tbody>
             </table></div>
-            ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${e.rejectionReason}</div></div>` : ''}`;
+            ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${Layout.esc(e.rejectionReason)}</div></div>` : ''}`;
 
           // Actions based on status
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';

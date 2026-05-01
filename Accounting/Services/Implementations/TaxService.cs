@@ -955,7 +955,7 @@ public class TaxService : ITaxService
                     await GenerateTaxReportAsync(companyId, new CreateTaxReportRequest(taxType, year, month));
                     refreshed++;
                 }
-                catch { }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to regenerate tax report for {taxType} {year}/{month}: {ex.Message}"); }
             }
         }
 

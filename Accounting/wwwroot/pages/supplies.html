@@ -212,13 +212,13 @@
         document.getElementById('balanceBody').innerHTML = d.items.length === 0
           ? '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่พบวัสดุสิ้นเปลือง</td></tr>'
           : d.items.map(i => `<tr>
-            <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td><td>${i.unit}</td>
+            <td>${Layout.esc(i.productCode)}</td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.category || '-')}</td><td>${Layout.esc(i.unit)}</td>
             <td class="text-right">${this.fmtQty(i.currentStock)}</td>
             <td class="text-right">${this.fmt(i.averageCost)}</td>
             <td class="text-right">${this.fmt(i.totalValue)}</td>
             <td class="text-right">${this.fmtQty(i.minimumStock)}</td>
             <td>${i.isLow ? '<span class="badge badge-danger">ต่ำ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${i.productName}')">ประวัติ</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${Layout.esc(i.productName)}')">ประวัติ</button></td>
           </tr>`).join('');
       } catch (e) { console.error(e); }
     },
@@ -244,21 +244,21 @@
         document.getElementById('usageBody').innerHTML = (!d.items || d.items.length === 0)
           ? '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบข้อมูล</td></tr>'
           : d.items.map(i => `<tr>
-            <td>${i.productCode}</td><td>${i.productName}</td><td>${i.category || '-'}</td>
-            <td>${i.department || '-'}</td><td>${i.unit}</td>
+            <td>${Layout.esc(i.productCode)}</td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.category || '-')}</td>
+            <td>${Layout.esc(i.department || '-')}</td><td>${Layout.esc(i.unit)}</td>
             <td class="text-right">${this.fmtQty(i.totalQuantity)}</td>
             <td class="text-right">${this.fmt(i.totalCost)}</td>
           </tr>`).join('');
 
         document.getElementById('deptChartBody').innerHTML = (d.byDepartment || []).map(x =>
           `<div class="breakdown-row">
-            <span>${x.department}</span>
+            <span>${Layout.esc(x.department)}</span>
             <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
           </div>`).join('') || '<p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p>';
 
         document.getElementById('catChartBody').innerHTML = (d.byCategory || []).map(x =>
           `<div class="breakdown-row">
-            <span>${x.category}</span>
+            <span>${Layout.esc(x.category)}</span>
             <span><strong>${this.fmt(x.totalCost)}</strong> (${x.percentage}%)</span>
           </div>`).join('') || '<p class="text-gray-400" style="font-size:13px" data-i18n="common.noData">ไม่มีข้อมูล</p>';
       } catch (e) { console.error(e); }
@@ -322,11 +322,11 @@
             ? '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่พบข้อมูล</td></tr>'
             : res.data.map(u => `<tr>
               <td>${Layout.date(u.usageDate)}</td>
-              <td>${this.fmtQty(u.quantity)} ${u.unit}</td>
+              <td>${this.fmtQty(u.quantity)} ${Layout.esc(u.unit)}</td>
               <td>${this.fmt(u.totalCost)}</td>
-              <td>${u.department || '-'}</td>
-              <td>${u.purpose || '-'}</td>
-              <td>${u.reference || '-'}</td>
+              <td>${Layout.esc(u.department || '-')}</td>
+              <td>${Layout.esc(u.purpose || '-')}</td>
+              <td>${Layout.esc(u.reference || '-')}</td>
             </tr>`).join('');
         }
       } catch (e) { console.error('supplies:', e); }

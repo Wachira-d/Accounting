@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace Accounting.Models.DTOs.Integration;
 
 // ===== Integration Configuration =====
@@ -156,14 +158,14 @@ public record InboundReverseJournalRequest(
     DateTime? ReversalDate,
     string? Description);
 
-/// <summary>Batch import — ส่งข้อมูลหลายรายการพร้อมกัน</summary>
+/// <summary>Batch import — ส่งข้อมูลหลายรายการพร้อมกัน (สูงสุด 500 รายการต่อประเภท)</summary>
 public record InboundBatchRequest(
-    List<InboundCustomerRequest>? Customers,
-    List<InboundInvoiceRequest>? Invoices,
-    List<InboundPaymentRequest>? Payments,
-    List<InboundExpenseRequest>? Expenses,
-    List<InboundProductRequest>? Products,
-    List<InboundJournalRequest>? Journals);
+    [property: MaxLength(500)] List<InboundCustomerRequest>? Customers,
+    [property: MaxLength(500)] List<InboundInvoiceRequest>? Invoices,
+    [property: MaxLength(500)] List<InboundPaymentRequest>? Payments,
+    [property: MaxLength(500)] List<InboundExpenseRequest>? Expenses,
+    [property: MaxLength(500)] List<InboundProductRequest>? Products,
+    [property: MaxLength(500)] List<InboundJournalRequest>? Journals);
 
 public record InboundBatchResponse(
     int TotalProcessed, int SuccessCount, int ErrorCount,
@@ -211,7 +213,18 @@ public record OutboundContactResponse(
     Guid Id, string Name, string? TaxId, string? BranchCode,
     string ContactType, bool IsCustomer, bool IsSupplier,
     string? Address, string? Phone, string? Email,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? BranchName = null,
+    string? BuildingNumber = null,
+    string? BuildingName = null,
+    string? StreetName = null,
+    string? SubDistrict = null,
+    string? District = null,
+    string? Province = null,
+    string? PostalCode = null,
+    string? CountryCode = null,
+    string? ContactPerson = null,
+    bool IsActive = true);
 
 public record OutboundPaymentResponse(
     Guid Id, string PaymentNumber, Guid DocumentId, string? DocumentNumber,

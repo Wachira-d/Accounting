@@ -161,12 +161,12 @@
           const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', PromptPay:'พร้อมเพย์' };
           if (!payments.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่มีประวัติการชำระเงิน</td></tr>'; return; }
           tbody.innerHTML = payments.map(p => `<tr>
-            <td class="font-medium">${p.paymentNumber}</td>
+            <td class="font-medium">${Layout.esc(p.paymentNumber)}</td>
             <td>${Layout.date(p.paymentDate)}</td>
-            <td>${planMap[p.requestedPlan] || p.requestedPlan}</td>
-            <td>${cycleMap[p.requestedBillingCycle] || p.requestedBillingCycle}</td>
+            <td>${planMap[p.requestedPlan] || Layout.esc(p.requestedPlan)}</td>
+            <td>${cycleMap[p.requestedBillingCycle] || Layout.esc(p.requestedBillingCycle)}</td>
             <td class="text-right font-semibold">฿${Layout.money(p.amount)}</td>
-            <td>${methodMap[p.paymentMethod] || p.paymentMethod}</td>
+            <td>${methodMap[p.paymentMethod] || Layout.esc(p.paymentMethod)}</td>
             <td>${Layout.statusBadge(p.status)}</td>
           </tr>`).join('');
         } catch (e) { document.getElementById('paymentHistory').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'; }
@@ -181,9 +181,9 @@
 
         document.getElementById('currentSubContent').innerHTML = `
           <div class="grid grid-4 gap-4" style="margin-bottom:16px">
-            <div><div class="text-xs text-gray-500">แพ็กเกจ</div><div class="text-lg font-bold"><span class="plan-badge plan-${s.plan?.toLowerCase()}">${planMap[s.plan] || s.plan}</span></div></div>
+            <div><div class="text-xs text-gray-500">แพ็กเกจ</div><div class="text-lg font-bold"><span class="plan-badge plan-${Layout.esc(s.plan?.toLowerCase())}">${planMap[s.plan] || Layout.esc(s.plan)}</span></div></div>
             <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div class="text-lg font-bold">${Layout.statusBadge(s.status)}</div></div>
-            <div><div class="text-xs text-gray-500">รอบบิล</div><div class="text-lg font-bold">${cycleMap[s.billingCycle] || s.billingCycle}</div></div>
+            <div><div class="text-xs text-gray-500">รอบบิล</div><div class="text-lg font-bold">${cycleMap[s.billingCycle] || Layout.esc(s.billingCycle)}</div></div>
             <div><div class="text-xs text-gray-500">ราคา/รอบ</div><div class="text-lg font-bold">฿${Layout.money(s.pricePerCycle)}</div></div>
           </div>
           <div class="grid grid-4 gap-4">
@@ -230,7 +230,7 @@
                 <button class="btn btn-white" onclick="Sub.openUpgradeFromTrial()">อัปเกรดเลย</button>
               </div>
               ${t.incentive?.discountPercent ? `<div style="margin-top:12px;background:rgba(255,255,255,.15);padding:8px 16px;border-radius:var(--radius);display:inline-block">
-                พิเศษ! อัปเกรดตอนนี้ลด ${t.incentive.discountPercent}% ${t.incentive.promoCode ? `ใช้โค้ด <strong>${t.incentive.promoCode}</strong>` : ''}
+                พิเศษ! อัปเกรดตอนนี้ลด ${t.incentive.discountPercent}% ${t.incentive.promoCode ? `ใช้โค้ด <strong>${Layout.esc(t.incentive.promoCode)}</strong>` : ''}
               </div>` : ''}
             </div>`;
         }
@@ -240,7 +240,7 @@
 
         document.getElementById('trialDetailContent').innerHTML = `
           <div class="grid grid-3 gap-4" style="margin-bottom:20px">
-            <div class="sub-card"><div class="text-xs text-gray-500">สถานะ Trial</div><div class="font-bold text-lg">${statusMap[t.trialStatus] || t.trialStatus}</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">สถานะ Trial</div><div class="font-bold text-lg">${statusMap[t.trialStatus] || Layout.esc(t.trialStatus)}</div></div>
             <div class="sub-card"><div class="text-xs text-gray-500">วันเริ่ม - สิ้นสุด</div><div class="font-medium">${Layout.date(t.trialStartDate)} - ${Layout.date(t.trialEndDate)}</div></div>
             <div class="sub-card"><div class="text-xs text-gray-500">ใช้ไป / ทั้งหมด</div><div class="font-bold text-lg">${t.daysUsed} / ${t.totalTrialDays} วัน</div></div>
           </div>
@@ -267,7 +267,7 @@
             <div class="sub-card"><div class="text-xs text-gray-500">ส่งออกข้อมูล</div><div class="font-bold">${t.expiryBehavior?.allowDataExportAfterExpiry ? '✓ ได้' : '✗ ไม่ได้'}</div></div>
           </div>
 
-          ${t.expiryBehavior?.trialMessage ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:var(--radius);font-size:13px;color:var(--gray-600)">ข้อความ: "${t.expiryBehavior.trialMessage}"</div>` : ''}
+          ${t.expiryBehavior?.trialMessage ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:var(--radius);font-size:13px;color:var(--gray-600)">ข้อความ: "${Layout.esc(t.expiryBehavior.trialMessage)}"</div>` : ''}
         `;
       },
 
@@ -290,8 +290,8 @@
 
           return `<div class="sub-card${isCurrent ? ' current' : ''}" style="position:relative">
             ${isCurrent ? '<div style="position:absolute;top:-10px;right:16px;background:var(--primary);color:#fff;padding:2px 12px;border-radius:9999px;font-size:11px;font-weight:600">แพ็กเกจปัจจุบัน</div>' : ''}
-            <div class="font-bold text-lg">${p.name}</div>
-            <div class="text-xs text-gray-500" style="margin-bottom:12px">${p.description ? p.description.substring(0, 80) + '...' : ''}</div>
+            <div class="font-bold text-lg">${Layout.esc(p.name)}</div>
+            <div class="text-xs text-gray-500" style="margin-bottom:12px">${p.description ? Layout.esc(p.description.substring(0, 80)) + '...' : ''}</div>
             <div style="margin-bottom:16px">
               <span style="font-size:32px;font-weight:800">฿${this.formatMoney(price.perMonth)}</span>
               <span class="text-gray-400">/เดือน</span>
@@ -302,7 +302,7 @@
               ทดลองฟรี ${p.trialDurationDays} วัน | ขยายได้ ${p.trialMaxExtensions} ครั้ง | Grace ${p.trialGracePeriodDays} วัน
             </div>
             ${isCurrent ? '<button class="btn btn-secondary w-full" disabled>แพ็กเกจปัจจุบัน</button>' :
-              `<button class="btn btn-primary w-full" onclick="Sub.selectPlan('${p.plan}')">
+              `<button class="btn btn-primary w-full" onclick="Sub.selectPlan('${Layout.esc(p.plan)}')">
                 ${!currentPlan || currentPlan === 'FreeTrial' ? 'เริ่มทดลองฟรี' : 'อัปเกรด'}
               </button>`}
           </div>`;
@@ -376,16 +376,16 @@
         document.getElementById('upgradeContent').innerHTML = `
           <div class="text-center" style="margin-bottom:16px">
             <div style="font-size:48px">&#x1F680;</div>
-            <h4>อัปเกรดเป็น ${p.name}</h4>
+            <h4>อัปเกรดเป็น ${Layout.esc(p.name)}</h4>
           </div>
           <div class="sub-card" style="margin-bottom:16px">
-            <div class="flex justify-between"><span>แพ็กเกจ</span><strong>${p.name}</strong></div>
+            <div class="flex justify-between"><span>แพ็กเกจ</span><strong>${Layout.esc(p.name)}</strong></div>
             <div class="flex justify-between"><span>รอบบิล</span><strong>${this.cycleName()}</strong></div>
             <div class="flex justify-between"><span>ราคา/เดือน</span><strong>฿${this.formatMoney(price.perMonth)}</strong></div>
             <div class="flex justify-between" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px"><span class="font-bold">ยอดชำระ</span><span class="font-bold text-lg text-primary">฿${this.formatMoney(price.total)}</span></div>
           </div>
           <div class="form-group"><label class="form-label">โค้ดส่วนลด (ถ้ามี)</label><input type="text" class="form-input" id="promoCode" placeholder="กรอกโค้ดส่วนลด"></div>
-          <input type="hidden" id="upgradePlan" value="${plan}">
+          <input type="hidden" id="upgradePlan" value="${Layout.esc(plan)}">
           <input type="hidden" id="upgradeCycle" value="${cycleEnum}">`;
         Layout.openModal('upgradeModal');
       },

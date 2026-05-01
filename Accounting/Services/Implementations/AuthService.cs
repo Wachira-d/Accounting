@@ -276,7 +276,7 @@ public class AuthService : IAuthService
 
     private static bool IsLikelyBase64(string s)
     {
-        try { _ = Convert.FromBase64String(s); return true; } catch { return false; }
+        try { _ = Convert.FromBase64String(s); return true; } catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Base64 validation failed: {ex.Message}"); return false; }
     }
 
     private static UserProfileResponse MapProfile(Models.Entities.User u) => new(

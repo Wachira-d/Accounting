@@ -109,6 +109,9 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+
             var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
             var docPrefix = $"{prefix}-{yearMonth}-";
             var maxNumber = await _db.Documents
@@ -1111,14 +1114,53 @@ public class DocumentService : IDocumentService
         && string.IsNullOrEmpty(r.District) && string.IsNullOrEmpty(r.Province)
         && string.IsNullOrEmpty(r.PostalCode);
 
-    public async Task<List<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null)
+    public async Task<ContactResponse> GetContactAsync(Guid companyId, Guid contactId)
+    {
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        return MapContactToResponse(contact);
+    }
+
+    public async Task<PagedResponse<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null, string? search = null, PagedRequest? paging = null)
     {
         var query = _db.Contacts.Where(c => c.CompanyId == companyId);
         if (isCustomer.HasValue) query = query.Where(c => c.IsCustomer == isCustomer.Value);
         if (isSupplier.HasValue) query = query.Where(c => c.IsSupplier == isSupplier.Value);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(c => c.Name.ToLower().Contains(s)
+                || (c.TaxId != null && c.TaxId.Contains(s))
+                || (c.Email != null && c.Email.ToLower().Contains(s))
+                || (c.Phone != null && c.Phone.Contains(s)));
+        }
 
-        var contacts = await query.OrderBy(c => c.Name).ToListAsync();
-        return contacts.Select(MapContactToResponse).ToList();
+        var totalCount = await query.CountAsync();
+        var page = paging?.Page ?? 1;
+        var pageSize = paging?.PageSize ?? 50;
+        var contacts = await query.OrderBy(c => c.Name)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+        return new PagedResponse<ContactResponse>(
+            contacts.Select(MapContactToResponse).ToList(),
+            totalCount, page, pageSize, totalPages);
+    }
+
+    public async Task DeleteContactAsync(Guid companyId, Guid contactId)
+    {
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        var hasDocuments = await _db.Documents.AnyAsync(d => d.ContactId == contactId && d.CompanyId == companyId);
+        if (hasDocuments)
+        {
+            contact.IsActive = false;
+            await _db.SaveChangesAsync();
+            return;
+        }
+        _db.Contacts.Remove(contact);
+        await _db.SaveChangesAsync();
     }
 
     public async Task<ContactResponse> UpdateContactAsync(Guid companyId, Guid contactId, UpdateContactRequest request)
@@ -1737,9 +1779,13 @@ public class DocumentService : IDocumentService
         }
     }
 
-    /// <summary>Generate next journal entry number for a given prefix (SV/UV/RV/PV/JV) per month.</summary>
+    /// <summary>Generate next journal entry number for a given prefix (SV/UV/RV/PV/JV) per month.
+    /// Uses PostgreSQL advisory lock to prevent race conditions on concurrent inserts.</summary>
     private async Task<string> GetNextJournalEntryNumberAsync(Guid companyId, string prefix)
     {
+        var lockKey = HashCode.Combine(companyId, prefix, "je-seq");
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+
         var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
         var pattern = $"{prefix}-{yearMonth}-";
         var lastEntry = await _db.JournalEntries

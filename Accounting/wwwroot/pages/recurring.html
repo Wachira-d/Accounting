@@ -184,7 +184,7 @@ const Page = {
       const res = await api.getContacts('?pageSize=200');
       const items = res.data?.items || res.data || [];
       const sel = document.getElementById('fContact');
-      sel.innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      sel.innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
     } catch (err) { /* ignore */ }
   },
 

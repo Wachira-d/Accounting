@@ -69,7 +69,7 @@
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีงวดบัญชี — กดปุ่ม "สร้างงวดบัญชี" เพื่อเริ่มต้น</td></tr>'; return; }
           tbody.innerHTML = items.map(p => `<tr>
-            <td class="font-medium">${p.name || `${p.year}/${p.month}`}</td>
+            <td class="font-medium">${Layout.esc(p.name || `${p.year}/${p.month}`)}</td>
             <td>${p.year}</td><td>${p.month}</td>
             <td>${Layout.date(p.startDate)}</td><td>${Layout.date(p.endDate)}</td>
             <td>${Layout.statusBadge(p.status)}</td>

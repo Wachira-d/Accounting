@@ -123,9 +123,9 @@ const Page = {
       const tbody = document.getElementById('branchBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสาขา</td></tr>'; return; }
       tbody.innerHTML = items.map(b => `<tr>
-        <td><span class="font-medium">${b.code || '-'}</span></td>
-        <td>${b.name || '-'}</td>
-        <td>${b.address || '-'}</td>
+        <td><span class="font-medium">${Layout.esc(b.code || '-')}</span></td>
+        <td>${Layout.esc(b.name || '-')}</td>
+        <td>${Layout.esc(b.address || '-')}</td>
         <td>${Layout.statusBadge(b.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td><button class="btn btn-sm btn-secondary" onclick="Page.editBranch('${b.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
@@ -167,8 +167,8 @@ const Page = {
       const tbody = document.getElementById('dimBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีมิติ</td></tr>'; return; }
       tbody.innerHTML = items.map(d => `<tr>
-        <td><span class="font-medium">${d.name || '-'}</span></td>
-        <td>${d.code || '-'}</td>
+        <td><span class="font-medium">${Layout.esc(d.name || '-')}</span></td>
+        <td>${Layout.esc(d.code || '-')}</td>
         <td>${d.values?.length || d.valueCount || 0} ค่า</td>
         <td>${Layout.statusBadge(d.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td>
@@ -217,7 +217,7 @@ const Page = {
       const res = await api.getDimensions();
       const items = res.data?.items || res.data || [];
       const sel = document.getElementById('analysisDim');
-      sel.innerHTML = '<option value="">-- เลือกมิติ --</option>' + items.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+      sel.innerHTML = '<option value="">-- เลือกมิติ --</option>' + items.map(d => `<option value="${d.id}">${Layout.esc(d.name)}</option>`).join('');
     } catch (err) { /* ignore */ }
   },
 
@@ -231,7 +231,7 @@ const Page = {
       const d = res.data || {};
       const items = d.items || d.values || [];
       content.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>มิติ</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th><th class="text-right">กำไร/ขาดทุน</th></tr></thead>
-      <tbody>${items.length ? items.map(i => `<tr><td class="font-medium">${i.name||i.value||'-'}</td><td class="text-right">${Layout.money(i.revenue)}</td><td class="text-right">${Layout.money(i.expense)}</td><td class="text-right ${(i.revenue-i.expense)>=0?'text-success':'text-danger'}">${Layout.money((i.revenue||0)-(i.expense||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'}</tbody></table></div>`;
+      <tbody>${items.length ? items.map(i => `<tr><td class="font-medium">${Layout.esc(i.name||i.value||'-')}</td><td class="text-right">${Layout.money(i.revenue)}</td><td class="text-right">${Layout.money(i.expense)}</td><td class="text-right ${(i.revenue-i.expense)>=0?'text-success':'text-danger'}">${Layout.money((i.revenue||0)-(i.expense||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'}</tbody></table></div>`;
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 };
