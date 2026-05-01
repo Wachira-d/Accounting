@@ -260,7 +260,7 @@ const Page = {
         <div class="text-sm"><strong>แถวทั้งหมด:</strong> ${d.totalRows || 0}</div>
         <div class="text-sm"><strong>ถูกต้อง:</strong> ${d.validRows || 0}</div>
         ${d.errors && d.errors.length ? `<div style="margin-top:12px"><strong class="text-sm">ข้อผิดพลาด:</strong><ul style="margin:8px 0;padding-left:20px">${d.errors.slice(0,10).map(e => `<li class="text-sm text-danger">${e.row ? 'แถว '+e.row+': ' : ''}${e.message || e}</li>`).join('')}</ul>${d.errors.length > 10 ? `<p class="text-sm text-gray-500">...และอีก ${d.errors.length-10} ข้อผิดพลาด</p>` : ''}</div>` : ''}`;
-    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 
   async doImport() {
@@ -285,7 +285,7 @@ const Page = {
         <div class="text-sm"><strong>ข้ามไป:</strong> ${d.skippedCount || 0} รายการ</div>
         ${d.errors && d.errors.length ? `<div class="text-sm text-danger" style="margin-top:8px"><strong>ข้อผิดพลาด:</strong> ${d.errors.length} รายการ</div>` : ''}`;
       Layout.toast('นำเข้าข้อมูลสำเร็จ');
-    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 
   async doExport() {
@@ -337,7 +337,7 @@ const Page = {
           <td><span class="badge ${(m.confidence||0)>0.7?'badge-success':'badge-warning'}">${Math.round((m.confidence||0)*100)}%</span></td>
         </tr>`).join('')}</tbody></table></div>
         <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button></div>`;
-    } catch (err) { result.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 
   async confirmSmartImport() {

@@ -275,7 +275,7 @@
           this.clearAccountSelection();
           this.render();
           if (!this.data?.accounts?.length) await this.showDiagnostics(api);
-        } catch(e) { content.innerHTML = `<div class="text-center text-danger" style="padding:60px">${e.message}</div>`; }
+        } catch(e) { content.innerHTML = `<div class="text-center text-danger" style="padding:60px">${Layout.esc(e.message)}</div>`; }
       },
       async showDiagnostics(api) {
         try {

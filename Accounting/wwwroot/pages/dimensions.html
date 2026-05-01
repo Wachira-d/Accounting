@@ -232,7 +232,7 @@ const Page = {
       const items = d.items || d.values || [];
       content.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>มิติ</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th><th class="text-right">กำไร/ขาดทุน</th></tr></thead>
       <tbody>${items.length ? items.map(i => `<tr><td class="font-medium">${i.name||i.value||'-'}</td><td class="text-right">${Layout.money(i.revenue)}</td><td class="text-right">${Layout.money(i.expense)}</td><td class="text-right ${(i.revenue-i.expense)>=0?'text-success':'text-danger'}">${Layout.money((i.revenue||0)-(i.expense||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'}</tbody></table></div>`;
-    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 };
 Page.init();

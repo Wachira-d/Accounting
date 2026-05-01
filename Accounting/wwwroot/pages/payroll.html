@@ -538,7 +538,7 @@ const Page = {
           ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
           <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.wage)}</td><td class="text-right">${Layout.money(e.contribution)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       }
-    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 };
 

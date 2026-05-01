@@ -121,7 +121,7 @@
           if (!handler) { c.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">ยังไม่มีรายงาน</div>'; return; }
           await handler.call(this, api, c);
         } catch (e) {
-          c.innerHTML = `<div class="er-section" style="color:#dc2626">เกิดข้อผิดพลาด: ${e.message || e}</div>`;
+          c.innerHTML = `<div class="er-section" style="color:#dc2626">เกิดข้อผิดพลาด: ${Layout.esc(e.message || String(e))}</div>`;
         }
       },
       handlers: {},

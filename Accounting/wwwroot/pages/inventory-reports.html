@@ -225,7 +225,7 @@
             <td style="text-align:right">${this._fmt(i.quantityAsOfDate)}</td><td style="text-align:right">${this._fmt(i.averageCost)}</td>
             <td style="text-align:right;font-weight:600">${this._fmt(i.totalValue)}</td></tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="7" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 
@@ -256,7 +256,7 @@
             <td style="text-align:right;color:#f59e0b">${i.totalAdjust !== 0 ? this._fmt(i.totalAdjust) : '-'}</td>
             <td style="text-align:right;font-weight:600">${this._fmt(i.closingStock)}</td></tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 
@@ -292,7 +292,7 @@
               <td>${this._fmtDate(i.lastMovementDate)}</td></tr>`;
           }).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 
@@ -316,7 +316,7 @@
             <td>${this._fmtDate(s.createdAt)}</td>
             <td><button class="btn btn-sm" onclick="Page.viewSnapshot('${s.id}')">ดูรายละเอียด</button></td></tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 

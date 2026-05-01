@@ -277,7 +277,7 @@
               </div>
             </div>
           `;
-        } catch (e) { document.getElementById('detailContent').innerHTML = `<p class="text-danger">${e.message}</p>`; }
+        } catch (e) { document.getElementById('detailContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
       },
 
       async loadCommission() {
@@ -313,7 +313,7 @@
               </div>
             `).join('')}
           `;
-        } catch (e) { document.getElementById('commissionContent').innerHTML = `<p class="text-danger">${e.message}</p>`; }
+        } catch (e) { document.getElementById('commissionContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
       },
 
       payLabel(m) {

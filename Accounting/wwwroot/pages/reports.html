@@ -148,7 +148,7 @@
             case 'pnl': await this.loadPnl(api, content); break;
             case 'cashflow': await this.loadCashFlow(api, content); break;
           }
-        } catch (e) { content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${e.message}</div>`; }
+        } catch (e) { content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message)}</div>`; }
       },
       async loadTrial(api, el) {
         const date = document.getElementById('asOfDate').value;
@@ -356,7 +356,7 @@
           const sel = document.getElementById('rDataSource');
           sel.innerHTML = sources.map(s => `<option value="${s.type||s.name}" ${(s.type||s.name)===r.dataSourceType?'selected':''}>${s.displayName||s.name}</option>`).join('');
           await this.loadDataSourceColumns();
-          if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch {} }
+          if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch (e) { console.error('parseGrouping:', e); } }
           Layout.openModal('reportModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -375,7 +375,7 @@
           if (d.totals) { html += '<tr style="background:var(--gray-100);font-weight:bold">' + cols.map(c => `<td>${d.totals[c] != null ? d.totals[c] : ''}</td>`).join('') + '</tr>'; }
           html += '</tbody></table></div>';
           document.getElementById('resultContent').innerHTML = html;
-        } catch (e) { document.getElementById('resultContent').innerHTML = `<p class="text-center text-danger">${e.message}</p>`; }
+        } catch (e) { document.getElementById('resultContent').innerHTML = `<p class="text-center text-danger">${Layout.esc(e.message)}</p>`; }
       },
       async duplicateReport(id) {
         const api = Layout.api(); if (!api) return;

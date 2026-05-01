@@ -100,7 +100,7 @@
               </table>
             </div>`;
         } catch (e) {
-          document.getElementById('reportContent').innerHTML = `<div class="text-center text-danger" style="padding:40px">${e.message}</div>`;
+          document.getElementById('reportContent').innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message)}</div>`;
         }
       }
     };

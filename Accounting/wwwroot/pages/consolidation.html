@@ -166,7 +166,7 @@ const Page = {
       content.innerHTML = `<h3 style="margin-bottom:16px">${type === 'bs' ? 'งบดุลรวม' : 'งบกำไรขาดทุนรวม'}</h3>
       <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
       <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${i.name||i.accountName||'-'}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table></div>`;
-    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 
   async loadEliminations() {
@@ -179,7 +179,7 @@ const Page = {
       const items = res.data?.items || res.data || [];
       content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th>บัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
       <tbody>${items.map(e => `<tr><td>${e.description||'-'}</td><td>${e.accountName||'-'}</td><td class="text-right">${Layout.money(e.debit)}</td><td class="text-right">${Layout.money(e.credit)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
-    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${err.message}</p>`; }
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 };
 Page.init();

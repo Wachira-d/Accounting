@@ -587,7 +587,7 @@
             ` : ''}
           `;
         } catch (e) {
-          document.getElementById('summaryContent').innerHTML = `<p class="text-danger">${e.message}</p>`;
+          document.getElementById('summaryContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`;
         }
       },
 

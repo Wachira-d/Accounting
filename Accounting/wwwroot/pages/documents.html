@@ -927,7 +927,7 @@
         try {
           const r = await api.getJournals(`?sourceDocumentId=${id}&pageSize=1`);
           linkedCount = r?.data?.totalItems || r?.data?.total || (r?.data?.items?.length || 0);
-        } catch {}
+        } catch (e) { console.error('linkedCount:', e); }
         const extra = linkedCount > 0
           ? `<br><strong style="color:#dc2626">มีใบสำคัญทางบัญชี ${linkedCount} รายการที่เชื่อมโยงกับเอกสารนี้ — จะถูกยกเลิกอัตโนมัติพร้อมกัน</strong>`
           : '';

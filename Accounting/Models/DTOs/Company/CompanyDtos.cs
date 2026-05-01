@@ -1,18 +1,19 @@
+using System.ComponentModel.DataAnnotations;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Company;
 
 public record CreateCompanyRequest(
-    string Name,
+    [property: Required, StringLength(100)] string Name,
     string? NameEn,
-    string TaxId,
-    string? BranchCode,
+    [property: Required, RegularExpression(@"^\d{13}$", ErrorMessage = "เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก")] string TaxId,
+    [property: RegularExpression(@"^\d{5}$", ErrorMessage = "รหัสสาขาต้องเป็นตัวเลข 5 หลัก")] string? BranchCode,
     string? BranchName,
     BusinessType BusinessType,
     IndustryType IndustryType = IndustryType.General,
     string? JuristicId = null,
     bool IsVatRegistered = false,
-    decimal VatRate = 7m,
+    [property: Range(0, 100)] decimal VatRate = 7m,
     bool IsWhtRegistered = true,
     bool IsSocialSecurityRegistered = false,
     string? SocialSecurityAccountNo = null,
@@ -28,16 +29,16 @@ public record CreateCompanyRequest(
     int FiscalYearStartMonth = 1);
 
 public record UpdateCompanyRequest(
-    string? Name,
+    [property: StringLength(100)] string? Name,
     string? NameEn,
-    string? TaxId,
-    string? BranchCode,
+    [property: RegularExpression(@"^\d{13}$", ErrorMessage = "เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก")] string? TaxId,
+    [property: RegularExpression(@"^\d{5}$", ErrorMessage = "รหัสสาขาต้องเป็นตัวเลข 5 หลัก")] string? BranchCode,
     string? BranchName,
     BusinessType? BusinessType,
     IndustryType? IndustryType,
     string? JuristicId,
     bool? IsVatRegistered,
-    decimal? VatRate,
+    [property: Range(0, 100)] decimal? VatRate,
     bool? IsWhtRegistered,
     bool? IsSocialSecurityRegistered,
     string? SocialSecurityAccountNo,

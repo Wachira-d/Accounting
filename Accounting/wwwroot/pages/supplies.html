@@ -190,7 +190,7 @@
           const sel = document.getElementById('balanceCategory');
           res.data.forEach(c => { const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; sel.appendChild(o); });
         }
-      } catch {}
+      } catch (e) { console.error('supplies:', e); }
     },
 
     async loadBalance() {
@@ -273,7 +273,7 @@
           res.data.items.filter(p => p.productType === 4 || p.productType === 'Supplies')
             .forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = `${p.code} - ${p.name} (คงเหลือ: ${p.currentStock} ${p.unit})`; o.dataset.stock = p.currentStock; o.dataset.unit = p.unit; sel.appendChild(o); });
         }
-      } catch {}
+      } catch (e) { console.error('supplies:', e); }
       document.getElementById('useQuantity').value = '';
       document.getElementById('useDepartment').value = '';
       document.getElementById('usePurpose').value = '';
@@ -329,7 +329,7 @@
               <td>${u.reference || '-'}</td>
             </tr>`).join('');
         }
-      } catch {}
+      } catch (e) { console.error('supplies:', e); }
       Layout.openModal('historyModal');
     },
 

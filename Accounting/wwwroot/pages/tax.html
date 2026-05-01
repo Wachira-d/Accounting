@@ -172,7 +172,7 @@
         sel.value = String(curYear);
         const api = Layout.api();
         if (api) {
-          try { await api.autoRefreshTaxReports(2); } catch {}
+          try { await api.autoRefreshTaxReports(2); } catch (e) { console.error('autoRefresh:', e); }
         }
         await this.load();
       },

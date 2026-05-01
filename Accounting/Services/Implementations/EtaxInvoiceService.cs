@@ -758,7 +758,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 if (raw.Length == 18 && raw.All(char.IsDigit)) return raw;
                 var digits = new string(raw.Where(char.IsDigit).ToArray());
                 var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadLeft(13, '0');
-                var bid = (branchCode ?? "00000").Trim();
+                // TIV-SellerTradeParty-013: branch must be all-numeric when schemeID=TXID
+                var branchDigits = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+                var bid = branchDigits.Length == 0 ? "00000" : branchDigits;
                 if (bid.Length > 5) bid = bid.Substring(0, 5);
                 if (bid.Length < 5) bid = bid.PadLeft(5, '0');
                 return tid + bid;

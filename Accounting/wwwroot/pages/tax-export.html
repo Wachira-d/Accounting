@@ -152,7 +152,7 @@
             const d = res.data;
             document.getElementById(`preview${code}`).innerHTML = d.summary || `${d.recordCount} รายการ | รายได้ ${Layout.money(d.totalIncome)} | ภาษี ${Layout.money(d.totalTax)}`;
           } catch (e) {
-            document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${e.message || 'ไม่มีข้อมูล'}</span>`;
+            document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
           }
         }
         // PND1K is annual
@@ -161,7 +161,7 @@
           const d = res.data;
           document.getElementById('previewPND1K').innerHTML = d.summary || `${d.recordCount} รายการ`;
         } catch(e) {
-          document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${e.message || 'ไม่มีข้อมูล'}</span>`;
+          document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
         }
       },
       download(formCode) {
