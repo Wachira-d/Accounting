@@ -417,6 +417,11 @@ public enum FeatureFlags : long
     EtaxByEmail = 1L << 43,   // PDF/A-3 with embedded XML, sent to customer + RD csemail timestamp
     EtaxDirect = 1L << 44,    // XML submitted directly to RD API
 
+    // CMS & Multi-Site
+    CmsWebsiteBuilder = 1L << 45,
+    CmsEcommerce = 1L << 46,
+    CmsBooking = 1L << 47,
+
     // Preset combos
     TrialFeatures = BasicAccounting | DocumentEngine | TaxManagement | Dashboard,
     BasicFeatures = TrialFeatures | AuditLog | EmailNotification | FileAttachments | AgingReport,
@@ -429,6 +434,7 @@ public enum FeatureFlags : long
         | WarehouseManagement | LoanManagement | Commission | AI_Features | DocumentOCR
         | ReportBuilder | CustomerPortal | TimeBilling | OpenBanking | Webhook
         | RevenueRecognition | FPA
+        | CmsWebsiteBuilder | CmsEcommerce | CmsBooking
 }
 
 // ==================== Dimensional Accounting ====================
@@ -597,4 +603,234 @@ public enum EmailLogStatus
     Sent = 1,
     Failed = 2,
     Bounced = 3
+}
+
+// ==================== CMS & Multi-Site ====================
+
+public enum SiteStatus
+{
+    Draft = 0,
+    Published = 1,
+    Maintenance = 2,
+    Suspended = 3
+}
+
+public enum SiteType
+{
+    Corporate = 1,
+    Ecommerce = 2,
+    Booking = 3,
+    ServiceCatalog = 4,
+    Hybrid = 5
+}
+
+public enum SiteRenderMode
+{
+    ServerRendered = 1,
+    Headless = 2,
+    Hybrid = 3
+}
+
+public enum DomainType
+{
+    Subdomain = 1,
+    CustomDomain = 2
+}
+
+public enum DomainVerificationStatus
+{
+    Pending = 0,
+    Verifying = 1,
+    Verified = 2,
+    Failed = 3
+}
+
+public enum DomainApprovalStatus
+{
+    PendingApproval = 0,
+    Approved = 1,
+    Rejected = 2
+}
+
+public enum PageStatus
+{
+    Draft = 0,
+    Published = 1,
+    Scheduled = 2,
+    Archived = 3
+}
+
+public enum PageType
+{
+    Standard = 1,
+    Landing = 2,
+    Blog = 3,
+    Product = 4,
+    Category = 5,
+    Checkout = 6,
+    Custom = 99
+}
+
+public enum CmsBlockType
+{
+    Hero = 1,
+    RichText = 2,
+    Image = 3,
+    Gallery = 4,
+    Video = 5,
+    ProductGrid = 6,
+    ProductDetail = 7,
+    BookingCalendar = 8,
+    ContactForm = 9,
+    RfqForm = 10,
+    Map = 11,
+    Testimonials = 12,
+    Faq = 13,
+    PricingTable = 14,
+    CallToAction = 15,
+    SocialFeed = 16,
+    Newsletter = 17,
+    Countdown = 18,
+    Divider = 19,
+    Html = 20,
+    NavigationBlock = 21,
+    FooterBlock = 22,
+    CartSummary = 23,
+    SearchResults = 24,
+    BlogList = 25,
+    CategoryList = 26,
+    Custom = 99
+}
+
+public enum StockBehavior
+{
+    InStockOnly = 1,
+    AllowBackorder = 2,
+    AllowPreorder = 3
+}
+
+public enum SiteOrderStatus
+{
+    Pending = 0,
+    Confirmed = 1,
+    Processing = 2,
+    Shipped = 3,
+    Delivered = 4,
+    Cancelled = 5,
+    Refunded = 6,
+    PartiallyRefunded = 7
+}
+
+public enum SitePaymentStatus
+{
+    Pending = 0,
+    Processing = 1,
+    Completed = 2,
+    Failed = 3,
+    Refunded = 4,
+    Cancelled = 5
+}
+
+public enum BookingType
+{
+    Lead = 1,
+    Appointment = 2,
+    Guaranteed = 3,
+    PrePayment = 4
+}
+
+public enum BookingStatus
+{
+    Pending = 0,
+    Confirmed = 1,
+    InProgress = 2,
+    Completed = 3,
+    Cancelled = 4,
+    NoShow = 5
+}
+
+public enum ErpBookingDocumentType
+{
+    DraftServiceOrder = 1,
+    AdvanceReceipt = 2,
+    TaxInvoice = 3,
+    Quotation = 4
+}
+
+public enum SiteMediaType
+{
+    Image = 1,
+    Video = 2,
+    Document = 3,
+    Audio = 4
+}
+
+public enum CookieCategory
+{
+    Necessary = 1,
+    Analytics = 2,
+    Marketing = 3,
+    Functional = 4
+}
+
+public enum SiteStaffRole
+{
+    Admin = 1,
+    Editor = 2,
+    ContentWriter = 3,
+    OrderManager = 4,
+    Viewer = 5
+}
+
+public enum SiteAddressType
+{
+    Shipping = 1,
+    Billing = 2,
+    Both = 3
+}
+
+public enum SiteFormType
+{
+    Contact = 1,
+    Rfq = 2,
+    Support = 3,
+    Feedback = 4,
+    Custom = 99
+}
+
+public enum FormFieldType
+{
+    Text = 1,
+    Email = 2,
+    Phone = 3,
+    Number = 4,
+    TextArea = 5,
+    Select = 6,
+    MultiSelect = 7,
+    Checkbox = 8,
+    Radio = 9,
+    Date = 10,
+    DateTime = 11,
+    File = 12
+}
+
+public enum FormSubmissionStatus
+{
+    New = 0,
+    Read = 1,
+    Replied = 2,
+    ConvertedToQuotation = 3,
+    Archived = 4
+}
+
+public enum PaymentGatewayType
+{
+    BankTransfer = 1,
+    PromptPay = 2,
+    CreditCard = 3,
+    PayPal = 4,
+    Stripe = 5,
+    TwoC2P = 6,
+    Omise = 7,
+    Custom = 99
 }
