@@ -1,0 +1,760 @@
+using Accounting.Data;
+using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Cms;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+public class CmsCommerceService : ICmsCommerceService
+{
+    private readonly AccountingDbContext _db;
+    private readonly ILogger<CmsCommerceService> _logger;
+
+    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger)
+    {
+        _db = db;
+        _logger = logger;
+    }
+
+    // ===== Products =====
+
+    public async Task<SiteProductResponse> AddProductAsync(Guid companyId, Guid siteId, CreateSiteProductRequest request, string userId)
+    {
+        if (await _db.SiteProducts.AnyAsync(p => p.SiteId == siteId && p.ProductId == request.ProductId))
+            throw new InvalidOperationException("Product is already listed on this site.");
+
+        var erpProduct = await _db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == request.ProductId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ERP product not found.");
+
+        var slug = !string.IsNullOrWhiteSpace(request.Slug) ? request.Slug : GenerateSlug(request.DisplayName ?? erpProduct.Name);
+
+        var sp = new SiteProduct
+        {
+            CompanyId = companyId,
+            SiteId = siteId,
+            ProductId = request.ProductId,
+            DisplayName = request.DisplayName,
+            DisplayNameEn = request.DisplayNameEn,
+            ShortDescription = request.ShortDescription,
+            FullDescription = request.FullDescription,
+            OverrideSellingPrice = request.OverrideSellingPrice,
+            CompareAtPrice = request.CompareAtPrice,
+            StockBehavior = request.StockBehavior,
+            PreorderAvailableDate = request.PreorderAvailableDate,
+            MaxOrderQuantity = request.MaxOrderQuantity,
+            MinOrderQuantity = request.MinOrderQuantity,
+            SiteCategoryId = request.SiteCategoryId,
+            IsVisible = request.IsVisible,
+            IsFeatured = request.IsFeatured,
+            SortOrder = request.SortOrder,
+            Tags = request.Tags,
+            Slug = slug,
+            MetaTitle = request.MetaTitle,
+            MetaDescription = request.MetaDescription,
+            CreatedBy = userId
+        };
+
+        _db.SiteProducts.Add(sp);
+
+        if (request.PricingTiers?.Any() == true)
+        {
+            foreach (var tier in request.PricingTiers)
+            {
+                _db.SitePricingTiers.Add(new SitePricingTier
+                {
+                    CompanyId = companyId,
+                    SiteProductId = sp.Id,
+                    TierName = tier.TierName,
+                    MinQuantity = tier.MinQuantity,
+                    MaxQuantity = tier.MaxQuantity,
+                    UnitPrice = tier.UnitPrice,
+                    CustomerGroupTag = tier.CustomerGroupTag,
+                    CreatedBy = userId
+                });
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return await GetProductAsync(companyId, siteId, sp.Id) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    public async Task<SiteProductResponse> UpdateProductAsync(Guid companyId, Guid siteId, Guid siteProductId, UpdateSiteProductRequest request, string userId)
+    {
+        var sp = await _db.SiteProducts.FirstOrDefaultAsync(p => p.Id == siteProductId && p.SiteId == siteId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("Site product not found.");
+
+        if (request.DisplayName != null) sp.DisplayName = request.DisplayName;
+        if (request.DisplayNameEn != null) sp.DisplayNameEn = request.DisplayNameEn;
+        if (request.ShortDescription != null) sp.ShortDescription = request.ShortDescription;
+        if (request.FullDescription != null) sp.FullDescription = request.FullDescription;
+        if (request.OverrideSellingPrice.HasValue) sp.OverrideSellingPrice = request.OverrideSellingPrice;
+        if (request.CompareAtPrice.HasValue) sp.CompareAtPrice = request.CompareAtPrice;
+        if (request.StockBehavior.HasValue) sp.StockBehavior = request.StockBehavior.Value;
+        if (request.PreorderAvailableDate.HasValue) sp.PreorderAvailableDate = request.PreorderAvailableDate;
+        if (request.MaxOrderQuantity.HasValue) sp.MaxOrderQuantity = request.MaxOrderQuantity;
+        if (request.MinOrderQuantity.HasValue) sp.MinOrderQuantity = request.MinOrderQuantity;
+        if (request.SiteCategoryId.HasValue) sp.SiteCategoryId = request.SiteCategoryId;
+        if (request.IsVisible.HasValue) sp.IsVisible = request.IsVisible.Value;
+        if (request.IsFeatured.HasValue) sp.IsFeatured = request.IsFeatured.Value;
+        if (request.SortOrder.HasValue) sp.SortOrder = request.SortOrder.Value;
+        if (request.Tags != null) sp.Tags = request.Tags;
+        if (request.Slug != null) sp.Slug = request.Slug;
+        if (request.MetaTitle != null) sp.MetaTitle = request.MetaTitle;
+        if (request.MetaDescription != null) sp.MetaDescription = request.MetaDescription;
+
+        sp.UpdatedBy = userId;
+        await _db.SaveChangesAsync();
+
+        return await GetProductAsync(companyId, siteId, siteProductId) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    public async Task<SiteProductResponse?> GetProductAsync(Guid companyId, Guid siteId, Guid siteProductId)
+    {
+        return await _db.SiteProducts.AsNoTracking()
+            .Where(p => p.Id == siteProductId && p.SiteId == siteId && p.CompanyId == companyId)
+            .Select(p => new SiteProductResponse
+            {
+                Id = p.Id,
+                ProductId = p.ProductId,
+                ProductCode = p.Product.Code,
+                ProductName = p.Product.Name,
+                ProductSku = p.Product.SKU,
+                DisplayName = p.DisplayName,
+                DisplayNameEn = p.DisplayNameEn,
+                ShortDescription = p.ShortDescription,
+                FullDescription = p.FullDescription,
+                ErpSellingPrice = p.Product.SellingPrice,
+                OverrideSellingPrice = p.OverrideSellingPrice,
+                EffectivePrice = p.OverrideSellingPrice ?? p.Product.SellingPrice,
+                CompareAtPrice = p.CompareAtPrice,
+                StockBehavior = p.StockBehavior,
+                PreorderAvailableDate = p.PreorderAvailableDate,
+                AvailableStock = p.Product.CurrentStock,
+                SiteCategoryId = p.SiteCategoryId,
+                CategoryName = p.SiteCategory != null ? p.SiteCategory.Name : null,
+                IsVisible = p.IsVisible,
+                IsFeatured = p.IsFeatured,
+                SortOrder = p.SortOrder,
+                Tags = p.Tags,
+                Slug = p.Slug,
+                ImageUrlsJson = p.ImageUrlsJson,
+                PricingTiers = p.PricingTiers.OrderBy(t => t.MinQuantity).Select(t => new PricingTierResponse
+                {
+                    Id = t.Id, TierName = t.TierName, MinQuantity = t.MinQuantity,
+                    MaxQuantity = t.MaxQuantity, UnitPrice = t.UnitPrice, CustomerGroupTag = t.CustomerGroupTag
+                }).ToList(),
+                CreatedAt = p.CreatedAt
+            })
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<SiteProductResponse?> GetProductBySlugAsync(Guid companyId, Guid siteId, string slug)
+    {
+        var id = await _db.SiteProducts.AsNoTracking()
+            .Where(p => p.SiteId == siteId && p.CompanyId == companyId && p.Slug == slug)
+            .Select(p => p.Id)
+            .FirstOrDefaultAsync();
+        return id == Guid.Empty ? null : await GetProductAsync(companyId, siteId, id);
+    }
+
+    public async Task<PagedResponse<SiteProductResponse>> GetProductsAsync(Guid companyId, Guid siteId, Guid? categoryId, string? search, bool? featured, int page, int pageSize)
+    {
+        var query = _db.SiteProducts.AsNoTracking().Where(p => p.SiteId == siteId && p.CompanyId == companyId);
+
+        if (categoryId.HasValue) query = query.Where(p => p.SiteCategoryId == categoryId);
+        if (featured.HasValue) query = query.Where(p => p.IsFeatured == featured);
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(p => (p.DisplayName != null && p.DisplayName.Contains(search)) || p.Product.Name.Contains(search) || (p.Tags != null && p.Tags.Contains(search)));
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderBy(p => p.SortOrder).ThenByDescending(p => p.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(p => new SiteProductResponse
+            {
+                Id = p.Id, ProductId = p.ProductId, ProductCode = p.Product.Code,
+                ProductName = p.Product.Name, ProductSku = p.Product.SKU,
+                DisplayName = p.DisplayName, ErpSellingPrice = p.Product.SellingPrice,
+                OverrideSellingPrice = p.OverrideSellingPrice,
+                EffectivePrice = p.OverrideSellingPrice ?? p.Product.SellingPrice,
+                CompareAtPrice = p.CompareAtPrice, StockBehavior = p.StockBehavior,
+                AvailableStock = p.Product.CurrentStock,
+                CategoryName = p.SiteCategory != null ? p.SiteCategory.Name : null,
+                IsVisible = p.IsVisible, IsFeatured = p.IsFeatured, SortOrder = p.SortOrder,
+                Slug = p.Slug, ImageUrlsJson = p.ImageUrlsJson, CreatedAt = p.CreatedAt
+            })
+            .ToListAsync();
+
+        return new PagedResponse<SiteProductResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+    }
+
+    public async Task<bool> RemoveProductAsync(Guid companyId, Guid siteId, Guid siteProductId)
+    {
+        var sp = await _db.SiteProducts.FirstOrDefaultAsync(p => p.Id == siteProductId && p.SiteId == siteId && p.CompanyId == companyId);
+        if (sp == null) return false;
+        sp.IsDeleted = true;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    // ===== Categories =====
+
+    public async Task<CategoryResponse> CreateCategoryAsync(Guid companyId, Guid siteId, CreateCategoryRequest request, string userId)
+    {
+        var slug = !string.IsNullOrWhiteSpace(request.Slug) ? request.Slug : GenerateSlug(request.Name);
+
+        var cat = new SiteCategory
+        {
+            CompanyId = companyId, SiteId = siteId, Name = request.Name, NameEn = request.NameEn,
+            Slug = slug, Description = request.Description, ImageUrl = request.ImageUrl,
+            ParentCategoryId = request.ParentCategoryId, SortOrder = request.SortOrder, CreatedBy = userId
+        };
+        _db.SiteCategories.Add(cat);
+        await _db.SaveChangesAsync();
+
+        return new CategoryResponse { Id = cat.Id, Name = cat.Name, NameEn = cat.NameEn, Slug = cat.Slug, Description = cat.Description, ImageUrl = cat.ImageUrl, ParentCategoryId = cat.ParentCategoryId, SortOrder = cat.SortOrder, IsActive = cat.IsActive };
+    }
+
+    public async Task<CategoryResponse> UpdateCategoryAsync(Guid companyId, Guid siteId, Guid categoryId, CreateCategoryRequest request, string userId)
+    {
+        var cat = await _db.SiteCategories.FirstOrDefaultAsync(c => c.Id == categoryId && c.SiteId == siteId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("Category not found.");
+
+        cat.Name = request.Name;
+        cat.NameEn = request.NameEn;
+        if (request.Slug != null) cat.Slug = request.Slug;
+        cat.Description = request.Description;
+        cat.ImageUrl = request.ImageUrl;
+        cat.ParentCategoryId = request.ParentCategoryId;
+        cat.SortOrder = request.SortOrder;
+        cat.UpdatedBy = userId;
+        await _db.SaveChangesAsync();
+
+        return new CategoryResponse { Id = cat.Id, Name = cat.Name, NameEn = cat.NameEn, Slug = cat.Slug, Description = cat.Description, ImageUrl = cat.ImageUrl, ParentCategoryId = cat.ParentCategoryId, SortOrder = cat.SortOrder, IsActive = cat.IsActive };
+    }
+
+    public async Task<List<CategoryResponse>> GetCategoriesAsync(Guid companyId, Guid siteId)
+    {
+        return await _db.SiteCategories.AsNoTracking()
+            .Where(c => c.SiteId == siteId && c.CompanyId == companyId && c.IsActive)
+            .OrderBy(c => c.SortOrder)
+            .Select(c => new CategoryResponse
+            {
+                Id = c.Id, Name = c.Name, NameEn = c.NameEn, Slug = c.Slug,
+                Description = c.Description, ImageUrl = c.ImageUrl,
+                ParentCategoryId = c.ParentCategoryId, SortOrder = c.SortOrder,
+                IsActive = c.IsActive, ProductCount = c.Products.Count(p => !p.IsDeleted && p.IsVisible)
+            })
+            .ToListAsync();
+    }
+
+    public async Task<bool> DeleteCategoryAsync(Guid companyId, Guid siteId, Guid categoryId)
+    {
+        var cat = await _db.SiteCategories.FirstOrDefaultAsync(c => c.Id == categoryId && c.SiteId == siteId);
+        if (cat == null) return false;
+        cat.IsActive = false;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    // ===== Cart =====
+
+    public async Task<CartResponse> GetOrCreateCartAsync(Guid companyId, Guid siteId, Guid? customerId, string? sessionToken)
+    {
+        SiteCart? cart = null;
+
+        if (customerId.HasValue)
+            cart = await _db.SiteCarts.Include(c => c.Items).FirstOrDefaultAsync(c => c.SiteId == siteId && c.CustomerId == customerId && !c.IsAbandoned);
+        else if (!string.IsNullOrEmpty(sessionToken))
+            cart = await _db.SiteCarts.Include(c => c.Items).FirstOrDefaultAsync(c => c.SiteId == siteId && c.SessionToken == sessionToken && !c.IsAbandoned);
+
+        if (cart == null)
+        {
+            cart = new SiteCart
+            {
+                CompanyId = companyId, SiteId = siteId, CustomerId = customerId,
+                SessionToken = sessionToken ?? Guid.NewGuid().ToString("N"),
+                ExpiresAt = DateTime.UtcNow.AddDays(7)
+            };
+            _db.SiteCarts.Add(cart);
+            await _db.SaveChangesAsync();
+        }
+
+        return await MapCartResponse(cart.Id);
+    }
+
+    public async Task<CartResponse> AddToCartAsync(Guid companyId, Guid siteId, Guid cartId, AddToCartRequest request)
+    {
+        var existing = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.CartId == cartId && i.SiteProductId == request.SiteProductId);
+        if (existing != null)
+        {
+            existing.Quantity += request.Quantity;
+            existing.TotalPrice = existing.Quantity * existing.UnitPrice;
+        }
+        else
+        {
+            var sp = await _db.SiteProducts.Include(p => p.Product).FirstOrDefaultAsync(p => p.Id == request.SiteProductId)
+                ?? throw new KeyNotFoundException("Product not found.");
+
+            var unitPrice = sp.OverrideSellingPrice ?? sp.Product.SellingPrice;
+            _db.SiteCartItems.Add(new SiteCartItem
+            {
+                CompanyId = companyId, CartId = cartId, SiteProductId = request.SiteProductId,
+                Quantity = request.Quantity, UnitPrice = unitPrice,
+                TotalPrice = request.Quantity * unitPrice,
+                VariantOptionsJson = request.VariantOptionsJson, Notes = request.Notes
+            });
+        }
+
+        await _db.SaveChangesAsync();
+        await RecalculateCartTotals(cartId);
+        return await MapCartResponse(cartId);
+    }
+
+    public async Task<CartResponse> UpdateCartItemAsync(Guid companyId, Guid siteId, Guid cartId, Guid itemId, UpdateCartItemRequest request)
+    {
+        var item = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.Id == itemId && i.CartId == cartId)
+            ?? throw new KeyNotFoundException("Cart item not found.");
+
+        item.Quantity = request.Quantity;
+        item.TotalPrice = item.Quantity * item.UnitPrice;
+        await _db.SaveChangesAsync();
+        await RecalculateCartTotals(cartId);
+        return await MapCartResponse(cartId);
+    }
+
+    public async Task<CartResponse> RemoveFromCartAsync(Guid companyId, Guid siteId, Guid cartId, Guid itemId)
+    {
+        var item = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.Id == itemId && i.CartId == cartId);
+        if (item != null)
+        {
+            _db.SiteCartItems.Remove(item);
+            await _db.SaveChangesAsync();
+            await RecalculateCartTotals(cartId);
+        }
+        return await MapCartResponse(cartId);
+    }
+
+    public async Task<bool> ClearCartAsync(Guid companyId, Guid siteId, Guid cartId)
+    {
+        var items = await _db.SiteCartItems.Where(i => i.CartId == cartId).ToListAsync();
+        _db.SiteCartItems.RemoveRange(items);
+        var cart = await _db.SiteCarts.FindAsync(cartId);
+        if (cart != null) { cart.SubTotal = 0; cart.VatAmount = 0; cart.TotalAmount = 0; }
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    // ===== Orders =====
+
+    public async Task<OrderResponse> CreateOrderAsync(Guid companyId, Guid siteId, CreateOrderRequest request, string userId)
+    {
+        var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("Site not found.");
+
+        var order = new SiteOrder
+        {
+            CompanyId = companyId, SiteId = siteId, CustomerId = request.CustomerId,
+            OrderNumber = await GenerateOrderNumber(companyId, siteId),
+            Currency = site.DefaultCurrency,
+            ShippingName = request.ShippingName, ShippingAddress = request.ShippingAddress,
+            ShippingPhone = request.ShippingPhone, ShippingEmail = request.ShippingEmail,
+            ShippingMethod = request.ShippingMethod,
+            BillingName = request.BillingName, BillingAddress = request.BillingAddress,
+            BillingTaxId = request.BillingTaxId, BillingBranchCode = request.BillingBranchCode,
+            RequestTaxInvoice = request.RequestTaxInvoice,
+            PaymentGatewayId = request.PaymentGatewayId,
+            CouponCode = request.CouponCode, CustomerNotes = request.CustomerNotes,
+            CreatedBy = userId
+        };
+
+        _db.SiteOrders.Add(order);
+
+        // Resolve lines from cart or direct
+        if (request.CartId.HasValue)
+        {
+            var cartItems = await _db.SiteCartItems
+                .Include(i => i.SiteProduct).ThenInclude(p => p.Product)
+                .Where(i => i.CartId == request.CartId).ToListAsync();
+
+            var lineOrder = 1;
+            foreach (var ci in cartItems)
+            {
+                _db.SiteOrderLines.Add(new SiteOrderLine
+                {
+                    CompanyId = companyId, OrderId = order.Id, SiteProductId = ci.SiteProductId,
+                    LineOrder = lineOrder++,
+                    ProductName = ci.SiteProduct.DisplayName ?? ci.SiteProduct.Product.Name,
+                    ProductSku = ci.SiteProduct.Product.SKU,
+                    Quantity = ci.Quantity, UnitPrice = ci.UnitPrice,
+                    VatRate = ci.SiteProduct.Product.VatRate,
+                    VatAmount = ci.TotalPrice * ci.SiteProduct.Product.VatRate / (100 + ci.SiteProduct.Product.VatRate),
+                    TotalAmount = ci.TotalPrice
+                });
+            }
+            // Clear cart after order
+            _db.SiteCartItems.RemoveRange(cartItems);
+        }
+        else if (request.Lines?.Any() == true)
+        {
+            var lineOrder = 1;
+            foreach (var lineReq in request.Lines)
+            {
+                var sp = await _db.SiteProducts.Include(p => p.Product)
+                    .FirstOrDefaultAsync(p => p.Id == lineReq.SiteProductId && p.SiteId == siteId)
+                    ?? throw new KeyNotFoundException($"Product {lineReq.SiteProductId} not found.");
+
+                var price = sp.OverrideSellingPrice ?? sp.Product.SellingPrice;
+                var total = price * lineReq.Quantity;
+
+                _db.SiteOrderLines.Add(new SiteOrderLine
+                {
+                    CompanyId = companyId, OrderId = order.Id, SiteProductId = sp.Id,
+                    LineOrder = lineOrder++,
+                    ProductName = sp.DisplayName ?? sp.Product.Name,
+                    ProductSku = sp.Product.SKU,
+                    Quantity = lineReq.Quantity, UnitPrice = price,
+                    VatRate = sp.Product.VatRate,
+                    VatAmount = total * sp.Product.VatRate / (100 + sp.Product.VatRate),
+                    TotalAmount = total
+                });
+            }
+        }
+
+        await _db.SaveChangesAsync();
+
+        // Recalculate order totals
+        var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();
+        order.SubTotal = lines.Sum(l => l.TotalAmount - l.VatAmount);
+        order.VatAmount = lines.Sum(l => l.VatAmount);
+        order.TotalAmount = lines.Sum(l => l.TotalAmount) + order.ShippingAmount;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Order {OrderNumber} created for site {SiteId}", order.OrderNumber, siteId);
+        return await GetOrderAsync(companyId, siteId, order.Id) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    public async Task<OrderResponse> UpdateOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, UpdateOrderStatusRequest request, string userId)
+    {
+        var order = await _db.SiteOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("Order not found.");
+
+        order.Status = request.Status;
+        if (request.TrackingNumber != null) order.TrackingNumber = request.TrackingNumber;
+        if (request.InternalNotes != null) order.InternalNotes = request.InternalNotes;
+        if (request.CancellationReason != null) order.CancellationReason = request.CancellationReason;
+
+        switch (request.Status)
+        {
+            case SiteOrderStatus.Shipped: order.ShippedAt = DateTime.UtcNow; break;
+            case SiteOrderStatus.Delivered: order.DeliveredAt = DateTime.UtcNow; break;
+            case SiteOrderStatus.Cancelled: order.CancelledAt = DateTime.UtcNow; break;
+            case SiteOrderStatus.Confirmed: order.Status = SiteOrderStatus.Confirmed; break;
+        }
+
+        order.UpdatedBy = userId;
+        await _db.SaveChangesAsync();
+
+        return await GetOrderAsync(companyId, siteId, orderId) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    public async Task<OrderResponse?> GetOrderAsync(Guid companyId, Guid siteId, Guid orderId)
+    {
+        return await _db.SiteOrders.AsNoTracking()
+            .Where(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
+            .Select(o => new OrderResponse
+            {
+                Id = o.Id, OrderNumber = o.OrderNumber, Status = o.Status,
+                CustomerId = o.CustomerId,
+                CustomerName = o.Customer != null ? o.Customer.FullName : null,
+                CustomerEmail = o.Customer != null ? o.Customer.Email : null,
+                Currency = o.Currency, SubTotal = o.SubTotal, DiscountAmount = o.DiscountAmount,
+                ShippingAmount = o.ShippingAmount, VatAmount = o.VatAmount,
+                TotalAmount = o.TotalAmount, PaidAmount = o.PaidAmount,
+                ShippingName = o.ShippingName, ShippingAddress = o.ShippingAddress,
+                ShippingMethod = o.ShippingMethod, TrackingNumber = o.TrackingNumber,
+                RequestTaxInvoice = o.RequestTaxInvoice, BillingTaxId = o.BillingTaxId,
+                ErpDocumentId = o.ErpDocumentId,
+                CouponCode = o.CouponCode, CustomerNotes = o.CustomerNotes,
+                InternalNotes = o.InternalNotes,
+                PaidAt = o.PaidAt, ShippedAt = o.ShippedAt, DeliveredAt = o.DeliveredAt,
+                CreatedAt = o.CreatedAt,
+                Lines = o.Lines.OrderBy(l => l.LineOrder).Select(l => new OrderLineResponse
+                {
+                    Id = l.Id, SiteProductId = l.SiteProductId, ProductName = l.ProductName,
+                    ProductSku = l.ProductSku, Quantity = l.Quantity, Unit = l.Unit,
+                    UnitPrice = l.UnitPrice, DiscountAmount = l.DiscountAmount,
+                    VatAmount = l.VatAmount, TotalAmount = l.TotalAmount
+                }).ToList(),
+                Payments = o.Payments.Select(p => new OrderPaymentResponse
+                {
+                    Id = p.Id, Amount = p.Amount, Currency = p.Currency,
+                    PaymentMethod = p.PaymentMethod, Status = p.Status,
+                    Reference = p.Reference, PaidAt = p.PaidAt
+                }).ToList()
+            })
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<PagedResponse<OrderListResponse>> GetOrdersAsync(Guid companyId, Guid siteId, string? status, Guid? customerId, string? search, int page, int pageSize)
+    {
+        var query = _db.SiteOrders.AsNoTracking().Where(o => o.SiteId == siteId && o.CompanyId == companyId);
+
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<SiteOrderStatus>(status, out var st))
+            query = query.Where(o => o.Status == st);
+        if (customerId.HasValue) query = query.Where(o => o.CustomerId == customerId);
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(o => o.OrderNumber.Contains(search) || (o.ShippingName != null && o.ShippingName.Contains(search)));
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(o => new OrderListResponse
+            {
+                Id = o.Id, OrderNumber = o.OrderNumber, Status = o.Status,
+                CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
+                TotalAmount = o.TotalAmount, Currency = o.Currency,
+                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
+            })
+            .ToListAsync();
+
+        return new PagedResponse<OrderListResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+    }
+
+    // ===== Payment Gateways =====
+
+    public async Task<PaymentGatewayResponse> CreatePaymentGatewayAsync(Guid companyId, Guid siteId, CreatePaymentGatewayRequest request, string userId)
+    {
+        var gw = new SitePaymentGateway
+        {
+            CompanyId = companyId, SiteId = siteId, GatewayType = request.GatewayType,
+            Name = request.Name, Description = request.Description,
+            ApiKeyEncrypted = request.ApiKey != null ? Helpers.EncryptionHelper.Encrypt(request.ApiKey) : null,
+            SecretKeyEncrypted = request.SecretKey != null ? Helpers.EncryptionHelper.Encrypt(request.SecretKey) : null,
+            MerchantId = request.MerchantId,
+            PromptPayId = request.PromptPayId, PromptPayQrUrl = request.PromptPayQrUrl,
+            BankName = request.BankName, BankAccountNumber = request.BankAccountNumber,
+            BankAccountName = request.BankAccountName,
+            IsTestMode = request.IsTestMode, SupportedCurrencies = request.SupportedCurrencies,
+            CreatedBy = userId
+        };
+        _db.SitePaymentGateways.Add(gw);
+        await _db.SaveChangesAsync();
+        return MapGatewayResponse(gw);
+    }
+
+    public async Task<PaymentGatewayResponse> UpdatePaymentGatewayAsync(Guid companyId, Guid siteId, Guid gatewayId, CreatePaymentGatewayRequest request, string userId)
+    {
+        var gw = await _db.SitePaymentGateways.FirstOrDefaultAsync(g => g.Id == gatewayId && g.SiteId == siteId && g.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("Payment gateway not found.");
+
+        gw.Name = request.Name;
+        gw.Description = request.Description;
+        gw.GatewayType = request.GatewayType;
+        if (request.ApiKey != null) gw.ApiKeyEncrypted = Helpers.EncryptionHelper.Encrypt(request.ApiKey);
+        if (request.SecretKey != null) gw.SecretKeyEncrypted = Helpers.EncryptionHelper.Encrypt(request.SecretKey);
+        gw.MerchantId = request.MerchantId;
+        gw.PromptPayId = request.PromptPayId;
+        gw.PromptPayQrUrl = request.PromptPayQrUrl;
+        gw.BankName = request.BankName;
+        gw.BankAccountNumber = request.BankAccountNumber;
+        gw.BankAccountName = request.BankAccountName;
+        gw.IsTestMode = request.IsTestMode;
+        gw.SupportedCurrencies = request.SupportedCurrencies;
+        gw.UpdatedBy = userId;
+
+        await _db.SaveChangesAsync();
+        return MapGatewayResponse(gw);
+    }
+
+    public async Task<List<PaymentGatewayResponse>> GetPaymentGatewaysAsync(Guid companyId, Guid siteId)
+    {
+        return await _db.SitePaymentGateways.AsNoTracking()
+            .Where(g => g.SiteId == siteId && g.CompanyId == companyId)
+            .OrderBy(g => g.SortOrder)
+            .Select(g => new PaymentGatewayResponse
+            {
+                Id = g.Id, GatewayType = g.GatewayType, Name = g.Name, Description = g.Description,
+                HasApiKey = g.ApiKeyEncrypted != null, MerchantId = g.MerchantId,
+                PromptPayId = g.PromptPayId, BankName = g.BankName, BankAccountName = g.BankAccountName,
+                IsTestMode = g.IsTestMode, IsActive = g.IsActive, SortOrder = g.SortOrder,
+                SupportedCurrencies = g.SupportedCurrencies
+            })
+            .ToListAsync();
+    }
+
+    public async Task<bool> DeletePaymentGatewayAsync(Guid companyId, Guid siteId, Guid gatewayId)
+    {
+        var gw = await _db.SitePaymentGateways.FirstOrDefaultAsync(g => g.Id == gatewayId && g.SiteId == siteId);
+        if (gw == null) return false;
+        _db.SitePaymentGateways.Remove(gw);
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    // ===== ERP Sync =====
+
+    public async Task<Guid?> SyncOrderToErpAsync(Guid companyId, Guid siteId, Guid orderId)
+    {
+        var order = await _db.SiteOrders
+            .Include(o => o.Lines).ThenInclude(l => l.SiteProduct).ThenInclude(sp => sp.Product)
+            .Include(o => o.Customer)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
+
+        if (order == null || order.ErpDocumentId.HasValue) return order?.ErpDocumentId;
+
+        var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId);
+
+        // Auto-link or create ERP Contact
+        Guid? contactId = order.Customer?.ContactId;
+        if (contactId == null && order.Customer != null)
+        {
+            var existingContact = await _db.Contacts.FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.Email == order.Customer.Email);
+
+            if (existingContact != null)
+            {
+                contactId = existingContact.Id;
+                order.Customer.ContactId = contactId;
+            }
+            else
+            {
+                var newContact = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = order.Customer.FullName ?? order.ShippingName ?? "Online Customer",
+                    Email = order.Customer.Email,
+                    Phone = order.Customer.Phone,
+                    TaxId = order.BillingTaxId,
+                    BranchCode = order.BillingBranchCode,
+                    IsCustomer = true,
+                    Address = order.ShippingAddress
+                };
+                _db.Contacts.Add(newContact);
+                contactId = newContact.Id;
+                order.Customer.ContactId = contactId;
+            }
+        }
+
+        // Create ERP Document (Invoice or TaxInvoice)
+        var docType = order.RequestTaxInvoice ? DocumentType.TaxInvoice : DocumentType.Invoice;
+        var doc = new Document
+        {
+            CompanyId = companyId,
+            DocumentType = docType,
+            Status = DocumentStatus.Draft,
+            DocumentDate = DateTime.UtcNow,
+            ContactId = contactId,
+            Currency = order.Currency,
+            SubTotal = order.SubTotal,
+            VatAmount = order.VatAmount,
+            TotalAmount = order.TotalAmount,
+            Notes = $"Online order #{order.OrderNumber}",
+            Reference = order.OrderNumber
+        };
+
+        // Map to branch if configured
+        if (site?.BranchId.HasValue == true)
+            doc.InternalNotes = $"Branch: {site.BranchId}";
+
+        _db.Documents.Add(doc);
+
+        var lineOrder = 1;
+        foreach (var line in order.Lines)
+        {
+            _db.DocumentLines.Add(new DocumentLine
+            {
+                DocumentId = doc.Id,
+                LineOrder = lineOrder++,
+                ProductCode = line.ProductSku ?? "",
+                Description = line.ProductName,
+                Quantity = line.Quantity,
+                Unit = line.Unit,
+                UnitPrice = line.UnitPrice,
+                Amount = line.TotalAmount - line.VatAmount,
+                VatRate = line.VatRate,
+                VatAmount = line.VatAmount
+            });
+        }
+
+        order.ErpDocumentId = doc.Id;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Order {OrderNumber} synced to ERP document {DocId}", order.OrderNumber, doc.Id);
+        return doc.Id;
+    }
+
+    // ===== Helpers =====
+
+    private async Task RecalculateCartTotals(Guid cartId)
+    {
+        var cart = await _db.SiteCarts.Include(c => c.Items).FirstOrDefaultAsync(c => c.Id == cartId);
+        if (cart == null) return;
+
+        cart.SubTotal = cart.Items.Sum(i => i.TotalPrice);
+        cart.VatAmount = cart.SubTotal * 7m / 107m;
+        cart.TotalAmount = cart.SubTotal - cart.DiscountAmount;
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task<CartResponse> MapCartResponse(Guid cartId)
+    {
+        return await _db.SiteCarts.AsNoTracking()
+            .Where(c => c.Id == cartId)
+            .Select(c => new CartResponse
+            {
+                Id = c.Id, SubTotal = c.SubTotal, DiscountAmount = c.DiscountAmount,
+                VatAmount = c.VatAmount, TotalAmount = c.TotalAmount,
+                Currency = c.Currency, CouponCode = c.CouponCode,
+                Items = c.Items.Select(i => new CartItemResponse
+                {
+                    Id = i.Id, SiteProductId = i.SiteProductId,
+                    ProductName = i.SiteProduct.DisplayName ?? i.SiteProduct.Product.Name,
+                    ProductSku = i.SiteProduct.Product.SKU,
+                    Quantity = i.Quantity, UnitPrice = i.UnitPrice, TotalPrice = i.TotalPrice,
+                    VariantOptionsJson = i.VariantOptionsJson
+                }).ToList()
+            })
+            .FirstAsync();
+    }
+
+    private async Task<string> GenerateOrderNumber(Guid companyId, Guid siteId)
+    {
+        var prefix = $"WEB-{DateTime.UtcNow:yyMM}";
+        var lastOrder = await _db.SiteOrders
+            .Where(o => o.SiteId == siteId && o.OrderNumber.StartsWith(prefix))
+            .OrderByDescending(o => o.OrderNumber)
+            .Select(o => o.OrderNumber)
+            .FirstOrDefaultAsync();
+
+        var seq = 1;
+        if (lastOrder != null && lastOrder.Length > prefix.Length + 1)
+        {
+            if (int.TryParse(lastOrder[(prefix.Length + 1)..], out var lastSeq))
+                seq = lastSeq + 1;
+        }
+        return $"{prefix}-{seq:D4}";
+    }
+
+    private static string GenerateSlug(string name)
+    {
+        var slug = name.ToLowerInvariant().Trim();
+        slug = System.Text.RegularExpressions.Regex.Replace(slug, @"[^a-z0-9฀-๿\s-]", "");
+        slug = System.Text.RegularExpressions.Regex.Replace(slug, @"[\s]+", "-");
+        slug = System.Text.RegularExpressions.Regex.Replace(slug, @"-+", "-");
+        return slug.Trim('-');
+    }
+
+    private static PaymentGatewayResponse MapGatewayResponse(SitePaymentGateway g) => new()
+    {
+        Id = g.Id, GatewayType = g.GatewayType, Name = g.Name, Description = g.Description,
+        HasApiKey = g.ApiKeyEncrypted != null, MerchantId = g.MerchantId,
+        PromptPayId = g.PromptPayId, BankName = g.BankName, BankAccountName = g.BankAccountName,
+        IsTestMode = g.IsTestMode, IsActive = g.IsActive, SortOrder = g.SortOrder,
+        SupportedCurrencies = g.SupportedCurrencies
+    };
+}

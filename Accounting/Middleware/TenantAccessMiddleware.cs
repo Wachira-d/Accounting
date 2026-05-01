@@ -21,6 +21,8 @@ public class TenantAccessMiddleware
         "/api/landing",
         "/api/contact",
         "/api/integration",
+        "/api/cms/resolve",
+        "/api/cms/block-templates",
         "/swagger",
         "/health"
     };

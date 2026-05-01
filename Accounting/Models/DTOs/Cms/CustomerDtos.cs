@@ -272,3 +272,12 @@ public class MergeCustomersRequest
     public Guid MergedCustomerId { get; set; }
     public string MergeReason { get; set; } = "manual";
 }
+
+// ==================== Submission Status Update ====================
+
+public class UpdateSubmissionStatusRequest
+{
+    [Required]
+    public string Status { get; set; } = string.Empty;
+    public string? Notes { get; set; }
+}

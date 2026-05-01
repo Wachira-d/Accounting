@@ -177,6 +177,13 @@ builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>(
 // Executive Reports
 builder.Services.AddScoped<IExecutiveReportService, ExecutiveReportService>();
 
+// CMS & Multi-Site
+builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
+builder.Services.AddScoped<ICmsContentService, CmsContentService>();
+builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
+builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
@@ -332,6 +339,9 @@ app.UseStaticFiles(new StaticFileOptions
 
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
+
+// 5.5 CMS Site Routing (subdomain/domain resolution)
+app.UseCmsSiteRouting();
 
 // 6. Authentication & Authorization
 app.UseAuthentication();
