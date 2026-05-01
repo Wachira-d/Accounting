@@ -183,6 +183,7 @@ builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
+builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
