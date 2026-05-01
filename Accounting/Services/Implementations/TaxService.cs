@@ -104,6 +104,9 @@ public class TaxService : ITaxService
 
     private async Task GenerateVatReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var companyVatRate = company?.VatRate ?? 7m;
+
         var docs = await _db.Documents
             .Include(d => d.Lines)
             .Include(d => d.Contact)

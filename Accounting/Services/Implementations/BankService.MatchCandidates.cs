@@ -54,7 +54,7 @@ public partial class BankService
                          || t.MatchedJournalEntryId != null
                          || t.MatchedEntryIdsJson != null
                          || t.MatchGroupId != null))
-            .Select(t => new { t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson, t.MatchGroupId })
+            .Select(t => new { t.Id, t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson, t.MatchGroupId })
             .ToListAsync();
 
         var usedPaymentIds = new HashSet<Guid>();
