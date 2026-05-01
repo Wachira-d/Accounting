@@ -105,10 +105,41 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
+        // ===== Pre-flight validation & auto-fix (prevent Schematron errors) =====
         if (string.IsNullOrWhiteSpace(company.TaxId))
             throw new InvalidOperationException("กรุณาตั้งค่าเลขประจำตัวผู้เสียภาษีของบริษัทก่อน");
+
+        // Auto-clean: strip dashes/dots/spaces from TaxId (users often enter "0-1234-56789-01-2")
+        var sellerTaxClean = new string((company.TaxId ?? "").Where(char.IsDigit).ToArray());
+        if (sellerTaxClean.Length != 13)
+            throw new InvalidOperationException(
+                $"เลขประจำตัวผู้เสียภาษีของบริษัทต้องเป็นตัวเลข 13 หลัก (ปัจจุบัน: \"{company.TaxId}\" → {sellerTaxClean.Length} หลัก)");
+
+        // Auto-clean: strip non-digits from branch code
+        var sellerBranchClean = new string((company.BranchCode ?? "").Where(char.IsDigit).ToArray());
+        if (sellerBranchClean.Length == 0) sellerBranchClean = "00000";
+        else if (sellerBranchClean.Length > 5) sellerBranchClean = sellerBranchClean.Substring(0, 5);
+        else if (sellerBranchClean.Length < 5) sellerBranchClean = sellerBranchClean.PadLeft(5, '0');
+
+        // Persist cleaned values so future calls don't hit the same issue
+        var dirty = false;
+        if (company.TaxId != sellerTaxClean) { company.TaxId = sellerTaxClean; dirty = true; }
+        if (company.BranchCode != sellerBranchClean) { company.BranchCode = sellerBranchClean; dirty = true; }
+        if (dirty) await _db.SaveChangesAsync();
+
         if (string.IsNullOrWhiteSpace(document.Contact?.TaxId))
             throw new InvalidOperationException("กรุณาระบุเลขประจำตัวผู้เสียภาษีของผู้ซื้อ");
+
+        // Auto-clean buyer TaxId too
+        var buyerTaxClean = new string((document.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+        if (document.Contact.TaxId != buyerTaxClean && buyerTaxClean.Length > 0)
+        {
+            document.Contact.TaxId = buyerTaxClean;
+            await _db.SaveChangesAsync();
+        }
+
+        if (string.IsNullOrWhiteSpace(company.Address) && string.IsNullOrWhiteSpace(company.SubDistrict))
+            throw new InvalidOperationException("กรุณาตั้งค่าที่อยู่บริษัทก่อนสร้าง e-Tax (ต้องมีอย่างน้อย ตำบล อำเภอ จังหวัด รหัสไปรษณีย์)");
 
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
@@ -611,12 +642,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var buyerParty = BuildBuyerParty(ram, doc.Contact, buyerTaxIdSchemeId, buyerTxId);
 
         // ShipToTradeParty: same address as buyer (delivery to billing address by default)
+        var shipPostCode = NormalizePostcode(doc.Contact.PostalCode, doc.Contact.Address);
+        var shipAddr = doc.Contact.Address ?? "-";
         var shipToParty = new XElement(ram + "ShipToTradeParty",
             new XElement(ram + "PostalTradeAddress",
-                ExtractPostcodeOrEmpty(doc.Contact.Address) is { Length: > 0 } pc
-                    ? new XElement(ram + "PostcodeCode", pc) : null,
-                !string.IsNullOrEmpty(doc.Contact.Address)
-                    ? new XElement(ram + "LineOne", doc.Contact.Address) : null,
+                new XElement(ram + "PostcodeCode", shipPostCode),
+                new XElement(ram + "LineOne", shipAddr),
                 new XElement(ram + "CountryID",
                     new XAttribute("schemeID", "3166-1 alpha-2"), "TH")));
 
@@ -752,27 +783,38 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// </summary>
     private static string ComposeTxId(string? taxId, string? branchCode, string schemeId)
     {
-        var raw = (taxId ?? "").Trim().Replace("-", "").Replace(" ", "").Replace(".", "");
+        // Strip everything except digits for all numeric schemes
+        var digits = new string((taxId ?? "").Where(char.IsDigit).ToArray());
         switch (schemeId)
         {
             case "TXID":
-                if (raw.Length == 18 && raw.All(char.IsDigit)) return raw;
-                var digits = new string(raw.Where(char.IsDigit).ToArray());
-                var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadLeft(13, '0');
-                // TIV-SellerTradeParty-013: branch must be all-numeric when schemeID=TXID
-                var branchDigits = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
-                var bid = branchDigits.Length == 0 ? "00000" : branchDigits;
-                if (bid.Length > 5) bid = bid.Substring(0, 5);
-                if (bid.Length < 5) bid = bid.PadLeft(5, '0');
-                return tid + bid;
+                // If already 18 digits (TaxID+Branch pre-concatenated), use as-is
+                if (digits.Length == 18) return digits;
+                // Ensure exactly 13-digit tax ID
+                var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadRight(13, '0');
+                // Ensure exactly 5-digit branch (all-numeric per TIV-SellerTradeParty-013)
+                var bd = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+                if (bd.Length == 0) bd = "00000";
+                else if (bd.Length > 5) bd = bd.Substring(0, 5);
+                else if (bd.Length < 5) bd = bd.PadLeft(5, '0');
+                var result = tid + bd;
+                // Final sanity: must be exactly 18 digits
+                if (result.Length != 18 || !result.All(char.IsDigit))
+                    throw new InvalidOperationException(
+                        $"e-Tax: เลขประจำตัวผู้เสียภาษี+สาขาต้องเป็นตัวเลข 18 หลัก (ได้: {result})");
+                return result;
             case "NIDN":
-                return raw.Length >= 13 ? raw.Substring(0, 13) : raw.PadLeft(13, '0');
+                if (digits.Length < 13)
+                    throw new InvalidOperationException(
+                        $"e-Tax: เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก (ได้ {digits.Length} หลัก)");
+                return digits.Substring(0, 13);
             case "CCPT":
+                var raw = (taxId ?? "").Trim();
                 return raw.Length > 35 ? raw.Substring(0, 35) : raw;
             case "OTHR":
                 return "N/A";
             default:
-                return raw;
+                return (taxId ?? "").Trim();
         }
     }
 
