@@ -1075,7 +1075,6 @@ public class DocumentService : IDocumentService
             ContactType = request.ContactType ?? InferContactType(request.TaxId, request.BranchCode),
             IsCustomer = request.IsCustomer,
             IsSupplier = request.IsSupplier,
-            Address = request.Address,
             BuildingNumber = request.BuildingNumber ?? parsed?.BuildingNumber,
             BuildingName = request.BuildingName ?? parsed?.BuildingName,
             StreetName = request.StreetName ?? parsed?.StreetName,
@@ -1089,10 +1088,22 @@ public class DocumentService : IDocumentService
             ContactPerson = request.ContactPerson
         };
 
+        contact.Address = request.Address ?? ComposeAddress(contact);
+
         _db.Contacts.Add(contact);
         await _db.SaveChangesAsync();
 
         return MapContactToResponse(contact);
+    }
+
+    private static string? ComposeAddress(Contact c)
+    {
+        var parts = new[] { c.BuildingNumber, c.BuildingName,
+            string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode }
+            .Where(s => !string.IsNullOrWhiteSpace(s));
+        var joined = string.Join(" ", parts);
+        return string.IsNullOrEmpty(joined) ? null : joined;
     }
 
     private static bool NeedsAutoParse(CreateContactRequest r) =>
@@ -1124,7 +1135,6 @@ public class DocumentService : IDocumentService
             contact.ContactType = InferContactType(request.TaxId ?? contact.TaxId, request.BranchCode ?? contact.BranchCode);
         if (request.IsCustomer.HasValue) contact.IsCustomer = request.IsCustomer.Value;
         if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
-        if (request.Address != null) contact.Address = request.Address;
         if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
         if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
         if (request.StreetName != null) contact.StreetName = request.StreetName;
@@ -1133,6 +1143,7 @@ public class DocumentService : IDocumentService
         if (request.Province != null) contact.Province = request.Province;
         if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
         if (request.CountryCode != null) contact.CountryCode = request.CountryCode;
+        contact.Address = request.Address ?? ComposeAddress(contact);
         if (request.Phone != null) contact.Phone = request.Phone;
         if (request.Email != null) contact.Email = request.Email;
         if (request.ContactPerson != null) contact.ContactPerson = request.ContactPerson;
