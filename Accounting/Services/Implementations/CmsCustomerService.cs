@@ -13,11 +13,13 @@ public class CmsCustomerService : ICmsCustomerService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCustomerService> _logger;
+    private readonly IConfiguration _config;
 
-    public CmsCustomerService(AccountingDbContext db, ILogger<CmsCustomerService> logger)
+    public CmsCustomerService(AccountingDbContext db, ILogger<CmsCustomerService> logger, IConfiguration config)
     {
         _db = db;
         _logger = logger;
+        _config = config;
     }
 
     // ===== Customers =====
@@ -157,7 +159,7 @@ public class CmsCustomerService : ICmsCustomerService
         customer.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        var token = JwtHelper.GenerateToken(customer.Id.ToString(), customer.Email, "SiteCustomer");
+        var token = JwtHelper.GenerateToken(customer.Id, customer.Email, customer.FullName, _config);
         return new CustomerLoginResponse
         {
             Token = token, FullName = customer.FullName, Email = customer.Email,

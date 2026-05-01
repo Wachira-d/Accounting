@@ -106,7 +106,7 @@ public class CmsRenderingService : ICmsRenderingService
             .AsNoTracking()
             .Include(s => s.Theme)
             .Include(s => s.Locales)
-            .FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId && s.Status == SiteStatus.Active);
+            .FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId && s.Status == SiteStatus.Published);
 
         if (site == null) throw new InvalidOperationException("ไม่พบเว็บไซต์หรือยังไม่ได้เผยแพร่");
 

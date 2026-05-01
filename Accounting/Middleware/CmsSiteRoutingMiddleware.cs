@@ -33,7 +33,7 @@ public class CmsSiteRoutingMiddleware
 
         var site = await db.Sites
             .AsNoTracking()
-            .Where(s => s.Status == SiteStatus.Active)
+            .Where(s => s.Status == SiteStatus.Published)
             .Where(s => s.Subdomain == host
                 || s.CustomDomain == host
                 || s.Domains.Any(d => d.Domain == host && d.IsActive))
