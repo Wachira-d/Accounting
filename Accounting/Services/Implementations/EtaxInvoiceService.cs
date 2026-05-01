@@ -596,7 +596,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // Tax IDs: ETDA Schematron requires TXID = 13-digit TaxID + 5-digit branch (18 total)
         // Detect if user entered 13 (need branch suffix) or 18 (already concatenated).
         var sellerTaxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId, isSeller: true);
-        var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId);
+        var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId,
+            contactType: doc.Contact.ContactType);
         var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode, sellerTaxIdSchemeId);
         var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode, buyerTaxIdSchemeId);
 
@@ -776,17 +777,34 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     }
 
     /// <summary>
-    /// Pick a Schematron-allowed schemeID based on what the user entered.
-    /// 13 digits → TXID (assume juristic — append branch for full 18); empty → OTHR (N/A).
+    /// Pick Schematron-allowed schemeID using ContactType when available.
+    ///   JuristicPerson / GovernmentAgency → TXID (13-digit tax + 5-digit branch = 18)
+    ///   Individual → NIDN (13-digit national ID)
+    ///   No tax ID → OTHR ("N/A")
+    /// Seller always falls back to TXID.
     /// </summary>
-    private static string DetermineTaxIdSchemeId(string? taxId, bool isSeller = false)
+    private static string DetermineTaxIdSchemeId(string? taxId, bool isSeller = false,
+        ContactType? contactType = null)
     {
         if (string.IsNullOrWhiteSpace(taxId))
             return isSeller ? "TXID" : "OTHR";
         var raw = taxId.Trim().Replace("-", "").Replace(" ", "").Replace(".", "");
+
+        // Use ContactType when explicitly set
+        if (contactType.HasValue)
+        {
+            return contactType.Value switch
+            {
+                ContactType.Individual => raw.All(char.IsDigit) && raw.Length == 13 ? "NIDN" : "OTHR",
+                ContactType.JuristicPerson => "TXID",
+                ContactType.GovernmentAgency => "TXID",
+                _ => "OTHR"
+            };
+        }
+
+        // Fallback: infer from digit pattern
         if (raw.All(char.IsDigit) && raw.Length == 13) return "TXID";
         if (raw.All(char.IsDigit) && raw.Length == 18) return "TXID";
-        // Schematron TIV-SellerTradeParty-004: seller must always be TXID or NIDN
         if (isSeller) return "TXID";
         return "OTHR";
     }

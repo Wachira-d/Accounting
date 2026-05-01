@@ -38,10 +38,30 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มผู้ติดต่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="editId">
-          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
-          <div class="form-row">
-            <div class="form-group" style="flex:2"><label class="form-label">เลขผู้เสียภาษี</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
-            <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000"></div>
+          <!-- ประเภทผู้ติดต่อ -->
+          <div class="form-group">
+            <label class="form-label">ประเภทผู้ติดต่อ *</label>
+            <select class="form-input" id="fContactType" onchange="Page.onContactTypeChange()">
+              <option value="2">นิติบุคคล (บริษัท/ห้างหุ้นส่วน)</option>
+              <option value="1">บุคคลธรรมดา</option>
+              <option value="3">หน่วยงานราชการ</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
+          <div class="form-row" id="taxIdRow">
+            <div class="form-group" style="flex:2"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
+            <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+          </div>
+          <!-- ฟิลด์เฉพาะนิติบุคคล -->
+          <div id="juristicFields" style="margin-bottom:12px">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fJuristicId" maxlength="13" placeholder="เลข 13 หลักจาก DBD"></div>
+              <div class="form-group"><label class="form-label">ประเภทนิติบุคคล</label><input type="text" class="form-input" id="fJuristicType" placeholder="เช่น บริษัทจำกัด" readonly style="background:#f8fafc"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ทุนจดทะเบียน</label><input type="text" class="form-input" id="fRegisteredCapital" readonly style="background:#f8fafc"></div>
+              <div class="form-group"><label class="form-label">สถานะนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fDbdStatus" readonly style="background:#f8fafc"></div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked><label for="fIsCustomer">ลูกค้า</label></div>
@@ -122,10 +142,11 @@
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีผู้ติดต่อ</td></tr>'; return; }
           items.forEach(c => Page._cache[c.id] = c);
+          const ctLabel = (ct) => ({1:'บุคคลธรรมดา',2:'นิติบุคคล',3:'หน่วยงานราชการ'}[ct] || '-');
           tbody.innerHTML = items.map(c => `<tr>
-            <td class="font-medium">${c.name}</td>
-            <td>${c.taxId || '-'}</td>
-            <td>${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
+            <td class="font-medium">${Layout.esc(c.name)}</td>
+            <td>${Layout.esc(c.taxId || '-')}${c.branchCode && c.contactType === 2 ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
+            <td><span class="badge ${c.contactType===2?'badge-info':c.contactType===3?'badge-warning':'badge-gray'}">${ctLabel(c.contactType)}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
@@ -141,6 +162,9 @@
         this._dbdAttached = true;
         const fillFromDbd = (result) => {
           if (!result) return;
+          // DBD returns juristic person data → auto-set type
+          document.getElementById('fContactType').value = '2';
+          Page.onContactTypeChange();
           // Fill name + taxId + free-text address + structured address parts
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'fName',
@@ -156,6 +180,14 @@
           if (result.juristicId && !document.getElementById('fTaxId').value) {
             document.getElementById('fTaxId').value = result.juristicId;
           }
+          // Fill juristic-specific fields from DBD
+          if (result.juristicId) document.getElementById('fJuristicId').value = result.juristicId;
+          if (result.juristicType) document.getElementById('fJuristicType').value = result.juristicType;
+          if (result.registeredCapital) document.getElementById('fRegisteredCapital').value = Number(result.registeredCapital).toLocaleString('th-TH') + ' บาท';
+          if (result.status) document.getElementById('fDbdStatus').value = result.status;
+          // Default branch to 00000 (head office) for juristic
+          if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
+          if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
           // After DBD fills the free-text Address, auto-parse to extract building number + street
           setTimeout(() => Page.parseAddressIfEmpty(), 50);
         };
@@ -170,14 +202,28 @@
         'fName','fTaxId','fBranch','fBranchName','fAddress',
         'fBuildingNumber','fBuildingName','fStreetName',
         'fSubDistrict','fDistrict','fProvince','fPostalCode',
-        'fPhone','fEmail','fContactPerson'
+        'fPhone','fEmail','fContactPerson',
+        'fJuristicId','fJuristicType','fRegisteredCapital','fDbdStatus'
       ],
+      onContactTypeChange() {
+        const ct = parseInt(document.getElementById('fContactType').value);
+        const isJuristic = ct === 2;
+        const isGov = ct === 3;
+        document.getElementById('juristicFields').style.display = isJuristic ? '' : 'none';
+        document.getElementById('branchCodeGroup').style.display = (isJuristic || isGov) ? '' : 'none';
+        document.getElementById('fDbdBtn').style.display = isJuristic ? '' : 'none';
+        document.getElementById('fNameHint').style.display = isJuristic ? '' : 'none';
+        document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ-นามสกุล';
+        document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
+      },
       openCreate() {
         document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
         document.getElementById('editId').value = '';
-        this._allFieldIds.forEach(id => document.getElementById(id).value = '');
+        this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+        document.getElementById('fContactType').value = '2';
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
+        this.onContactTypeChange();
         Layout.openModal('formModal');
         setTimeout(() => this._attachDbd(), 100);
       },
@@ -185,6 +231,7 @@
         const c = this._cache[id]; if (!c) return;
         document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
         document.getElementById('editId').value = c.id;
+        document.getElementById('fContactType').value = String(c.contactType || 2);
         document.getElementById('fName').value = c.name;
         document.getElementById('fTaxId').value = c.taxId || '';
         document.getElementById('fBranch').value = c.branchCode || '';
@@ -202,6 +249,11 @@
         document.getElementById('fPhone').value = c.phone || '';
         document.getElementById('fEmail').value = c.email || '';
         document.getElementById('fContactPerson').value = c.contactPerson || '';
+        document.getElementById('fJuristicId').value = '';
+        document.getElementById('fJuristicType').value = '';
+        document.getElementById('fRegisteredCapital').value = '';
+        document.getElementById('fDbdStatus').value = '';
+        this.onContactTypeChange();
         Layout.openModal('formModal');
         setTimeout(() => this._attachDbd(), 100);
       },
@@ -239,11 +291,13 @@
       async save() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('editId').value;
+        const ct = parseInt(document.getElementById('fContactType').value);
         const data = {
           name: document.getElementById('fName').value,
           taxId: document.getElementById('fTaxId').value || null,
-          branchCode: document.getElementById('fBranch').value || null,
+          branchCode: (ct === 2 || ct === 3) ? (document.getElementById('fBranch').value || '00000') : null,
           branchName: document.getElementById('fBranchName').value || null,
+          contactType: ct,
           isCustomer: document.getElementById('fIsCustomer').checked,
           isSupplier: document.getElementById('fIsSupplier').checked,
           address: document.getElementById('fAddress').value || null,
