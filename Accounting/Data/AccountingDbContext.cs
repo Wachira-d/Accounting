@@ -288,6 +288,17 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteOrderPayment> SiteOrderPayments => Set<SiteOrderPayment>();
     public DbSet<SitePaymentGateway> SitePaymentGateways => Set<SitePaymentGateway>();
 
+    // Commerce Extensions
+    public DbSet<SiteCoupon> SiteCoupons => Set<SiteCoupon>();
+    public DbSet<SiteCouponUsage> SiteCouponUsages => Set<SiteCouponUsage>();
+    public DbSet<SiteShippingZone> SiteShippingZones => Set<SiteShippingZone>();
+    public DbSet<SiteShippingRate> SiteShippingRates => Set<SiteShippingRate>();
+    public DbSet<SiteProductVariant> SiteProductVariants => Set<SiteProductVariant>();
+    public DbSet<SiteProductOption> SiteProductOptions => Set<SiteProductOption>();
+    public DbSet<SiteProductOptionValue> SiteProductOptionValues => Set<SiteProductOptionValue>();
+    public DbSet<SiteProductReview> SiteProductReviews => Set<SiteProductReview>();
+    public DbSet<SiteCommerceConfig> SiteCommerceConfigs => Set<SiteCommerceConfig>();
+
     // Booking
     public DbSet<SiteBookingService> SiteBookingServices => Set<SiteBookingService>();
     public DbSet<SiteBookingServiceTranslation> SiteBookingServiceTranslations => Set<SiteBookingServiceTranslation>();
@@ -2175,6 +2186,120 @@ public class AccountingDbContext : DbContext
             e.Property(g => g.BankName).HasMaxLength(128);
             e.Property(g => g.SupportedCurrencies).HasMaxLength(100);
             e.HasOne(g => g.Site).WithMany(s => s.PaymentGateways).HasForeignKey(g => g.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCoupon =====
+        modelBuilder.Entity<SiteCoupon>(e =>
+        {
+            e.HasIndex(c => new { c.SiteId, c.Code }).IsUnique().HasDatabaseName("IX_SiteCoupons_SiteId_Code");
+            e.HasIndex(c => new { c.SiteId, c.IsActive }).HasDatabaseName("IX_SiteCoupons_SiteId_IsActive");
+            e.Property(c => c.Code).HasMaxLength(64);
+            e.Property(c => c.Description).HasMaxLength(512);
+            e.Property(c => c.DiscountValue).HasPrecision(18, 2);
+            e.Property(c => c.MaxDiscountAmount).HasPrecision(18, 2);
+            e.Property(c => c.MinOrderAmount).HasPrecision(18, 2);
+            e.Property(c => c.CustomerGroupTag).HasMaxLength(128);
+            e.HasOne(c => c.Site).WithMany().HasForeignKey(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SiteCouponUsage>(e =>
+        {
+            e.HasIndex(u => new { u.CouponId, u.CustomerId }).HasDatabaseName("IX_CouponUsages_Coupon_Customer");
+            e.HasIndex(u => u.OrderId).HasDatabaseName("IX_CouponUsages_OrderId");
+            e.Property(u => u.DiscountApplied).HasPrecision(18, 2);
+            e.HasOne(u => u.Coupon).WithMany(c => c.Usages).HasForeignKey(u => u.CouponId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(u => u.Order).WithMany().HasForeignKey(u => u.OrderId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(u => u.Customer).WithMany().HasForeignKey(u => u.CustomerId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteShippingZone & Rate =====
+        modelBuilder.Entity<SiteShippingZone>(e =>
+        {
+            e.HasIndex(z => new { z.SiteId, z.IsActive }).HasDatabaseName("IX_ShippingZones_SiteId_IsActive");
+            e.Property(z => z.Name).HasMaxLength(128);
+            e.Property(z => z.Description).HasMaxLength(512);
+            e.Property(z => z.CountryCodes).HasMaxLength(512);
+            e.Property(z => z.Provinces).HasMaxLength(2048);
+            e.Property(z => z.PostalCodePatterns).HasMaxLength(1024);
+            e.HasOne(z => z.Site).WithMany().HasForeignKey(z => z.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SiteShippingRate>(e =>
+        {
+            e.HasIndex(r => new { r.ZoneId, r.IsActive }).HasDatabaseName("IX_ShippingRates_Zone_Active");
+            e.Property(r => r.Name).HasMaxLength(128);
+            e.Property(r => r.CarrierName).HasMaxLength(128);
+            e.Property(r => r.BaseRate).HasPrecision(18, 2);
+            e.Property(r => r.PerKgRate).HasPrecision(18, 2);
+            e.Property(r => r.FreeAboveAmount).HasPrecision(18, 2);
+            e.Property(r => r.MinWeightKg).HasPrecision(10, 3);
+            e.Property(r => r.MaxWeightKg).HasPrecision(10, 3);
+            e.HasOne(r => r.Zone).WithMany(z => z.Rates).HasForeignKey(r => r.ZoneId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteProductVariant =====
+        modelBuilder.Entity<SiteProductVariant>(e =>
+        {
+            e.HasIndex(v => new { v.SiteProductId, v.Sku }).IsUnique().HasDatabaseName("IX_Variants_Product_Sku");
+            e.Property(v => v.Sku).HasMaxLength(128);
+            e.Property(v => v.Name).HasMaxLength(256);
+            e.Property(v => v.Barcode).HasMaxLength(128);
+            e.Property(v => v.Price).HasPrecision(18, 2);
+            e.Property(v => v.CompareAtPrice).HasPrecision(18, 2);
+            e.Property(v => v.Stock).HasPrecision(18, 4);
+            e.Property(v => v.WeightKg).HasPrecision(10, 3);
+            e.HasOne(v => v.SiteProduct).WithMany().HasForeignKey(v => v.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(v => v.ErpProduct).WithMany().HasForeignKey(v => v.ErpProductId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<SiteProductOption>(e =>
+        {
+            e.HasIndex(o => new { o.SiteProductId, o.Name }).HasDatabaseName("IX_ProductOptions_Product_Name");
+            e.Property(o => o.Name).HasMaxLength(64);
+            e.Property(o => o.NameEn).HasMaxLength(64);
+            e.Property(o => o.DisplayType).HasMaxLength(32);
+            e.HasOne(o => o.SiteProduct).WithMany().HasForeignKey(o => o.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SiteProductOptionValue>(e =>
+        {
+            e.HasIndex(v => new { v.OptionId, v.SortOrder }).HasDatabaseName("IX_OptionValues_Option_Sort");
+            e.Property(v => v.Value).HasMaxLength(64);
+            e.Property(v => v.ValueEn).HasMaxLength(64);
+            e.Property(v => v.ColorHex).HasMaxLength(16);
+            e.HasOne(v => v.Option).WithMany(o => o.Values).HasForeignKey(v => v.OptionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCommerceConfig =====
+        modelBuilder.Entity<SiteCommerceConfig>(e =>
+        {
+            e.HasIndex(c => c.SiteId).IsUnique().HasDatabaseName("IX_CommerceConfig_SiteId");
+            e.Property(c => c.DefaultVatRate).HasPrecision(5, 2);
+            e.Property(c => c.FlatShippingRate).HasPrecision(18, 2);
+            e.Property(c => c.FreeShippingThreshold).HasPrecision(18, 2);
+            e.Property(c => c.OrderNumberPrefix).HasMaxLength(16);
+            e.Property(c => c.OrderNotificationEmails).HasMaxLength(1024);
+            e.Property(c => c.DefaultProductSort).HasMaxLength(32);
+            e.Property(c => c.OrderConfirmMessageTh).HasMaxLength(2048);
+            e.Property(c => c.OrderConfirmMessageEn).HasMaxLength(2048);
+            e.Property(c => c.QuotationMessageTh).HasMaxLength(2048);
+            e.Property(c => c.QuotationMessageEn).HasMaxLength(2048);
+            e.HasOne(c => c.Site).WithOne(s => s.CommerceConfig).HasForeignKey<SiteCommerceConfig>(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteProductReview =====
+        modelBuilder.Entity<SiteProductReview>(e =>
+        {
+            e.HasIndex(r => new { r.SiteId, r.IsApproved, r.IsHidden }).HasDatabaseName("IX_Reviews_Site_Status");
+            e.HasIndex(r => new { r.SiteProductId, r.IsApproved, r.IsHidden }).HasDatabaseName("IX_Reviews_Product_Status");
+            e.HasIndex(r => r.CustomerId).HasDatabaseName("IX_Reviews_CustomerId");
+            e.Property(r => r.ReviewerName).HasMaxLength(128);
+            e.Property(r => r.ReviewerEmail).HasMaxLength(256);
+            e.Property(r => r.Title).HasMaxLength(256);
+            e.HasOne(r => r.Site).WithMany().HasForeignKey(r => r.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.SiteProduct).WithMany().HasForeignKey(r => r.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.Customer).WithMany().HasForeignKey(r => r.CustomerId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(r => r.Order).WithMany().HasForeignKey(r => r.OrderId).OnDelete(DeleteBehavior.SetNull);
         });
 
         // ===== SiteBookingService =====

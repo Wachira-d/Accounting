@@ -757,4 +757,124 @@ public class CmsCommerceService : ICmsCommerceService
         IsTestMode = g.IsTestMode, IsActive = g.IsActive, SortOrder = g.SortOrder,
         SupportedCurrencies = g.SupportedCurrencies
     };
+
+    // ===== Cart Merge =====
+
+    public async Task<CartResponse> MergeGuestCartAsync(Guid companyId, Guid siteId, MergeCartRequest request)
+    {
+        var guestCart = await _db.SiteCarts.Include(c => c.Items)
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.SessionToken == request.GuestSessionToken && !c.IsAbandoned);
+
+        var customerCart = await _db.SiteCarts.Include(c => c.Items)
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CustomerId == request.CustomerId && !c.IsAbandoned);
+
+        if (guestCart == null && customerCart == null)
+            return await GetOrCreateCartAsync(companyId, siteId, request.CustomerId, null);
+
+        if (customerCart == null && guestCart != null)
+        {
+            guestCart.CustomerId = request.CustomerId;
+            await _db.SaveChangesAsync();
+            return await MapCartResponse(guestCart.Id);
+        }
+
+        if (customerCart != null && guestCart != null && guestCart.Id != customerCart.Id)
+        {
+            foreach (var guestItem in guestCart.Items.ToList())
+            {
+                var existing = customerCart.Items.FirstOrDefault(i => i.SiteProductId == guestItem.SiteProductId
+                    && i.VariantOptionsJson == guestItem.VariantOptionsJson);
+                if (existing != null)
+                {
+                    existing.Quantity += guestItem.Quantity;
+                    existing.TotalPrice = existing.Quantity * existing.UnitPrice;
+                    _db.SiteCartItems.Remove(guestItem);
+                }
+                else
+                {
+                    guestItem.CartId = customerCart.Id;
+                }
+            }
+            _db.SiteCarts.Remove(guestCart);
+            await _db.SaveChangesAsync();
+            await RecalculateCartTotals(customerCart.Id);
+            return await MapCartResponse(customerCart.Id);
+        }
+
+        return await MapCartResponse(customerCart!.Id);
+    }
+
+    // ===== Stock Reservation =====
+
+    public async Task<bool> DeductStockAsync(Guid companyId, Guid siteId, Guid orderId)
+    {
+        var order = await _db.SiteOrders
+            .Include(o => o.Lines).ThenInclude(l => l.SiteProduct).ThenInclude(p => p.Product)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
+
+        if (order == null) return false;
+
+        foreach (var line in order.Lines.Where(l => !l.StockDeducted))
+        {
+            var product = line.SiteProduct.Product;
+            if (line.SiteProduct.StockBehavior == StockBehavior.InStockOnly)
+            {
+                if (product.CurrentStock < line.Quantity)
+                {
+                    _logger.LogWarning("Insufficient stock for product {ProductId}: requested {Qty}, available {Stock}",
+                        product.Id, line.Quantity, product.CurrentStock);
+                    throw new InvalidOperationException($"สินค้า {product.Name} มีไม่พอ (เหลือ {product.CurrentStock})");
+                }
+            }
+
+            product.CurrentStock -= line.Quantity;
+            line.StockDeducted = true;
+
+            _db.StockMovements.Add(new StockMovement
+            {
+                CompanyId = companyId,
+                ProductId = product.Id,
+                MovementType = "OUT",
+                Quantity = line.Quantity,
+                BalanceAfter = product.CurrentStock,
+                Reference = $"WEB-Order-{order.OrderNumber}",
+                Notes = "Online order line",
+                MovementDate = DateTime.UtcNow
+            });
+        }
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Stock deducted for order {OrderNumber}", order.OrderNumber);
+        return true;
+    }
+
+    public async Task<bool> RestoreStockAsync(Guid companyId, Guid siteId, Guid orderId)
+    {
+        var order = await _db.SiteOrders
+            .Include(o => o.Lines).ThenInclude(l => l.SiteProduct).ThenInclude(p => p.Product)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
+
+        if (order == null) return false;
+
+        foreach (var line in order.Lines.Where(l => l.StockDeducted))
+        {
+            line.SiteProduct.Product.CurrentStock += line.Quantity;
+            line.StockDeducted = false;
+
+            _db.StockMovements.Add(new StockMovement
+            {
+                CompanyId = companyId,
+                ProductId = line.SiteProduct.Product.Id,
+                MovementType = "IN",
+                Quantity = line.Quantity,
+                BalanceAfter = line.SiteProduct.Product.CurrentStock,
+                Reference = $"WEB-Cancel-{order.OrderNumber}",
+                Notes = "Online order cancelled",
+                MovementDate = DateTime.UtcNow
+            });
+        }
+
+        await _db.SaveChangesAsync();
+        return true;
+    }
 }

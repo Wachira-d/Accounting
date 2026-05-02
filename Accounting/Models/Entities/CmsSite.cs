@@ -85,6 +85,83 @@ public class Site : TenantEntity
     public ICollection<SitePaymentGateway> PaymentGateways { get; set; } = new List<SitePaymentGateway>();
     public ICollection<SiteStaffAccess> StaffAccess { get; set; } = new List<SiteStaffAccess>();
     public ICollection<SiteOrder> Orders { get; set; } = new List<SiteOrder>();
+
+    // Commerce config (1:1)
+    public SiteCommerceConfig? CommerceConfig { get; set; }
+}
+
+// ===== Commerce Configuration (per-site e-commerce settings) =====
+
+public class SiteCommerceConfig : TenantEntity
+{
+    public Guid SiteId { get; set; }
+    public Site Site { get; set; } = null!;
+
+    // ── Checkout Mode ──
+    public CheckoutMode CheckoutMode { get; set; } = CheckoutMode.PaymentRequired;
+    public bool AutoGenerateQuotation { get; set; } = false;
+    public bool RequireCustomerAccount { get; set; } = false;
+    public bool EnableGuestCheckout { get; set; } = true;
+
+    // ── Tax Settings ──
+    public decimal DefaultVatRate { get; set; } = 7m;
+    public bool PricesIncludeVat { get; set; } = true;
+    public bool EnableTaxInvoice { get; set; } = true;
+
+    // ── Shipping ──
+    public bool EnableShipping { get; set; } = true;
+    public bool EnableShippingCalculation { get; set; } = false;
+    public decimal? FlatShippingRate { get; set; }
+    public decimal? FreeShippingThreshold { get; set; }
+
+    // ── Inventory ──
+    public bool EnableStockTracking { get; set; } = true;
+    public bool AutoDeductStock { get; set; } = true;
+    public StockBehavior DefaultStockBehavior { get; set; } = StockBehavior.InStockOnly;
+    public bool ShowStockQuantity { get; set; } = false;
+    public string? LowStockThresholdJson { get; set; }
+
+    // ── Coupons & Discounts ──
+    public bool EnableCoupons { get; set; } = true;
+    public bool EnableTierPricing { get; set; } = true;
+
+    // ── Reviews ──
+    public bool EnableReviews { get; set; } = true;
+    public bool ReviewAutoApprove { get; set; } = false;
+    public bool ReviewRequirePurchase { get; set; } = false;
+
+    // ── Cart ──
+    public bool EnableWishlist { get; set; } = true;
+    public bool EnableAbandonedCartRecovery { get; set; } = true;
+    public int CartExpiryDays { get; set; } = 7;
+    public int AbandonedCartHours { get; set; } = 3;
+
+    // ── Order ──
+    public string OrderNumberPrefix { get; set; } = "WEB";
+    public bool AutoConfirmOrders { get; set; } = false;
+    public bool NotifyOnNewOrder { get; set; } = true;
+    public string? OrderNotificationEmails { get; set; }
+
+    // ── ERP Integration ──
+    public bool AutoSyncToErp { get; set; } = false;
+    public DocumentType ErpDocumentType { get; set; } = DocumentType.Invoice;
+
+    // ── Payment ──
+    public bool EnableOnlinePayment { get; set; } = true;
+    public bool EnableCod { get; set; } = false;
+    public bool EnableBankTransfer { get; set; } = true;
+
+    // ── Product Display ──
+    public string DefaultProductSort { get; set; } = "newest";
+    public int ProductsPerPage { get; set; } = 20;
+    public bool ShowComparePrice { get; set; } = true;
+    public bool ShowSku { get; set; } = false;
+
+    // ── Notification Messages (bilingual) ──
+    public string? OrderConfirmMessageTh { get; set; }
+    public string? OrderConfirmMessageEn { get; set; }
+    public string? QuotationMessageTh { get; set; }
+    public string? QuotationMessageEn { get; set; }
 }
 
 // ===== Domain Management =====

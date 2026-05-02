@@ -21,6 +21,8 @@ public class CmsCommerceController : ControllerBase
         _commerceService = commerceService;
     }
 
+    private string Lang => CmsMessages.ResolveLanguage(HttpContext);
+
     // ===== Products =====
 
     [HttpPost("products")]
@@ -30,7 +32,7 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.AddProductAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<SiteProductResponse>(true, result, "เพิ่มสินค้าสำเร็จ"));
+        return StatusCode(201, new ApiResponse<SiteProductResponse>(true, result, CmsMessages.Get("product.created", Lang)));
     }
 
     [HttpGet("products")]
@@ -49,7 +51,7 @@ public class CmsCommerceController : ControllerBase
     public async Task<ActionResult<ApiResponse<SiteProductResponse>>> GetProduct(Guid companyId, Guid siteId, Guid siteProductId)
     {
         var result = await _commerceService.GetProductAsync(companyId, siteId, siteProductId);
-        if (result == null) return NotFound(new ApiResponse<SiteProductResponse>(false, null, "ไม่พบสินค้า"));
+        if (result == null) return NotFound(new ApiResponse<SiteProductResponse>(false, null, CmsMessages.Get("product.notFound", Lang)));
         return Ok(new ApiResponse<SiteProductResponse>(true, result));
     }
 
@@ -58,7 +60,7 @@ public class CmsCommerceController : ControllerBase
     public async Task<ActionResult<ApiResponse<SiteProductResponse>>> GetProductBySlug(Guid companyId, Guid siteId, string slug)
     {
         var result = await _commerceService.GetProductBySlugAsync(companyId, siteId, slug);
-        if (result == null) return NotFound(new ApiResponse<SiteProductResponse>(false, null, "ไม่พบสินค้า"));
+        if (result == null) return NotFound(new ApiResponse<SiteProductResponse>(false, null, CmsMessages.Get("product.notFound", Lang)));
         return Ok(new ApiResponse<SiteProductResponse>(true, result));
     }
 
@@ -68,15 +70,15 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.UpdateProductAsync(companyId, siteId, siteProductId, request, userId);
-        return Ok(new ApiResponse<SiteProductResponse>(true, result, "อัปเดตสินค้าสำเร็จ"));
+        return Ok(new ApiResponse<SiteProductResponse>(true, result, CmsMessages.Get("product.updated", Lang)));
     }
 
     [HttpDelete("products/{siteProductId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveProduct(Guid companyId, Guid siteId, Guid siteProductId)
     {
         var result = await _commerceService.RemoveProductAsync(companyId, siteId, siteProductId);
-        if (!result) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบสินค้า"));
-        return Ok(new ApiResponse<bool>(true, true, "ลบสินค้าสำเร็จ"));
+        if (!result) return NotFound(new ApiResponse<bool>(false, false, CmsMessages.Get("product.notFound", Lang)));
+        return Ok(new ApiResponse<bool>(true, true, CmsMessages.Get("product.deleted", Lang)));
     }
 
     // ===== Categories =====
@@ -87,7 +89,7 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.CreateCategoryAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<CategoryResponse>(true, result, "สร้างหมวดหมู่สำเร็จ"));
+        return StatusCode(201, new ApiResponse<CategoryResponse>(true, result, CmsMessages.Get("category.created", Lang)));
     }
 
     [HttpGet("categories")]
@@ -104,15 +106,15 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.UpdateCategoryAsync(companyId, siteId, categoryId, request, userId);
-        return Ok(new ApiResponse<CategoryResponse>(true, result, "อัปเดตหมวดหมู่สำเร็จ"));
+        return Ok(new ApiResponse<CategoryResponse>(true, result, CmsMessages.Get("category.updated", Lang)));
     }
 
     [HttpDelete("categories/{categoryId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteCategory(Guid companyId, Guid siteId, Guid categoryId)
     {
         var result = await _commerceService.DeleteCategoryAsync(companyId, siteId, categoryId);
-        if (!result) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบหมวดหมู่"));
-        return Ok(new ApiResponse<bool>(true, true, "ลบหมวดหมู่สำเร็จ"));
+        if (!result) return NotFound(new ApiResponse<bool>(false, false, CmsMessages.Get("category.notFound", Lang)));
+        return Ok(new ApiResponse<bool>(true, true, CmsMessages.Get("category.deleted", Lang)));
     }
 
     // ===== Cart =====
@@ -132,7 +134,7 @@ public class CmsCommerceController : ControllerBase
         Guid companyId, Guid siteId, Guid cartId, [FromBody] AddToCartRequest request)
     {
         var result = await _commerceService.AddToCartAsync(companyId, siteId, cartId, request);
-        return Ok(new ApiResponse<CartResponse>(true, result, "เพิ่มสินค้าในตะกร้าสำเร็จ"));
+        return Ok(new ApiResponse<CartResponse>(true, result, CmsMessages.Get("cart.itemAdded", Lang)));
     }
 
     [HttpPut("cart/{cartId:guid}/items/{itemId:guid}")]
@@ -141,7 +143,7 @@ public class CmsCommerceController : ControllerBase
         Guid companyId, Guid siteId, Guid cartId, Guid itemId, [FromBody] UpdateCartItemRequest request)
     {
         var result = await _commerceService.UpdateCartItemAsync(companyId, siteId, cartId, itemId, request);
-        return Ok(new ApiResponse<CartResponse>(true, result, "อัปเดตตะกร้าสำเร็จ"));
+        return Ok(new ApiResponse<CartResponse>(true, result, CmsMessages.Get("cart.updated", Lang)));
     }
 
     [HttpDelete("cart/{cartId:guid}/items/{itemId:guid}")]
@@ -150,7 +152,7 @@ public class CmsCommerceController : ControllerBase
         Guid companyId, Guid siteId, Guid cartId, Guid itemId)
     {
         var result = await _commerceService.RemoveFromCartAsync(companyId, siteId, cartId, itemId);
-        return Ok(new ApiResponse<CartResponse>(true, result, "ลบสินค้าจากตะกร้าสำเร็จ"));
+        return Ok(new ApiResponse<CartResponse>(true, result, CmsMessages.Get("cart.itemRemoved", Lang)));
     }
 
     [HttpDelete("cart/{cartId:guid}")]
@@ -158,7 +160,7 @@ public class CmsCommerceController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> ClearCart(Guid companyId, Guid siteId, Guid cartId)
     {
         var result = await _commerceService.ClearCartAsync(companyId, siteId, cartId);
-        return Ok(new ApiResponse<bool>(true, result, "ล้างตะกร้าสำเร็จ"));
+        return Ok(new ApiResponse<bool>(true, result, CmsMessages.Get("cart.cleared", Lang)));
     }
 
     // ===== Orders =====
@@ -169,7 +171,7 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<OrderResponse>(true, result, "สร้างคำสั่งซื้อสำเร็จ"));
+        return StatusCode(201, new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.created", Lang)));
     }
 
     [HttpGet("orders")]
@@ -186,7 +188,7 @@ public class CmsCommerceController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> GetOrder(Guid companyId, Guid siteId, Guid orderId)
     {
         var result = await _commerceService.GetOrderAsync(companyId, siteId, orderId);
-        if (result == null) return NotFound(new ApiResponse<OrderResponse>(false, null, "ไม่พบคำสั่งซื้อ"));
+        if (result == null) return NotFound(new ApiResponse<OrderResponse>(false, null, CmsMessages.Get("order.notFound", Lang)));
         return Ok(new ApiResponse<OrderResponse>(true, result));
     }
 
@@ -197,7 +199,7 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.UpdateOrderStatusAsync(companyId, siteId, orderId, request, userId);
-        return Ok(new ApiResponse<OrderResponse>(true, result, "อัปเดตสถานะคำสั่งซื้อสำเร็จ"));
+        return Ok(new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.statusUpdated", Lang)));
     }
 
     [HttpPost("orders/{orderId:guid}/sync-erp")]
@@ -205,7 +207,8 @@ public class CmsCommerceController : ControllerBase
     public async Task<ActionResult<ApiResponse<Guid?>>> SyncOrderToErp(Guid companyId, Guid siteId, Guid orderId)
     {
         var documentId = await _commerceService.SyncOrderToErpAsync(companyId, siteId, orderId);
-        return Ok(new ApiResponse<Guid?>(true, documentId, documentId != null ? "ซิงค์เอกสาร ERP สำเร็จ" : "ไม่สามารถซิงค์ได้"));
+        var msg = documentId != null ? CmsMessages.Get("erp.synced", Lang) : CmsMessages.Get("erp.syncFailed", Lang);
+        return Ok(new ApiResponse<Guid?>(true, documentId, msg));
     }
 
     // ===== Payment Gateways =====
@@ -216,7 +219,7 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.CreatePaymentGatewayAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<PaymentGatewayResponse>(true, result, "สร้างช่องทางชำระเงินสำเร็จ"));
+        return StatusCode(201, new ApiResponse<PaymentGatewayResponse>(true, result, CmsMessages.Get("gateway.created", Lang)));
     }
 
     [HttpGet("payment-gateways")]
@@ -232,14 +235,14 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.UpdatePaymentGatewayAsync(companyId, siteId, gatewayId, request, userId);
-        return Ok(new ApiResponse<PaymentGatewayResponse>(true, result, "อัปเดตช่องทางชำระเงินสำเร็จ"));
+        return Ok(new ApiResponse<PaymentGatewayResponse>(true, result, CmsMessages.Get("gateway.updated", Lang)));
     }
 
     [HttpDelete("payment-gateways/{gatewayId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteGateway(Guid companyId, Guid siteId, Guid gatewayId)
     {
         var result = await _commerceService.DeletePaymentGatewayAsync(companyId, siteId, gatewayId);
-        if (!result) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบช่องทางชำระเงิน"));
-        return Ok(new ApiResponse<bool>(true, true, "ลบช่องทางชำระเงินสำเร็จ"));
+        if (!result) return NotFound(new ApiResponse<bool>(false, false, CmsMessages.Get("gateway.notFound", Lang)));
+        return Ok(new ApiResponse<bool>(true, true, CmsMessages.Get("gateway.deleted", Lang)));
     }
 }

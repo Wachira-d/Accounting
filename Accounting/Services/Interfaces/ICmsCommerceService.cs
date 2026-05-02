@@ -25,6 +25,11 @@ public interface ICmsCommerceService
     Task<CartResponse> UpdateCartItemAsync(Guid companyId, Guid siteId, Guid cartId, Guid itemId, UpdateCartItemRequest request);
     Task<CartResponse> RemoveFromCartAsync(Guid companyId, Guid siteId, Guid cartId, Guid itemId);
     Task<bool> ClearCartAsync(Guid companyId, Guid siteId, Guid cartId);
+    Task<CartResponse> MergeGuestCartAsync(Guid companyId, Guid siteId, MergeCartRequest request);
+
+    // Stock
+    Task<bool> DeductStockAsync(Guid companyId, Guid siteId, Guid orderId);
+    Task<bool> RestoreStockAsync(Guid companyId, Guid siteId, Guid orderId);
 
     // Orders
     Task<OrderResponse> CreateOrderAsync(Guid companyId, Guid siteId, CreateOrderRequest request, string userId);

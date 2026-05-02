@@ -21,6 +21,8 @@ public class CmsBookingController : ControllerBase
         _bookingService = bookingService;
     }
 
+    private string Lang => CmsMessages.ResolveLanguage(HttpContext);
+
     // ===== Booking Services =====
 
     [HttpPost("services")]
@@ -29,7 +31,7 @@ public class CmsBookingController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookingService.CreateServiceAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<BookingServiceResponse>(true, result, "สร้างบริการสำเร็จ"));
+        return StatusCode(201, new ApiResponse<BookingServiceResponse>(true, result, CmsMessages.Get("booking.serviceCreated", Lang)));
     }
 
     [HttpGet("services")]
@@ -45,7 +47,7 @@ public class CmsBookingController : ControllerBase
     public async Task<ActionResult<ApiResponse<BookingServiceResponse>>> GetService(Guid companyId, Guid siteId, Guid serviceId)
     {
         var result = await _bookingService.GetServiceAsync(companyId, siteId, serviceId);
-        if (result == null) return NotFound(new ApiResponse<BookingServiceResponse>(false, null, "ไม่พบบริการ"));
+        if (result == null) return NotFound(new ApiResponse<BookingServiceResponse>(false, null, CmsMessages.Get("booking.serviceNotFound", Lang)));
         return Ok(new ApiResponse<BookingServiceResponse>(true, result));
     }
 
@@ -55,15 +57,15 @@ public class CmsBookingController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookingService.UpdateServiceAsync(companyId, siteId, serviceId, request, userId);
-        return Ok(new ApiResponse<BookingServiceResponse>(true, result, "อัปเดตบริการสำเร็จ"));
+        return Ok(new ApiResponse<BookingServiceResponse>(true, result, CmsMessages.Get("booking.serviceUpdated", Lang)));
     }
 
     [HttpDelete("services/{serviceId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteService(Guid companyId, Guid siteId, Guid serviceId)
     {
         var result = await _bookingService.DeleteServiceAsync(companyId, siteId, serviceId);
-        if (!result) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบบริการ"));
-        return Ok(new ApiResponse<bool>(true, true, "ลบบริการสำเร็จ"));
+        if (!result) return NotFound(new ApiResponse<bool>(false, false, CmsMessages.Get("booking.serviceNotFound", Lang)));
+        return Ok(new ApiResponse<bool>(true, true, CmsMessages.Get("booking.serviceDeleted", Lang)));
     }
 
     // ===== Booking Slots =====
@@ -74,7 +76,7 @@ public class CmsBookingController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookingService.CreateSlotAsync(companyId, siteId, serviceId, request, userId);
-        return StatusCode(201, new ApiResponse<BookingSlotResponse>(true, result, "สร้างช่วงเวลาสำเร็จ"));
+        return StatusCode(201, new ApiResponse<BookingSlotResponse>(true, result, CmsMessages.Get("booking.slotCreated", Lang)));
     }
 
     [HttpGet("services/{serviceId:guid}/slots")]
@@ -89,8 +91,8 @@ public class CmsBookingController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> DeleteSlot(Guid companyId, Guid siteId, Guid serviceId, Guid slotId)
     {
         var result = await _bookingService.DeleteSlotAsync(companyId, siteId, serviceId, slotId);
-        if (!result) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบช่วงเวลา"));
-        return Ok(new ApiResponse<bool>(true, true, "ลบช่วงเวลาสำเร็จ"));
+        if (!result) return NotFound(new ApiResponse<bool>(false, false, CmsMessages.Get("booking.slotNotFound", Lang)));
+        return Ok(new ApiResponse<bool>(true, true, CmsMessages.Get("booking.slotDeleted", Lang)));
     }
 
     // ===== Available Slots (public query) =====
@@ -114,7 +116,7 @@ public class CmsBookingController : ControllerBase
         string? userId = null;
         try { userId = JwtHelper.GetUserIdFromClaims(User).ToString(); } catch { }
         var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<BookingResponse>(true, result, "สร้างการจองสำเร็จ"));
+        return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang)));
     }
 
     [HttpGet("bookings")]
@@ -132,7 +134,7 @@ public class CmsBookingController : ControllerBase
     public async Task<ActionResult<ApiResponse<BookingResponse>>> GetBooking(Guid companyId, Guid siteId, Guid bookingId)
     {
         var result = await _bookingService.GetBookingAsync(companyId, siteId, bookingId);
-        if (result == null) return NotFound(new ApiResponse<BookingResponse>(false, null, "ไม่พบการจอง"));
+        if (result == null) return NotFound(new ApiResponse<BookingResponse>(false, null, CmsMessages.Get("booking.notFound", Lang)));
         return Ok(new ApiResponse<BookingResponse>(true, result));
     }
 
@@ -143,7 +145,7 @@ public class CmsBookingController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookingService.UpdateBookingStatusAsync(companyId, siteId, bookingId, request, userId);
-        return Ok(new ApiResponse<BookingResponse>(true, result, "อัปเดตสถานะการจองสำเร็จ"));
+        return Ok(new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.statusUpdated", Lang)));
     }
 
     [HttpPost("bookings/{bookingId:guid}/sync-erp")]
@@ -151,6 +153,7 @@ public class CmsBookingController : ControllerBase
     public async Task<ActionResult<ApiResponse<Guid?>>> SyncBookingToErp(Guid companyId, Guid siteId, Guid bookingId)
     {
         var documentId = await _bookingService.SyncBookingToErpAsync(companyId, siteId, bookingId);
-        return Ok(new ApiResponse<Guid?>(true, documentId, documentId != null ? "ซิงค์เอกสาร ERP สำเร็จ" : "ไม่สามารถซิงค์ได้"));
+        var msg = documentId != null ? CmsMessages.Get("erp.synced", Lang) : CmsMessages.Get("erp.syncFailed", Lang);
+        return Ok(new ApiResponse<Guid?>(true, documentId, msg));
     }
 }

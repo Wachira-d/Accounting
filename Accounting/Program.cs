@@ -185,12 +185,18 @@ builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
 builder.Services.AddScoped<ICmsQuotaService, CmsQuotaService>();
+builder.Services.AddScoped<ICmsCouponService, CmsCouponService>();
+builder.Services.AddScoped<ICmsShippingService, CmsShippingService>();
+builder.Services.AddScoped<ICmsVariantService, CmsVariantService>();
+builder.Services.AddScoped<ICmsReviewService, CmsReviewService>();
+builder.Services.AddScoped<ICmsWishlistService, CmsWishlistService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
 // Background job scheduler
 builder.Services.AddHostedService<BackgroundJobService>();
+builder.Services.AddHostedService<AbandonedCartService>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

@@ -834,3 +834,34 @@ public enum PaymentGatewayType
     Omise = 7,
     Custom = 99
 }
+
+public enum CouponDiscountType
+{
+    Percentage = 1,
+    FixedAmount = 2,
+    FreeShipping = 3
+}
+
+public enum CouponScope
+{
+    AllProducts = 1,
+    SpecificCategories = 2,
+    SpecificProducts = 3,
+    CustomerGroup = 4
+}
+
+public enum ShippingRateType
+{
+    Flat = 1,
+    ByWeight = 2,
+    Free = 3,
+    Calculated = 4
+}
+
+public enum CheckoutMode
+{
+    PaymentRequired = 1,
+    QuotationOnly = 2,
+    QuotationThenPayment = 3,
+    InquiryOnly = 4
+}
