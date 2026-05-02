@@ -9,6 +9,7 @@ public interface ICmsCouponService
     Task<CouponResponse?> GetCouponAsync(Guid companyId, Guid siteId, Guid couponId);
     Task<List<CouponResponse>> GetCouponsAsync(Guid companyId, Guid siteId, bool? activeOnly = null);
     Task<bool> DeleteCouponAsync(Guid companyId, Guid siteId, Guid couponId);
-    Task<CouponApplicationResult> ValidateAndApplyCouponAsync(Guid companyId, Guid siteId, Guid cartId, ApplyCouponRequest request);
+    Task<CouponApplicationResult> ValidateAndApplyCouponAsync(Guid companyId, Guid siteId, Guid cartId, ApplyCouponRequest request, string lang = "th");
     Task<CartResponse> RemoveCouponFromCartAsync(Guid companyId, Guid siteId, Guid cartId);
+    Task RecordCouponUsageAsync(Guid companyId, Guid siteId, Guid orderId);
 }

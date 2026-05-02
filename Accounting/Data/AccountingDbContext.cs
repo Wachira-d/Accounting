@@ -2248,7 +2248,7 @@ public class AccountingDbContext : DbContext
             e.Property(v => v.CompareAtPrice).HasPrecision(18, 2);
             e.Property(v => v.Stock).HasPrecision(18, 4);
             e.Property(v => v.WeightKg).HasPrecision(10, 3);
-            e.HasOne(v => v.SiteProduct).WithMany().HasForeignKey(v => v.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(v => v.SiteProduct).WithMany(p => p.Variants).HasForeignKey(v => v.SiteProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(v => v.ErpProduct).WithMany().HasForeignKey(v => v.ErpProductId).OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -2258,7 +2258,7 @@ public class AccountingDbContext : DbContext
             e.Property(o => o.Name).HasMaxLength(64);
             e.Property(o => o.NameEn).HasMaxLength(64);
             e.Property(o => o.DisplayType).HasMaxLength(32);
-            e.HasOne(o => o.SiteProduct).WithMany().HasForeignKey(o => o.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(o => o.SiteProduct).WithMany(p => p.Options).HasForeignKey(o => o.SiteProductId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<SiteProductOptionValue>(e =>
@@ -2297,7 +2297,7 @@ public class AccountingDbContext : DbContext
             e.Property(r => r.ReviewerEmail).HasMaxLength(256);
             e.Property(r => r.Title).HasMaxLength(256);
             e.HasOne(r => r.Site).WithMany().HasForeignKey(r => r.SiteId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(r => r.SiteProduct).WithMany().HasForeignKey(r => r.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.SiteProduct).WithMany(p => p.Reviews).HasForeignKey(r => r.SiteProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(r => r.Customer).WithMany().HasForeignKey(r => r.CustomerId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(r => r.Order).WithMany().HasForeignKey(r => r.OrderId).OnDelete(DeleteBehavior.SetNull);
         });

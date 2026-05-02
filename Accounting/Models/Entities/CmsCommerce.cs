@@ -49,6 +49,9 @@ public class SiteProduct : TenantEntity
     // Multi-tier pricing
     public ICollection<SitePricingTier> PricingTiers { get; set; } = new List<SitePricingTier>();
     public ICollection<SiteProductTranslation> Translations { get; set; } = new List<SiteProductTranslation>();
+    public ICollection<SiteProductVariant> Variants { get; set; } = new List<SiteProductVariant>();
+    public ICollection<SiteProductOption> Options { get; set; } = new List<SiteProductOption>();
+    public ICollection<SiteProductReview> Reviews { get; set; } = new List<SiteProductReview>();
 }
 
 public class SiteProductTranslation : TenantEntity

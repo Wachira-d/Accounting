@@ -50,7 +50,7 @@ public class AbandonedCartService : BackgroundService
 
         // Mark abandoned: carts with items, not abandoned yet, not updated recently, has customer or session
         var staleCarts = await db.SiteCarts
-            .Include(c => c.Items)
+            .Include(c => c.Items).ThenInclude(i => i.SiteProduct).ThenInclude(p => p.Product)
             .Include(c => c.Customer)
             .Include(c => c.Site)
             .Where(c => !c.IsAbandoned
@@ -68,8 +68,11 @@ public class AbandonedCartService : BackgroundService
             {
                 try
                 {
-                    var subject = $"You left items in your cart at {cart.Site.Name}";
-                    var body = BuildRecoveryEmail(cart);
+                    var lang = ResolveCartLanguage(cart);
+                    var subject = lang == "en"
+                        ? $"You left items in your cart at {cart.Site.Name}"
+                        : $"คุณมีสินค้าค้างในตะกร้าที่ {cart.Site.Name}";
+                    var body = BuildRecoveryEmail(cart, lang);
                     await emailService.SendAsync(cart.Customer.Email, subject, body);
                     cart.AbandonedEmailSentAt = DateTime.UtcNow;
                     _logger.LogInformation("Abandoned cart recovery email sent to {Email}", cart.Customer.Email);
@@ -97,13 +100,26 @@ public class AbandonedCartService : BackgroundService
             await db.SaveChangesAsync(ct);
     }
 
-    private static string BuildRecoveryEmail(Models.Entities.SiteCart cart)
+    private static string ResolveCartLanguage(Models.Entities.SiteCart cart)
+    {
+        var lang = cart.Site?.DefaultLanguage?.ToLowerInvariant();
+        return lang == "en" ? "en" : "th";
+    }
+
+    private static string BuildRecoveryEmail(Models.Entities.SiteCart cart, string lang)
     {
         var itemsHtml = string.Join("", cart.Items.Select(i =>
-            $"<tr><td>{System.Net.WebUtility.HtmlEncode(i.SiteProduct?.DisplayName ?? "Item")}</td>" +
-            $"<td>{i.Quantity}</td><td>{i.TotalPrice:N2}</td></tr>"));
+        {
+            var name = i.SiteProduct?.DisplayName
+                ?? i.SiteProduct?.Product?.Name
+                ?? (lang == "en" ? "Item" : "สินค้า");
+            return $"<tr><td>{System.Net.WebUtility.HtmlEncode(name)}</td>" +
+                   $"<td>{i.Quantity}</td><td>{i.TotalPrice:N2}</td></tr>";
+        }));
 
-        return $@"
+        if (lang == "en")
+        {
+            return $@"
 <!DOCTYPE html>
 <html><body style=""font-family:Arial,sans-serif;"">
 <h2>You left items in your cart!</h2>
@@ -115,6 +131,21 @@ public class AbandonedCartService : BackgroundService
 </table>
 <p><strong>Total: {cart.TotalAmount:N2} {cart.Currency}</strong></p>
 <p style=""margin-top:20px;"">Visit our store to complete your purchase.</p>
+</body></html>";
+        }
+
+        return $@"
+<!DOCTYPE html>
+<html><body style=""font-family:Arial,sans-serif;"">
+<h2>คุณมีสินค้าค้างในตะกร้า!</h2>
+<p>สวัสดีคุณ {System.Net.WebUtility.HtmlEncode(cart.Customer?.FullName ?? "ลูกค้า")},</p>
+<p>คุณมีสินค้ารออยู่ในตะกร้า กรุณาชำระเงินเพื่อสั่งซื้อก่อนของจะหมด!</p>
+<table cellpadding=""8"" border=""1"" style=""border-collapse:collapse;"">
+<tr><th>สินค้า</th><th>จำนวน</th><th>รวม</th></tr>
+{itemsHtml}
+</table>
+<p><strong>ยอดรวม: {cart.TotalAmount:N2} {cart.Currency}</strong></p>
+<p style=""margin-top:20px;"">เยี่ยมชมร้านของเราเพื่อสั่งซื้อให้สำเร็จ</p>
 </body></html>";
     }
 }

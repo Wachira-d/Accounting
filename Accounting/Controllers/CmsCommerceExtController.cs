@@ -61,6 +61,7 @@ public class CmsCommerceExtController : ControllerBase
     }
 
     [HttpGet("coupons/{couponId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<CouponResponse>>> GetCoupon(Guid companyId, Guid siteId, Guid couponId)
     {
         var result = await _couponService.GetCouponAsync(companyId, siteId, couponId);
@@ -92,7 +93,7 @@ public class CmsCommerceExtController : ControllerBase
     public async Task<ActionResult<ApiResponse<CouponApplicationResult>>> ApplyCoupon(
         Guid companyId, Guid siteId, Guid cartId, [FromBody] ApplyCouponRequest request)
     {
-        var result = await _couponService.ValidateAndApplyCouponAsync(companyId, siteId, cartId, request);
+        var result = await _couponService.ValidateAndApplyCouponAsync(companyId, siteId, cartId, request, Lang);
         if (!result.Valid)
             return BadRequest(new ApiResponse<CouponApplicationResult>(false, result, result.ErrorMessage));
         return Ok(new ApiResponse<CouponApplicationResult>(true, result, CmsMessages.Get("coupon.applied", Lang)));
@@ -119,6 +120,7 @@ public class CmsCommerceExtController : ControllerBase
     }
 
     [HttpGet("shipping/zones")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<List<ShippingZoneResponse>>>> GetShippingZones(Guid companyId, Guid siteId)
     {
         var result = await _shippingService.GetZonesAsync(companyId, siteId);

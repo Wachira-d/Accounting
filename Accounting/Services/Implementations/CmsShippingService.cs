@@ -93,7 +93,7 @@ public class CmsShippingService : ICmsShippingService
 
     public async Task<bool> DeleteZoneAsync(Guid companyId, Guid siteId, Guid zoneId)
     {
-        var zone = await _db.SiteShippingZones.FirstOrDefaultAsync(z => z.Id == zoneId && z.SiteId == siteId);
+        var zone = await _db.SiteShippingZones.FirstOrDefaultAsync(z => z.Id == zoneId && z.SiteId == siteId && z.CompanyId == companyId);
         if (zone == null) return false;
         zone.IsActive = false;
         zone.IsDeleted = true;

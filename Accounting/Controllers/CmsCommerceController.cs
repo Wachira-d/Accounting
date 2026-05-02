@@ -15,10 +15,12 @@ namespace Accounting.Controllers;
 public class CmsCommerceController : ControllerBase
 {
     private readonly ICmsCommerceService _commerceService;
+    private readonly ICmsCouponService _couponService;
 
-    public CmsCommerceController(ICmsCommerceService commerceService)
+    public CmsCommerceController(ICmsCommerceService commerceService, ICmsCouponService couponService)
     {
         _commerceService = commerceService;
+        _couponService = couponService;
     }
 
     private string Lang => CmsMessages.ResolveLanguage(HttpContext);
@@ -65,6 +67,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpPut("products/{siteProductId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<SiteProductResponse>>> UpdateProduct(
         Guid companyId, Guid siteId, Guid siteProductId, [FromBody] UpdateSiteProductRequest request)
     {
@@ -74,6 +77,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpDelete("products/{siteProductId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveProduct(Guid companyId, Guid siteId, Guid siteProductId)
     {
         var result = await _commerceService.RemoveProductAsync(companyId, siteId, siteProductId);
@@ -84,6 +88,7 @@ public class CmsCommerceController : ControllerBase
     // ===== Categories =====
 
     [HttpPost("categories")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> CreateCategory(
         Guid companyId, Guid siteId, [FromBody] CreateCategoryRequest request)
     {
@@ -101,6 +106,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpPut("categories/{categoryId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> UpdateCategory(
         Guid companyId, Guid siteId, Guid categoryId, [FromBody] CreateCategoryRequest request)
     {
@@ -110,6 +116,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpDelete("categories/{categoryId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteCategory(Guid companyId, Guid siteId, Guid categoryId)
     {
         var result = await _commerceService.DeleteCategoryAsync(companyId, siteId, categoryId);
@@ -166,15 +173,19 @@ public class CmsCommerceController : ControllerBase
     // ===== Orders =====
 
     [HttpPost("orders")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> CreateOrder(
         Guid companyId, Guid siteId, [FromBody] CreateOrderRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        Guid userIdGuid = Guid.Empty;
+        try { userIdGuid = JwtHelper.GetUserIdFromClaims(User); } catch { }
+        var userId = userIdGuid == Guid.Empty ? "guest" : userIdGuid.ToString();
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
         return StatusCode(201, new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.created", Lang)));
     }
 
     [HttpGet("orders")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<PagedResponse<OrderListResponse>>>> GetOrders(
         Guid companyId, Guid siteId,
         [FromQuery] string? status = null, [FromQuery] Guid? customerId = null,
@@ -185,6 +196,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpGet("orders/{orderId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> GetOrder(Guid companyId, Guid siteId, Guid orderId)
     {
         var result = await _commerceService.GetOrderAsync(companyId, siteId, orderId);
@@ -199,6 +211,13 @@ public class CmsCommerceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _commerceService.UpdateOrderStatusAsync(companyId, siteId, orderId, request, userId);
+
+        // Record coupon usage when order is confirmed (idempotent)
+        if (request.Status == SiteOrderStatus.Confirmed || request.Status == SiteOrderStatus.Processing)
+        {
+            await _couponService.RecordCouponUsageAsync(companyId, siteId, orderId);
+        }
+
         return Ok(new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.statusUpdated", Lang)));
     }
 
@@ -214,6 +233,7 @@ public class CmsCommerceController : ControllerBase
     // ===== Payment Gateways =====
 
     [HttpPost("payment-gateways")]
+    [RequireSiteRole(SiteStaffRole.Admin)]
     public async Task<ActionResult<ApiResponse<PaymentGatewayResponse>>> CreateGateway(
         Guid companyId, Guid siteId, [FromBody] CreatePaymentGatewayRequest request)
     {
@@ -223,6 +243,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpGet("payment-gateways")]
+    [RequireSiteRole(SiteStaffRole.Admin)]
     public async Task<ActionResult<ApiResponse<List<PaymentGatewayResponse>>>> GetGateways(Guid companyId, Guid siteId)
     {
         var result = await _commerceService.GetPaymentGatewaysAsync(companyId, siteId);
@@ -230,6 +251,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpPut("payment-gateways/{gatewayId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin)]
     public async Task<ActionResult<ApiResponse<PaymentGatewayResponse>>> UpdateGateway(
         Guid companyId, Guid siteId, Guid gatewayId, [FromBody] CreatePaymentGatewayRequest request)
     {
@@ -239,6 +261,7 @@ public class CmsCommerceController : ControllerBase
     }
 
     [HttpDelete("payment-gateways/{gatewayId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteGateway(Guid companyId, Guid siteId, Guid gatewayId)
     {
         var result = await _commerceService.DeletePaymentGatewayAsync(companyId, siteId, gatewayId);

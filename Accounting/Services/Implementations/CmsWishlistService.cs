@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -14,21 +15,36 @@ public class CmsWishlistService : ICmsWishlistService
 
     public async Task<List<WishlistItemResponse>> GetWishlistAsync(Guid companyId, Guid siteId, Guid customerId)
     {
-        return await _db.SiteWishlistItems.AsNoTracking()
+        var rows = await _db.SiteWishlistItems.AsNoTracking()
             .Include(w => w.SiteProduct).ThenInclude(p => p.Product)
             .Where(w => w.CustomerId == customerId && w.CompanyId == companyId && w.SiteProduct.SiteId == siteId)
             .OrderByDescending(w => w.CreatedAt)
-            .Select(w => new WishlistItemResponse
-            {
-                Id = w.Id, SiteProductId = w.SiteProductId,
-                ProductName = w.SiteProduct.DisplayName ?? w.SiteProduct.Product.Name,
-                ProductSlug = w.SiteProduct.Slug,
-                ImageUrl = w.SiteProduct.ImageUrlsJson,
-                Price = w.SiteProduct.OverrideSellingPrice ?? w.SiteProduct.Product.SellingPrice,
-                CompareAtPrice = w.SiteProduct.CompareAtPrice,
-                AddedAt = w.CreatedAt
-            })
             .ToListAsync();
+
+        return rows.Select(w => new WishlistItemResponse
+        {
+            Id = w.Id, SiteProductId = w.SiteProductId,
+            ProductName = w.SiteProduct.DisplayName ?? w.SiteProduct.Product.Name,
+            ProductSlug = w.SiteProduct.Slug,
+            ImageUrl = ExtractFirstImage(w.SiteProduct.ImageUrlsJson),
+            Price = w.SiteProduct.OverrideSellingPrice ?? w.SiteProduct.Product.SellingPrice,
+            CompareAtPrice = w.SiteProduct.CompareAtPrice,
+            AddedAt = w.CreatedAt
+        }).ToList();
+    }
+
+    private static string? ExtractFirstImage(string? imageUrlsJson)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrlsJson)) return null;
+        try
+        {
+            var arr = JsonSerializer.Deserialize<List<string>>(imageUrlsJson);
+            return arr?.FirstOrDefault();
+        }
+        catch
+        {
+            return imageUrlsJson;
+        }
     }
 
     public async Task<WishlistItemResponse> AddToWishlistAsync(Guid companyId, Guid siteId, Guid customerId, AddToWishlistRequest request)
@@ -46,7 +62,7 @@ public class CmsWishlistService : ICmsWishlistService
             {
                 Id = existing.Id, SiteProductId = existing.SiteProductId,
                 ProductName = product.DisplayName ?? product.Product.Name,
-                ProductSlug = product.Slug, ImageUrl = product.ImageUrlsJson,
+                ProductSlug = product.Slug, ImageUrl = ExtractFirstImage(product.ImageUrlsJson),
                 Price = product.OverrideSellingPrice ?? product.Product.SellingPrice,
                 CompareAtPrice = product.CompareAtPrice, AddedAt = existing.CreatedAt
             };
@@ -63,7 +79,7 @@ public class CmsWishlistService : ICmsWishlistService
         {
             Id = item.Id, SiteProductId = item.SiteProductId,
             ProductName = product.DisplayName ?? product.Product.Name,
-            ProductSlug = product.Slug, ImageUrl = product.ImageUrlsJson,
+            ProductSlug = product.Slug, ImageUrl = ExtractFirstImage(product.ImageUrlsJson),
             Price = product.OverrideSellingPrice ?? product.Product.SellingPrice,
             CompareAtPrice = product.CompareAtPrice, AddedAt = item.CreatedAt
         };

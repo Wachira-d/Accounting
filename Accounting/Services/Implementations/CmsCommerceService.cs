@@ -253,9 +253,10 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<bool> DeleteCategoryAsync(Guid companyId, Guid siteId, Guid categoryId)
     {
-        var cat = await _db.SiteCategories.FirstOrDefaultAsync(c => c.Id == categoryId && c.SiteId == siteId);
+        var cat = await _db.SiteCategories.FirstOrDefaultAsync(c => c.Id == categoryId && c.SiteId == siteId && c.CompanyId == companyId);
         if (cat == null) return false;
         cat.IsActive = false;
+        cat.IsDeleted = true;
         await _db.SaveChangesAsync();
         return true;
     }
@@ -343,7 +344,11 @@ public class CmsCommerceService : ICmsCommerceService
         var items = await _db.SiteCartItems.Where(i => i.CartId == cartId).ToListAsync();
         _db.SiteCartItems.RemoveRange(items);
         var cart = await _db.SiteCarts.FindAsync(cartId);
-        if (cart != null) { cart.SubTotal = 0; cart.VatAmount = 0; cart.TotalAmount = 0; }
+        if (cart != null)
+        {
+            cart.SubTotal = 0; cart.VatAmount = 0; cart.TotalAmount = 0;
+            cart.DiscountAmount = 0; cart.CouponCode = null;
+        }
         await _db.SaveChangesAsync();
         return true;
     }
@@ -376,6 +381,13 @@ public class CmsCommerceService : ICmsCommerceService
         // Resolve lines from cart or direct
         if (request.CartId.HasValue)
         {
+            var cart = await _db.SiteCarts.FirstOrDefaultAsync(c => c.Id == request.CartId && c.SiteId == siteId);
+            if (cart != null)
+            {
+                order.DiscountAmount = cart.DiscountAmount;
+                if (string.IsNullOrEmpty(order.CouponCode)) order.CouponCode = cart.CouponCode;
+            }
+
             var cartItems = await _db.SiteCartItems
                 .Include(i => i.SiteProduct).ThenInclude(p => p.Product)
                 .Where(i => i.CartId == request.CartId).ToListAsync();
@@ -397,6 +409,11 @@ public class CmsCommerceService : ICmsCommerceService
             }
             // Clear cart after order
             _db.SiteCartItems.RemoveRange(cartItems);
+            if (cart != null)
+            {
+                cart.SubTotal = 0; cart.VatAmount = 0; cart.TotalAmount = 0;
+                cart.DiscountAmount = 0; cart.CouponCode = null;
+            }
         }
         else if (request.Lines?.Any() == true)
         {
@@ -430,7 +447,8 @@ public class CmsCommerceService : ICmsCommerceService
         var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();
         order.SubTotal = lines.Sum(l => l.TotalAmount - l.VatAmount);
         order.VatAmount = lines.Sum(l => l.VatAmount);
-        order.TotalAmount = lines.Sum(l => l.TotalAmount) + order.ShippingAmount;
+        order.TotalAmount = lines.Sum(l => l.TotalAmount) + order.ShippingAmount - order.DiscountAmount;
+        if (order.TotalAmount < 0) order.TotalAmount = 0;
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Order {OrderNumber} created for site {SiteId}", order.OrderNumber, siteId);
@@ -452,7 +470,6 @@ public class CmsCommerceService : ICmsCommerceService
             case SiteOrderStatus.Shipped: order.ShippedAt = DateTime.UtcNow; break;
             case SiteOrderStatus.Delivered: order.DeliveredAt = DateTime.UtcNow; break;
             case SiteOrderStatus.Cancelled: order.CancelledAt = DateTime.UtcNow; break;
-            case SiteOrderStatus.Confirmed: order.Status = SiteOrderStatus.Confirmed; break;
         }
 
         order.UpdatedBy = userId;
@@ -589,9 +606,10 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<bool> DeletePaymentGatewayAsync(Guid companyId, Guid siteId, Guid gatewayId)
     {
-        var gw = await _db.SitePaymentGateways.FirstOrDefaultAsync(g => g.Id == gatewayId && g.SiteId == siteId);
+        var gw = await _db.SitePaymentGateways.FirstOrDefaultAsync(g => g.Id == gatewayId && g.SiteId == siteId && g.CompanyId == companyId);
         if (gw == null) return false;
-        _db.SitePaymentGateways.Remove(gw);
+        gw.IsDeleted = true;
+        gw.IsActive = false;
         await _db.SaveChangesAsync();
         return true;
     }
@@ -609,42 +627,68 @@ public class CmsCommerceService : ICmsCommerceService
 
         var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId);
 
-        // Auto-link or create ERP Contact
-        Guid? contactId = order.Customer?.ContactId;
-        if (contactId == null && order.Customer != null)
+        // Resolve or create ERP Contact (required by Document.ContactId non-nullable FK)
+        Guid contactId;
+
+        if (order.Customer?.ContactId.HasValue == true)
         {
-            var existingContact = await _db.Contacts.FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.Email == order.Customer.Email);
+            contactId = order.Customer.ContactId.Value;
+        }
+        else
+        {
+            var matchEmail = order.Customer?.Email ?? order.ShippingEmail;
+            Contact? existingContact = null;
+            if (!string.IsNullOrEmpty(matchEmail))
+            {
+                existingContact = await _db.Contacts.FirstOrDefaultAsync(c =>
+                    c.CompanyId == companyId && c.Email == matchEmail);
+            }
 
             if (existingContact != null)
             {
                 contactId = existingContact.Id;
-                order.Customer.ContactId = contactId;
+                if (order.Customer != null) order.Customer.ContactId = contactId;
             }
             else
             {
                 var newContact = new Contact
                 {
                     CompanyId = companyId,
-                    Name = order.Customer.FullName ?? order.ShippingName ?? "Online Customer",
-                    Email = order.Customer.Email,
-                    Phone = order.Customer.Phone,
+                    Name = order.Customer?.FullName ?? order.ShippingName ?? order.BillingName ?? "Online Guest",
+                    Email = order.Customer?.Email ?? order.ShippingEmail,
+                    Phone = order.Customer?.Phone ?? order.ShippingPhone,
                     TaxId = order.BillingTaxId,
                     BranchCode = order.BillingBranchCode,
                     IsCustomer = true,
                     Address = order.ShippingAddress
                 };
                 _db.Contacts.Add(newContact);
+                await _db.SaveChangesAsync();
                 contactId = newContact.Id;
-                order.Customer.ContactId = contactId;
+                if (order.Customer != null) order.Customer.ContactId = contactId;
             }
         }
 
-        // Create ERP Document (Invoice or TaxInvoice)
+        // Generate document number using same pattern as DocumentService
         var docType = order.RequestTaxInvoice ? DocumentType.TaxInvoice : DocumentType.Invoice;
+        var docPrefix = $"{(docType == DocumentType.TaxInvoice ? "TINV" : "INV")}-{DateTime.UtcNow:yyyyMM}-";
+        var maxNumber = await _db.Documents
+            .IgnoreQueryFilters()
+            .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
+            .Select(d => d.DocumentNumber)
+            .MaxAsync();
+        var nextSeq = 1;
+        if (maxNumber != null)
+        {
+            var lastPart = maxNumber.Substring(docPrefix.Length);
+            if (int.TryParse(lastPart, out var parsed)) nextSeq = parsed + 1;
+        }
+        var docNumber = $"{docPrefix}{nextSeq:D4}";
+
         var doc = new Document
         {
             CompanyId = companyId,
+            DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
             DocumentDate = DateTime.UtcNow,
@@ -823,7 +867,7 @@ public class CmsCommerceService : ICmsCommerceService
                 {
                     _logger.LogWarning("Insufficient stock for product {ProductId}: requested {Qty}, available {Stock}",
                         product.Id, line.Quantity, product.CurrentStock);
-                    throw new InvalidOperationException($"สินค้า {product.Name} มีไม่พอ (เหลือ {product.CurrentStock})");
+                    throw new InvalidOperationException($"Insufficient stock for product '{product.Name}' (available: {product.CurrentStock})");
                 }
             }
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -104,50 +105,50 @@ public class CmsCouponService : ICmsCouponService
         return true;
     }
 
-    public async Task<CouponApplicationResult> ValidateAndApplyCouponAsync(Guid companyId, Guid siteId, Guid cartId, ApplyCouponRequest request)
+    public async Task<CouponApplicationResult> ValidateAndApplyCouponAsync(Guid companyId, Guid siteId, Guid cartId, ApplyCouponRequest request, string lang = "th")
     {
         var code = request.Code.Trim().ToUpperInvariant();
         var coupon = await _db.SiteCoupons.AsNoTracking()
             .FirstOrDefaultAsync(c => c.SiteId == siteId && c.Code == code);
 
         if (coupon == null || !coupon.IsActive || coupon.IsDeleted)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = "รหัสคูปองไม่ถูกต้อง" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.invalid", lang) };
 
         var now = DateTime.UtcNow;
         if (coupon.StartsAt.HasValue && now < coupon.StartsAt.Value)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = "คูปองยังไม่เริ่มใช้งาน" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.notStarted", lang) };
         if (coupon.ExpiresAt.HasValue && now > coupon.ExpiresAt.Value)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = "คูปองหมดอายุแล้ว" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.expired", lang) };
 
         if (coupon.MaxUses.HasValue && coupon.CurrentUses >= coupon.MaxUses.Value)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = "คูปองถูกใช้งานครบจำนวนแล้ว" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.limitReached", lang) };
 
         if (request.CustomerId.HasValue && coupon.MaxUsesPerCustomer.HasValue)
         {
             var usedByCustomer = await _db.SiteCouponUsages.CountAsync(u =>
                 u.CouponId == coupon.Id && u.CustomerId == request.CustomerId.Value);
             if (usedByCustomer >= coupon.MaxUsesPerCustomer.Value)
-                return new CouponApplicationResult { Valid = false, ErrorMessage = "คุณใช้คูปองนี้ครบจำนวนแล้ว" };
+                return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.personalLimit", lang) };
         }
 
         if (coupon.IsFirstOrderOnly && request.CustomerId.HasValue)
         {
             var hasOrders = await _db.SiteOrders.AnyAsync(o => o.SiteId == siteId && o.CustomerId == request.CustomerId.Value);
             if (hasOrders)
-                return new CouponApplicationResult { Valid = false, ErrorMessage = "คูปองนี้ใช้ได้สำหรับคำสั่งซื้อแรกเท่านั้น" };
+                return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.firstOrderOnly", lang) };
         }
 
         var cart = await _db.SiteCarts.Include(c => c.Items).ThenInclude(i => i.SiteProduct)
             .FirstOrDefaultAsync(c => c.Id == cartId && c.SiteId == siteId);
         if (cart == null)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = "ไม่พบตะกร้าสินค้า" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("cart.notFound", lang) };
 
         if (coupon.MinOrderAmount.HasValue && cart.SubTotal < coupon.MinOrderAmount.Value)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = $"ยอดขั้นต่ำ {coupon.MinOrderAmount:N2} บาท" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.GetMinOrder(coupon.MinOrderAmount.Value, lang) };
 
         var eligibleSubtotal = await CalculateEligibleSubtotalAsync(coupon, cart);
         if (eligibleSubtotal <= 0)
-            return new CouponApplicationResult { Valid = false, ErrorMessage = "ไม่มีสินค้าที่ใช้คูปองได้ในตะกร้า" };
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.noEligible", lang) };
 
         decimal discount = coupon.DiscountType switch
         {
@@ -197,6 +198,34 @@ public class CmsCouponService : ICmsCouponService
                 }).ToList()
             })
             .FirstAsync();
+    }
+
+    public async Task RecordCouponUsageAsync(Guid companyId, Guid siteId, Guid orderId)
+    {
+        var order = await _db.SiteOrders
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
+        if (order == null || string.IsNullOrEmpty(order.CouponCode) || order.DiscountAmount <= 0) return;
+
+        var coupon = await _db.SiteCoupons
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId && c.Code == order.CouponCode);
+        if (coupon == null) return;
+
+        var alreadyRecorded = await _db.SiteCouponUsages.AnyAsync(u => u.OrderId == orderId);
+        if (alreadyRecorded) return;
+
+        coupon.CurrentUses += 1;
+        _db.SiteCouponUsages.Add(new SiteCouponUsage
+        {
+            CompanyId = companyId,
+            CouponId = coupon.Id,
+            OrderId = orderId,
+            CustomerId = order.CustomerId,
+            DiscountApplied = order.DiscountAmount,
+            UsedAt = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Coupon {Code} usage recorded for order {OrderId} (uses now {Uses})",
+            coupon.Code, orderId, coupon.CurrentUses);
     }
 
     private async Task<decimal> CalculateEligibleSubtotalAsync(SiteCoupon coupon, SiteCart cart)
