@@ -129,7 +129,9 @@ public class CalculateShippingRequest
     public string? CountryCode { get; set; }
     public string? Province { get; set; }
     public string? PostalCode { get; set; }
+    [Range(0, double.MaxValue)]
     public decimal? TotalWeightKg { get; set; }
+    [Range(0, double.MaxValue)]
     public decimal SubTotal { get; set; }
 }
 

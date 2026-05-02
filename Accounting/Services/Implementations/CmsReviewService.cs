@@ -110,7 +110,7 @@ public class CmsReviewService : ICmsReviewService
     public async Task<ReviewSummaryResponse> GetProductReviewSummaryAsync(Guid companyId, Guid siteId, Guid siteProductId)
     {
         var reviews = await _db.SiteProductReviews.AsNoTracking()
-            .Where(r => r.SiteId == siteId && r.SiteProductId == siteProductId && r.IsApproved && !r.IsHidden)
+            .Where(r => r.CompanyId == companyId && r.SiteId == siteId && r.SiteProductId == siteProductId && r.IsApproved && !r.IsHidden)
             .Select(r => r.Rating)
             .ToListAsync();
 

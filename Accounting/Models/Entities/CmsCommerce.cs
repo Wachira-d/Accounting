@@ -201,6 +201,7 @@ public class SiteOrder : TenantEntity
     public Guid? ErpDocumentId { get; set; }
     public Document? ErpDocument { get; set; }
     public Guid? ErpJournalEntryId { get; set; }
+    public JournalEntry? ErpJournalEntry { get; set; }
 
     // Coupon
     public string? CouponCode { get; set; }
@@ -240,6 +241,7 @@ public class SiteOrderLine : TenantEntity
 
     // Stock deduction tracking
     public Guid? WarehouseId { get; set; }
+    public Warehouse? Warehouse { get; set; }
     public bool StockDeducted { get; set; } = false;
 }
 

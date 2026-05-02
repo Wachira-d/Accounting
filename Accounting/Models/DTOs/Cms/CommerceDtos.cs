@@ -148,6 +148,7 @@ public class AddToCartRequest
 
 public class UpdateCartItemRequest
 {
+    [Range(1, int.MaxValue)]
     public decimal Quantity { get; set; }
 }
 
@@ -178,6 +179,10 @@ public class CartItemResponse
 
 // ==================== Order ====================
 
+/// <summary>
+/// At least one of CartId or Lines must be provided. CartId creates an order from an existing cart;
+/// Lines allows creating a direct order without a cart.
+/// </summary>
 public class CreateOrderRequest
 {
     public Guid? CustomerId { get; set; }
