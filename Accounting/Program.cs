@@ -191,6 +191,13 @@ builder.Services.AddScoped<ICmsVariantService, CmsVariantService>();
 builder.Services.AddScoped<ICmsReviewService, CmsReviewService>();
 builder.Services.AddScoped<ICmsWishlistService, CmsWishlistService>();
 
+// Thai Government & Public Service Integrations
+builder.Services.AddScoped<IBotExchangeRateService, BotExchangeRateService>();
+builder.Services.AddSingleton<IThaiAddressService, ThaiAddressService>();
+builder.Services.AddScoped<IThaiGovIntegrationService, ThaiGovIntegrationService>();
+builder.Services.AddScoped<IShippingTrackingService, ShippingTrackingService>();
+builder.Services.AddSingleton<IPromptPayService, PromptPayService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
