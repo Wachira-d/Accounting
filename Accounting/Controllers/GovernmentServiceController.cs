@@ -158,6 +158,14 @@ public class GovernmentServiceController : ControllerBase
         return Ok(new ApiResponse<TimestampResponse>(true, result));
     }
 
+    [HttpPost("etda/verify-timestamp")]
+    public async Task<ActionResult<ApiResponse<bool>>> VerifyTimestamp([FromBody] VerifyTimestampRequest request)
+    {
+        var token = Convert.FromBase64String(request.TimestampTokenBase64);
+        var isValid = await _govService.VerifyTimestampAsync(token);
+        return Ok(new ApiResponse<bool>(true, isValid, isValid ? "Timestamp ถูกต้อง" : "Timestamp ไม่ถูกต้อง"));
+    }
+
     // ===== Shipping & Tracking =====
 
     [HttpGet("shipping/track/{trackingNumber}")]
@@ -230,3 +238,4 @@ public class GovernmentServiceController : ControllerBase
 }
 
 public record TimestampRequest(string DocumentHashBase64, string HashAlgorithm = "SHA256");
+public record VerifyTimestampRequest(string TimestampTokenBase64);
