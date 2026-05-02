@@ -76,6 +76,36 @@ public class ComplianceService : IComplianceService
             (int)Math.Ceiling(totalCount / (double)request.PageSize));
     }
 
+    public async Task<ComplianceFilingResponse> UpdateFilingAsync(Guid companyId, Guid filingId, UpdateComplianceFilingRequest request)
+    {
+        var filing = await _db.Set<ComplianceFiling>()
+            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.Id == filingId && !f.IsDeleted)
+            ?? throw new InvalidOperationException("Compliance filing not found.");
+
+        if (request.DueDate.HasValue) filing.DueDate = request.DueDate.Value;
+        if (request.Notes != null) filing.Notes = request.Notes;
+        if (request.Status != null) filing.Status = request.Status;
+
+        filing.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return MapToResponse(filing);
+    }
+
+    public async Task DeleteFilingAsync(Guid companyId, Guid filingId)
+    {
+        var filing = await _db.Set<ComplianceFiling>()
+            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.Id == filingId && !f.IsDeleted)
+            ?? throw new InvalidOperationException("Compliance filing not found.");
+
+        if (filing.Status == "Filed" || filing.Status == "Accepted")
+            throw new InvalidOperationException("Cannot delete a filed or accepted compliance filing.");
+
+        filing.IsDeleted = true;
+        filing.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<ComplianceFilingResponse> ValidateFilingAsync(Guid companyId, Guid filingId)
     {
         var filing = await _db.Set<ComplianceFiling>()

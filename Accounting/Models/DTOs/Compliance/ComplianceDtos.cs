@@ -17,3 +17,5 @@ public record ComplianceValidationResponse(
     string FilingType, bool IsValid, List<string> Errors, List<string> Warnings);
 
 public record CreateComplianceFilingRequest(string FilingType, string FormCode, int Year, int? Month, DateTime DueDate, string? Notes);
+
+public record UpdateComplianceFilingRequest(DateTime? DueDate, string? Notes, string? Status);

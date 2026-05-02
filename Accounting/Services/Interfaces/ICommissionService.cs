@@ -7,8 +7,10 @@ public interface ICommissionService
 {
     // Plans
     Task<CommissionPlanResponse> CreatePlanAsync(Guid companyId, CreateCommissionPlanRequest request);
+    Task<CommissionPlanResponse> GetPlanByIdAsync(Guid companyId, Guid planId);
     Task<List<CommissionPlanResponse>> GetPlansAsync(Guid companyId);
     Task<CommissionPlanResponse> UpdatePlanAsync(Guid companyId, Guid planId, UpdateCommissionPlanRequest request);
+    Task DeletePlanAsync(Guid companyId, Guid planId);
 
     // Assignments
     Task AssignPlanAsync(Guid companyId, Guid planId, AssignCommissionRequest request);
