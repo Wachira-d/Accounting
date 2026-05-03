@@ -114,11 +114,13 @@ public class CmsStorefrontController : ControllerBase
     }
 
     [HttpGet("pages/{slug}/json-ld")]
-    public async Task<ActionResult<ApiResponse<RenderedPageResponse>>> PageWithJsonLd(
+    [Produces("application/ld+json")]
+    public async Task<IActionResult> PageJsonLd(
         Guid companyId, Guid siteId, string slug, [FromQuery] string? lang = null)
     {
-        var page = await _renderingService.RenderPageAsync(companyId, siteId, slug, lang);
-        if (page == null) return NotFound(new ApiResponse<RenderedPageResponse>(false, null, "ไม่พบหน้าเว็บ"));
-        return Ok(new ApiResponse<RenderedPageResponse>(true, page));
+        var page = await _contentService.GetPageBySlugAsync(companyId, siteId, slug, lang);
+        if (page == null) return NotFound();
+        var json = await _contentService.GenerateJsonLdAsync(companyId, siteId, page.Id);
+        return Content(json, "application/ld+json");
     }
 }

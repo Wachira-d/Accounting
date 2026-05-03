@@ -57,8 +57,10 @@ public class AccountingDbContext : DbContext
     public DbSet<DepositTransaction> DepositTransactions => Set<DepositTransaction>();
     public DbSet<DepositRefund> DepositRefunds => Set<DepositRefund>();
     public DbSet<BadDebtAllowance> BadDebtAllowances => Set<BadDebtAllowance>();
+    public DbSet<BadDebtAllowanceLine> BadDebtAllowanceLines => Set<BadDebtAllowanceLine>();
     public DbSet<AccruedExpense> AccruedExpenses => Set<AccruedExpense>();
     public DbSet<InventoryObsolescenceAllowance> InventoryObsolescenceAllowances => Set<InventoryObsolescenceAllowance>();
+    public DbSet<InventoryObsolescenceLine> InventoryObsolescenceLines => Set<InventoryObsolescenceLine>();
     public DbSet<CorporateIncomeTax> CorporateIncomeTaxes => Set<CorporateIncomeTax>();
     public DbSet<ProfitAppropriation> ProfitAppropriations => Set<ProfitAppropriation>();
     public DbSet<CapitalTransaction> CapitalTransactions => Set<CapitalTransaction>();
@@ -573,6 +575,67 @@ public class AccountingDbContext : DbContext
             e.Property(m => m.UnitCost).HasPrecision(18, 2);
             e.Property(m => m.BalanceAfter).HasPrecision(18, 4);
             e.HasOne(m => m.Product).WithMany().HasForeignKey(m => m.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== UnitConversion =====
+        modelBuilder.Entity<UnitConversion>(e =>
+        {
+            e.Property(u => u.FromUnit).HasMaxLength(50);
+            e.Property(u => u.ToUnit).HasMaxLength(50);
+            e.Property(u => u.ConversionRate).HasPrecision(18, 6);
+            e.Property(u => u.SellingPrice).HasPrecision(18, 2);
+            e.Property(u => u.CostPrice).HasPrecision(18, 2);
+            e.Property(u => u.Barcode).HasMaxLength(100);
+            e.HasOne(u => u.Product).WithMany().HasForeignKey(u => u.ProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(u => !u.IsDeleted);
+        });
+
+        // ===== ProductCategory =====
+        modelBuilder.Entity<ProductCategory>(e =>
+        {
+            e.Property(c => c.Code).HasMaxLength(50);
+            e.Property(c => c.Name).HasMaxLength(200);
+            e.HasIndex(c => new { c.CompanyId, c.Code }).IsUnique();
+            e.HasOne(c => c.ParentCategory).WithMany().HasForeignKey(c => c.ParentCategoryId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        // ===== StockCount =====
+        modelBuilder.Entity<StockCount>(e =>
+        {
+            e.Property(c => c.CountNumber).HasMaxLength(50);
+            e.Property(c => c.Status).HasMaxLength(20);
+            e.HasIndex(c => new { c.CompanyId, c.CountNumber }).IsUnique();
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        modelBuilder.Entity<StockCountLine>(e =>
+        {
+            e.Property(l => l.SystemQty).HasPrecision(18, 4);
+            e.Property(l => l.CountedQty).HasPrecision(18, 4);
+            e.Property(l => l.Variance).HasPrecision(18, 4);
+            e.HasOne(l => l.StockCount).WithMany(c => c.Lines).HasForeignKey(l => l.StockCountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+
+        // ===== InventorySnapshot =====
+        modelBuilder.Entity<InventorySnapshot>(e =>
+        {
+            e.Property(s => s.Status).HasMaxLength(20);
+            e.Property(s => s.TotalValue).HasPrecision(18, 2);
+            e.HasOne(s => s.JournalEntry).WithMany().HasForeignKey(s => s.JournalEntryId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        modelBuilder.Entity<InventorySnapshotLine>(e =>
+        {
+            e.Property(l => l.Quantity).HasPrecision(18, 4);
+            e.Property(l => l.UnitCost).HasPrecision(18, 2);
+            e.Property(l => l.TotalValue).HasPrecision(18, 2);
+            e.HasOne(l => l.Snapshot).WithMany(s => s.Lines).HasForeignKey(l => l.SnapshotId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(l => !l.IsDeleted);
         });
 
         // ===== BankAccount =====
@@ -1546,8 +1609,28 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<DepositTransaction>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<DepositRefund>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<BadDebtAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BadDebtAllowanceLine>(e =>
+        {
+            e.HasQueryFilter(x => !x.IsDeleted);
+            e.Property(x => x.OutstandingAmount).HasPrecision(18, 2);
+            e.Property(x => x.AllowancePercentage).HasPrecision(5, 2);
+            e.Property(x => x.AllowanceAmount).HasPrecision(18, 2);
+            e.HasOne(x => x.BadDebtAllowance).WithMany(p => p.Lines)
+                .HasForeignKey(x => x.BadDebtAllowanceId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<AccruedExpense>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<InventoryObsolescenceAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<InventoryObsolescenceLine>(e =>
+        {
+            e.HasQueryFilter(x => !x.IsDeleted);
+            e.Property(x => x.CurrentStock).HasPrecision(18, 4);
+            e.Property(x => x.StockValue).HasPrecision(18, 2);
+            e.Property(x => x.AllowancePercentage).HasPrecision(5, 2);
+            e.Property(x => x.AllowanceAmount).HasPrecision(18, 2);
+            e.HasOne(x => x.Allowance).WithMany(p => p.Lines)
+                .HasForeignKey(x => x.AllowanceId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
         modelBuilder.Entity<CorporateIncomeTax>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ProfitAppropriation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CapitalTransaction>().HasQueryFilter(e => !e.IsDeleted);
