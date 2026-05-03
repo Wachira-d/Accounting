@@ -26,6 +26,17 @@ public class ComplianceController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<ComplianceFilingResponse>>>> GetAll(Guid companyId, [FromQuery] int? year, [FromQuery] string? filingType, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => Ok(new ApiResponse<PagedResponse<ComplianceFilingResponse>>(true, await _service.GetFilingsAsync(companyId, year, filingType, new PagedRequest(page, pageSize))));
 
+    [HttpPut("filings/{filingId:guid}")]
+    public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> Update(Guid companyId, Guid filingId, [FromBody] UpdateComplianceFilingRequest request)
+        => Ok(new ApiResponse<ComplianceFilingResponse>(true, await _service.UpdateFilingAsync(companyId, filingId, request)));
+
+    [HttpDelete("filings/{filingId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid filingId)
+    {
+        await _service.DeleteFilingAsync(companyId, filingId);
+        return Ok(new ApiResponse<bool>(true, true, "ลบสำเร็จ"));
+    }
+
     [HttpPost("filings/{filingId:guid}/validate")]
     public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> Validate(Guid companyId, Guid filingId)
         => Ok(new ApiResponse<ComplianceFilingResponse>(true, await _service.ValidateFilingAsync(companyId, filingId)));

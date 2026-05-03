@@ -90,10 +90,18 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<LeaveResponse>>>> GetLeaves(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] int? year)
         => Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
 
+    [HttpPost("runs/{runId:guid}/void")]
+    public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
+    { await _service.VoidPayrollAsync(companyId, runId); return Ok(new ApiResponse<bool>(true, true)); }
+
     // Reports
     [HttpGet("pnd1/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd1(Guid companyId, int year, int month)
         => Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
+
+    [HttpGet("pnd3/{year:int}/{month:int}")]
+    public async Task<ActionResult<ApiResponse<object>>> GetPnd3(Guid companyId, int year, int month)
+        => Ok(new ApiResponse<object>(true, await _service.GeneratePnd3Async(companyId, year, month)));
 
     [HttpGet("sso/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)

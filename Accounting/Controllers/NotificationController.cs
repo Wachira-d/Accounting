@@ -50,4 +50,15 @@ public class NotificationController : ControllerBase
         await _notificationService.MarkAllAsReadAsync(userId);
         return Ok(new ApiResponse<string>(true, null, "อ่านทั้งหมดแล้ว"));
     }
+
+    [HttpPost("send")]
+    [Authorize(Roles = "SystemAdmin,Admin")]
+    public async Task<ActionResult<ApiResponse<string>>> Send([FromBody] SendNotificationRequest request)
+    {
+        await _notificationService.SendAsync(
+            request.UserId, request.CompanyId, request.Type,
+            request.Title, request.Message, request.ActionUrl,
+            request.EntityType, request.EntityId);
+        return Ok(new ApiResponse<string>(true, null, "ส่งการแจ้งเตือนสำเร็จ"));
+    }
 }

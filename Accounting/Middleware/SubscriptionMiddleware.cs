@@ -21,6 +21,8 @@ public class SubscriptionCheckMiddleware
         "/api/integration",
         "/api/error-log",
         "/api/notifications",
+        "/api/cms/resolve",
+        "/api/cms/block-templates",
         "/swagger",
         "/health"
     };
@@ -105,6 +107,13 @@ public class SubscriptionCheckMiddleware
 
         // FPA
         ("/fpa",                      FeatureFlags.FPA),
+
+        // CMS
+        ("/cms/sites",                FeatureFlags.CmsWebsiteBuilder),
+        ("/cms/themes",               FeatureFlags.CmsWebsiteBuilder),
+        ("/cms/customers",            FeatureFlags.CmsWebsiteBuilder),
+        ("/commerce",                 FeatureFlags.CmsEcommerce),
+        ("/booking",                  FeatureFlags.CmsBooking),
     };
 
     public SubscriptionCheckMiddleware(RequestDelegate next)

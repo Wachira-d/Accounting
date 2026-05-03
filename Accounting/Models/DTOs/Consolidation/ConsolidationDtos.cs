@@ -7,6 +7,10 @@ public record CreateConsolidationGroupRequest(
     Guid ParentCompanyId, string Currency,
     int FiscalYearStartMonth);
 
+public record UpdateConsolidationGroupRequest(
+    string? Name, string? Description,
+    string? Currency, bool? IsActive);
+
 public record AddConsolidationMemberRequest(
     Guid CompanyId, decimal OwnershipPercent,
     ConsolidationMethod Method);

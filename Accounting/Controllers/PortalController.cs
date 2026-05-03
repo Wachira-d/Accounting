@@ -44,6 +44,15 @@ public class PortalPublicController : ControllerBase
     public async Task<ActionResult<ApiResponse<PortalLoginResponse>>> Login([FromBody] PortalLoginRequest request)
         => Ok(new ApiResponse<PortalLoginResponse>(true, await _service.LoginAsync(request)));
 
+    [HttpPost("refresh")]
+    public async Task<ActionResult<ApiResponse<PortalLoginResponse>>> Refresh([FromBody] PortalRefreshRequest request)
+        => Ok(new ApiResponse<PortalLoginResponse>(true, await _service.RefreshTokenAsync(request.RefreshToken)));
+
+    [HttpGet("{companyId:guid}/payments")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<List<PortalPaymentResponse>>>> GetPayments(Guid companyId, [FromQuery] Guid contactId)
+        => Ok(new ApiResponse<List<PortalPaymentResponse>>(true, await _service.GetMyPaymentsAsync(companyId, contactId)));
+
     [HttpGet("{companyId:guid}/documents")]
     [Authorize]
     public async Task<ActionResult<ApiResponse<List<PortalDocumentResponse>>>> GetDocuments(Guid companyId, [FromQuery] Guid contactId, [FromQuery] string? type)

@@ -26,6 +26,10 @@ public class LoanController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<LoanResponse>>>> GetAll(Guid companyId, [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => Ok(new ApiResponse<PagedResponse<LoanResponse>>(true, await _service.GetAllAsync(companyId, status, new PagedRequest(page, pageSize))));
 
+    [HttpPut("{loanId:guid}")]
+    public async Task<ActionResult<ApiResponse<LoanResponse>>> Update(Guid companyId, Guid loanId, [FromBody] UpdateLoanRequest request)
+        => Ok(new ApiResponse<LoanResponse>(true, await _service.UpdateAsync(companyId, loanId, request)));
+
     [HttpPost("{loanId:guid}/generate-schedule")]
     public async Task<ActionResult<ApiResponse<List<LoanScheduleResponse>>>> GenerateSchedule(Guid companyId, Guid loanId)
         => Ok(new ApiResponse<List<LoanScheduleResponse>>(true, await _service.GenerateScheduleAsync(companyId, loanId)));

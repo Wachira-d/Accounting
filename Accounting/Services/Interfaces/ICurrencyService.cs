@@ -7,7 +7,9 @@ public interface ICurrencyService
     // Company Currencies
     Task<CompanyCurrencyResponse> AddCurrencyAsync(Guid companyId, CreateCompanyCurrencyRequest request);
     Task<List<CompanyCurrencyResponse>> GetCurrenciesAsync(Guid companyId);
+    Task<CompanyCurrencyResponse> GetCurrencyByIdAsync(Guid companyId, Guid currencyId);
     Task<CompanyCurrencyResponse> UpdateCurrencyAsync(Guid companyId, Guid currencyId, UpdateCompanyCurrencyRequest request);
+    Task DeleteCurrencyAsync(Guid companyId, Guid currencyId);
 
     // Exchange Rates
     Task<CurrencyRateResponse> AddRateAsync(Guid companyId, CreateCurrencyRateRequest request);

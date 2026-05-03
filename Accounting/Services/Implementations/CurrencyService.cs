@@ -51,6 +51,25 @@ public class CurrencyService : ICurrencyService
         return currencies.Select(MapCurrencyToResponse).ToList();
     }
 
+    public async Task<CompanyCurrencyResponse> GetCurrencyByIdAsync(Guid companyId, Guid currencyId)
+    {
+        var currency = await _db.CompanyCurrencies
+            .FirstOrDefaultAsync(c => c.Id == currencyId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสกุลเงิน");
+
+        return MapCurrencyToResponse(currency);
+    }
+
+    public async Task DeleteCurrencyAsync(Guid companyId, Guid currencyId)
+    {
+        var currency = await _db.CompanyCurrencies
+            .FirstOrDefaultAsync(c => c.Id == currencyId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสกุลเงิน");
+
+        _db.CompanyCurrencies.Remove(currency);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<CompanyCurrencyResponse> UpdateCurrencyAsync(Guid companyId, Guid currencyId, UpdateCompanyCurrencyRequest request)
     {
         var currency = await _db.CompanyCurrencies

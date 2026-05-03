@@ -11,6 +11,8 @@ public interface IConsolidationService
     Task<ConsolidationGroupResponse> GetGroupAsync(Guid groupId);
     Task<List<ConsolidationGroupResponse>> GetGroupsAsync(Guid parentCompanyId);
     Task<ConsolidationGroupResponse> AddMemberAsync(Guid groupId, AddConsolidationMemberRequest request);
+    Task<ConsolidationGroupResponse> UpdateGroupAsync(Guid groupId, UpdateConsolidationGroupRequest request);
+    Task DeleteGroupAsync(Guid groupId);
     Task RemoveMemberAsync(Guid groupId, Guid memberId);
 
     // Consolidated reports

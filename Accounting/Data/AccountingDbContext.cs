@@ -57,8 +57,10 @@ public class AccountingDbContext : DbContext
     public DbSet<DepositTransaction> DepositTransactions => Set<DepositTransaction>();
     public DbSet<DepositRefund> DepositRefunds => Set<DepositRefund>();
     public DbSet<BadDebtAllowance> BadDebtAllowances => Set<BadDebtAllowance>();
+    public DbSet<BadDebtAllowanceLine> BadDebtAllowanceLines => Set<BadDebtAllowanceLine>();
     public DbSet<AccruedExpense> AccruedExpenses => Set<AccruedExpense>();
     public DbSet<InventoryObsolescenceAllowance> InventoryObsolescenceAllowances => Set<InventoryObsolescenceAllowance>();
+    public DbSet<InventoryObsolescenceLine> InventoryObsolescenceLines => Set<InventoryObsolescenceLine>();
     public DbSet<CorporateIncomeTax> CorporateIncomeTaxes => Set<CorporateIncomeTax>();
     public DbSet<ProfitAppropriation> ProfitAppropriations => Set<ProfitAppropriation>();
     public DbSet<CapitalTransaction> CapitalTransactions => Set<CapitalTransaction>();
@@ -255,6 +257,65 @@ public class AccountingDbContext : DbContext
     public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
     public DbSet<DocumentApproval> DocumentApprovals => Set<DocumentApproval>();
     public DbSet<DocumentSignature> DocumentSignatures => Set<DocumentSignature>();
+
+    // ===== CMS & Multi-Site =====
+    // Core
+    public DbSet<Site> Sites => Set<Site>();
+    public DbSet<SiteDomain> SiteDomains => Set<SiteDomain>();
+    public DbSet<SiteTheme> SiteThemes => Set<SiteTheme>();
+    public DbSet<SiteLocale> SiteLocales => Set<SiteLocale>();
+    public DbSet<SiteStaffAccess> SiteStaffAccesses => Set<SiteStaffAccess>();
+    public DbSet<SiteCookieConsent> SiteCookieConsents => Set<SiteCookieConsent>();
+
+    // Content
+    public DbSet<SitePage> SitePages => Set<SitePage>();
+    public DbSet<SitePageTranslation> SitePageTranslations => Set<SitePageTranslation>();
+    public DbSet<PageBlock> PageBlocks => Set<PageBlock>();
+    public DbSet<PageBlockTranslation> PageBlockTranslations => Set<PageBlockTranslation>();
+    public DbSet<BlockTemplate> BlockTemplates => Set<BlockTemplate>();
+    public DbSet<SiteNavigation> SiteNavigations => Set<SiteNavigation>();
+    public DbSet<SiteMenuItem> SiteMenuItems => Set<SiteMenuItem>();
+    public DbSet<SiteMedia> SiteMediaItems => Set<SiteMedia>();
+    public DbSet<SiteSeoRedirect> SiteSeoRedirects => Set<SiteSeoRedirect>();
+
+    // Commerce
+    public DbSet<SiteProduct> SiteProducts => Set<SiteProduct>();
+    public DbSet<SiteProductTranslation> SiteProductTranslations => Set<SiteProductTranslation>();
+    public DbSet<SitePricingTier> SitePricingTiers => Set<SitePricingTier>();
+    public DbSet<SiteCategory> SiteCategories => Set<SiteCategory>();
+    public DbSet<SiteCart> SiteCarts => Set<SiteCart>();
+    public DbSet<SiteCartItem> SiteCartItems => Set<SiteCartItem>();
+    public DbSet<SiteOrder> SiteOrders => Set<SiteOrder>();
+    public DbSet<SiteOrderLine> SiteOrderLines => Set<SiteOrderLine>();
+    public DbSet<SiteOrderPayment> SiteOrderPayments => Set<SiteOrderPayment>();
+    public DbSet<SitePaymentGateway> SitePaymentGateways => Set<SitePaymentGateway>();
+
+    // Commerce Extensions
+    public DbSet<SiteCoupon> SiteCoupons => Set<SiteCoupon>();
+    public DbSet<SiteCouponUsage> SiteCouponUsages => Set<SiteCouponUsage>();
+    public DbSet<SiteShippingZone> SiteShippingZones => Set<SiteShippingZone>();
+    public DbSet<SiteShippingRate> SiteShippingRates => Set<SiteShippingRate>();
+    public DbSet<SiteProductVariant> SiteProductVariants => Set<SiteProductVariant>();
+    public DbSet<SiteProductOption> SiteProductOptions => Set<SiteProductOption>();
+    public DbSet<SiteProductOptionValue> SiteProductOptionValues => Set<SiteProductOptionValue>();
+    public DbSet<SiteProductReview> SiteProductReviews => Set<SiteProductReview>();
+    public DbSet<SiteCommerceConfig> SiteCommerceConfigs => Set<SiteCommerceConfig>();
+
+    // Booking
+    public DbSet<SiteBookingService> SiteBookingServices => Set<SiteBookingService>();
+    public DbSet<SiteBookingServiceTranslation> SiteBookingServiceTranslations => Set<SiteBookingServiceTranslation>();
+    public DbSet<SiteBookingSlot> SiteBookingSlots => Set<SiteBookingSlot>();
+    public DbSet<SiteBooking> SiteBookings => Set<SiteBooking>();
+    public DbSet<SiteBookingPayment> SiteBookingPayments => Set<SiteBookingPayment>();
+
+    // Customer & CRM
+    public DbSet<SiteCustomer> SiteCustomers => Set<SiteCustomer>();
+    public DbSet<SiteCustomerAddress> SiteCustomerAddresses => Set<SiteCustomerAddress>();
+    public DbSet<SiteWishlistItem> SiteWishlistItems => Set<SiteWishlistItem>();
+    public DbSet<SiteForm> SiteForms => Set<SiteForm>();
+    public DbSet<SiteFormField> SiteFormFields => Set<SiteFormField>();
+    public DbSet<SiteFormSubmission> SiteFormSubmissions => Set<SiteFormSubmission>();
+    public DbSet<SiteCustomerMerge> SiteCustomerMerges => Set<SiteCustomerMerge>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -514,6 +575,67 @@ public class AccountingDbContext : DbContext
             e.Property(m => m.UnitCost).HasPrecision(18, 2);
             e.Property(m => m.BalanceAfter).HasPrecision(18, 4);
             e.HasOne(m => m.Product).WithMany().HasForeignKey(m => m.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== UnitConversion =====
+        modelBuilder.Entity<UnitConversion>(e =>
+        {
+            e.Property(u => u.FromUnit).HasMaxLength(50);
+            e.Property(u => u.ToUnit).HasMaxLength(50);
+            e.Property(u => u.ConversionRate).HasPrecision(18, 6);
+            e.Property(u => u.SellingPrice).HasPrecision(18, 2);
+            e.Property(u => u.CostPrice).HasPrecision(18, 2);
+            e.Property(u => u.Barcode).HasMaxLength(100);
+            e.HasOne(u => u.Product).WithMany().HasForeignKey(u => u.ProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(u => !u.IsDeleted);
+        });
+
+        // ===== ProductCategory =====
+        modelBuilder.Entity<ProductCategory>(e =>
+        {
+            e.Property(c => c.Code).HasMaxLength(50);
+            e.Property(c => c.Name).HasMaxLength(200);
+            e.HasIndex(c => new { c.CompanyId, c.Code }).IsUnique();
+            e.HasOne(c => c.ParentCategory).WithMany().HasForeignKey(c => c.ParentCategoryId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        // ===== StockCount =====
+        modelBuilder.Entity<StockCount>(e =>
+        {
+            e.Property(c => c.CountNumber).HasMaxLength(50);
+            e.Property(c => c.Status).HasMaxLength(20);
+            e.HasIndex(c => new { c.CompanyId, c.CountNumber }).IsUnique();
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        modelBuilder.Entity<StockCountLine>(e =>
+        {
+            e.Property(l => l.SystemQty).HasPrecision(18, 4);
+            e.Property(l => l.CountedQty).HasPrecision(18, 4);
+            e.Property(l => l.Variance).HasPrecision(18, 4);
+            e.HasOne(l => l.StockCount).WithMany(c => c.Lines).HasForeignKey(l => l.StockCountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+
+        // ===== InventorySnapshot =====
+        modelBuilder.Entity<InventorySnapshot>(e =>
+        {
+            e.Property(s => s.Status).HasMaxLength(20);
+            e.Property(s => s.TotalValue).HasPrecision(18, 2);
+            e.HasOne(s => s.JournalEntry).WithMany().HasForeignKey(s => s.JournalEntryId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        modelBuilder.Entity<InventorySnapshotLine>(e =>
+        {
+            e.Property(l => l.Quantity).HasPrecision(18, 4);
+            e.Property(l => l.UnitCost).HasPrecision(18, 2);
+            e.Property(l => l.TotalValue).HasPrecision(18, 2);
+            e.HasOne(l => l.Snapshot).WithMany(s => s.Lines).HasForeignKey(l => l.SnapshotId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(l => !l.IsDeleted);
         });
 
         // ===== BankAccount =====
@@ -1487,8 +1609,28 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<DepositTransaction>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<DepositRefund>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<BadDebtAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<BadDebtAllowanceLine>(e =>
+        {
+            e.HasQueryFilter(x => !x.IsDeleted);
+            e.Property(x => x.OutstandingAmount).HasPrecision(18, 2);
+            e.Property(x => x.AllowancePercentage).HasPrecision(5, 2);
+            e.Property(x => x.AllowanceAmount).HasPrecision(18, 2);
+            e.HasOne(x => x.BadDebtAllowance).WithMany(p => p.Lines)
+                .HasForeignKey(x => x.BadDebtAllowanceId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<AccruedExpense>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<InventoryObsolescenceAllowance>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<InventoryObsolescenceLine>(e =>
+        {
+            e.HasQueryFilter(x => !x.IsDeleted);
+            e.Property(x => x.CurrentStock).HasPrecision(18, 4);
+            e.Property(x => x.StockValue).HasPrecision(18, 2);
+            e.Property(x => x.AllowancePercentage).HasPrecision(5, 2);
+            e.Property(x => x.AllowanceAmount).HasPrecision(18, 2);
+            e.HasOne(x => x.Allowance).WithMany(p => p.Lines)
+                .HasForeignKey(x => x.AllowanceId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
         modelBuilder.Entity<CorporateIncomeTax>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ProfitAppropriation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CapitalTransaction>().HasQueryFilter(e => !e.IsDeleted);
@@ -1828,6 +1970,562 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(ec => new { ec.CompanyId, ec.Status })
                 .HasDatabaseName("IX_ExpenseClaims_CompanyId_Status");
+        });
+
+        // ==================== CMS & Multi-Site ====================
+
+        // ===== Site =====
+        modelBuilder.Entity<Site>(e =>
+        {
+            e.HasIndex(s => new { s.CompanyId, s.Subdomain }).IsUnique().HasDatabaseName("IX_Sites_CompanyId_Subdomain");
+            e.HasIndex(s => s.CustomDomain).IsUnique().HasFilter("\"CustomDomain\" IS NOT NULL").HasDatabaseName("IX_Sites_CustomDomain");
+            e.HasIndex(s => new { s.CompanyId, s.Slug }).IsUnique().HasDatabaseName("IX_Sites_CompanyId_Slug");
+            e.Property(s => s.Name).HasMaxLength(256);
+            e.Property(s => s.NameEn).HasMaxLength(256);
+            e.Property(s => s.Slug).HasMaxLength(128);
+            e.Property(s => s.Subdomain).HasMaxLength(63);
+            e.Property(s => s.CustomDomain).HasMaxLength(256);
+            e.Property(s => s.DefaultLanguage).HasMaxLength(10);
+            e.Property(s => s.DefaultCurrency).HasMaxLength(3);
+            e.Property(s => s.GoogleAnalyticsId).HasMaxLength(50);
+            e.Property(s => s.GoogleTagManagerId).HasMaxLength(50);
+            e.Property(s => s.MetaPixelId).HasMaxLength(50);
+            e.HasOne(s => s.Branch).WithMany().HasForeignKey(s => s.BranchId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(s => s.DefaultWarehouse).WithMany().HasForeignKey(s => s.DefaultWarehouseId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(s => s.Theme).WithMany(t => t.Sites).HasForeignKey(s => s.ThemeId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        // ===== SiteDomain =====
+        modelBuilder.Entity<SiteDomain>(e =>
+        {
+            e.HasIndex(d => d.Domain).IsUnique().HasDatabaseName("IX_SiteDomains_Domain");
+            e.Property(d => d.Domain).HasMaxLength(256);
+            e.Property(d => d.VerificationToken).HasMaxLength(256);
+            e.HasOne(d => d.Site).WithMany(s => s.Domains).HasForeignKey(d => d.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteTheme =====
+        modelBuilder.Entity<SiteTheme>(e =>
+        {
+            e.Property(t => t.Name).HasMaxLength(128);
+            e.Property(t => t.PrimaryColor).HasMaxLength(9);
+            e.Property(t => t.SecondaryColor).HasMaxLength(9);
+            e.Property(t => t.AccentColor).HasMaxLength(9);
+            e.Property(t => t.BackgroundColor).HasMaxLength(9);
+            e.Property(t => t.SurfaceColor).HasMaxLength(9);
+            e.Property(t => t.TextColor).HasMaxLength(9);
+            e.Property(t => t.TextSecondaryColor).HasMaxLength(9);
+            e.Property(t => t.SuccessColor).HasMaxLength(9);
+            e.Property(t => t.WarningColor).HasMaxLength(9);
+            e.Property(t => t.DangerColor).HasMaxLength(9);
+            e.Property(t => t.HeadingFont).HasMaxLength(128);
+            e.Property(t => t.BodyFont).HasMaxLength(128);
+            e.Property(t => t.MonoFont).HasMaxLength(128);
+        });
+
+        // ===== SiteLocale =====
+        modelBuilder.Entity<SiteLocale>(e =>
+        {
+            e.HasIndex(l => new { l.SiteId, l.LanguageCode }).IsUnique().HasDatabaseName("IX_SiteLocales_SiteId_Lang");
+            e.Property(l => l.LanguageCode).HasMaxLength(10);
+            e.Property(l => l.LanguageName).HasMaxLength(64);
+            e.Property(l => l.CurrencyCode).HasMaxLength(3);
+            e.Property(l => l.CurrencySymbol).HasMaxLength(10);
+            e.Property(l => l.ExchangeRateToBase).HasPrecision(18, 6);
+            e.HasOne(l => l.Site).WithMany(s => s.Locales).HasForeignKey(l => l.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteStaffAccess =====
+        modelBuilder.Entity<SiteStaffAccess>(e =>
+        {
+            e.HasIndex(a => new { a.SiteId, a.UserId }).IsUnique().HasDatabaseName("IX_SiteStaffAccess_SiteUser");
+            e.HasOne(a => a.Site).WithMany(s => s.StaffAccess).HasForeignKey(a => a.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(a => a.User).WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCookieConsent =====
+        modelBuilder.Entity<SiteCookieConsent>(e =>
+        {
+            e.Property(c => c.Name).HasMaxLength(128);
+            e.Property(c => c.Provider).HasMaxLength(128);
+            e.HasOne(c => c.Site).WithMany().HasForeignKey(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SitePage =====
+        modelBuilder.Entity<SitePage>(e =>
+        {
+            e.HasIndex(p => new { p.SiteId, p.Slug }).IsUnique().HasDatabaseName("IX_SitePages_SiteId_Slug");
+            e.Property(p => p.Title).HasMaxLength(512);
+            e.Property(p => p.Slug).HasMaxLength(256);
+            e.Property(p => p.TemplateLayout).HasMaxLength(64);
+            e.HasOne(p => p.Site).WithMany(s => s.Pages).HasForeignKey(p => p.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(p => p.ParentPage).WithMany(p => p.ChildPages).HasForeignKey(p => p.ParentPageId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        // ===== SitePageTranslation =====
+        modelBuilder.Entity<SitePageTranslation>(e =>
+        {
+            e.HasIndex(t => new { t.PageId, t.LanguageCode }).IsUnique().HasDatabaseName("IX_SitePageTrans_PageId_Lang");
+            e.Property(t => t.LanguageCode).HasMaxLength(10);
+            e.Property(t => t.Title).HasMaxLength(512);
+            e.Property(t => t.Slug).HasMaxLength(256);
+            e.HasOne(t => t.Page).WithMany(p => p.Translations).HasForeignKey(t => t.PageId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== PageBlock =====
+        modelBuilder.Entity<PageBlock>(e =>
+        {
+            e.HasIndex(b => new { b.PageId, b.SortOrder }).HasDatabaseName("IX_PageBlocks_PageId_Sort");
+            e.HasOne(b => b.Page).WithMany(p => p.Blocks).HasForeignKey(b => b.PageId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(b => b.BlockTemplate).WithMany().HasForeignKey(b => b.BlockTemplateId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== PageBlockTranslation =====
+        modelBuilder.Entity<PageBlockTranslation>(e =>
+        {
+            e.HasIndex(t => new { t.PageBlockId, t.LanguageCode }).IsUnique().HasDatabaseName("IX_PageBlockTrans_BlockId_Lang");
+            e.Property(t => t.LanguageCode).HasMaxLength(10);
+            e.HasOne(t => t.PageBlock).WithMany(b => b.Translations).HasForeignKey(t => t.PageBlockId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== BlockTemplate =====
+        modelBuilder.Entity<BlockTemplate>(e =>
+        {
+            e.Property(t => t.Name).HasMaxLength(256);
+            e.Property(t => t.Category).HasMaxLength(64);
+            e.Property(t => t.Tags).HasMaxLength(500);
+        });
+
+        // ===== SiteNavigation =====
+        modelBuilder.Entity<SiteNavigation>(e =>
+        {
+            e.HasIndex(n => new { n.SiteId, n.Location }).HasDatabaseName("IX_SiteNavigations_SiteId_Loc");
+            e.Property(n => n.Name).HasMaxLength(128);
+            e.Property(n => n.Location).HasMaxLength(64);
+            e.HasOne(n => n.Site).WithMany(s => s.Navigations).HasForeignKey(n => n.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteMenuItem =====
+        modelBuilder.Entity<SiteMenuItem>(e =>
+        {
+            e.Property(m => m.Label).HasMaxLength(256);
+            e.Property(m => m.LabelEn).HasMaxLength(256);
+            e.Property(m => m.Url).HasMaxLength(1024);
+            e.HasOne(m => m.Navigation).WithMany(n => n.Items).HasForeignKey(m => m.NavigationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(m => m.ParentItem).WithMany(m => m.Children).HasForeignKey(m => m.ParentItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(m => m.Page).WithMany().HasForeignKey(m => m.PageId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteMedia =====
+        modelBuilder.Entity<SiteMedia>(e =>
+        {
+            e.HasIndex(m => new { m.SiteId, m.FolderPath }).HasDatabaseName("IX_SiteMedia_SiteId_Folder");
+            e.Property(m => m.FileName).HasMaxLength(512);
+            e.Property(m => m.OriginalFileName).HasMaxLength(512);
+            e.Property(m => m.ContentType).HasMaxLength(128);
+            e.Property(m => m.FolderPath).HasMaxLength(512);
+            e.Property(m => m.Tags).HasMaxLength(500);
+            e.HasOne(m => m.Site).WithMany(s => s.Media).HasForeignKey(m => m.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteSeoRedirect =====
+        modelBuilder.Entity<SiteSeoRedirect>(e =>
+        {
+            e.HasIndex(r => new { r.SiteId, r.FromPath }).IsUnique().HasDatabaseName("IX_SiteSeoRedirects_SiteId_From");
+            e.Property(r => r.FromPath).HasMaxLength(1024);
+            e.Property(r => r.ToPath).HasMaxLength(1024);
+            e.HasOne(r => r.Site).WithMany().HasForeignKey(r => r.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteProduct =====
+        modelBuilder.Entity<SiteProduct>(e =>
+        {
+            e.HasIndex(p => new { p.SiteId, p.ProductId }).IsUnique().HasDatabaseName("IX_SiteProducts_SiteId_ProductId");
+            e.HasIndex(p => new { p.SiteId, p.Slug }).IsUnique().HasFilter("\"Slug\" IS NOT NULL").HasDatabaseName("IX_SiteProducts_SiteId_Slug");
+            e.Property(p => p.DisplayName).HasMaxLength(512);
+            e.Property(p => p.Slug).HasMaxLength(256);
+            e.Property(p => p.OverrideSellingPrice).HasPrecision(18, 2);
+            e.Property(p => p.CompareAtPrice).HasPrecision(18, 2);
+            e.HasOne(p => p.Site).WithMany(s => s.Products).HasForeignKey(p => p.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(p => p.Product).WithMany().HasForeignKey(p => p.ProductId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(p => p.SiteCategory).WithMany(c => c.Products).HasForeignKey(p => p.SiteCategoryId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteProductTranslation =====
+        modelBuilder.Entity<SiteProductTranslation>(e =>
+        {
+            e.HasIndex(t => new { t.SiteProductId, t.LanguageCode }).IsUnique().HasDatabaseName("IX_SiteProductTrans_ProdId_Lang");
+            e.Property(t => t.LanguageCode).HasMaxLength(10);
+            e.Property(t => t.DisplayName).HasMaxLength(512);
+            e.HasOne(t => t.SiteProduct).WithMany(p => p.Translations).HasForeignKey(t => t.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SitePricingTier =====
+        modelBuilder.Entity<SitePricingTier>(e =>
+        {
+            e.Property(t => t.TierName).HasMaxLength(128);
+            e.Property(t => t.UnitPrice).HasPrecision(18, 2);
+            e.Property(t => t.CustomerGroupTag).HasMaxLength(64);
+            e.HasOne(t => t.SiteProduct).WithMany(p => p.PricingTiers).HasForeignKey(t => t.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCategory =====
+        modelBuilder.Entity<SiteCategory>(e =>
+        {
+            e.HasIndex(c => new { c.SiteId, c.Slug }).IsUnique().HasDatabaseName("IX_SiteCategories_SiteId_Slug");
+            e.Property(c => c.Name).HasMaxLength(256);
+            e.Property(c => c.NameEn).HasMaxLength(256);
+            e.Property(c => c.Slug).HasMaxLength(128);
+            e.HasOne(c => c.Site).WithMany(s => s.Categories).HasForeignKey(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(c => c.ParentCategory).WithMany(c => c.Children).HasForeignKey(c => c.ParentCategoryId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== SiteCart =====
+        modelBuilder.Entity<SiteCart>(e =>
+        {
+            e.HasIndex(c => new { c.SiteId, c.CustomerId }).HasDatabaseName("IX_SiteCarts_SiteId_CustomerId");
+            e.HasIndex(c => c.SessionToken).HasDatabaseName("IX_SiteCarts_SessionToken");
+            e.Property(c => c.Currency).HasMaxLength(3);
+            e.Property(c => c.SessionToken).HasMaxLength(128);
+            e.Property(c => c.CouponCode).HasMaxLength(64);
+            e.Property(c => c.SubTotal).HasPrecision(18, 2);
+            e.Property(c => c.DiscountAmount).HasPrecision(18, 2);
+            e.Property(c => c.VatAmount).HasPrecision(18, 2);
+            e.Property(c => c.TotalAmount).HasPrecision(18, 2);
+            e.HasOne(c => c.Site).WithMany().HasForeignKey(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(c => c.Customer).WithMany(cu => cu.Carts).HasForeignKey(c => c.CustomerId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteCartItem =====
+        modelBuilder.Entity<SiteCartItem>(e =>
+        {
+            e.Property(i => i.Quantity).HasPrecision(18, 4);
+            e.Property(i => i.UnitPrice).HasPrecision(18, 2);
+            e.Property(i => i.TotalPrice).HasPrecision(18, 2);
+            e.HasOne(i => i.Cart).WithMany(c => c.Items).HasForeignKey(i => i.CartId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(i => i.SiteProduct).WithMany().HasForeignKey(i => i.SiteProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== SiteOrder =====
+        modelBuilder.Entity<SiteOrder>(e =>
+        {
+            e.HasIndex(o => new { o.SiteId, o.OrderNumber }).IsUnique().HasDatabaseName("IX_SiteOrders_SiteId_OrderNo");
+            e.HasIndex(o => new { o.SiteId, o.Status }).HasDatabaseName("IX_SiteOrders_SiteId_Status");
+            e.Property(o => o.OrderNumber).HasMaxLength(50);
+            e.Property(o => o.Currency).HasMaxLength(3);
+            e.Property(o => o.SubTotal).HasPrecision(18, 2);
+            e.Property(o => o.DiscountAmount).HasPrecision(18, 2);
+            e.Property(o => o.ShippingAmount).HasPrecision(18, 2);
+            e.Property(o => o.VatAmount).HasPrecision(18, 2);
+            e.Property(o => o.TotalAmount).HasPrecision(18, 2);
+            e.Property(o => o.PaidAmount).HasPrecision(18, 2);
+            e.Property(o => o.CouponCode).HasMaxLength(64);
+            e.Property(o => o.BillingTaxId).HasMaxLength(13);
+            e.Property(o => o.BillingBranchCode).HasMaxLength(5);
+            e.Property(o => o.TrackingNumber).HasMaxLength(128);
+            e.HasOne(o => o.Site).WithMany(s => s.Orders).HasForeignKey(o => o.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(o => o.Customer).WithMany(c => c.Orders).HasForeignKey(o => o.CustomerId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(o => o.PaymentGateway).WithMany().HasForeignKey(o => o.PaymentGatewayId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(o => o.ErpDocument).WithMany().HasForeignKey(o => o.ErpDocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(o => !o.IsDeleted);
+        });
+
+        // ===== SiteOrderLine =====
+        modelBuilder.Entity<SiteOrderLine>(e =>
+        {
+            e.Property(l => l.ProductName).HasMaxLength(512);
+            e.Property(l => l.ProductSku).HasMaxLength(64);
+            e.Property(l => l.Unit).HasMaxLength(20);
+            e.Property(l => l.Quantity).HasPrecision(18, 4);
+            e.Property(l => l.UnitPrice).HasPrecision(18, 2);
+            e.Property(l => l.DiscountAmount).HasPrecision(18, 2);
+            e.Property(l => l.VatRate).HasPrecision(5, 2);
+            e.Property(l => l.VatAmount).HasPrecision(18, 2);
+            e.Property(l => l.TotalAmount).HasPrecision(18, 2);
+            e.HasOne(l => l.Order).WithMany(o => o.Lines).HasForeignKey(l => l.OrderId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.SiteProduct).WithMany().HasForeignKey(l => l.SiteProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== SiteOrderPayment =====
+        modelBuilder.Entity<SiteOrderPayment>(e =>
+        {
+            e.Property(p => p.Amount).HasPrecision(18, 2);
+            e.Property(p => p.Currency).HasMaxLength(3);
+            e.Property(p => p.GatewayTransactionId).HasMaxLength(256);
+            e.Property(p => p.Reference).HasMaxLength(256);
+            e.HasOne(p => p.Order).WithMany(o => o.Payments).HasForeignKey(p => p.OrderId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SitePaymentGateway =====
+        modelBuilder.Entity<SitePaymentGateway>(e =>
+        {
+            e.Property(g => g.Name).HasMaxLength(128);
+            e.Property(g => g.MerchantId).HasMaxLength(128);
+            e.Property(g => g.PromptPayId).HasMaxLength(20);
+            e.Property(g => g.BankAccountNumber).HasMaxLength(50);
+            e.Property(g => g.BankAccountName).HasMaxLength(256);
+            e.Property(g => g.BankName).HasMaxLength(128);
+            e.Property(g => g.SupportedCurrencies).HasMaxLength(100);
+            e.HasOne(g => g.Site).WithMany(s => s.PaymentGateways).HasForeignKey(g => g.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCoupon =====
+        modelBuilder.Entity<SiteCoupon>(e =>
+        {
+            e.HasIndex(c => new { c.SiteId, c.Code }).IsUnique().HasDatabaseName("IX_SiteCoupons_SiteId_Code");
+            e.HasIndex(c => new { c.SiteId, c.IsActive }).HasDatabaseName("IX_SiteCoupons_SiteId_IsActive");
+            e.Property(c => c.Code).HasMaxLength(64);
+            e.Property(c => c.Description).HasMaxLength(512);
+            e.Property(c => c.DiscountValue).HasPrecision(18, 2);
+            e.Property(c => c.MaxDiscountAmount).HasPrecision(18, 2);
+            e.Property(c => c.MinOrderAmount).HasPrecision(18, 2);
+            e.Property(c => c.CustomerGroupTag).HasMaxLength(128);
+            e.HasOne(c => c.Site).WithMany().HasForeignKey(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SiteCouponUsage>(e =>
+        {
+            e.HasIndex(u => new { u.CouponId, u.CustomerId }).HasDatabaseName("IX_CouponUsages_Coupon_Customer");
+            e.HasIndex(u => u.OrderId).HasDatabaseName("IX_CouponUsages_OrderId");
+            e.Property(u => u.DiscountApplied).HasPrecision(18, 2);
+            e.HasOne(u => u.Coupon).WithMany(c => c.Usages).HasForeignKey(u => u.CouponId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(u => u.Order).WithMany().HasForeignKey(u => u.OrderId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(u => u.Customer).WithMany().HasForeignKey(u => u.CustomerId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteShippingZone & Rate =====
+        modelBuilder.Entity<SiteShippingZone>(e =>
+        {
+            e.HasIndex(z => new { z.SiteId, z.IsActive }).HasDatabaseName("IX_ShippingZones_SiteId_IsActive");
+            e.Property(z => z.Name).HasMaxLength(128);
+            e.Property(z => z.Description).HasMaxLength(512);
+            e.Property(z => z.CountryCodes).HasMaxLength(512);
+            e.Property(z => z.Provinces).HasMaxLength(2048);
+            e.Property(z => z.PostalCodePatterns).HasMaxLength(1024);
+            e.HasOne(z => z.Site).WithMany().HasForeignKey(z => z.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SiteShippingRate>(e =>
+        {
+            e.HasIndex(r => new { r.ZoneId, r.IsActive }).HasDatabaseName("IX_ShippingRates_Zone_Active");
+            e.Property(r => r.Name).HasMaxLength(128);
+            e.Property(r => r.CarrierName).HasMaxLength(128);
+            e.Property(r => r.BaseRate).HasPrecision(18, 2);
+            e.Property(r => r.PerKgRate).HasPrecision(18, 2);
+            e.Property(r => r.FreeAboveAmount).HasPrecision(18, 2);
+            e.Property(r => r.MinWeightKg).HasPrecision(10, 3);
+            e.Property(r => r.MaxWeightKg).HasPrecision(10, 3);
+            e.HasOne(r => r.Zone).WithMany(z => z.Rates).HasForeignKey(r => r.ZoneId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteProductVariant =====
+        modelBuilder.Entity<SiteProductVariant>(e =>
+        {
+            e.HasIndex(v => new { v.SiteProductId, v.Sku }).IsUnique().HasDatabaseName("IX_Variants_Product_Sku");
+            e.Property(v => v.Sku).HasMaxLength(128);
+            e.Property(v => v.Name).HasMaxLength(256);
+            e.Property(v => v.Barcode).HasMaxLength(128);
+            e.Property(v => v.Price).HasPrecision(18, 2);
+            e.Property(v => v.CompareAtPrice).HasPrecision(18, 2);
+            e.Property(v => v.Stock).HasPrecision(18, 4);
+            e.Property(v => v.WeightKg).HasPrecision(10, 3);
+            e.HasOne(v => v.SiteProduct).WithMany(p => p.Variants).HasForeignKey(v => v.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(v => v.ErpProduct).WithMany().HasForeignKey(v => v.ErpProductId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<SiteProductOption>(e =>
+        {
+            e.HasIndex(o => new { o.SiteProductId, o.Name }).HasDatabaseName("IX_ProductOptions_Product_Name");
+            e.Property(o => o.Name).HasMaxLength(64);
+            e.Property(o => o.NameEn).HasMaxLength(64);
+            e.Property(o => o.DisplayType).HasMaxLength(32);
+            e.HasOne(o => o.SiteProduct).WithMany(p => p.Options).HasForeignKey(o => o.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SiteProductOptionValue>(e =>
+        {
+            e.HasIndex(v => new { v.OptionId, v.SortOrder }).HasDatabaseName("IX_OptionValues_Option_Sort");
+            e.Property(v => v.Value).HasMaxLength(64);
+            e.Property(v => v.ValueEn).HasMaxLength(64);
+            e.Property(v => v.ColorHex).HasMaxLength(16);
+            e.HasOne(v => v.Option).WithMany(o => o.Values).HasForeignKey(v => v.OptionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCommerceConfig =====
+        modelBuilder.Entity<SiteCommerceConfig>(e =>
+        {
+            e.HasIndex(c => c.SiteId).IsUnique().HasDatabaseName("IX_CommerceConfig_SiteId");
+            e.Property(c => c.DefaultVatRate).HasPrecision(5, 2);
+            e.Property(c => c.FlatShippingRate).HasPrecision(18, 2);
+            e.Property(c => c.FreeShippingThreshold).HasPrecision(18, 2);
+            e.Property(c => c.OrderNumberPrefix).HasMaxLength(16);
+            e.Property(c => c.OrderNotificationEmails).HasMaxLength(1024);
+            e.Property(c => c.DefaultProductSort).HasMaxLength(32);
+            e.Property(c => c.OrderConfirmMessageTh).HasMaxLength(2048);
+            e.Property(c => c.OrderConfirmMessageEn).HasMaxLength(2048);
+            e.Property(c => c.QuotationMessageTh).HasMaxLength(2048);
+            e.Property(c => c.QuotationMessageEn).HasMaxLength(2048);
+            e.HasOne(c => c.Site).WithOne(s => s.CommerceConfig).HasForeignKey<SiteCommerceConfig>(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteProductReview =====
+        modelBuilder.Entity<SiteProductReview>(e =>
+        {
+            e.HasIndex(r => new { r.SiteId, r.IsApproved, r.IsHidden }).HasDatabaseName("IX_Reviews_Site_Status");
+            e.HasIndex(r => new { r.SiteProductId, r.IsApproved, r.IsHidden }).HasDatabaseName("IX_Reviews_Product_Status");
+            e.HasIndex(r => r.CustomerId).HasDatabaseName("IX_Reviews_CustomerId");
+            e.Property(r => r.ReviewerName).HasMaxLength(128);
+            e.Property(r => r.ReviewerEmail).HasMaxLength(256);
+            e.Property(r => r.Title).HasMaxLength(256);
+            e.HasOne(r => r.Site).WithMany().HasForeignKey(r => r.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.SiteProduct).WithMany(p => p.Reviews).HasForeignKey(r => r.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.Customer).WithMany().HasForeignKey(r => r.CustomerId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(r => r.Order).WithMany().HasForeignKey(r => r.OrderId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteBookingService =====
+        modelBuilder.Entity<SiteBookingService>(e =>
+        {
+            e.HasIndex(bs => new { bs.SiteId, bs.Slug }).IsUnique().HasDatabaseName("IX_SiteBookingSvc_SiteId_Slug");
+            e.Property(bs => bs.Name).HasMaxLength(256);
+            e.Property(bs => bs.NameEn).HasMaxLength(256);
+            e.Property(bs => bs.Slug).HasMaxLength(128);
+            e.Property(bs => bs.Price).HasPrecision(18, 2);
+            e.Property(bs => bs.DepositAmount).HasPrecision(18, 2);
+            e.Property(bs => bs.DepositPercent).HasPrecision(5, 2);
+            e.Property(bs => bs.CancellationFeePercent).HasPrecision(5, 2);
+            e.Property(bs => bs.Currency).HasMaxLength(3);
+            e.Property(bs => bs.Category).HasMaxLength(128);
+            e.Property(bs => bs.Tags).HasMaxLength(500);
+            e.HasOne(bs => bs.Site).WithMany(s => s.BookingServices).HasForeignKey(bs => bs.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(bs => bs.Product).WithMany().HasForeignKey(bs => bs.ProductId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteBookingServiceTranslation =====
+        modelBuilder.Entity<SiteBookingServiceTranslation>(e =>
+        {
+            e.HasIndex(t => new { t.BookingServiceId, t.LanguageCode }).IsUnique().HasDatabaseName("IX_SiteBookingSvcTrans_SvcId_Lang");
+            e.Property(t => t.LanguageCode).HasMaxLength(10);
+            e.Property(t => t.Name).HasMaxLength(256);
+            e.HasOne(t => t.BookingService).WithMany(bs => bs.Translations).HasForeignKey(t => t.BookingServiceId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteBookingSlot =====
+        modelBuilder.Entity<SiteBookingSlot>(e =>
+        {
+            e.HasOne(sl => sl.BookingService).WithMany(bs => bs.Slots).HasForeignKey(sl => sl.BookingServiceId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteBooking =====
+        modelBuilder.Entity<SiteBooking>(e =>
+        {
+            e.HasIndex(b => new { b.SiteId, b.BookingNumber }).IsUnique().HasDatabaseName("IX_SiteBookings_SiteId_BookNo");
+            e.HasIndex(b => new { b.SiteId, b.BookingDate, b.Status }).HasDatabaseName("IX_SiteBookings_SiteId_Date_Status");
+            e.Property(b => b.BookingNumber).HasMaxLength(50);
+            e.Property(b => b.GuestName).HasMaxLength(256);
+            e.Property(b => b.GuestEmail).HasMaxLength(256);
+            e.Property(b => b.GuestPhone).HasMaxLength(20);
+            e.Property(b => b.TotalAmount).HasPrecision(18, 2);
+            e.Property(b => b.DepositAmount).HasPrecision(18, 2);
+            e.Property(b => b.PaidAmount).HasPrecision(18, 2);
+            e.Property(b => b.Currency).HasMaxLength(3);
+            e.HasOne(b => b.Site).WithMany().HasForeignKey(b => b.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(b => b.BookingService).WithMany(bs => bs.Bookings).HasForeignKey(b => b.BookingServiceId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(b => b.Customer).WithMany(c => c.Bookings).HasForeignKey(b => b.CustomerId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(b => b.ErpDocument).WithMany().HasForeignKey(b => b.ErpDocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(b => !b.IsDeleted);
+        });
+
+        // ===== SiteBookingPayment =====
+        modelBuilder.Entity<SiteBookingPayment>(e =>
+        {
+            e.Property(p => p.Amount).HasPrecision(18, 2);
+            e.Property(p => p.Currency).HasMaxLength(3);
+            e.Property(p => p.GatewayTransactionId).HasMaxLength(256);
+            e.Property(p => p.Reference).HasMaxLength(256);
+            e.HasOne(p => p.Booking).WithMany(b => b.Payments).HasForeignKey(p => p.BookingId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteCustomer =====
+        modelBuilder.Entity<SiteCustomer>(e =>
+        {
+            e.HasIndex(c => new { c.SiteId, c.Email }).IsUnique().HasDatabaseName("IX_SiteCustomers_SiteId_Email");
+            e.HasIndex(c => new { c.CompanyId, c.Email }).HasDatabaseName("IX_SiteCustomers_CompanyId_Email");
+            e.Property(c => c.Email).HasMaxLength(256);
+            e.Property(c => c.FullName).HasMaxLength(256);
+            e.Property(c => c.Phone).HasMaxLength(20);
+            e.Property(c => c.TaxId).HasMaxLength(13);
+            e.Property(c => c.BranchCode).HasMaxLength(5);
+            e.Property(c => c.CompanyName).HasMaxLength(256);
+            e.Property(c => c.PreferredLanguage).HasMaxLength(10);
+            e.Property(c => c.PreferredCurrency).HasMaxLength(3);
+            e.Property(c => c.CustomerGroup).HasMaxLength(64);
+            e.Property(c => c.Tags).HasMaxLength(500);
+            e.HasOne(c => c.Site).WithMany(s => s.Customers).HasForeignKey(c => c.SiteId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(c => c.Contact).WithMany().HasForeignKey(c => c.ContactId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        // ===== SiteCustomerAddress =====
+        modelBuilder.Entity<SiteCustomerAddress>(e =>
+        {
+            e.Property(a => a.Label).HasMaxLength(64);
+            e.Property(a => a.RecipientName).HasMaxLength(256);
+            e.Property(a => a.Phone).HasMaxLength(20);
+            e.Property(a => a.PostalCode).HasMaxLength(10);
+            e.Property(a => a.CountryCode).HasMaxLength(2);
+            e.HasOne(a => a.Customer).WithMany(c => c.Addresses).HasForeignKey(a => a.CustomerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteWishlistItem =====
+        modelBuilder.Entity<SiteWishlistItem>(e =>
+        {
+            e.HasIndex(w => new { w.CustomerId, w.SiteProductId }).IsUnique().HasDatabaseName("IX_SiteWishlist_CustId_ProdId");
+            e.HasOne(w => w.Customer).WithMany(c => c.WishlistItems).HasForeignKey(w => w.CustomerId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(w => w.SiteProduct).WithMany().HasForeignKey(w => w.SiteProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteForm =====
+        modelBuilder.Entity<SiteForm>(e =>
+        {
+            e.Property(f => f.Name).HasMaxLength(256);
+            e.Property(f => f.NotifyEmails).HasMaxLength(1000);
+            e.Property(f => f.SuccessMessage).HasMaxLength(1000);
+            e.Property(f => f.RedirectUrl).HasMaxLength(1024);
+            e.HasOne(f => f.Site).WithMany(s => s.Forms).HasForeignKey(f => f.SiteId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteFormField =====
+        modelBuilder.Entity<SiteFormField>(e =>
+        {
+            e.Property(f => f.FieldName).HasMaxLength(128);
+            e.Property(f => f.Label).HasMaxLength(256);
+            e.Property(f => f.LabelEn).HasMaxLength(256);
+            e.Property(f => f.Placeholder).HasMaxLength(256);
+            e.Property(f => f.ValidationPattern).HasMaxLength(512);
+            e.Property(f => f.Width).HasMaxLength(20);
+            e.HasOne(f => f.Form).WithMany(fm => fm.Fields).HasForeignKey(f => f.FormId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== SiteFormSubmission =====
+        modelBuilder.Entity<SiteFormSubmission>(e =>
+        {
+            e.HasIndex(s => new { s.FormId, s.Status }).HasDatabaseName("IX_SiteFormSubs_FormId_Status");
+            e.Property(s => s.IpAddress).HasMaxLength(45);
+            e.Property(s => s.UserAgent).HasMaxLength(512);
+            e.HasOne(s => s.Form).WithMany(f => f.Submissions).HasForeignKey(s => s.FormId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(s => s.Customer).WithMany().HasForeignKey(s => s.CustomerId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(s => s.ErpDocument).WithMany().HasForeignKey(s => s.ErpDocumentId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== SiteCustomerMerge =====
+        modelBuilder.Entity<SiteCustomerMerge>(e =>
+        {
+            e.Property(m => m.MergeReason).HasMaxLength(64);
+            e.Property(m => m.MergedBy).HasMaxLength(256);
+            e.HasOne(m => m.PrimaryCustomer).WithMany().HasForeignKey(m => m.PrimaryCustomerId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 

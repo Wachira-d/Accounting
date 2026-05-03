@@ -177,11 +177,33 @@ builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>(
 // Executive Reports
 builder.Services.AddScoped<IExecutiveReportService, ExecutiveReportService>();
 
+// CMS & Multi-Site
+builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
+builder.Services.AddScoped<ICmsContentService, CmsContentService>();
+builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
+builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
+builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
+builder.Services.AddScoped<ICmsQuotaService, CmsQuotaService>();
+builder.Services.AddScoped<ICmsCouponService, CmsCouponService>();
+builder.Services.AddScoped<ICmsShippingService, CmsShippingService>();
+builder.Services.AddScoped<ICmsVariantService, CmsVariantService>();
+builder.Services.AddScoped<ICmsReviewService, CmsReviewService>();
+builder.Services.AddScoped<ICmsWishlistService, CmsWishlistService>();
+
+// Thai Government & Public Service Integrations
+builder.Services.AddScoped<IBotExchangeRateService, BotExchangeRateService>();
+builder.Services.AddSingleton<IThaiAddressService, ThaiAddressService>();
+builder.Services.AddScoped<IThaiGovIntegrationService, ThaiGovIntegrationService>();
+builder.Services.AddScoped<IShippingTrackingService, ShippingTrackingService>();
+builder.Services.AddSingleton<IPromptPayService, PromptPayService>();
+
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
 
 // Background job scheduler
 builder.Services.AddHostedService<BackgroundJobService>();
+builder.Services.AddHostedService<AbandonedCartService>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
@@ -333,12 +355,18 @@ app.UseStaticFiles(new StaticFileOptions
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
 
+// 5.5 CMS Site Routing (subdomain/domain resolution)
+app.UseCmsSiteRouting();
+
 // 6. Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
 // 7. Tenant access control (after auth)
 app.UseMiddleware<TenantAccessMiddleware>();
+
+// 7.5 CMS RBAC (site-level staff access check)
+app.UseCmsRbac();
 
 // 8. Subscription check
 app.UseMiddleware<SubscriptionCheckMiddleware>();

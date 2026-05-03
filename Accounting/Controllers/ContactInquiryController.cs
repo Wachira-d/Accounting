@@ -81,7 +81,7 @@ public class ContactInquiryController : ControllerBase
     /// Admin endpoint - list all inquiries
     /// </summary>
     [HttpGet]
-    [Authorize]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<IActionResult> GetInquiries([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] bool? isRead = null)
     {
         var query = _db.ContactInquiries.AsNoTracking().OrderByDescending(c => c.CreatedAt).AsQueryable();
@@ -111,7 +111,7 @@ public class ContactInquiryController : ControllerBase
     /// Mark inquiry as read
     /// </summary>
     [HttpPut("{id}/read")]
-    [Authorize]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<IActionResult> MarkAsRead(Guid id)
     {
         var inquiry = await _db.ContactInquiries.FindAsync(id);

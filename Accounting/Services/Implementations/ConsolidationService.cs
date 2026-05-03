@@ -64,6 +64,34 @@ public class ConsolidationService : IConsolidationService
         return groups.Select(MapToResponse).ToList();
     }
 
+    public async Task<ConsolidationGroupResponse> UpdateGroupAsync(Guid groupId, UpdateConsolidationGroupRequest request)
+    {
+        var group = await _db.Set<ConsolidationGroup>()
+            .FirstOrDefaultAsync(g => g.Id == groupId && !g.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบกลุ่มบริษัท");
+
+        if (request.Name != null) group.Name = request.Name;
+        if (request.Description != null) group.Description = request.Description;
+        if (request.Currency != null) group.Currency = request.Currency;
+        if (request.IsActive.HasValue) group.IsActive = request.IsActive.Value;
+
+        group.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return await GetGroupAsync(groupId);
+    }
+
+    public async Task DeleteGroupAsync(Guid groupId)
+    {
+        var group = await _db.Set<ConsolidationGroup>()
+            .FirstOrDefaultAsync(g => g.Id == groupId && !g.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบกลุ่มบริษัท");
+
+        group.IsDeleted = true;
+        group.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<ConsolidationGroupResponse> AddMemberAsync(Guid groupId, AddConsolidationMemberRequest request)
     {
         var group = await _db.Set<ConsolidationGroup>()

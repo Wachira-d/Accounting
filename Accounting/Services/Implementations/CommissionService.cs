@@ -60,6 +60,37 @@ public class CommissionService : ICommissionService
         return MapPlanToResponse(plan, tiers);
     }
 
+    public async Task<CommissionPlanResponse> GetPlanByIdAsync(Guid companyId, Guid planId)
+    {
+        var plan = await _db.CommissionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบแผนค่าคอมมิชชัน");
+
+        var tiers = await _db.CommissionTiers
+            .Where(t => t.CommissionPlanId == planId)
+            .OrderBy(t => t.FromAmount)
+            .ToListAsync();
+
+        return MapPlanToResponse(plan, tiers);
+    }
+
+    public async Task DeletePlanAsync(Guid companyId, Guid planId)
+    {
+        var plan = await _db.CommissionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบแผนค่าคอมมิชชัน");
+
+        var hasActiveAssignments = await _db.CommissionAssignments
+            .AnyAsync(a => a.CommissionPlanId == planId && a.CompanyId == companyId
+                && (a.EndDate == null || a.EndDate >= DateTime.UtcNow));
+
+        if (hasActiveAssignments)
+            throw new InvalidOperationException("ไม่สามารถลบแผนที่มีการกำหนดอยู่");
+
+        _db.CommissionPlans.Remove(plan);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<List<CommissionPlanResponse>> GetPlansAsync(Guid companyId)
     {
         var plans = await _db.CommissionPlans

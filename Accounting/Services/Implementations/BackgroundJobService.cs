@@ -54,6 +54,15 @@ public class BackgroundJobService : BackgroundService
 
         // 3. Send payment reminders
         await ProcessPaymentReminders(scope, ct);
+
+        // 4. Escalate overdue approval requests
+        await ProcessApprovalEscalations(scope, ct);
+
+        // 5. Send tax filing deadline reminders
+        await ProcessTaxCalendarReminders(scope, ct);
+
+        // 6. Auto-sync open banking transactions
+        await ProcessOpenBankingAutoSync(scope, ct);
     }
 
     private async Task ProcessRecurringTransactions(IServiceScope scope, CancellationToken ct)
@@ -155,6 +164,57 @@ public class BackgroundJobService : BackgroundService
             var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
             if (errorLogService != null)
                 await errorLogService.LogErrorAsync(ex, "BackgroundJob.PaymentReminders");
+        }
+    }
+
+    private async Task ProcessApprovalEscalations(IServiceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            var approvalService = scope.ServiceProvider.GetRequiredService<IApprovalService>();
+            await approvalService.EscalateOverdueApprovalsAsync();
+            _logger.LogDebug("Approval escalation cycle completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to escalate overdue approvals");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.ApprovalEscalations");
+        }
+    }
+
+    private async Task ProcessTaxCalendarReminders(IServiceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            var taxCalendarService = scope.ServiceProvider.GetRequiredService<ITaxCalendarService>();
+            await taxCalendarService.ProcessRemindersAsync();
+            _logger.LogDebug("Tax calendar reminder cycle completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process tax calendar reminders");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.TaxCalendarReminders");
+        }
+    }
+
+    private async Task ProcessOpenBankingAutoSync(IServiceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            var openBankingService = scope.ServiceProvider.GetRequiredService<IOpenBankingService>();
+            await openBankingService.ProcessAutoSyncAsync();
+            _logger.LogDebug("Open banking auto-sync cycle completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to auto-sync open banking transactions");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.OpenBankingAutoSync");
         }
     }
 }

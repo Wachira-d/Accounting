@@ -18,6 +18,10 @@ public class CommissionController : ControllerBase
     public async Task<ActionResult<ApiResponse<CommissionPlanResponse>>> CreatePlan(Guid companyId, [FromBody] CreateCommissionPlanRequest request)
         => StatusCode(201, new ApiResponse<CommissionPlanResponse>(true, await _service.CreatePlanAsync(companyId, request)));
 
+    [HttpGet("plans/{planId:guid}")]
+    public async Task<ActionResult<ApiResponse<CommissionPlanResponse>>> GetPlan(Guid companyId, Guid planId)
+        => Ok(new ApiResponse<CommissionPlanResponse>(true, await _service.GetPlanByIdAsync(companyId, planId)));
+
     [HttpGet("plans")]
     public async Task<ActionResult<ApiResponse<List<CommissionPlanResponse>>>> GetPlans(Guid companyId)
         => Ok(new ApiResponse<List<CommissionPlanResponse>>(true, await _service.GetPlansAsync(companyId)));
@@ -26,9 +30,23 @@ public class CommissionController : ControllerBase
     public async Task<ActionResult<ApiResponse<CommissionPlanResponse>>> UpdatePlan(Guid companyId, Guid planId, [FromBody] UpdateCommissionPlanRequest request)
         => Ok(new ApiResponse<CommissionPlanResponse>(true, await _service.UpdatePlanAsync(companyId, planId, request)));
 
+    [HttpDelete("plans/{planId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeletePlan(Guid companyId, Guid planId)
+    {
+        await _service.DeletePlanAsync(companyId, planId);
+        return Ok(new ApiResponse<bool>(true, true, "ลบแผนค่าคอมมิชชันสำเร็จ"));
+    }
+
     [HttpPost("plans/{planId:guid}/assign")]
     public async Task<ActionResult<ApiResponse<bool>>> Assign(Guid companyId, Guid planId, [FromBody] AssignCommissionRequest request)
     { await _service.AssignPlanAsync(companyId, planId, request); return Ok(new ApiResponse<bool>(true, true)); }
+
+    [HttpDelete("assignments/{assignmentId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> Unassign(Guid companyId, Guid assignmentId)
+    {
+        await _service.UnassignPlanAsync(companyId, assignmentId);
+        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกการกำหนดสำเร็จ"));
+    }
 
     [HttpPost("calculate/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<List<CommissionCalcResponse>>>> Calculate(Guid companyId, int year, int month)

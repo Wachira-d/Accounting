@@ -27,6 +27,17 @@ public class ConsolidationController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<ConsolidationGroupResponse>>>> GetGroups([FromQuery] Guid parentCompanyId)
         => Ok(new ApiResponse<List<ConsolidationGroupResponse>>(true, await _service.GetGroupsAsync(parentCompanyId)));
 
+    [HttpPut("groups/{groupId:guid}")]
+    public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> UpdateGroup(Guid groupId, [FromBody] UpdateConsolidationGroupRequest request)
+        => Ok(new ApiResponse<ConsolidationGroupResponse>(true, await _service.UpdateGroupAsync(groupId, request)));
+
+    [HttpDelete("groups/{groupId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteGroup(Guid groupId)
+    {
+        await _service.DeleteGroupAsync(groupId);
+        return Ok(new ApiResponse<bool>(true, true, "ลบกลุ่มบริษัทสำเร็จ"));
+    }
+
     [HttpPost("groups/{groupId:guid}/members")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> AddMember(Guid groupId, [FromBody] AddConsolidationMemberRequest request)
         => StatusCode(201, new ApiResponse<ConsolidationGroupResponse>(true, await _service.AddMemberAsync(groupId, request)));
