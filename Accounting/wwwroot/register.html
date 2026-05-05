@@ -325,6 +325,41 @@
         this.querySelector('input[type="radio"]').checked = true;
       });
     });
+
+    // Apply site settings (logo, background, colors)
+    (async function() {
+      try {
+        const res = await fetch('/api/site/landing');
+        const json = await res.json();
+        const d = json.data;
+        if (!d) return;
+        if (d.registrationEnabled === false) {
+          document.querySelector('.auth-form').innerHTML = '<h1>ปิดรับสมัครชั่วคราว</h1><p>ระบบปิดรับสมัครสมาชิกใหม่ในขณะนี้ กรุณาติดต่อผู้ดูแลระบบ</p><a href="/" class="btn btn-primary" style="margin-top:16px">กลับหน้าแรก</a>';
+          return;
+        }
+        if (d.siteLogoUrl || d.siteName) {
+          const logoEl = document.querySelector('.auth-left a');
+          if (logoEl) {
+            if (d.siteLogoUrl) logoEl.innerHTML = `<img src="${d.siteLogoUrl}" alt="${d.siteName||'Logo'}" style="height:36px;object-fit:contain">`;
+            else logoEl.textContent = d.siteName;
+          }
+        }
+        if (d.loginBackgroundUrl) {
+          const left = document.querySelector('.auth-left');
+          if (left) {
+            left.style.backgroundImage = `linear-gradient(135deg, rgba(99,102,241,.85), rgba(124,58,237,.85)), url('${d.loginBackgroundUrl}')`;
+            left.style.backgroundSize = 'cover';
+            left.style.backgroundPosition = 'center';
+          }
+        }
+        if (d.primaryColor) document.documentElement.style.setProperty('--primary', d.primaryColor);
+        if (d.faviconUrl) {
+          let link = document.querySelector("link[rel~='icon']");
+          if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+          link.href = d.faviconUrl;
+        }
+      } catch {}
+    })();
   </script>
 </body>
 </html>

@@ -121,6 +121,12 @@ public record SiteSettingsResponse(
     string? SiteName,
     string? SiteDescription,
     string? SiteLogoUrl,
+    string? FaviconUrl,
+    string? LoginBackgroundUrl,
+    string? PrimaryColor,
+    string? HeroTitle,
+    string? HeroSubtitle,
+    string? FooterCopyright,
     List<LandingServiceItem> Services,
     string? ContactPhone,
     string? ContactLine,
@@ -129,12 +135,24 @@ public record SiteSettingsResponse(
     string? PricingSectionSubtitle,
     string? FacebookUrl,
     string? LineOfficialUrl,
-    string? WebsiteUrl);
+    string? WebsiteUrl,
+    string? YouTubeUrl,
+    string? InstagramUrl,
+    bool RegistrationEnabled,
+    bool MaintenanceMode,
+    string? MaintenanceMessage,
+    string DefaultLanguage);
 
 public record UpdateSiteSettingsRequest(
     string? SiteName,
     string? SiteDescription,
     string? SiteLogoUrl,
+    string? FaviconUrl,
+    string? LoginBackgroundUrl,
+    string? PrimaryColor,
+    string? HeroTitle,
+    string? HeroSubtitle,
+    string? FooterCopyright,
     List<LandingServiceItem>? Services,
     string? ContactPhone,
     string? ContactLine,
@@ -143,12 +161,23 @@ public record UpdateSiteSettingsRequest(
     string? PricingSectionSubtitle,
     string? FacebookUrl,
     string? LineOfficialUrl,
-    string? WebsiteUrl);
+    string? WebsiteUrl,
+    string? YouTubeUrl,
+    string? InstagramUrl,
+    bool? RegistrationEnabled,
+    bool? MaintenanceMode,
+    string? MaintenanceMessage,
+    string? DefaultLanguage);
 
 public record LandingPageResponse(
     string? SiteName,
     string? SiteDescription,
     string? SiteLogoUrl,
+    string? FaviconUrl,
+    string? PrimaryColor,
+    string? HeroTitle,
+    string? HeroSubtitle,
+    string? FooterCopyright,
     string? ContactPhone,
     string? ContactLine,
     string? ContactEmail,
@@ -157,7 +186,11 @@ public record LandingPageResponse(
     string? PricingSectionSubtitle,
     string? FacebookUrl,
     string? LineOfficialUrl,
-    string? WebsiteUrl);
+    string? WebsiteUrl,
+    string? YouTubeUrl,
+    string? InstagramUrl,
+    bool RegistrationEnabled,
+    string DefaultLanguage);
 
 // ===== Number Series =====
 public record CreateNumberSeriesRequest(

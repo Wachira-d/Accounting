@@ -21,9 +21,10 @@ public class RecurringController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<RecurringTransactionResponse>>>> GetAll(
-        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
+        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? search = null, [FromQuery] string? status = null)
     {
-        var result = await _recurringService.GetAllAsync(companyId, new PagedRequest(page, pageSize, search));
+        var result = await _recurringService.GetAllAsync(companyId, new PagedRequest(page, pageSize, search), status);
         return Ok(new ApiResponse<PagedResponse<RecurringTransactionResponse>>(true, result));
     }
 

@@ -42,6 +42,17 @@ const AdminAPI = {
   post(path, body) { return this.request('POST', path, body); },
   put(path, body) { return this.request('PUT', path, body); },
 
+  async upload(path, formData) {
+    const token = localStorage.getItem('admin_token');
+    const opts = { method: 'POST', body: formData, headers: {} };
+    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${this.base}${path}`, opts);
+    if (res.status === 401) { window.location.href = '/admin/login.html'; throw new Error('Unauthorized'); }
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || 'อัพโหลดไม่สำเร็จ');
+    return data;
+  },
+
   // Auth
   async login(email, password) {
     const res = await fetch('/api/auth/login', {

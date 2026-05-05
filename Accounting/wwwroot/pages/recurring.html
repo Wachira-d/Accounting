@@ -144,11 +144,11 @@ const Page = {
       const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
       tbody.innerHTML = items.map(r => `<tr>
-        <td><span class="font-medium">${r.name || r.title || '-'}</span></td>
-        <td>${Layout.docTypeLabel(r.documentType || r.type || '-')}</td>
+        <td><span class="font-medium">${r.name || '-'}</span></td>
+        <td>${Layout.docTypeLabel(r.documentType || '-')}</td>
         <td>${freqMap[r.frequency] || r.frequency || '-'}</td>
         <td>${r.contactName || '-'}</td>
-        <td class="text-right">${Layout.money(r.amount || r.totalAmount)}</td>
+        <td class="text-right">${Layout.money(r.amount)}</td>
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
         <td>${Layout.statusBadge(r.status || 'Active')}</td>
         <td>
@@ -253,7 +253,7 @@ const Page = {
           <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
           <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${r.contactName||'-'}</strong></div>
-          <div><span class="text-gray-500 text-sm">ยอดเงิน:</span><br><strong>${Layout.money(r.amount||r.totalAmount)}</strong></div>
+          <div><span class="text-gray-500 text-sm">ยอดเงิน:</span><br><strong>${Layout.money(r.amount)}</strong></div>
           <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
           <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.executionCount || r.runCount || 0} ครั้ง</strong></div>
@@ -281,9 +281,22 @@ const Page = {
       document.getElementById('fFrequency').value = r.frequency || 'Monthly';
       document.getElementById('fStartDate').value = Layout.dateInput(r.startDate);
       document.getElementById('fEndDate').value = Layout.dateInput(r.endDate);
-      document.getElementById('fAmount').value = r.amount || r.totalAmount || '';
+      document.getElementById('fAmount').value = r.amount || '';
       document.getElementById('fDescription').value = r.description || '';
       document.getElementById('fAutoApprove').checked = r.autoApprove || false;
+
+      // Parse templateData to restore VAT/WHT/incomeType
+      try {
+        const td = JSON.parse(r.templateData || '{}');
+        const line = td.lines && td.lines[0];
+        if (line) {
+          document.getElementById('fVatRate').value = line.vatRate ?? 7;
+          document.getElementById('fWhtRate').value = line.withholdingTaxRate ?? 0;
+          document.getElementById('fIncomeType').value = line.incomeTypeCode || '';
+        }
+        if (td.autoGenerateWht !== undefined) document.getElementById('fAutoWht').checked = td.autoGenerateWht;
+      } catch {}
+
       await this.loadContacts();
       if (r.contactId) document.getElementById('fContact').value = r.contactId;
       Layout.openModal('formModal');

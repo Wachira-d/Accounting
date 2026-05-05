@@ -25,10 +25,26 @@ public class SiteSettings : BaseEntity
     public string? SiteDescription { get; set; }
     public string? SiteLogoUrl { get; set; }
 
+    // Site branding – extended
+    public string? FaviconUrl { get; set; }
+    public string? LoginBackgroundUrl { get; set; }
+    public string? PrimaryColor { get; set; }          // hex e.g. #6366f1
+    public string? HeroTitle { get; set; }
+    public string? HeroSubtitle { get; set; }
+    public string? FooterCopyright { get; set; }
+
     // Social links
     public string? FacebookUrl { get; set; }
     public string? LineOfficialUrl { get; set; }
     public string? WebsiteUrl { get; set; }
+    public string? YouTubeUrl { get; set; }
+    public string? InstagramUrl { get; set; }
+
+    // System behavior
+    public bool RegistrationEnabled { get; set; } = true;
+    public bool MaintenanceMode { get; set; } = false;
+    public string? MaintenanceMessage { get; set; }
+    public string DefaultLanguage { get; set; } = "th";
 
     // ===== System Email (used for invitations, password resets, system notifications) =====
     // ใช้สำหรับส่งอีเมลจาก "ระบบ" — เช่น เชิญ accountant ที่ยังไม่ได้สมัคร, reset password
