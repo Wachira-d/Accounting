@@ -204,6 +204,7 @@
           <td class="text-right">${Layout.money(w.totalIncomeAmount)}</td>
           <td class="text-right font-semibold">${Layout.money(w.totalTaxAmount)}</td>
           <td>${Layout.statusBadge(w.status)}</td>
+          <td>${w.documentNumber ? `<a href="/pages/documents.html" onclick="event.preventDefault();window.location='/pages/documents.html?search=${w.documentNumber}'">${w.documentNumber}</a>` : '-'}</td>
           <td class="flex gap-1">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
             ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" data-i18n="common.print">พิมพ์</button>` : ''}

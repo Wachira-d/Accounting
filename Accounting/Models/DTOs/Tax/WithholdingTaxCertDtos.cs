@@ -43,7 +43,9 @@ public record WithholdingTaxCertResponse(
     decimal TotalTaxAmount,
     List<WithholdingTaxCertLineResponse> Lines,
     DateTime? IssuedDate,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? DocumentId = null,
+    string? DocumentNumber = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

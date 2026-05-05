@@ -568,7 +568,7 @@
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
-          <td>${t.reconciliationStatus === 'Matched' ? '<span class="badge badge-success">จับคู่แล้ว</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
           <td>
             ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>

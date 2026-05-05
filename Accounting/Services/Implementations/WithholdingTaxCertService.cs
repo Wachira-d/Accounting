@@ -85,6 +85,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var cert = await _db.WithholdingTaxCerts
             .Include(w => w.Lines)
             .Include(w => w.PayeeContact)
+            .Include(w => w.Document)
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
 
@@ -99,6 +100,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var query = _db.WithholdingTaxCerts
             .Include(w => w.Lines)
             .Include(w => w.PayeeContact)
+            .Include(w => w.Document)
             .Where(w => w.CompanyId == companyId);
 
         if (taxFormType.HasValue) query = query.Where(w => w.TaxFormType == taxFormType.Value);
@@ -410,5 +412,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         w.Lines.OrderBy(l => l.LineOrder).Select(l => new WithholdingTaxCertLineResponse(
             l.Id, l.IncomeTypeCode, GetIncomeTypeName(l.IncomeTypeCode),
             l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition)).ToList(),
-        w.IssuedDate, w.CreatedAt);
+        w.IssuedDate, w.CreatedAt,
+        w.DocumentId, w.Document?.DocumentNumber);
 }

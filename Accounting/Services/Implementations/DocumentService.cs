@@ -1687,7 +1687,8 @@ public class DocumentService : IDocumentService
             // Cr: ภาษีขาย (Output VAT 21911) per ภ.พ.30
             if (doc.VatAmount > 0)
             {
-                var vatAccount = await FindAccountAsync(companyId, "21911");
+                var vatAccount = await FindAccountAsync(companyId, "21911")
+                    ?? throw new InvalidOperationException("ไม่พบบัญชีภาษีขาย (21911) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารที่มี VAT");
                 if (vatAccount != null)
                     AddLine(vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย");
             }
@@ -1850,7 +1851,8 @@ public class DocumentService : IDocumentService
             // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30
             if (doc.VatAmount > 0)
             {
-                var vatInputAccount = await FindAccountAsync(companyId, "116");
+                var vatInputAccount = await FindAccountAsync(companyId, "116")
+                    ?? throw new InvalidOperationException("ไม่พบบัญชีภาษีซื้อ (116) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่มี VAT");
                 if (vatInputAccount != null)
                     AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
             }

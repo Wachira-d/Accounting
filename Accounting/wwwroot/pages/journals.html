@@ -552,7 +552,7 @@
               <div class="detail-item"><span class="detail-label" data-i18n="common.date">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
               <div class="detail-item"><span class="detail-label" data-i18n="common.status">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
               <div class="detail-item"><span class="detail-label" data-i18n="common.reference">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
-              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value">${j.sourceDocumentNumber}${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
+              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value"><a href="/pages/documents.html?search=${encodeURIComponent(j.sourceDocumentNumber)}" style="color:var(--primary)">${j.sourceDocumentNumber}</a>${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
               ${reversalInfo}
             </div>
             <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>

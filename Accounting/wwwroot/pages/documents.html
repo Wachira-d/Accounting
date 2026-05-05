@@ -866,7 +866,7 @@
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
-              <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact?.name || '-'}</div></div>
+              <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
