@@ -13,4 +13,8 @@ public class Payment : TenantEntity
     public string? Reference { get; set; }
     public string? BankAccount { get; set; }
     public string? Notes { get; set; }
+
+    // Proper FK to bank account (replaces text BankAccount field)
+    public Guid? BankAccountId { get; set; }
+    public BankAccount? BankAccountEntity { get; set; }
 }

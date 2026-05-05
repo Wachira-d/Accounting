@@ -23,9 +23,10 @@ public class AccountingController : ControllerBase
     // ===== Chart of Accounts =====
 
     [HttpGet("accounts")]
-    public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetAccounts(Guid companyId)
+    public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetAccounts(
+        Guid companyId, [FromQuery] AccountType? type = null)
     {
-        var result = await _accountingService.GetAccountsAsync(companyId);
+        var result = await _accountingService.GetAccountsAsync(companyId, type);
         return Ok(new ApiResponse<List<AccountResponse>>(true, result));
     }
 

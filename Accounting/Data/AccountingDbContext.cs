@@ -477,6 +477,10 @@ public class AccountingDbContext : DbContext
             // Project link (nullable) — preserves doc when project is deleted
             e.HasOne(d => d.Project).WithMany().HasForeignKey(d => d.ProjectId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(d => d.ProjectId);
+            // Bank account link — which bank account money flows through
+            e.HasOne(d => d.BankAccount).WithMany().HasForeignKey(d => d.BankAccountId).OnDelete(DeleteBehavior.SetNull);
+            // Expense category — header-level chart of account for expense documents
+            e.HasOne(d => d.ExpenseCategory).WithMany().HasForeignKey(d => d.ExpenseCategoryId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(d => !d.IsDeleted);
         });
 
@@ -514,6 +518,7 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
             e.HasOne(p => p.Document).WithMany(d => d.Payments).HasForeignKey(p => p.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(p => p.BankAccountEntity).WithMany().HasForeignKey(p => p.BankAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(p => !p.IsDeleted);
         });
 

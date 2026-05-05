@@ -884,6 +884,17 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "SystemGmailRefreshToken" varchar(2000) NULL;
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AppBaseUrl" varchar(500) NULL;
             """,
+
+            // ===== Documents: bank account + expense category link =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BankAccountId" uuid NULL;
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExpenseCategoryId" uuid NULL;
+            """,
+
+            // ===== Payments: proper FK to BankAccount =====
+            """
+            ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "BankAccountId" uuid NULL;
+            """,
         ];
     }
 

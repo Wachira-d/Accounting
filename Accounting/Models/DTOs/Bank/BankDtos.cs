@@ -63,7 +63,22 @@ public record ReconcileRequest(
 public record ImportBankStatementRequest(
     Guid BankAccountId,
     string FileFormat,  // "CSV", "OFX"
-    string Base64Content);
+    string Base64Content,
+    bool ForceOverwrite = false);
+
+public record ImportBankStatementResponse(
+    int Imported,
+    int Skipped,
+    int Conflicts,
+    List<ImportConflict>? ConflictDetails = null);
+
+public record ImportConflict(
+    int RowNumber,
+    DateTime TransactionDate,
+    decimal Amount,
+    string? NewDescription,
+    string? ExistingDescription,
+    Guid ExistingTransactionId);
 
 // ==================== AI Reconciliation ====================
 
@@ -131,7 +146,10 @@ public record ReconciliationSummaryDto(
     int UnmatchedCount,
     int ExcludedCount,
     decimal UnmatchedDeposits,
-    decimal UnmatchedWithdrawals);
+    decimal UnmatchedWithdrawals,
+    decimal DocumentBalance = 0,
+    decimal ReceiptTotal = 0,
+    decimal PaymentVoucherTotal = 0);
 
 public record BatchReconcileRequest(
     [property: MaxLength(500)] List<BatchReconcileItem> Items);

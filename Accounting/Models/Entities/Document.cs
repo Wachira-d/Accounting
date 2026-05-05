@@ -27,6 +27,15 @@ public class Document : TenantEntity
     public Guid? ProjectId { get; set; }
     public Project? Project { get; set; }
 
+    // Bank account link — which bank account money flows in/out of.
+    // Used for reconciliation and auto-posting to correct GL bank account.
+    public Guid? BankAccountId { get; set; }
+    public BankAccount? BankAccount { get; set; }
+
+    // Expense category (header-level default when all lines share the same category)
+    public Guid? ExpenseCategoryId { get; set; }
+    public ChartOfAccount? ExpenseCategory { get; set; }
+
     // Amounts
     public string Currency { get; set; } = "THB";
     public decimal SubTotal { get; set; }

@@ -124,6 +124,14 @@
             <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
+            <div class="form-group"><label class="form-label">บัญชีธนาคาร <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากบัญชีไหน)</span></label>
+              <select class="form-select" id="fBankAccount"><option value="">— ไม่ระบุ —</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></label>
+              <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
+            </div>
+          </div>
+          <div class="form-row">
             <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
@@ -322,6 +330,20 @@
           this.projects = pr?.data || [];
           this.populateProjects();
         } catch(e) { this.projects = []; }
+        // Load bank accounts for money in/out tracking
+        try {
+          const ba = await api.getBankAccounts();
+          this.bankAccounts = ba?.data || [];
+          const sel = document.getElementById('fBankAccount');
+          this.bankAccounts.forEach(a => { sel.innerHTML += `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`; });
+        } catch(e) { this.bankAccounts = []; }
+        // Load expense categories (chart of accounts type=Expense)
+        try {
+          const ac = await api.getAccounts('?type=Expense&pageSize=200');
+          this.expenseCategories = ac?.data?.items || ac?.data || [];
+          const sel = document.getElementById('fExpenseCategory');
+          this.expenseCategories.forEach(a => { sel.innerHTML += `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`; });
+        } catch(e) { this.expenseCategories = []; }
         // Check if email is configured for this company
         try {
           const ec = await api.getEmailConfig();
@@ -379,6 +401,11 @@
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
+        // Show/hide expense category based on document type
+        const docType = document.getElementById('fDocType')?.value;
+        const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition'];
+        const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
+        if (ecField) ecField.style.display = expenseTypes.includes(docType) ? '' : 'none';
       },
       /**
        * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
@@ -678,6 +705,10 @@
           document.getElementById('fNotes').value = d.notes || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
+          const fba = document.getElementById('fBankAccount');
+          if (fba) fba.value = d.bankAccountId || '';
+          const fec = document.getElementById('fExpenseCategory');
+          if (fec) fec.value = d.expenseCategoryId || '';
           document.getElementById('linesBody').innerHTML = '';
           this.lineCount = 0;
           (d.lines || []).forEach(l => {
@@ -717,6 +748,8 @@
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
         const projectId = document.getElementById('fProject')?.value || null;
+        const bankAccountId = document.getElementById('fBankAccount')?.value || null;
+        const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
         const payload = {
           documentType: document.getElementById('fDocType').value,
           documentDate: document.getElementById('fDate').value,
@@ -725,6 +758,8 @@
           reference: document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
           projectId,
+          bankAccountId,
+          expenseCategoryId,
           lines
         };
         try {

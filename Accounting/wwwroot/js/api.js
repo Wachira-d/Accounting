@@ -126,7 +126,7 @@ const API = {
       // Dashboard
       dashboard: (q = '') => API.get(`${base}/dashboard${q}`),
       // Accounting
-      getAccounts: () => API.get(`${base}/accounting/accounts`),
+      getAccounts: (q = '') => API.get(`${base}/accounting/accounts${q}`),
       createAccount: (d) => API.post(`${base}/accounting/accounts`, d),
       updateAccount: (id, d) => API.put(`${base}/accounting/accounts/${id}`, d),
       seedAccounts: (businessType, industryType) => {
@@ -271,7 +271,7 @@ const API = {
       deleteConnection: (id) => API.del(`${base}/open-banking/connections/${id}`),
       syncConnection: (id, q = '') => API.post(`${base}/open-banking/connections/${id}/sync${q}`),
       getConnectionImports: (id) => API.get(`${base}/open-banking/connections/${id}/imports`),
-      importBankFile: (accountId, format, base64) => API.post(`${base}/open-banking/import-file?bankAccountId=${accountId}&fileFormat=${format}`, base64),
+      importBankFile: (accountId, format, base64, forceOverwrite = false) => API.post(`${base}/bank/import-statement`, { bankAccountId: accountId, fileFormat: format, base64Content: base64, forceOverwrite }),
       // Tax
       getTaxReports: (q = '') => API.get(`${base}/tax${q}`),
       getTaxReport: (id) => API.get(`${base}/tax/${id}`),
