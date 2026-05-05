@@ -700,21 +700,35 @@
     };
     Pricing.init();
 
-    // ===== Load Site Settings & Accounting Services from API =====
+    // ===== Load Site Settings & Apply Dynamic Branding =====
     (async function() {
       try {
-        // Try new site settings API first, fallback to legacy
-        let d = null;
-        try {
-          const res = await fetch('/api/site/landing');
-          const json = await res.json();
-          d = json.data;
-        } catch {
-          const res = await fetch('/api/landing/services');
-          const json = await res.json();
-          d = json.data;
-        }
+        const res = await fetch('/api/site/landing');
+        const json = await res.json();
+        const d = json.data;
         if (!d) return;
+
+        // Apply site branding
+        if (d.siteLogoUrl) {
+          const navLogo = document.querySelector('.nav-logo');
+          if (navLogo) navLogo.innerHTML = `<img src="${d.siteLogoUrl}" alt="${d.siteName || 'Logo'}" style="height:32px;object-fit:contain">`;
+        }
+        if (d.siteName) {
+          const footerBrand = document.querySelector('.footer-brand h3');
+          if (footerBrand) footerBrand.textContent = d.siteName;
+        }
+        if (d.faviconUrl) {
+          let link = document.querySelector("link[rel~='icon']");
+          if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+          link.href = d.faviconUrl;
+        }
+        if (d.footerCopyright) {
+          const fc = document.querySelector('[data-i18n="landing.footerCopy"]');
+          if (fc) fc.textContent = d.footerCopyright;
+        }
+        if (d.primaryColor) {
+          document.documentElement.style.setProperty('--primary', d.primaryColor);
+        }
 
         // Show contact bar if any contact info exists
         if (d.contactPhone || d.contactLine || d.contactEmail) {
@@ -736,9 +750,6 @@
             emailLink.textContent = d.contactEmail;
           }
         }
-
-        // Service packages are rendered via renderServices() with i18n support
-        // API data (d.services) is not used for rendering to maintain bilingual support
       } catch (e) { /* Use default static content */ }
     })();
 

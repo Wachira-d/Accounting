@@ -734,15 +734,21 @@ public class AdminController : ControllerBase
         var settings = await _db.SiteSettings.FirstOrDefaultAsync();
         if (settings == null)
             return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
-                null, null, null, null, new List<LandingServiceItem>(),
-                null, null, null, null, null, null, null, null)));
+                null, null, null, null, null, null, null, null, null, null,
+                new List<LandingServiceItem>(), null, null, null, null, null,
+                null, null, null, null, null, true, false, null, "th")));
 
         var services = DeserializeServices(settings.ServicesJson);
         return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
             settings.Id, settings.SiteName, settings.SiteDescription, settings.SiteLogoUrl,
+            settings.FaviconUrl, settings.LoginBackgroundUrl, settings.PrimaryColor,
+            settings.HeroTitle, settings.HeroSubtitle, settings.FooterCopyright,
             services, settings.ContactPhone, settings.ContactLine, settings.ContactEmail,
             settings.PricingSectionTitle, settings.PricingSectionSubtitle,
-            settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl)));
+            settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl,
+            settings.YouTubeUrl, settings.InstagramUrl,
+            settings.RegistrationEnabled, settings.MaintenanceMode,
+            settings.MaintenanceMessage, settings.DefaultLanguage)));
     }
 
     [HttpPut("site-settings")]
@@ -758,6 +764,12 @@ public class AdminController : ControllerBase
         settings.SiteName = request.SiteName;
         settings.SiteDescription = request.SiteDescription;
         settings.SiteLogoUrl = request.SiteLogoUrl;
+        settings.FaviconUrl = request.FaviconUrl;
+        settings.LoginBackgroundUrl = request.LoginBackgroundUrl;
+        settings.PrimaryColor = request.PrimaryColor;
+        settings.HeroTitle = request.HeroTitle;
+        settings.HeroSubtitle = request.HeroSubtitle;
+        settings.FooterCopyright = request.FooterCopyright;
         settings.ContactPhone = request.ContactPhone;
         settings.ContactLine = request.ContactLine;
         settings.ContactEmail = request.ContactEmail;
@@ -766,6 +778,16 @@ public class AdminController : ControllerBase
         settings.FacebookUrl = request.FacebookUrl;
         settings.LineOfficialUrl = request.LineOfficialUrl;
         settings.WebsiteUrl = request.WebsiteUrl;
+        settings.YouTubeUrl = request.YouTubeUrl;
+        settings.InstagramUrl = request.InstagramUrl;
+
+        if (request.RegistrationEnabled.HasValue)
+            settings.RegistrationEnabled = request.RegistrationEnabled.Value;
+        if (request.MaintenanceMode.HasValue)
+            settings.MaintenanceMode = request.MaintenanceMode.Value;
+        settings.MaintenanceMessage = request.MaintenanceMessage;
+        if (request.DefaultLanguage != null)
+            settings.DefaultLanguage = request.DefaultLanguage;
 
         if (request.Services != null)
         {
@@ -780,10 +802,69 @@ public class AdminController : ControllerBase
         var services = DeserializeServices(settings.ServicesJson);
         return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
             settings.Id, settings.SiteName, settings.SiteDescription, settings.SiteLogoUrl,
+            settings.FaviconUrl, settings.LoginBackgroundUrl, settings.PrimaryColor,
+            settings.HeroTitle, settings.HeroSubtitle, settings.FooterCopyright,
             services, settings.ContactPhone, settings.ContactLine, settings.ContactEmail,
             settings.PricingSectionTitle, settings.PricingSectionSubtitle,
-            settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl),
+            settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl,
+            settings.YouTubeUrl, settings.InstagramUrl,
+            settings.RegistrationEnabled, settings.MaintenanceMode,
+            settings.MaintenanceMessage, settings.DefaultLanguage),
             "บันทึกการตั้งค่าสำเร็จ"));
+    }
+
+    [HttpPost("upload-logo")]
+    [RequestSizeLimit(5 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> UploadLogo(IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
+
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif" };
+        if (!allowedTypes.Contains(file.ContentType))
+            return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์ PNG, JPG, SVG, WebP, GIF"));
+
+        var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads");
+        Directory.CreateDirectory(uploadsDir);
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var fileName = $"logo_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
+        var filePath = Path.Combine(uploadsDir, fileName);
+
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        var url = $"/uploads/{fileName}";
+        return Ok(new ApiResponse<object>(true, new { url }, "อัพโหลดโลโก้สำเร็จ"));
+    }
+
+    [HttpPost("upload-image")]
+    [RequestSizeLimit(5 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> UploadImage(IFormFile file, [FromQuery] string type = "general")
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
+
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif", "image/x-icon" };
+        if (!allowedTypes.Contains(file.ContentType))
+            return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์รูปภาพ"));
+
+        var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads");
+        Directory.CreateDirectory(uploadsDir);
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var fileName = $"{type}_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
+        var filePath = Path.Combine(uploadsDir, fileName);
+
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        var url = $"/uploads/{fileName}";
+        return Ok(new ApiResponse<object>(true, new { url }, "อัพโหลดสำเร็จ"));
     }
 
     // Public endpoint for landing page
@@ -803,10 +884,15 @@ public class AdminController : ControllerBase
 
         return Ok(new ApiResponse<LandingPageResponse>(true, new LandingPageResponse(
             settings?.SiteName, settings?.SiteDescription, settings?.SiteLogoUrl,
+            settings?.FaviconUrl, settings?.PrimaryColor,
+            settings?.HeroTitle, settings?.HeroSubtitle, settings?.FooterCopyright,
             settings?.ContactPhone, settings?.ContactLine, settings?.ContactEmail,
             services,
             settings?.PricingSectionTitle, settings?.PricingSectionSubtitle,
-            settings?.FacebookUrl, settings?.LineOfficialUrl, settings?.WebsiteUrl)));
+            settings?.FacebookUrl, settings?.LineOfficialUrl, settings?.WebsiteUrl,
+            settings?.YouTubeUrl, settings?.InstagramUrl,
+            settings?.RegistrationEnabled ?? true,
+            settings?.DefaultLanguage ?? "th")));
     }
 
     private static List<LandingServiceItem> DeserializeServices(string? json)

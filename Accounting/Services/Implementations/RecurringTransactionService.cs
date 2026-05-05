@@ -66,6 +66,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task<RecurringTransactionResponse> GetByIdAsync(Guid companyId, Guid id)
     {
         var recurring = await _db.RecurringTransactions
+            .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
         return MapToResponse(recurring);
@@ -73,7 +74,7 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     public async Task<PagedResponse<RecurringTransactionResponse>> GetAllAsync(Guid companyId, PagedRequest request)
     {
-        var query = _db.RecurringTransactions.Where(r => r.CompanyId == companyId);
+        var query = _db.RecurringTransactions.Include(r => r.Contact).Where(r => r.CompanyId == companyId);
 
         if (!string.IsNullOrEmpty(request.Search))
             query = query.Where(r => r.Name.Contains(request.Search));
@@ -94,6 +95,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task<RecurringTransactionResponse> UpdateAsync(Guid companyId, Guid id, UpdateRecurringTransactionRequest request)
     {
         var recurring = await _db.RecurringTransactions
+            .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
 
@@ -102,6 +104,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (request.Frequency.HasValue) recurring.Frequency = request.Frequency.Value;
         if (request.EndDate.HasValue) recurring.EndDate = request.EndDate.Value;
         if (request.MaxRuns.HasValue) recurring.MaxRuns = request.MaxRuns.Value;
+        if (request.DocumentType.HasValue) recurring.DocumentType = request.DocumentType.Value;
+        if (request.ContactId.HasValue) recurring.ContactId = request.ContactId.Value;
         if (request.TemplateData != null) recurring.TemplateData = request.TemplateData;
         if (request.NotifyBeforeRun.HasValue) recurring.NotifyBeforeRun = request.NotifyBeforeRun.Value;
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
@@ -156,6 +160,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task<RecurringTransactionResponse> RunNowAsync(Guid companyId, Guid id, string performedBy)
     {
         var recurring = await _db.RecurringTransactions
+            .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
 
@@ -440,6 +445,25 @@ public class RecurringTransactionService : IRecurringTransactionService
         new(r.Id, r.Name, r.Description, r.Frequency, r.Status,
             r.StartDate, r.EndDate, r.NextRunDate, r.LastRunDate,
             r.TotalRuns, r.MaxRuns, r.TemplateType, r.DocumentType,
-            r.ContactId, r.TemplateData, r.NotifyBeforeRun,
+            r.ContactId, r.Contact?.Name,
+            r.TemplateData, ExtractAmount(r.TemplateData), r.NotifyBeforeRun,
             r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt);
+
+    private static decimal ExtractAmount(string? templateData)
+    {
+        if (string.IsNullOrEmpty(templateData)) return 0;
+        try
+        {
+            using var doc = JsonDocument.Parse(templateData);
+            if (doc.RootElement.TryGetProperty("lines", out var lines) && lines.GetArrayLength() > 0)
+            {
+                var line = lines[0];
+                var qty = line.TryGetProperty("quantity", out var q) ? q.GetDecimal() : 1m;
+                var price = line.TryGetProperty("unitPrice", out var p) ? p.GetDecimal() : 0m;
+                return qty * price;
+            }
+        }
+        catch { }
+        return 0;
+    }
 }
