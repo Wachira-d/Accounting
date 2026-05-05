@@ -139,6 +139,7 @@ public class DocumentService : IDocumentService
                 Notes = request.Notes,
                 ProjectId = request.ProjectId,
                 BankAccountId = request.BankAccountId,
+                PaymentAccountId = request.PaymentAccountId,
                 ExpenseCategoryId = request.ExpenseCategoryId,
                 CreatedBy = createdBy
             };
@@ -209,6 +210,7 @@ public class DocumentService : IDocumentService
             .Include(d => d.Lines)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
+            .Include(d => d.PaymentAccount)
             .Include(d => d.ExpenseCategory)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
@@ -224,6 +226,7 @@ public class DocumentService : IDocumentService
             .Include(d => d.Lines)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
+            .Include(d => d.PaymentAccount)
             .Include(d => d.ExpenseCategory)
             .Where(d => d.CompanyId == companyId);
 
@@ -313,6 +316,8 @@ public class DocumentService : IDocumentService
 
         if (request.BankAccountId.HasValue)
             doc.BankAccountId = request.BankAccountId.Value;
+        if (request.PaymentAccountId.HasValue)
+            doc.PaymentAccountId = request.PaymentAccountId.Value;
         if (request.ExpenseCategoryId.HasValue)
             doc.ExpenseCategoryId = request.ExpenseCategoryId.Value;
 
@@ -1386,10 +1391,15 @@ public class DocumentService : IDocumentService
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
 
-        // Resolve bank account's linked GL for money-movement entries
-        // (replaces Cash 111 when a specific bank account is selected)
+        // Resolve money account for cash/bank movement entries.
+        // Priority: PaymentAccountId (direct GL) > BankAccountId (bank's linked GL) > Cash 111
         ChartOfAccount? moneyAccount = null;
-        if (doc.BankAccountId.HasValue)
+        if (doc.PaymentAccountId.HasValue)
+        {
+            moneyAccount = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == doc.PaymentAccountId.Value && a.CompanyId == companyId);
+        }
+        if (moneyAccount == null && doc.BankAccountId.HasValue)
         {
             var bankAcc = await _db.BankAccounts
                 .Include(b => b.LinkedAccount)
@@ -1932,6 +1942,8 @@ public class DocumentService : IDocumentService
         ProjectName: d.Project?.Name,
         BankAccountId: d.BankAccountId,
         BankAccountName: d.BankAccount?.AccountName,
+        PaymentAccountId: d.PaymentAccountId,
+        PaymentAccountName: d.PaymentAccount != null ? $"{d.PaymentAccount.AccountCode} - {d.PaymentAccount.AccountName}" : null,
         ExpenseCategoryId: d.ExpenseCategoryId,
         ExpenseCategoryName: d.ExpenseCategory?.AccountName);
 

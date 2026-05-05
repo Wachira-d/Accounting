@@ -127,6 +127,7 @@ const API = {
       dashboard: (q = '') => API.get(`${base}/dashboard${q}`),
       // Accounting
       getAccounts: (q = '') => API.get(`${base}/accounting/accounts${q}`),
+      getPaymentChannels: () => API.get(`${base}/accounting/accounts/payment-channels`),
       createAccount: (d) => API.post(`${base}/accounting/accounts`, d),
       updateAccount: (id, d) => API.put(`${base}/accounting/accounts/${id}`, d),
       seedAccounts: (businessType, industryType) => {

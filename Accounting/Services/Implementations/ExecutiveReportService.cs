@@ -24,7 +24,7 @@ public partial class ExecutiveReportService : IExecutiveReportService
             .Include(l => l.Account)
             .Where(l => !l.IsDeleted && !l.JournalEntry.IsDeleted)
             .Where(l => l.JournalEntry.CompanyId == companyId)
-            .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted)
+            .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
             .Where(l => l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate);
     }
 
@@ -70,7 +70,7 @@ public partial class ExecutiveReportService : IExecutiveReportService
             .Include(l => l.Account)
             .Where(l => !l.IsDeleted && !l.JournalEntry.IsDeleted)
             .Where(l => l.JournalEntry.CompanyId == companyId)
-            .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted)
+            .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
             .Where(l => l.JournalEntry.EntryDate <= asOfDate)
             .Where(l => l.Account.AccountType == accountType);
         if (!string.IsNullOrEmpty(codePrefix))
@@ -96,7 +96,7 @@ public partial class ExecutiveReportService : IExecutiveReportService
             .Include(l => l.Account)
             .Where(l => !l.IsDeleted && !l.JournalEntry.IsDeleted)
             .Where(l => l.JournalEntry.CompanyId == companyId)
-            .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted)
+            .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
             .Where(l => l.JournalEntry.EntryDate <= asOfDate)
             .Where(l => l.Account.AccountType == AccountType.Asset)
             .Where(l => l.Account.AccountCode.StartsWith("111") || l.Account.AccountCode.StartsWith("112"));

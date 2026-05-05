@@ -30,6 +30,13 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<List<AccountResponse>>(true, result));
     }
 
+    [HttpGet("accounts/payment-channels")]
+    public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetPaymentChannelAccounts(Guid companyId)
+    {
+        var result = await _accountingService.GetPaymentChannelAccountsAsync(companyId);
+        return Ok(new ApiResponse<List<AccountResponse>>(true, result));
+    }
+
     [HttpPost("accounts")]
     public async Task<ActionResult<ApiResponse<AccountResponse>>> CreateAccount(Guid companyId, [FromBody] CreateAccountRequest request)
     {

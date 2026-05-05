@@ -69,8 +69,8 @@
             <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">บัญชีธนาคาร <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากบัญชีไหน)</span></label>
-              <select class="form-select" id="fBankAccount"><option value="">— ไม่ระบุ —</option></select>
+            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+              <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
             <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
@@ -185,7 +185,7 @@ const Page = {
     document.getElementById('fDocType').value = 'Invoice';
     document.getElementById('fVatRate').value = '7';
     document.getElementById('fWhtRate').value = '0';
-    document.getElementById('fBankAccount').value = '';
+    document.getElementById('fPaymentChannel').value = '';
     document.getElementById('fExpenseCategory').value = '';
     document.getElementById('fAutoApprove').checked = false;
     document.getElementById('fAutoWht').checked = true;
@@ -203,11 +203,26 @@ const Page = {
       sel.innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
     } catch (err) { /* ignore */ }
     try {
-      const ba = await api.getBankAccounts();
-      this.bankAccounts = ba?.data || [];
-      const sel = document.getElementById('fBankAccount');
-      sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + this.bankAccounts.map(a => `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('');
-    } catch (e) { this.bankAccounts = []; }
+      const [baRes, pcRes] = await Promise.all([
+        api.getBankAccounts().catch(() => ({ data: [] })),
+        api.getPaymentChannels().catch(() => ({ data: [] }))
+      ]);
+      this.bankAccounts = baRes?.data || [];
+      this.paymentChannels = pcRes?.data || [];
+      const sel = document.getElementById('fPaymentChannel');
+      sel.innerHTML = '<option value="">— เงินสด (ค่าเริ่มต้น) —</option>';
+      if (this.bankAccounts.length) {
+        sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
+          this.bankAccounts.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+          '</optgroup>';
+      }
+      const nonBankAccounts = this.paymentChannels.filter(a => !a.accountCode.startsWith('112'));
+      if (nonBankAccounts.length) {
+        sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
+          nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
+          '</optgroup>';
+      }
+    } catch (e) { this.bankAccounts = []; this.paymentChannels = []; }
     try {
       const ac = await api.getAccounts('?type=Expense&pageSize=200');
       this.expenseCategories = ac?.data?.items || ac?.data || [];
@@ -236,10 +251,13 @@ const Page = {
     const whtRate = parseFloat(document.getElementById('fWhtRate').value) || 0;
     const incomeType = document.getElementById('fIncomeType').value || null;
 
-    const bankAccountId = document.getElementById('fBankAccount')?.value || null;
+    const paymentChannelVal = document.getElementById('fPaymentChannel')?.value || '';
+    let bankAccountId = null;
+    let paymentAccountId = null;
+    if (paymentChannelVal.startsWith('bank:')) bankAccountId = paymentChannelVal.substring(5);
+    else if (paymentChannelVal.startsWith('account:')) paymentAccountId = paymentChannelVal.substring(8);
     const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
 
-    // Build templateData JSON expected by backend (RecurringTransactionService)
     const templateData = JSON.stringify({
       lines: [{
         description: description || name,
@@ -250,6 +268,7 @@ const Page = {
         incomeTypeCode: incomeType
       }],
       bankAccountId: bankAccountId,
+      paymentAccountId: paymentAccountId,
       expenseCategoryId: expenseCategoryId,
       autoGenerateWht: document.getElementById('fAutoWht').checked,
       dueDays: 30
@@ -287,13 +306,15 @@ const Page = {
       const r = res.data;
       const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
       document.getElementById('detailTitle').textContent = r.name || 'รายละเอียด';
-      // Parse templateData for display
-      let tdBankName = '-', tdExpenseName = '-';
+      let tdPaymentName = 'เงินสด (ค่าเริ่มต้น)', tdExpenseName = '-';
       try {
         const td = JSON.parse(r.templateData || '{}');
-        if (td.bankAccountId && this.bankAccounts) {
+        if (td.paymentAccountId && this.paymentChannels) {
+          const pa = this.paymentChannels.find(a => a.id === td.paymentAccountId);
+          if (pa) tdPaymentName = `${pa.accountCode} - ${pa.accountName}`;
+        } else if (td.bankAccountId && this.bankAccounts) {
           const ba = this.bankAccounts.find(a => a.id === td.bankAccountId);
-          if (ba) tdBankName = `${ba.accountName} (${ba.bankName} ${ba.accountNumber})`;
+          if (ba) tdPaymentName = `${ba.accountName} (${ba.bankName} ${ba.accountNumber})`;
         }
         if (td.expenseCategoryId && this.expenseCategories) {
           const ec = this.expenseCategories.find(a => a.id === td.expenseCategoryId);
@@ -308,7 +329,7 @@ const Page = {
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
           <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${r.contactName||'-'}</strong></div>
           <div><span class="text-gray-500 text-sm">ยอดเงิน:</span><br><strong>${Layout.money(r.amount)}</strong></div>
-          <div><span class="text-gray-500 text-sm">บัญชีธนาคาร:</span><br><strong>${tdBankName}</strong></div>
+          <div><span class="text-gray-500 text-sm">แหล่งเงิน / ช่องทางชำระ:</span><br><strong>${tdPaymentName}</strong></div>
           <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${tdExpenseName}</strong></div>
           <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
@@ -341,8 +362,7 @@ const Page = {
       document.getElementById('fDescription').value = r.description || '';
       document.getElementById('fAutoApprove').checked = r.autoApprove || false;
 
-      // Parse templateData to restore VAT/WHT/incomeType/bank/expense
-      let savedBankAccountId = '';
+      let savedPaymentChannelVal = '';
       let savedExpenseCategoryId = '';
       try {
         const td = JSON.parse(r.templateData || '{}');
@@ -353,13 +373,14 @@ const Page = {
           document.getElementById('fIncomeType').value = line.incomeTypeCode || '';
         }
         if (td.autoGenerateWht !== undefined) document.getElementById('fAutoWht').checked = td.autoGenerateWht;
-        savedBankAccountId = td.bankAccountId || '';
+        if (td.paymentAccountId) savedPaymentChannelVal = 'account:' + td.paymentAccountId;
+        else if (td.bankAccountId) savedPaymentChannelVal = 'bank:' + td.bankAccountId;
         savedExpenseCategoryId = td.expenseCategoryId || '';
       } catch {}
 
       await this.loadFormData();
       if (r.contactId) document.getElementById('fContact').value = r.contactId;
-      if (savedBankAccountId) document.getElementById('fBankAccount').value = savedBankAccountId;
+      if (savedPaymentChannelVal) document.getElementById('fPaymentChannel').value = savedPaymentChannelVal;
       if (savedExpenseCategoryId) document.getElementById('fExpenseCategory').value = savedExpenseCategoryId;
       this.onDocTypeChange();
       Layout.openModal('formModal');

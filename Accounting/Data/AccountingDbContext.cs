@@ -479,6 +479,8 @@ public class AccountingDbContext : DbContext
             e.HasIndex(d => d.ProjectId);
             // Bank account link — which bank account money flows through
             e.HasOne(d => d.BankAccount).WithMany().HasForeignKey(d => d.BankAccountId).OnDelete(DeleteBehavior.SetNull);
+            // Payment account — direct GL for non-bank money flow (cash, director advance, etc.)
+            e.HasOne(d => d.PaymentAccount).WithMany().HasForeignKey(d => d.PaymentAccountId).OnDelete(DeleteBehavior.SetNull);
             // Expense category — header-level chart of account for expense documents
             e.HasOne(d => d.ExpenseCategory).WithMany().HasForeignKey(d => d.ExpenseCategoryId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(d => !d.IsDeleted);

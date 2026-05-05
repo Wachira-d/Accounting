@@ -124,8 +124,8 @@
             <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">บัญชีธนาคาร <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากบัญชีไหน)</span></label>
-              <select class="form-select" id="fBankAccount"><option value="">— ไม่ระบุ —</option></select>
+            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+              <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
             <div class="form-group"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
@@ -330,13 +330,30 @@
           this.projects = pr?.data || [];
           this.populateProjects();
         } catch(e) { this.projects = []; }
-        // Load bank accounts for money in/out tracking
+        // Load payment channels (cash, bank accounts, director advance, etc.)
         try {
-          const ba = await api.getBankAccounts();
-          this.bankAccounts = ba?.data || [];
-          const sel = document.getElementById('fBankAccount');
-          this.bankAccounts.forEach(a => { sel.innerHTML += `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`; });
-        } catch(e) { this.bankAccounts = []; }
+          const [baRes, pcRes] = await Promise.all([
+            api.getBankAccounts().catch(() => ({ data: [] })),
+            api.getPaymentChannels().catch(() => ({ data: [] }))
+          ]);
+          this.bankAccounts = baRes?.data || [];
+          this.paymentChannels = pcRes?.data || [];
+          const sel = document.getElementById('fPaymentChannel');
+          sel.innerHTML = '<option value="">— เงินสด (ค่าเริ่มต้น) —</option>';
+          // Group: Bank accounts
+          if (this.bankAccounts.length) {
+            sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
+              this.bankAccounts.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+              '</optgroup>';
+          }
+          // Group: Other GL accounts (cash variants, director advance, e-wallet)
+          const nonBankAccounts = this.paymentChannels.filter(a => !a.accountCode.startsWith('112'));
+          if (nonBankAccounts.length) {
+            sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
+              nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
+              '</optgroup>';
+          }
+        } catch(e) { this.bankAccounts = []; this.paymentChannels = []; }
         // Load expense categories (chart of accounts type=Expense)
         try {
           const ac = await api.getAccounts('?type=Expense&pageSize=200');
@@ -705,8 +722,12 @@
           document.getElementById('fNotes').value = d.notes || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
-          const fba = document.getElementById('fBankAccount');
-          if (fba) fba.value = d.bankAccountId || '';
+          const fpc = document.getElementById('fPaymentChannel');
+          if (fpc) {
+            if (d.bankAccountId) fpc.value = 'bank:' + d.bankAccountId;
+            else if (d.paymentAccountId) fpc.value = 'account:' + d.paymentAccountId;
+            else fpc.value = '';
+          }
           const fec = document.getElementById('fExpenseCategory');
           if (fec) fec.value = d.expenseCategoryId || '';
           document.getElementById('linesBody').innerHTML = '';
@@ -748,7 +769,10 @@
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
         const projectId = document.getElementById('fProject')?.value || null;
-        const bankAccountId = document.getElementById('fBankAccount')?.value || null;
+        const pcVal = document.getElementById('fPaymentChannel')?.value || '';
+        let bankAccountId = null, paymentAccountId = null;
+        if (pcVal.startsWith('bank:')) bankAccountId = pcVal.substring(5);
+        else if (pcVal.startsWith('account:')) paymentAccountId = pcVal.substring(8);
         const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
         const payload = {
           documentType: document.getElementById('fDocType').value,
@@ -759,6 +783,7 @@
           notes: document.getElementById('fNotes').value || null,
           projectId,
           bankAccountId,
+          paymentAccountId,
           expenseCategoryId,
           lines
         };

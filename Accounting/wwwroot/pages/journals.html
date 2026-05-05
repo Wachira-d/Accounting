@@ -36,21 +36,23 @@
       <button class="journal-tab" data-type="CashPayments" onclick="Page.setType('CashPayments')">PV สมุดรายวันจ่าย <span class="tab-badge" id="countCashPayments">-</span></button>
     </div>
 
-    <div class="toolbar">
+    <div class="toolbar" style="flex-wrap:wrap;gap:8px">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput" oninput="Page.debounceSearch()">
-      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+      <select class="filter-select" id="statusFilter">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
         <option value="Posted">ผ่านรายการ</option>
         <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
         <option value="Reversed">กลับรายการแล้ว</option>
       </select>
-      <input type="date" class="form-input" id="fromDate" style="width:160px" onchange="Page.load()">
+      <input type="date" class="form-input" id="fromDate" style="width:150px">
       <span class="text-gray-400">ถึง</span>
-      <input type="date" class="form-input" id="toDate" style="width:160px" onchange="Page.load()">
-      <select class="filter-select" id="projectFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกโครงการ</option></select>
-      <select class="filter-select" id="dimBranchFilter" onchange="Page.load()" style="min-width:140px"><option value="">ทุกสาขา</option></select>
-      <input type="text" class="form-input" id="tagFilter" placeholder="แท็ก..." onchange="Page.load()" style="width:120px">
+      <input type="date" class="form-input" id="toDate" style="width:150px">
+      <select class="filter-select" id="projectFilter" style="min-width:130px"><option value="">ทุกโครงการ</option></select>
+      <select class="filter-select" id="dimBranchFilter" style="min-width:130px"><option value="">ทุกสาขา</option></select>
+      <input type="text" class="form-input" id="tagFilter" placeholder="แท็ก..." style="width:110px">
+      <button class="btn btn-primary btn-sm" onclick="Page.applyFilters()" style="white-space:nowrap">ค้นหา</button>
+      <button class="btn btn-ghost btn-sm" onclick="Page.clearFilters()" style="white-space:nowrap;color:var(--gray-500)">ล้างตัวกรอง</button>
     </div>
 
     <!-- Batch Action Bar -->
@@ -317,6 +319,21 @@
       debounceSearch() {
         clearTimeout(this._searchTimer);
         this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
+      },
+      applyFilters() {
+        this.page = 1;
+        this.load();
+      },
+      clearFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('statusFilter').value = '';
+        document.getElementById('fromDate').value = '';
+        document.getElementById('toDate').value = '';
+        document.getElementById('projectFilter').value = '';
+        document.getElementById('dimBranchFilter').value = '';
+        document.getElementById('tagFilter').value = '';
+        this.page = 1;
+        this.load();
       },
 
       // ===== Selection =====
