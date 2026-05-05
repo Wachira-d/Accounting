@@ -76,9 +76,7 @@ public class AccountingService : IAccountingService
 
     public async Task<List<AccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId)
     {
-        // Payment channel accounts: cash, bank deposits, director advance, e-wallet, etc.
-        // These are GL accounts used as money source/destination in transactions.
-        var prefixes = new[] { "111", "112", "115", "119", "219" };
+        var prefixes = new[] { "111", "112", "1133", "2123" };
         var accounts = await _db.ChartOfAccounts
             .Where(a => a.CompanyId == companyId && a.IsActive
                 && a.Level >= 3
