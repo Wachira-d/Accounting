@@ -59,10 +59,15 @@ public class AccountingService : IAccountingService
         return MapAccountToResponse(account);
     }
 
-    public async Task<List<AccountResponse>> GetAccountsAsync(Guid companyId)
+    public async Task<List<AccountResponse>> GetAccountsAsync(Guid companyId, AccountType? type = null)
     {
-        var accounts = await _db.ChartOfAccounts
-            .Where(a => a.CompanyId == companyId)
+        var query = _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId);
+
+        if (type.HasValue)
+            query = query.Where(a => a.AccountType == type.Value);
+
+        var accounts = await query
             .OrderBy(a => a.AccountCode)
             .ToListAsync();
 

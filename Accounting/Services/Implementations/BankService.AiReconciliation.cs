@@ -673,6 +673,40 @@ public partial class BankService
             if (sums != null) bookBalance = sums.Debit - sums.Credit;
         }
 
+        // Document-based balance: Receipts (money in) - PaymentVouchers (money out)
+        var receiptTotal = await _db.Documents
+            .Where(d => d.CompanyId == companyId
+                && d.BankAccountId == account.Id
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+            .SumAsync(d => (decimal?)d.TotalAmount) ?? 0;
+
+        var pvTotal = await _db.Documents
+            .Where(d => d.CompanyId == companyId
+                && d.BankAccountId == account.Id
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                && (d.DocumentType == DocumentType.PaymentVoucher || d.DocumentType == DocumentType.Expense))
+            .SumAsync(d => (decimal?)d.TotalAmount) ?? 0;
+
+        // Also include payments linked to this bank account
+        var paymentIn = await _db.Payments
+            .Where(p => p.CompanyId == companyId && p.BankAccountId == account.Id
+                && p.Document.DocumentType != DocumentType.PaymentVoucher
+                && p.Document.DocumentType != DocumentType.Expense
+                && p.Document.DocumentType != DocumentType.PurchaseInvoice)
+            .SumAsync(p => (decimal?)p.Amount) ?? 0;
+
+        var paymentOut = await _db.Payments
+            .Where(p => p.CompanyId == companyId && p.BankAccountId == account.Id
+                && (p.Document.DocumentType == DocumentType.PaymentVoucher
+                    || p.Document.DocumentType == DocumentType.Expense
+                    || p.Document.DocumentType == DocumentType.PurchaseInvoice))
+            .SumAsync(p => (decimal?)p.Amount) ?? 0;
+
+        var totalReceiptBalance = receiptTotal + paymentIn;
+        var totalPvBalance = pvTotal + paymentOut;
+        var documentBalance = totalReceiptBalance - totalPvBalance;
+
         var matched = allTxns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Matched);
         var excluded = allTxns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Excluded);
         var unmatchedList = allTxns.Where(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched).ToList();
@@ -688,7 +722,10 @@ public partial class BankService
             unmatchedList.Where(t => t.TransactionType == BankTransactionType.Deposit
                 || t.TransactionType == BankTransactionType.Interest).Sum(t => t.Amount),
             unmatchedList.Where(t => t.TransactionType == BankTransactionType.Withdrawal
-                || t.TransactionType == BankTransactionType.Fee).Sum(t => t.Amount));
+                || t.TransactionType == BankTransactionType.Fee).Sum(t => t.Amount),
+            documentBalance,
+            totalReceiptBalance,
+            totalPvBalance);
     }
 
     public async Task<ReconciliationSummaryDto> GetReconciliationSummaryAsync(Guid companyId, Guid bankAccountId)

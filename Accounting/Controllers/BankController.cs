@@ -76,11 +76,16 @@ public class BankController : ControllerBase
     }
 
     [HttpPost("import-statement")]
-    public async Task<ActionResult<ApiResponse<int>>> ImportStatement(
+    public async Task<ActionResult<ApiResponse<ImportBankStatementResponse>>> ImportStatement(
         Guid companyId, [FromBody] ImportBankStatementRequest request)
     {
-        var count = await _bankService.ImportBankStatementAsync(companyId, request);
-        return Ok(new ApiResponse<int>(true, count, $"นำเข้า {count} รายการสำเร็จ"));
+        var result = await _bankService.ImportBankStatementAsync(companyId, request);
+        if (result.Conflicts > 0)
+            return Ok(new ApiResponse<ImportBankStatementResponse>(true, result,
+                $"พบรายการซ้ำ {result.Conflicts} รายการ กรุณาเลือกใช้ข้อมูลเก่าหรือใหม่"));
+        var msg = $"นำเข้า {result.Imported} รายการสำเร็จ";
+        if (result.Skipped > 0) msg += $" (ข้าม {result.Skipped} รายการซ้ำ)";
+        return Ok(new ApiResponse<ImportBankStatementResponse>(true, result, msg));
     }
 
     [HttpPost("accounts/{accountId:guid}/ai-match")]

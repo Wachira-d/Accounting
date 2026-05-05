@@ -466,7 +466,7 @@ public partial class BankService : IBankService
         }
     }
 
-    public async Task<int> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request)
+    public async Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Base64Content))
             throw new ArgumentException("กรุณาระบุเนื้อหาไฟล์");
@@ -489,12 +489,23 @@ public partial class BankService : IBankService
             throw new ArgumentException($"ไม่พบรายการที่นำเข้าได้จาก CSV{hint}");
         }
 
+        // Load existing transactions for duplicate detection
+        var existingTxns = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.BankAccountId == request.BankAccountId)
+            .Select(t => new { t.Id, t.TransactionDate, t.Amount, t.TransactionType, t.Description, t.Reference })
+            .ToListAsync();
+
+        var conflicts = new List<ImportConflict>();
+        int imported = 0, skipped = 0;
+
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
             decimal? lastBalance = null;
+            var rowNum = 0;
             foreach (var r in parsedRows)
             {
+                rowNum++;
                 var isDeposit = r.Deposit > 0;
                 var amount = isDeposit ? r.Deposit : r.Withdrawal;
                 if (amount <= 0) continue;
@@ -503,18 +514,67 @@ public partial class BankService : IBankService
                 if (!string.IsNullOrWhiteSpace(r.Channel)) desc = $"{desc} | {r.Channel}";
                 if (desc.Length > 500) desc = desc[..500];
 
+                var txnType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal;
+
+                // Check for duplicates: same date + amount + type
+                var duplicate = existingTxns.FirstOrDefault(t =>
+                    t.TransactionDate.Date == r.Date.Date
+                    && t.Amount == amount
+                    && t.TransactionType == txnType);
+
+                if (duplicate != null)
+                {
+                    var isSameContent = string.Equals(
+                        (duplicate.Description ?? "").Trim(),
+                        desc.Trim(),
+                        StringComparison.OrdinalIgnoreCase);
+
+                    if (isSameContent)
+                    {
+                        skipped++;
+                        lastBalance = r.Balance;
+                        continue;
+                    }
+
+                    if (!request.ForceOverwrite)
+                    {
+                        conflicts.Add(new ImportConflict(
+                            rowNum, r.Date, amount,
+                            desc, duplicate.Description, duplicate.Id));
+                        lastBalance = r.Balance;
+                        continue;
+                    }
+
+                    // ForceOverwrite: update existing record
+                    var existingEntity = await _db.Set<BankTransaction>()
+                        .FirstAsync(t => t.Id == duplicate.Id);
+                    existingEntity.Description = desc;
+                    existingEntity.Reference = r.Reference;
+                    existingEntity.BalanceAfter = r.Balance;
+                    imported++;
+                    lastBalance = r.Balance;
+                    continue;
+                }
+
                 _db.Set<BankTransaction>().Add(new BankTransaction
                 {
                     CompanyId = companyId,
                     BankAccountId = request.BankAccountId,
                     TransactionDate = r.Date,
-                    TransactionType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal,
+                    TransactionType = txnType,
                     Amount = amount,
                     BalanceAfter = r.Balance,
                     Description = desc,
                     Reference = r.Reference
                 });
+                imported++;
                 lastBalance = r.Balance;
+            }
+
+            if (conflicts.Count > 0 && !request.ForceOverwrite)
+            {
+                await dbTransaction.RollbackAsync();
+                return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts);
             }
 
             if (lastBalance.HasValue && lastBalance.Value != 0)
@@ -523,10 +583,10 @@ public partial class BankService : IBankService
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
 
-            _logger?.LogInformation("Bank CSV import: {Count} transactions imported, {Skipped} skipped",
-                parsedRows.Count, skippedRows.Count);
+            _logger?.LogInformation("Bank CSV import: {Imported} imported, {Skipped} duplicates skipped, {Conflicts} conflicts",
+                imported, skipped, conflicts.Count);
 
-            return parsedRows.Count;
+            return new ImportBankStatementResponse(imported, skipped, 0);
         }
         catch
         {

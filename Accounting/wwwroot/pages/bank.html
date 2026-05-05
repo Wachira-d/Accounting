@@ -89,6 +89,11 @@
         <div class="card"><div class="text-gray-500 text-xs">ยอดตามบัญชี (GL)</div><div class="text-xl font-bold" id="reconBookBal">-</div></div>
         <div class="card"><div class="text-gray-500 text-xs">ผลต่าง</div><div class="text-xl font-bold" id="reconDiff" style="color:var(--danger)">-</div></div>
       </div>
+      <div class="grid grid-3 gap-4" style="margin-bottom:16px">
+        <div class="card"><div class="text-gray-500 text-xs">ยอดตามเอกสาร (รับ-จ่าย)</div><div class="text-xl font-bold" id="reconDocBal">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">รวมรับ (ใบเสร็จ/ใบสำคัญรับ)</div><div class="text-lg font-bold text-success" id="reconReceipts">-</div></div>
+        <div class="card"><div class="text-gray-500 text-xs">รวมจ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย)</div><div class="text-lg font-bold text-danger" id="reconPVs">-</div></div>
+      </div>
       <div class="grid grid-4 gap-4" style="margin-bottom:16px">
         <div class="card text-center"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold" id="reconTotal">0</div></div>
         <div class="card text-center"><div class="text-gray-500 text-xs">จับคู่แล้ว</div><div class="text-2xl font-bold text-success" id="reconMatched">0</div></div>
@@ -680,6 +685,15 @@
           document.getElementById('reconMatched').textContent = s.matchedCount;
           document.getElementById('reconCount').textContent = s.unmatchedCount;
           document.getElementById('reconExcluded').textContent = s.excludedCount;
+          // Document-based balance (receipts - payment vouchers)
+          const docBalEl = document.getElementById('reconDocBal');
+          if (docBalEl && s.documentBalance !== undefined) {
+            docBalEl.textContent = Layout.money(s.documentBalance);
+            const recEl = document.getElementById('reconReceipts');
+            const pvEl = document.getElementById('reconPVs');
+            if (recEl) recEl.textContent = Layout.money(s.receiptTotal || 0);
+            if (pvEl) pvEl.textContent = Layout.money(s.paymentVoucherTotal || 0);
+          }
         } catch (e) { /* silent */ }
       },
       // === RECONCILIATION ===
@@ -1500,14 +1514,40 @@
             const base64 = e.target.result.split(',')[1];
             try {
               const res = await api.importBankFile(accountId, format, base64);
-              Layout.closeModal('importModal');
               const stats = res?.data;
-              const msg = stats
-                ? `นำเข้าสำเร็จ: ${stats.newTransactions || 0} รายการใหม่` +
-                  (stats.duplicateSkipped ? `, ข้าม ${stats.duplicateSkipped} รายการซ้ำ` : '') +
-                  (stats.autoMatched ? `, จับคู่อัตโนมัติ ${stats.autoMatched} รายการ` : '')
-                : 'นำเข้า Statement สำเร็จ';
-              Layout.toast(msg, 'success');
+
+              // Handle conflicts: ask user to choose old or new
+              if (stats && stats.conflicts > 0 && stats.conflictDetails?.length) {
+                const conflicts = stats.conflictDetails;
+                const choice = await Layout.confirmDanger({
+                  title: `พบรายการซ้ำ ${conflicts.length} รายการ`,
+                  message: `ข้อมูลในไฟล์ต่างจากข้อมูลที่มีอยู่:\n\n` +
+                    conflicts.slice(0,5).map(c =>
+                      `• ${Layout.date(c.transactionDate)} ${Layout.money(c.amount)}\n  เดิม: ${c.existingDescription || '-'}\n  ใหม่: ${c.newDescription || '-'}`
+                    ).join('\n\n') +
+                    (conflicts.length > 5 ? `\n\n... อีก ${conflicts.length - 5} รายการ` : '') +
+                    '\n\nต้องการใช้ข้อมูลจากไฟล์ใหม่แทนหรือไม่?',
+                  mode: 'confirm',
+                  confirmText: 'ใช้ข้อมูลใหม่',
+                  cancelText: 'เก็บข้อมูลเดิม'
+                });
+                if (choice) {
+                  // Re-import with forceOverwrite
+                  const res2 = await api.importBankFile(accountId, format, base64, true);
+                  Layout.closeModal('importModal');
+                  Layout.toast(`นำเข้าสำเร็จ ${res2?.data?.imported || 0} รายการ (อัพเดตรายการซ้ำ)`, 'success');
+                } else {
+                  Layout.closeModal('importModal');
+                  Layout.toast(`นำเข้าสำเร็จ ${stats.imported || 0} รายการ (ข้าม ${stats.conflicts} รายการซ้ำ)`, 'info');
+                }
+              } else {
+                Layout.closeModal('importModal');
+                const msg = stats
+                  ? `นำเข้าสำเร็จ ${stats.imported || 0} รายการ` +
+                    (stats.skipped ? `, ข้าม ${stats.skipped} รายการซ้ำ` : '')
+                  : 'นำเข้า Statement สำเร็จ';
+                Layout.toast(msg, 'success');
+              }
 
               // 1) Refresh accounts (balance may have changed)
               await this.loadAccounts();

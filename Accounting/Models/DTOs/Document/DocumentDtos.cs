@@ -11,9 +11,9 @@ public record CreateDocumentRequest(
     string? Reference,
     string? Notes,
     List<DocumentLineRequest> Lines,
-    // Project tagging — header default; lines may override individually.
-    // Auto-post propagates this to JournalEntry.ProjectId for per-project P&L.
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    Guid? BankAccountId = null,
+    Guid? ExpenseCategoryId = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -34,7 +34,9 @@ public record UpdateDocumentRequest(
     string? Reference,
     string? Notes,
     List<DocumentLineRequest>? Lines,
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    Guid? BankAccountId = null,
+    Guid? ExpenseCategoryId = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -59,10 +61,13 @@ public record DocumentResponse(
     // which is required for e-Tax by Email compliance — printing strips the XML payload.
     Guid? EtaxInvoiceId = null,
     EtaxStatus? EtaxStatus = null,
-    // Project link — populated when document is tagged to a project for cost tracking
     Guid? ProjectId = null,
     string? ProjectCode = null,
-    string? ProjectName = null);
+    string? ProjectName = null,
+    Guid? BankAccountId = null,
+    string? BankAccountName = null,
+    Guid? ExpenseCategoryId = null,
+    string? ExpenseCategoryName = null);
 
 public record DocumentLineResponse(
     Guid Id,

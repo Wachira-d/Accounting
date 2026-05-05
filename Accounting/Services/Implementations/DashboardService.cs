@@ -268,14 +268,15 @@ public class DashboardService : IDashboardService
 
     private async Task<List<TopExpenseCategory>> GetTopExpenseCategoriesAsync(Guid companyId, DateTime fromDate, DateTime toDate, int top = 10)
     {
-        // Server-side GroupBy — aggregation happens in PostgreSQL
         var expenseLines = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.OriginalEntryId == null
                 && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Expense)
             .GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName })
             .Select(g => new { g.Key.AccountCode, g.Key.AccountName, Amount = g.Sum(l => l.DebitAmount - l.CreditAmount) })
+            .Where(e => e.Amount > 0)
             .OrderByDescending(e => e.Amount)
             .Take(top)
             .ToListAsync();

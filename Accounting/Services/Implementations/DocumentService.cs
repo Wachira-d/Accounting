@@ -138,6 +138,8 @@ public class DocumentService : IDocumentService
                 Reference = request.Reference,
                 Notes = request.Notes,
                 ProjectId = request.ProjectId,
+                BankAccountId = request.BankAccountId,
+                ExpenseCategoryId = request.ExpenseCategoryId,
                 CreatedBy = createdBy
             };
 
@@ -206,6 +208,8 @@ public class DocumentService : IDocumentService
             .Include(d => d.Contact)
             .Include(d => d.Lines)
             .Include(d => d.Project)
+            .Include(d => d.BankAccount)
+            .Include(d => d.ExpenseCategory)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
@@ -219,6 +223,8 @@ public class DocumentService : IDocumentService
             .Include(d => d.Contact)
             .Include(d => d.Lines)
             .Include(d => d.Project)
+            .Include(d => d.BankAccount)
+            .Include(d => d.ExpenseCategory)
             .Where(d => d.CompanyId == companyId);
 
         if (type.HasValue)
@@ -304,6 +310,11 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
             doc.ProjectId = request.ProjectId.Value;
         }
+
+        if (request.BankAccountId.HasValue)
+            doc.BankAccountId = request.BankAccountId.Value;
+        if (request.ExpenseCategoryId.HasValue)
+            doc.ExpenseCategoryId = request.ExpenseCategoryId.Value;
 
         if (request.Lines != null)
         {
@@ -1360,12 +1371,32 @@ public class DocumentService : IDocumentService
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
-        var defaultExpense = await FindAccountAsync(companyId, "51110")
+
+        // Use document-level expense category if specified, otherwise fallback to default
+        ChartOfAccount? defaultExpense = null;
+        if (doc.ExpenseCategoryId.HasValue)
+        {
+            defaultExpense = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == doc.ExpenseCategoryId.Value && a.CompanyId == companyId);
+        }
+        defaultExpense ??= await FindAccountAsync(companyId, "51110")
             ?? await FindAccountAsync(companyId, "52110")
             ?? await _db.ChartOfAccounts
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
+
+        // Resolve bank account's linked GL for money-movement entries
+        // (replaces Cash 111 when a specific bank account is selected)
+        ChartOfAccount? moneyAccount = null;
+        if (doc.BankAccountId.HasValue)
+        {
+            var bankAcc = await _db.BankAccounts
+                .Include(b => b.LinkedAccount)
+                .FirstOrDefaultAsync(b => b.Id == doc.BankAccountId.Value && b.CompanyId == companyId);
+            moneyAccount = bankAcc?.LinkedAccount;
+        }
+        moneyAccount ??= await FindAccountAsync(companyId, "111");
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
         JournalType journalType;
@@ -1602,15 +1633,11 @@ public class DocumentService : IDocumentService
                  || doc.DocumentType == DocumentType.ReceiptVoucher)
         {
             journalType = JournalType.CashReceipts;
-            var cashAccount = await FindAccountAsync(companyId, "111");
 
             if (doc.RelatedDocumentId.HasValue)
             {
-                // Collection against an existing Invoice's AR.
-                // The original Invoice already booked Dr WHT-Asset (Policy A: WHT
-                // claimed at issuance). Don't book WHT again here — just clear AR.
-                if (cashAccount != null)
-                    AddLine(cashAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
+                if (moneyAccount != null)
+                    AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
 
                 var arAccount = await FindAccountAsync(companyId, "113");
                 if (arAccount != null)
@@ -1619,9 +1646,9 @@ public class DocumentService : IDocumentService
             }
             else
             {
-                // Direct cash sale (ใบเสร็จรับเงิน/ใบกำกับภาษี): no prior AR
-                if (cashAccount != null)
-                    AddLine(cashAccount.Id, doc.TotalAmount, 0, $"รับเงินสด - {doc.DocumentNumber}");
+                if (moneyAccount != null)
+                    AddLine(moneyAccount.Id, doc.TotalAmount, 0,
+                        $"{(doc.BankAccountId.HasValue ? "รับเงินเข้าบัญชี" : "รับเงินสด")} - {doc.DocumentNumber}");
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
@@ -1653,24 +1680,20 @@ public class DocumentService : IDocumentService
         else if (doc.DocumentType == DocumentType.PaymentVoucher)
         {
             journalType = JournalType.CashPayments;
-            var cashAccount = await FindAccountAsync(companyId, "111");
 
             if (doc.RelatedDocumentId.HasValue)
             {
-                // Settlement of existing AP. The original PurchaseInvoice already
-                // credited WHT-Payable; settling it is a separate event (when filing
-                // ภ.ง.ด.3/53 with Revenue Dept). Just clear AP and pay cash here.
                 var apAccount = await FindAccountAsync(companyId, "212");
                 if (apAccount != null)
                     AddLine(apAccount.Id, doc.TotalAmount, 0,
                         $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
 
-                if (cashAccount != null)
-                    AddLine(cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงิน - {doc.DocumentNumber}");
+                if (moneyAccount != null)
+                    AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                        $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
             }
             else
             {
-                // Direct cash purchase (no prior AP)
                 foreach (var docLine in doc.Lines)
                 {
                     var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
@@ -1685,8 +1708,9 @@ public class DocumentService : IDocumentService
                         AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
                 }
 
-                if (cashAccount != null)
-                    AddLine(cashAccount.Id, 0, doc.TotalAmount, $"จ่ายเงินสด - {doc.DocumentNumber}");
+                if (moneyAccount != null)
+                    AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                        $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
@@ -1905,7 +1929,11 @@ public class DocumentService : IDocumentService
         EtaxStatus: etax?.Status,
         ProjectId: d.ProjectId,
         ProjectCode: d.Project?.Code,
-        ProjectName: d.Project?.Name);
+        ProjectName: d.Project?.Name,
+        BankAccountId: d.BankAccountId,
+        BankAccountName: d.BankAccount?.AccountName,
+        ExpenseCategoryId: d.ExpenseCategoryId,
+        ExpenseCategoryName: d.ExpenseCategory?.AccountName);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
