@@ -42,7 +42,7 @@ public class DashboardService : IDashboardService
         // Server-side aggregation by AccountType — avoids loading all lines into memory
         var periodSums = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate)
             .GroupBy(l => l.Account.AccountType)
@@ -66,7 +66,7 @@ public class DashboardService : IDashboardService
 
         var prevSums = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= prevFromDate
                 && l.JournalEntry.EntryDate <= prevToDate)
             .GroupBy(l => l.Account.AccountType)
@@ -111,7 +111,7 @@ public class DashboardService : IDashboardService
         // Cash accounts balance — server-side sum, no Include needed
         var cashBalance = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.Account.AccountCode.StartsWith("111"))
             .SumAsync(l => l.DebitAmount - l.CreditAmount);
 
@@ -193,7 +193,7 @@ public class DashboardService : IDashboardService
         // Server-side GROUP BY year/month — single query, no in-memory loop
         var monthlyData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= startDate
                 && l.Account.AccountType == AccountType.Revenue)
             .GroupBy(l => new { l.JournalEntry.EntryDate.Year, l.JournalEntry.EntryDate.Month })
@@ -224,7 +224,7 @@ public class DashboardService : IDashboardService
         // Server-side GROUP BY year/month — single query, no in-memory loop
         var monthlyData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= startDate
                 && l.Account.AccountType == AccountType.Expense)
             .GroupBy(l => new { l.JournalEntry.EntryDate.Year, l.JournalEntry.EntryDate.Month })

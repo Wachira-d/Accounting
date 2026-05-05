@@ -142,7 +142,7 @@ public partial class BankService : IBankService
         if (linkedIds.Any())
         {
             var postedEntryIds = _db.JournalEntries
-                .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+                .Where(j => j.CompanyId == companyId && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed))
                 .Select(j => j.Id);
             var sums = await _db.JournalEntryLines
                 .Where(l => linkedIds.Contains(l.AccountId) && postedEntryIds.Contains(l.JournalEntryId))

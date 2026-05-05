@@ -666,7 +666,7 @@ public partial class BankService
                 .Where(l => l.AccountId == bankCoaId.Value
                     && _db.JournalEntries.Any(j => j.Id == l.JournalEntryId
                         && j.CompanyId == companyId
-                        && j.Status == JournalEntryStatus.Posted))
+                        && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)))
                 .GroupBy(l => 1)
                 .Select(g => new { Debit = g.Sum(l => l.DebitAmount), Credit = g.Sum(l => l.CreditAmount) })
                 .FirstOrDefaultAsync();

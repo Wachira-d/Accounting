@@ -258,7 +258,7 @@ public class ProjectAccountingService : IProjectAccountingService
             .Include(l => l.Account)
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= from
                 && l.JournalEntry.EntryDate < to
                 && (l.ProjectId == projectId || l.JournalEntry.ProjectId == projectId))

@@ -160,7 +160,7 @@ public class BudgetService : IBudgetService
         var actualAmounts = await _db.JournalEntryLines
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= startDate
                 && l.JournalEntry.EntryDate <= endDate)
             .GroupBy(l => l.AccountId)

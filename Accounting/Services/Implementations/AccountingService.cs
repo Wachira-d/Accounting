@@ -788,10 +788,12 @@ public class AccountingService : IAccountingService
                 .FirstOrDefaultAsync();
         }
 
-        // Query posted entry IDs as subquery to avoid Include/navigation filter issues
+        // Query posted + reversed entry IDs. Reversed entries are historically valid
+        // transactions that were later offset by a reversal JE — both must appear in
+        // the ledger for the running balance to net to zero after a void.
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
-                && j.Status == JournalEntryStatus.Posted
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                 && j.EntryDate >= fromDateStart
                 && j.EntryDate < toDateEnd)
             .Select(j => j.Id);
@@ -825,10 +827,10 @@ public class AccountingService : IAccountingService
             .ThenBy(l => l.JournalEntry.EntryNumber)
             .ToListAsync();
 
-        // Get opening balances (all posted entries before fromDate)
+        // Get opening balances (all posted/reversed entries before fromDate)
         var openingEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
-                && j.Status == JournalEntryStatus.Posted
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                 && j.EntryDate < fromDateStart)
             .Select(j => j.Id);
 
@@ -1181,7 +1183,7 @@ public class AccountingService : IAccountingService
     {
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
-                && j.Status == JournalEntryStatus.Posted
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                 && j.EntryDate < asOfDate.Date.AddDays(1))
             .Select(j => j.Id);
 
@@ -1246,7 +1248,7 @@ public class AccountingService : IAccountingService
     {
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
-                && j.Status == JournalEntryStatus.Posted
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                 && j.EntryDate >= fromDate.Date
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
@@ -1293,7 +1295,7 @@ public class AccountingService : IAccountingService
     {
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
-                && j.Status == JournalEntryStatus.Posted
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                 && j.EntryDate >= fromDate.Date
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
@@ -1396,7 +1398,7 @@ public class AccountingService : IAccountingService
         var openingCash = await _db.JournalEntryLines
             .Include(l => l.Account).Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate < fromDate
                 && cashAccountCodes.Any(c => l.Account.AccountCode.StartsWith(c)))
             .SumAsync(l => l.DebitAmount - l.CreditAmount);
