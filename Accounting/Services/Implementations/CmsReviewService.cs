@@ -79,7 +79,7 @@ public class CmsReviewService : ICmsReviewService
             })
             .ToListAsync();
 
-        return new PagedResponse<ReviewResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<ReviewResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<PagedResponse<ReviewResponse>> GetSiteReviewsAsync(Guid companyId, Guid siteId, bool? approved = null, int page = 1, int pageSize = 20)
@@ -104,7 +104,7 @@ public class CmsReviewService : ICmsReviewService
             })
             .ToListAsync();
 
-        return new PagedResponse<ReviewResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<ReviewResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<ReviewSummaryResponse> GetProductReviewSummaryAsync(Guid companyId, Guid siteId, Guid siteProductId)

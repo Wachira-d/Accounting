@@ -180,7 +180,7 @@ public class ImportExportService : IImportExportService
 
     // ===== Import Helpers =====
 
-    private async Task ImportContactAsync(Guid companyId, Dictionary<string, string> row)
+    private Task ImportContactAsync(Guid companyId, Dictionary<string, string> row)
     {
         var contact = new Contact
         {
@@ -195,6 +195,7 @@ public class ImportExportService : IImportExportService
             ContactPerson = row.GetValueOrDefault("ContactPerson")
         };
         _db.Contacts.Add(contact);
+        return Task.CompletedTask;
     }
 
     private async Task ImportProductAsync(Guid companyId, Dictionary<string, string> row)
