@@ -13,6 +13,7 @@ public record CreateDocumentRequest(
     List<DocumentLineRequest> Lines,
     Guid? ProjectId = null,
     Guid? BankAccountId = null,
+    Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null);
 
 public record DocumentLineRequest(
@@ -36,6 +37,7 @@ public record UpdateDocumentRequest(
     List<DocumentLineRequest>? Lines,
     Guid? ProjectId = null,
     Guid? BankAccountId = null,
+    Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null);
 
 public record DocumentResponse(
@@ -66,6 +68,8 @@ public record DocumentResponse(
     string? ProjectName = null,
     Guid? BankAccountId = null,
     string? BankAccountName = null,
+    Guid? PaymentAccountId = null,
+    string? PaymentAccountName = null,
     Guid? ExpenseCategoryId = null,
     string? ExpenseCategoryName = null);
 

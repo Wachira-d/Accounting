@@ -32,6 +32,12 @@ public class Document : TenantEntity
     public Guid? BankAccountId { get; set; }
     public BankAccount? BankAccount { get; set; }
 
+    // Payment account — direct GL account for non-bank money flow
+    // (e.g. เงินสด 111, เงินทดรองกรรมการ 115/219, e-Wallet 11190)
+    // Takes precedence over BankAccountId when set.
+    public Guid? PaymentAccountId { get; set; }
+    public ChartOfAccount? PaymentAccount { get; set; }
+
     // Expense category (header-level default when all lines share the same category)
     public Guid? ExpenseCategoryId { get; set; }
     public ChartOfAccount? ExpenseCategory { get; set; }

@@ -74,6 +74,20 @@ public class AccountingService : IAccountingService
         return accounts.Select(MapAccountToResponse).ToList();
     }
 
+    public async Task<List<AccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId)
+    {
+        // Payment channel accounts: cash, bank deposits, director advance, e-wallet, etc.
+        // These are GL accounts used as money source/destination in transactions.
+        var prefixes = new[] { "111", "112", "115", "119", "219" };
+        var accounts = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.IsActive
+                && a.Level >= 3
+                && prefixes.Any(p => a.AccountCode.StartsWith(p)))
+            .OrderBy(a => a.AccountCode)
+            .ToListAsync();
+        return accounts.Select(MapAccountToResponse).ToList();
+    }
+
     public async Task<AccountResponse> UpdateAccountAsync(Guid companyId, Guid accountId, UpdateAccountRequest request)
     {
         var account = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == accountId && a.CompanyId == companyId)

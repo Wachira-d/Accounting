@@ -895,6 +895,11 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "BankAccountId" uuid NULL;
             """,
+
+            // ===== Documents: PaymentAccountId for non-bank money accounts =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentAccountId" uuid NULL;
+            """,
         ];
     }
 

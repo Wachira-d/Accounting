@@ -293,6 +293,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             }
 
             Guid? bankAccountId = root.TryGetProperty("bankAccountId", out var baEl) && baEl.ValueKind == JsonValueKind.String && Guid.TryParse(baEl.GetString(), out var baId) ? baId : null;
+            Guid? paymentAccountId = root.TryGetProperty("paymentAccountId", out var paEl) && paEl.ValueKind == JsonValueKind.String && Guid.TryParse(paEl.GetString(), out var paId) ? paId : null;
             Guid? expenseCategoryId = root.TryGetProperty("expenseCategoryId", out var ecEl) && ecEl.ValueKind == JsonValueKind.String && Guid.TryParse(ecEl.GetString(), out var ecId) ? ecId : null;
 
             var request = new Models.DTOs.Document.CreateDocumentRequest(
@@ -304,6 +305,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 Notes: root.TryGetProperty("notes", out var notes) ? notes.GetString() : null,
                 Lines: lines,
                 BankAccountId: bankAccountId,
+                PaymentAccountId: paymentAccountId,
                 ExpenseCategoryId: expenseCategoryId
             );
 

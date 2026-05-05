@@ -9,6 +9,7 @@ public interface IAccountingService
     // Chart of Accounts
     Task<AccountResponse> CreateAccountAsync(Guid companyId, CreateAccountRequest request);
     Task<List<AccountResponse>> GetAccountsAsync(Guid companyId, AccountType? type = null);
+    Task<List<AccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId);
     Task<AccountResponse> UpdateAccountAsync(Guid companyId, Guid accountId, UpdateAccountRequest request);
     Task SeedDefaultAccountsAsync(Guid companyId);
     Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType);
