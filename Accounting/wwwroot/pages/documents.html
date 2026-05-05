@@ -347,7 +347,7 @@
               '</optgroup>';
           }
           // Group: Other GL accounts (cash variants, director advance, e-wallet)
-          const nonBankAccounts = this.paymentChannels.filter(a => !a.accountCode.startsWith('112'));
+          const nonBankAccounts = this.paymentChannels.filter(a => !a.accountCode.startsWith('1112'));
           if (nonBankAccounts.length) {
             sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
               nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +

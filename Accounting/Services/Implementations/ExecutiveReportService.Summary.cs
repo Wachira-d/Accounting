@@ -87,8 +87,9 @@ public partial class ExecutiveReportService
 
     private async Task<CashPositionSummary> BuildCashPositionAsync(Guid companyId, DateTime asOf)
     {
-        var cashOnHand = await GetBalanceAsync(companyId, AccountType.Asset, asOf, "111");
-        var bankBal = await GetBalanceAsync(companyId, AccountType.Asset, asOf, "112");
+        var allCash = await GetBalanceAsync(companyId, AccountType.Asset, asOf, "111");
+        var bankBal = await GetBalanceAsync(companyId, AccountType.Asset, asOf, "1112");
+        var cashOnHand = allCash - bankBal;
         var total = cashOnHand + bankBal;
 
         var overduePay = await _db.Documents
