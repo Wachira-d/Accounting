@@ -1568,11 +1568,10 @@ public class DocumentService : IDocumentService
     /// </summary>
     private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
     {
-        // Try exact match first, then prefix match (first child account)
         return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == codePrefix)
+                a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4)
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
     }

@@ -426,6 +426,10 @@ public class FixedAssetService : IFixedAssetService
                 CreatedBy = performedBy
             };
 
+            if (Math.Abs(journalEntry.TotalDebit - journalEntry.TotalCredit) > 0.01m)
+                throw new InvalidOperationException(
+                    $"ค่าเสื่อมราคาไม่สมดุล: Dr={journalEntry.TotalDebit:N2} Cr={journalEntry.TotalCredit:N2}");
+
             foreach (var line in journalLines)
             {
                 line.JournalEntryId = journalEntry.Id;
@@ -475,29 +479,52 @@ public class FixedAssetService : IFixedAssetService
                 CreatedBy = performedBy
             };
 
+            journalEntry.Lines.Add(new JournalEntryLine
+            {
+                AccountId = asset.AssetAccountId.Value,
+                DebitAmount = surplus > 0 ? surplus : 0,
+                CreditAmount = surplus < 0 ? Math.Abs(surplus) : 0,
+                Description = $"ตีราคา{(surplus > 0 ? "เพิ่ม" : "ลด")} - {asset.Name}"
+            });
+
             if (surplus > 0)
             {
+                // Cr: ส่วนเกินทุนจากการตีราคาสินทรัพย์ (Equity 313xx per TAS 16)
+                var revalSurplusAcc = await FindAccountAsync(companyId, "31300")
+                    ?? await FindAccountAsync(companyId, "313")
+                    ?? throw new InvalidOperationException(
+                        "ไม่พบบัญชีส่วนเกินทุนจากการตีราคาสินทรัพย์ (313) ในผังบัญชี — กรุณาเพิ่มก่อนทำการตีราคา");
                 journalEntry.Lines.Add(new JournalEntryLine
                 {
-                    AccountId = asset.AssetAccountId.Value,
-                    DebitAmount = surplus,
-                    CreditAmount = 0,
-                    Description = $"ตีราคาเพิ่ม - {asset.Name}"
+                    AccountId = revalSurplusAcc.Id,
+                    DebitAmount = 0,
+                    CreditAmount = surplus,
+                    Description = $"ส่วนเกินทุนจากการตีราคา - {asset.Name}"
                 });
             }
             else
             {
+                // Dr: ขาดทุนจากการตีราคาสินทรัพย์ (Expense 571xx per TAS 16/36)
+                var revalLossAcc = await FindAccountAsync(companyId, "57120")
+                    ?? await FindAccountAsync(companyId, "571")
+                    ?? throw new InvalidOperationException(
+                        "ไม่พบบัญชีขาดทุนจากการตีราคาสินทรัพย์ (571) ในผังบัญชี — กรุณาเพิ่มก่อนทำการตีราคา");
                 journalEntry.Lines.Add(new JournalEntryLine
                 {
-                    AccountId = asset.AssetAccountId.Value,
-                    DebitAmount = 0,
-                    CreditAmount = Math.Abs(surplus),
-                    Description = $"ตีราคาลด - {asset.Name}"
+                    AccountId = revalLossAcc.Id,
+                    DebitAmount = Math.Abs(surplus),
+                    CreditAmount = 0,
+                    Description = $"ขาดทุนจากการตีราคา - {asset.Name}"
                 });
             }
 
             journalEntry.TotalDebit = journalEntry.Lines.Sum(l => l.DebitAmount);
             journalEntry.TotalCredit = journalEntry.Lines.Sum(l => l.CreditAmount);
+
+            if (Math.Abs(journalEntry.TotalDebit - journalEntry.TotalCredit) > 0.01m)
+                throw new InvalidOperationException(
+                    $"รายการบัญชีตีราคาสินทรัพย์ไม่สมดุล: Dr={journalEntry.TotalDebit:N2} Cr={journalEntry.TotalCredit:N2}");
+
             _db.JournalEntries.Add(journalEntry);
         }
 
@@ -668,9 +695,9 @@ public class FixedAssetService : IFixedAssetService
     private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
     {
         return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == codePrefix)
+                a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4)
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
     }
