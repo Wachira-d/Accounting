@@ -331,7 +331,7 @@ public class CmsBookingService : ICmsBookingService
             })
             .ToListAsync();
 
-        return new PagedResponse<BookingListResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<BookingListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     // ===== ERP Sync (Event-Driven) =====
@@ -394,7 +394,7 @@ public class CmsBookingService : ICmsBookingService
             DocumentType = docType,
             Status = svc.BookingType == BookingType.Lead ? DocumentStatus.Draft : DocumentStatus.Approved,
             DocumentDate = DateTime.UtcNow,
-            ContactId = contactId,
+            ContactId = contactId!.Value,
             Currency = svc.Currency,
             SubTotal = booking.TotalAmount,
             TotalAmount = booking.TotalAmount,

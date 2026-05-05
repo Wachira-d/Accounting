@@ -66,7 +66,7 @@ public class CmsRbacMiddleware
             return;
         }
 
-        var staffAccess = await db.SiteStaffAccess
+        var staffAccess = await db.SiteStaffAccesses
             .AsNoTracking()
             .FirstOrDefaultAsync(sa => sa.SiteId == siteId && sa.UserId == userId && sa.IsActive);
 

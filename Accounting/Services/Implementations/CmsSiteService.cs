@@ -197,7 +197,7 @@ public class CmsSiteService : ICmsSiteService
             })
             .ToListAsync();
 
-        return new PagedResponse<SiteListResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<SiteListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<bool> DeleteSiteAsync(Guid companyId, Guid siteId)

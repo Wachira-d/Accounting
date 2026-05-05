@@ -122,7 +122,7 @@ public class CmsCustomerService : ICmsCustomerService
             })
             .ToListAsync();
 
-        return new PagedResponse<SiteCustomerListResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<SiteCustomerListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<bool> DeleteCustomerAsync(Guid companyId, Guid siteId, Guid customerId)
@@ -159,7 +159,7 @@ public class CmsCustomerService : ICmsCustomerService
         customer.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        var token = JwtHelper.GenerateToken(customer.Id, customer.Email, customer.FullName, _config);
+        var token = JwtHelper.GenerateToken(customer.Id, customer.Email, customer.FullName ?? "", _config);
         return new CustomerLoginResponse
         {
             Token = token, FullName = customer.FullName, Email = customer.Email,
@@ -502,7 +502,7 @@ public class CmsCustomerService : ICmsCustomerService
             })
             .ToListAsync();
 
-        return new PagedResponse<FormSubmissionResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<FormSubmissionResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<bool> UpdateSubmissionStatusAsync(Guid companyId, Guid siteId, Guid formId, Guid submissionId, string status, string? notes)

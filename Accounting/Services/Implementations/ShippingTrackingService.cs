@@ -202,22 +202,10 @@ public class ShippingTrackingService : IShippingTrackingService
         }
     }
 
-    private async Task<ShipmentTrackingResult?> TrackKerryAsync(string trackingNumber)
+    private Task<ShipmentTrackingResult?> TrackKerryAsync(string trackingNumber)
     {
-        try
-        {
-            var client = _httpClientFactory.CreateClient();
-            var url = $"https://th.kerryexpress.com/en/track/?track={Uri.EscapeDataString(trackingNumber)}";
-
-            // Kerry doesn't have a public JSON API — would need web scraping or official API partnership
-            _logger.LogInformation("Kerry tracking for {Tracking} — requires official API partnership", trackingNumber);
-            return CreatePendingResult(trackingNumber, "Kerry");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Kerry tracking failed for {Tracking}", trackingNumber);
-            return CreatePendingResult(trackingNumber, "Kerry");
-        }
+        _logger.LogInformation("Kerry tracking for {Tracking} — requires official API partnership", trackingNumber);
+        return Task.FromResult<ShipmentTrackingResult?>(CreatePendingResult(trackingNumber, "Kerry"));
     }
 
     private async Task<ShipmentTrackingResult?> TrackFlashAsync(string trackingNumber)

@@ -31,7 +31,7 @@ public class AuditMiddleware
         var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var email = context.User.FindFirst(ClaimTypes.Email)?.Value;
         var companyId = context.Items.ContainsKey("CompanyId") ? context.Items["CompanyId"] as Guid? : null;
-        var isApiKey = context.Items.ContainsKey("IsApiKeyAuth") && (bool)context.Items["IsApiKeyAuth"];
+        var isApiKey = context.Items.ContainsKey("IsApiKeyAuth") && context.Items["IsApiKeyAuth"] is true;
         var path = context.Request.Path.Value;
 
         await _next(context);

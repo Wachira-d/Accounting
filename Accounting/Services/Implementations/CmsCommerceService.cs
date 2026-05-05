@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -12,11 +13,13 @@ public class CmsCommerceService : ICmsCommerceService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCommerceService> _logger;
+    private readonly string _encryptionKey;
 
-    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger)
+    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger, IConfiguration config)
     {
         _db = db;
         _logger = logger;
+        _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
     }
 
     // ===== Products =====
@@ -188,7 +191,7 @@ public class CmsCommerceService : ICmsCommerceService
             })
             .ToListAsync();
 
-        return new PagedResponse<SiteProductResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<SiteProductResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<bool> RemoveProductAsync(Guid companyId, Guid siteId, Guid siteProductId)
@@ -539,7 +542,7 @@ public class CmsCommerceService : ICmsCommerceService
             })
             .ToListAsync();
 
-        return new PagedResponse<OrderListResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     // ===== Payment Gateways =====
@@ -550,8 +553,8 @@ public class CmsCommerceService : ICmsCommerceService
         {
             CompanyId = companyId, SiteId = siteId, GatewayType = request.GatewayType,
             Name = request.Name, Description = request.Description,
-            ApiKeyEncrypted = request.ApiKey != null ? Helpers.EncryptionHelper.Encrypt(request.ApiKey) : null,
-            SecretKeyEncrypted = request.SecretKey != null ? Helpers.EncryptionHelper.Encrypt(request.SecretKey) : null,
+            ApiKeyEncrypted = request.ApiKey != null ? EncryptionHelper.Encrypt(request.ApiKey, _encryptionKey) : null,
+            SecretKeyEncrypted = request.SecretKey != null ? EncryptionHelper.Encrypt(request.SecretKey, _encryptionKey) : null,
             MerchantId = request.MerchantId,
             PromptPayId = request.PromptPayId, PromptPayQrUrl = request.PromptPayQrUrl,
             BankName = request.BankName, BankAccountNumber = request.BankAccountNumber,
@@ -572,8 +575,8 @@ public class CmsCommerceService : ICmsCommerceService
         gw.Name = request.Name;
         gw.Description = request.Description;
         gw.GatewayType = request.GatewayType;
-        if (request.ApiKey != null) gw.ApiKeyEncrypted = Helpers.EncryptionHelper.Encrypt(request.ApiKey);
-        if (request.SecretKey != null) gw.SecretKeyEncrypted = Helpers.EncryptionHelper.Encrypt(request.SecretKey);
+        if (request.ApiKey != null) gw.ApiKeyEncrypted = EncryptionHelper.Encrypt(request.ApiKey, _encryptionKey);
+        if (request.SecretKey != null) gw.SecretKeyEncrypted = EncryptionHelper.Encrypt(request.SecretKey, _encryptionKey);
         gw.MerchantId = request.MerchantId;
         gw.PromptPayId = request.PromptPayId;
         gw.PromptPayQrUrl = request.PromptPayQrUrl;

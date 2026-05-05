@@ -228,7 +228,7 @@ public class CmsContentService : ICmsContentService
             })
             .ToListAsync();
 
-        return new PagedResponse<PageListResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<PageListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<bool> DeletePageAsync(Guid companyId, Guid siteId, Guid pageId)
@@ -577,7 +577,7 @@ public class CmsContentService : ICmsContentService
             })
             .ToListAsync();
 
-        return new PagedResponse<MediaResponse> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+        return new PagedResponse<MediaResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<MediaResponse> UpdateMediaAsync(Guid companyId, Guid siteId, Guid mediaId, UpdateMediaRequest request, string userId)

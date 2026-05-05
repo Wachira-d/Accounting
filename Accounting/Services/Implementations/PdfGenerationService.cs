@@ -543,7 +543,6 @@ public partial class PdfGenerationService : IPdfGenerationService
         var pages = new List<byte[]>();
         var currentPage = new StringBuilder();
         var y = pageHeight - marginTop;
-        var lineHeight = 14;
         var headerSize = 16;
         var bodySize = 10;
 
