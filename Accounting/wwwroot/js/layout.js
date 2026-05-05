@@ -147,6 +147,7 @@ const Layout = {
       }
     }
     nav.innerHTML = visible.map(item => this._renderNavItem(item)).join('');
+    this._highlightActiveSection();
   },
 
   // ===== Per-user menu visibility (stored in localStorage, scoped by company) =====
@@ -189,15 +190,15 @@ const Layout = {
     if (item.section) {
       const sectionKey = this._sectionI18nKey(item.section);
       const label = sectionKey ? this._t(sectionKey, item.section) : item.section;
-      return `<div class="nav-section">${label}</div>`;
+      return `<div class="nav-section" data-section="${item.section}">${label}</div>`;
     }
     const active = item.id === this.currentPage ? ' active' : '';
     const label = item._i18nKey ? this._t(item._i18nKey, item.label) : item.label;
     const locked = item.feature && this.subscription && !this.hasFeature(item.feature);
     if (locked) {
-      return `<a href="/pages/subscription.html" class="nav-item nav-item-locked${active}" title="${this._t('layout.upgradeLocked', 'Upgrade required').replace('{label}', label)}" style="opacity:0.5"><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:11px">🔒</span></a>`;
+      return `<a href="/pages/subscription.html" class="nav-item nav-item-locked${active}" data-nav-id="${item.id}" title="${this._t('layout.upgradeLocked', 'Upgrade required').replace('{label}', label)}" style="opacity:0.5"><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:11px">🔒</span></a>`;
     }
-    return `<a href="${item.href}" class="nav-item${active}"><span class="icon">${item.icon}</span>${label}</a>`;
+    return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"><span class="icon">${item.icon}</span>${label}</a>`;
   },
 
   _sectionI18nKey(section) {
@@ -465,7 +466,19 @@ const Layout = {
       I18n.renderSwitcher('appLangSwitcher');
       I18n.apply();
     }
+    this._highlightActiveSection();
     this.loadCompanies();
+  },
+
+  _highlightActiveSection() {
+    const activeItem = document.querySelector('.nav-item.active');
+    if (!activeItem) return;
+    let el = activeItem.previousElementSibling;
+    while (el && !el.classList.contains('nav-section')) el = el.previousElementSibling;
+    if (el) el.classList.add('section-active');
+    requestAnimationFrame(() => {
+      activeItem.scrollIntoView({ block: 'center', behavior: 'instant' });
+    });
   },
 
   _companiesLoaded: false,
