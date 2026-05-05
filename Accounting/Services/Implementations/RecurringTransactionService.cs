@@ -292,6 +292,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                 }
             }
 
+            Guid? bankAccountId = root.TryGetProperty("bankAccountId", out var baEl) && baEl.ValueKind == JsonValueKind.String && Guid.TryParse(baEl.GetString(), out var baId) ? baId : null;
+            Guid? expenseCategoryId = root.TryGetProperty("expenseCategoryId", out var ecEl) && ecEl.ValueKind == JsonValueKind.String && Guid.TryParse(ecEl.GetString(), out var ecId) ? ecId : null;
+
             var request = new Models.DTOs.Document.CreateDocumentRequest(
                 DocumentType: docType,
                 DocumentDate: DateTime.UtcNow,
@@ -299,7 +302,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                 ContactId: contactId ?? Guid.Empty,
                 Reference: $"AUTO-{recurring.Name}",
                 Notes: root.TryGetProperty("notes", out var notes) ? notes.GetString() : null,
-                Lines: lines
+                Lines: lines,
+                BankAccountId: bankAccountId,
+                ExpenseCategoryId: expenseCategoryId
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
