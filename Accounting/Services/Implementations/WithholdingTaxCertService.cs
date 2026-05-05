@@ -142,6 +142,20 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         await _db.SaveChangesAsync();
     }
 
+    public async Task DeleteAsync(Guid companyId, Guid certId)
+    {
+        var exists = await _db.WithholdingTaxCerts
+            .IgnoreQueryFilters()
+            .AnyAsync(w => w.Id == certId && w.CompanyId == companyId);
+        if (!exists) throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+
+        await _db.Database.ExecuteSqlRawAsync(
+            @"DELETE FROM ""WithholdingTaxCertLines"" WHERE ""WithholdingTaxCertId"" = {0}", certId);
+        await _db.Database.ExecuteSqlRawAsync(
+            @"DELETE FROM ""WithholdingTaxCerts"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}", certId, companyId);
+        _db.ChangeTracker.Clear();
+    }
+
     public async Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null)
     {
         var query = _db.WithholdingTaxCerts

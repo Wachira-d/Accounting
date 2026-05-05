@@ -60,6 +60,13 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
     }
 
+    [HttpDelete("{certId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid certId)
+    {
+        await _whtService.DeleteAsync(companyId, certId);
+        return Ok(new ApiResponse<string>(true, null, "ลบหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
+    }
+
     [HttpGet("contacts/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<List<WithholdingTaxCertResponse>>>> GetByContact(
         Guid companyId, Guid contactId, [FromQuery] int? year)

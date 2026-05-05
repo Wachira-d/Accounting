@@ -124,6 +124,17 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ลบเอกสารสำเร็จ"));
     }
 
+    /// <summary>
+    /// ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax)
+    /// ลบถาวร ไม่สามารถกู้คืนได้ — เหมือนไม่เคยสร้างมาเลย
+    /// </summary>
+    [HttpDelete("{documentId:guid}/purge")]
+    public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId)
+    {
+        await _documentService.PurgeDocumentAsync(companyId, documentId);
+        return Ok(new ApiResponse<string>(true, null, "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
+    }
+
     [HttpPost("{documentId:guid}/convert/{targetType}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> ConvertDocument(Guid companyId, Guid documentId, DocumentType targetType)
     {

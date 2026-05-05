@@ -76,7 +76,7 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">โปรเจค</label><select class="form-select" id="eProject"></select></div>
-            <div class="form-group"><label class="form-label">ลูกค้า</label><select class="form-select" id="eContact"></select></div>
+            <div class="form-group"><label class="form-label">ลูกค้า</label><input type="hidden" id="eContactId"><input type="text" class="form-input" id="eContact"></div>
           </div>
           <div class="form-group"><label class="form-label">รายละเอียดงาน *</label><textarea class="form-input" id="eDesc" rows="2"></textarea></div>
           <div class="form-group"><label class="form-label"><input type="checkbox" id="eBillable" checked> Billable (เรียกเก็บได้)</label></div>
@@ -157,22 +157,20 @@ const Page = {
     document.getElementById('eDesc').value = '';
     document.getElementById('eBillable').checked = true;
     try {
-      const [pRes, cRes] = await Promise.allSettled([api.getProjects('?pageSize=100'), api.getContacts('?pageSize=200')]);
-      if (pRes.status === 'fulfilled') {
-        const projects = pRes.value.data?.items || pRes.value.data || [];
-        document.getElementById('eProject').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-      }
-      if (cRes.status === 'fulfilled') {
-        const contacts = cRes.value.data?.items || cRes.value.data || [];
-        document.getElementById('eContact').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
-      }
+      const pRes = await api.getProjects('?pageSize=100');
+      const projects = pRes.data?.items || pRes.data || [];
+      document.getElementById('eProject').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
     } catch (err) { /* ignore */ }
+    if (!this._contactAC) {
+      this._contactAC = Layout.contactAutocomplete('eContact', 'eContactId');
+    }
+    if (this._contactAC) this._contactAC.clear();
     Layout.openModal('entryModal');
   },
 
   async saveEntry() {
     const api = Layout.api(); if (!api) return;
-    const data = { date: document.getElementById('eDate').value, hours: parseFloat(document.getElementById('eHours').value) || 0, projectId: document.getElementById('eProject').value || null, contactId: document.getElementById('eContact').value || null, description: document.getElementById('eDesc').value, isBillable: document.getElementById('eBillable').checked };
+    const data = { date: document.getElementById('eDate').value, hours: parseFloat(document.getElementById('eHours').value) || 0, projectId: document.getElementById('eProject').value || null, contactId: document.getElementById('eContactId').value || null, description: document.getElementById('eDesc').value, isBillable: document.getElementById('eBillable').checked };
     if (!data.date || !data.hours || !data.description) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
     try { await api.createTimeEntry(data); Layout.toast('บันทึกสำเร็จ'); Layout.closeModal('entryModal'); this.loadEntries(); } catch (err) { Layout.toast(err.message, 'error'); }
   },

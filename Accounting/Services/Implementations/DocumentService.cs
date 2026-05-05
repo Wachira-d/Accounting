@@ -621,6 +621,130 @@ public class DocumentService : IDocumentService
         }
     }
 
+    public async Task PurgeDocumentAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // 1. Delete JournalLineDimensions → JournalEntryLines → JournalEntries
+            var journalIds = await _db.JournalEntries
+                .IgnoreQueryFilters()
+                .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId)
+                .Select(j => j.Id)
+                .ToListAsync();
+
+            // Also include reversal entries (linked via OriginalEntryId or ReversedByEntryId)
+            if (journalIds.Any())
+            {
+                var reversalIds = await _db.JournalEntries
+                    .IgnoreQueryFilters()
+                    .Where(j => j.CompanyId == companyId &&
+                        (journalIds.Contains(j.OriginalEntryId ?? Guid.Empty) ||
+                         journalIds.Contains(j.ReversedByEntryId ?? Guid.Empty)))
+                    .Select(j => j.Id)
+                    .ToListAsync();
+                journalIds = journalIds.Union(reversalIds).Distinct().ToList();
+            }
+
+            if (journalIds.Any())
+            {
+                var lineIds = await _db.JournalEntryLines
+                    .IgnoreQueryFilters()
+                    .Where(l => journalIds.Contains(l.JournalEntryId))
+                    .Select(l => l.Id)
+                    .ToListAsync();
+
+                if (lineIds.Any())
+                {
+                    await _db.Database.ExecuteSqlRawAsync(
+                        @"DELETE FROM ""JournalLineDimensions"" WHERE ""JournalEntryLineId"" = ANY({0})",
+                        lineIds);
+                    await _db.Database.ExecuteSqlRawAsync(
+                        @"DELETE FROM ""JournalEntryLines"" WHERE ""Id"" = ANY({0})",
+                        lineIds);
+                }
+
+                // Null out references from other tables before deleting journals
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"UPDATE ""BankTransactions"" SET ""MatchedJournalEntryId"" = NULL WHERE ""MatchedJournalEntryId"" = ANY({0})",
+                    journalIds);
+
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""JournalEntries"" WHERE ""Id"" = ANY({0})",
+                    journalIds);
+            }
+
+            // 2. Delete Payments
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""Payments"" WHERE ""DocumentId"" = {0} AND ""CompanyId"" = {1}",
+                documentId, companyId);
+
+            // 3. Delete WHT certificates + lines linked to this document
+            var whtIds = await _db.WithholdingTaxCerts
+                .IgnoreQueryFilters()
+                .Where(w => w.DocumentId == documentId && w.CompanyId == companyId)
+                .Select(w => w.Id)
+                .ToListAsync();
+
+            if (whtIds.Any())
+            {
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""WithholdingTaxCertLines"" WHERE ""WithholdingTaxCertId"" = ANY({0})",
+                    whtIds);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""WithholdingTaxCerts"" WHERE ""Id"" = ANY({0})",
+                    whtIds);
+            }
+
+            // 4. Delete EtaxInvoices
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""EtaxInvoices"" WHERE ""DocumentId"" = {0} AND ""CompanyId"" = {1}",
+                documentId, companyId);
+
+            // 5. Null out DocumentEmailLogs (FK is SetNull but we force-clean)
+            await _db.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""DocumentEmailLogs"" SET ""DocumentId"" = NULL WHERE ""DocumentId"" = {0}",
+                documentId);
+
+            // 6. Delete DocumentApprovals & DocumentSignatures
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""DocumentApprovals"" WHERE ""DocumentId"" = {0}",
+                documentId);
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""DocumentSignatures"" WHERE ""DocumentId"" = {0}",
+                documentId);
+
+            // 7. Null out references from other documents (RelatedDocumentId)
+            await _db.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""Documents"" SET ""RelatedDocumentId"" = NULL WHERE ""RelatedDocumentId"" = {0}",
+                documentId);
+
+            // 8. Delete DocumentLines → Document
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""DocumentLines"" WHERE ""DocumentId"" = {0}",
+                documentId);
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}",
+                documentId, companyId);
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            _db.ChangeTracker.Clear();
+        }
+    }
+
     /// <summary>
     /// ยกเลิกการชำระเงิน — กลับรายการ JE ของการชำระ + คืนยอดให้เอกสารต้นทาง.
     /// ใช้ทั้งจาก endpoint โดยตรง และจาก VoidDocumentAsync (cascade).
