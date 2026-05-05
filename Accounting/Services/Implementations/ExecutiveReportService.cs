@@ -90,7 +90,6 @@ public partial class ExecutiveReportService : IExecutiveReportService
 
     private async Task<decimal> GetCashAndBankAsync(Guid companyId, DateTime asOfDate)
     {
-        // 11 = Current Assets; 111 = Cash; 112 = Bank
         var lines = _db.JournalEntryLines
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
@@ -99,7 +98,7 @@ public partial class ExecutiveReportService : IExecutiveReportService
             .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
             .Where(l => l.JournalEntry.EntryDate <= asOfDate)
             .Where(l => l.Account.AccountType == AccountType.Asset)
-            .Where(l => l.Account.AccountCode.StartsWith("111") || l.Account.AccountCode.StartsWith("112"));
+            .Where(l => l.Account.AccountCode.StartsWith("111"));
         var totals = await lines.GroupBy(_ => 1)
             .Select(g => new { D = g.Sum(x => x.DebitAmount), C = g.Sum(x => x.CreditAmount) })
             .FirstOrDefaultAsync();

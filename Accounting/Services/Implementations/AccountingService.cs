@@ -76,11 +76,12 @@ public class AccountingService : IAccountingService
 
     public async Task<List<AccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId)
     {
-        var prefixes = new[] { "111", "112", "1133", "2123" };
+        var prefixes = new[] { "111", "1133", "2123" };
         var accounts = await _db.ChartOfAccounts
             .Where(a => a.CompanyId == companyId && a.IsActive
-                && a.Level >= 3
-                && prefixes.Any(p => a.AccountCode.StartsWith(p)))
+                && a.Level >= 4
+                && prefixes.Any(p => a.AccountCode.StartsWith(p))
+                && !a.AccountCode.StartsWith("1112"))
             .OrderBy(a => a.AccountCode)
             .ToListAsync();
         return accounts.Select(MapAccountToResponse).ToList();
@@ -1109,7 +1110,7 @@ public class AccountingService : IAccountingService
         var cashAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive && !a.IsDeleted);
         var bankAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("112") && a.IsActive && !a.IsDeleted);
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("1112") && a.IsActive && !a.IsDeleted);
         var arAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive && !a.IsDeleted);
         var apAccount = await _db.ChartOfAccounts
