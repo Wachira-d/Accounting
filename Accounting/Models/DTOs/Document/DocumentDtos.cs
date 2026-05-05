@@ -87,6 +87,7 @@ public record DocumentLineResponse(
     decimal VatAmount,
     decimal WithholdingTaxRate,
     decimal WithholdingTaxAmount,
+    Guid? AccountId = null,
     Guid? ProjectId = null);
 
 public record ContactBrief(Guid Id, string Name, string? TaxId);

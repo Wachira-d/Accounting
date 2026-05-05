@@ -304,7 +304,7 @@ public class AccountingService : IAccountingService
             if (string.IsNullOrWhiteSpace(reference) && !string.IsNullOrWhiteSpace(sourceDocNumber))
                 reference = sourceDocNumber;
 
-            // Re-sync support: void existing posted journals linked to this source document
+            // Re-sync support: reverse existing posted journals linked to this source document
             // before creating a new one. This enables idempotent re-syncs from external systems.
             if (request.ReplaceExistingForSource && sourceDocId.HasValue)
             {
@@ -315,8 +315,9 @@ public class AccountingService : IAccountingService
                     .ToListAsync();
                 foreach (var old in existing)
                 {
-                    old.Status = JournalEntryStatus.Voided;
-                    old.UpdatedAt = DateTime.UtcNow;
+                    await ReverseJournalEntryAsync(companyId, old.Id,
+                        reversalDate: request.EntryDate,
+                        description: $"Re-sync reversal: {old.EntryNumber}");
                 }
             }
 

@@ -901,7 +901,7 @@
             if (journals.length) {
               extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">รายการบัญชี (${journals.length})</h4>
                 <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th></tr></thead>
-                <tbody>${journals.map(j => `<tr><td><a href="/pages/accounting.html?entryId=${j.id}">${j.entryNumber}</a></td><td>${Layout.date(j.entryDate)}</td><td>${j.journalType||'-'}</td><td class="text-right">${Layout.money(j.totalDebit)}</td><td class="text-right">${Layout.money(j.totalCredit)}</td><td>${Layout.statusBadge(j.status)}</td></tr>`).join('')}</tbody></table></div>`;
+                <tbody>${journals.map(j => `<tr><td><a href="/pages/journals.html?entryId=${j.id}">${j.entryNumber}</a></td><td>${Layout.date(j.entryDate)}</td><td>${j.journalType||'-'}</td><td class="text-right">${Layout.money(j.totalDebit)}</td><td class="text-right">${Layout.money(j.totalCredit)}</td><td>${Layout.statusBadge(j.status)}</td></tr>`).join('')}</tbody></table></div>`;
             }
             if (extraSections) {
               document.getElementById('detailContent').innerHTML += extraSections;

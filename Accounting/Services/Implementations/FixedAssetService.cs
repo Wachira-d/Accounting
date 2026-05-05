@@ -151,17 +151,16 @@ public class FixedAssetService : IFixedAssetService
             // Dr: เงินสด/ธนาคาร (ถ้าขายได้เงิน)
             if (request.DisposalAmount > 0)
             {
-                var cashAccount = await FindAccountAsync(companyId, "111");
-                if (cashAccount != null)
+                var cashAccount = await FindAccountAsync(companyId, "111")
+                    ?? throw new InvalidOperationException(
+                        "ไม่พบบัญชีเงินสด/ธนาคาร (111) ในผังบัญชี — ไม่สามารถบันทึกรายการจำหน่ายสินทรัพย์ได้");
+                journalEntry.Lines.Add(new JournalEntryLine
                 {
-                    journalEntry.Lines.Add(new JournalEntryLine
-                    {
-                        AccountId = cashAccount.Id,
-                        DebitAmount = request.DisposalAmount,
-                        CreditAmount = 0,
-                        Description = $"รับเงินจากจำหน่ายสินทรัพย์ - {asset.Name}"
-                    });
-                }
+                    AccountId = cashAccount.Id,
+                    DebitAmount = request.DisposalAmount,
+                    CreditAmount = 0,
+                    Description = $"รับเงินจากจำหน่ายสินทรัพย์ - {asset.Name}"
+                });
             }
 
             // กำไร/ขาดทุนจากการจำหน่าย
@@ -169,42 +168,42 @@ public class FixedAssetService : IFixedAssetService
             {
                 if (gainLoss > 0)
                 {
-                    // Cr: กำไรจากการจำหน่ายสินทรัพย์ (รายได้อื่น 42xx)
                     var gainAccount = await FindAccountAsync(companyId, "43030")
                         ?? await FindAccountAsync(companyId, "430")
-                        ?? await FindAccountAsync(companyId, "43");
-                    if (gainAccount != null)
+                        ?? await FindAccountAsync(companyId, "43")
+                        ?? throw new InvalidOperationException(
+                            "ไม่พบบัญชีกำไรจากการจำหน่ายสินทรัพย์ (43030/430/43) ในผังบัญชี");
+                    journalEntry.Lines.Add(new JournalEntryLine
                     {
-                        journalEntry.Lines.Add(new JournalEntryLine
-                        {
-                            AccountId = gainAccount.Id,
-                            DebitAmount = 0,
-                            CreditAmount = gainLoss,
-                            Description = $"กำไรจากการจำหน่ายสินทรัพย์ - {asset.Name}"
-                        });
-                    }
+                        AccountId = gainAccount.Id,
+                        DebitAmount = 0,
+                        CreditAmount = gainLoss,
+                        Description = $"กำไรจากการจำหน่ายสินทรัพย์ - {asset.Name}"
+                    });
                 }
                 else
                 {
-                    // Dr: ขาดทุนจากการจำหน่ายสินทรัพย์ (ค่าใช้จ่ายอื่น 54xx)
                     var lossAccount = await FindAccountAsync(companyId, "57110")
                         ?? await FindAccountAsync(companyId, "571")
-                        ?? await FindAccountAsync(companyId, "57");
-                    if (lossAccount != null)
+                        ?? await FindAccountAsync(companyId, "57")
+                        ?? throw new InvalidOperationException(
+                            "ไม่พบบัญชีขาดทุนจากการจำหน่ายสินทรัพย์ (57110/571/57) ในผังบัญชี");
+                    journalEntry.Lines.Add(new JournalEntryLine
                     {
-                        journalEntry.Lines.Add(new JournalEntryLine
-                        {
-                            AccountId = lossAccount.Id,
-                            DebitAmount = Math.Abs(gainLoss),
-                            CreditAmount = 0,
-                            Description = $"ขาดทุนจากการจำหน่ายสินทรัพย์ - {asset.Name}"
-                        });
-                    }
+                        AccountId = lossAccount.Id,
+                        DebitAmount = Math.Abs(gainLoss),
+                        CreditAmount = 0,
+                        Description = $"ขาดทุนจากการจำหน่ายสินทรัพย์ - {asset.Name}"
+                    });
                 }
             }
 
             journalEntry.TotalDebit = journalEntry.Lines.Sum(l => l.DebitAmount);
             journalEntry.TotalCredit = journalEntry.Lines.Sum(l => l.CreditAmount);
+
+            if (Math.Abs(journalEntry.TotalDebit - journalEntry.TotalCredit) > 0.01m)
+                throw new InvalidOperationException(
+                    $"รายการบัญชีจำหน่ายสินทรัพย์ไม่สมดุล: Dr={journalEntry.TotalDebit:N2} Cr={journalEntry.TotalCredit:N2}");
 
             _db.JournalEntries.Add(journalEntry);
         }
@@ -360,7 +359,8 @@ public class FixedAssetService : IFixedAssetService
                     asset.NetBookValue * (1.0m / asset.UsefulLifeMonths),
                 DepreciationMethod.DoubleDecliningBalance =>
                     asset.NetBookValue * (2.0m / asset.UsefulLifeMonths),
-                _ => 0
+                _ => throw new NotSupportedException(
+                    $"วิธีคิดค่าเสื่อมราคา '{asset.DepreciationMethod}' ไม่รองรับ สำหรับสินทรัพย์ '{asset.Name}'")
             };
 
             // Don't depreciate below salvage value
@@ -574,7 +574,8 @@ public class FixedAssetService : IFixedAssetService
                     nbv * (1.0m / asset.UsefulLifeMonths),
                 DepreciationMethod.DoubleDecliningBalance =>
                     nbv * (2.0m / asset.UsefulLifeMonths),
-                _ => 0
+                _ => throw new NotSupportedException(
+                    $"วิธีคิดค่าเสื่อมราคา '{asset.DepreciationMethod}' ไม่รองรับ")
             };
 
             if (nbv - depAmount < asset.SalvageValue)

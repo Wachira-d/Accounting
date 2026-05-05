@@ -123,6 +123,9 @@
         Layout.setTitle('ผู้ติดต่อ');
         this._attachDbd();
         await this.load();
+        const params = new URLSearchParams(window.location.search);
+        const openId = params.get('id');
+        if (openId) this.openEdit(openId);
       },
       setFilter(type, el) {
         this.filterType = type; this.page = 1;

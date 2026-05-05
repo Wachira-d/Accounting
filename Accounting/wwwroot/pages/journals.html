@@ -191,12 +191,15 @@
         } catch(e) {}
         this.renderHeaderActions();
         await this.loadDimensionFilters();
-        const urlType = new URLSearchParams(window.location.search).get('type');
+        const params = new URLSearchParams(window.location.search);
+        const urlType = params.get('type');
         if (urlType) this.currentType = urlType;
         this.updateTabs();
         await this.load();
         this.loadCounts();
         this.checkDraftCount();
+        const entryId = params.get('entryId');
+        if (entryId) this.detail(entryId);
       },
       renderHeaderActions() {
         const holder = document.getElementById('pageActions');

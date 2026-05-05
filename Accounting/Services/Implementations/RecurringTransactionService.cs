@@ -508,10 +508,14 @@ public class RecurringTransactionService : IRecurringTransactionService
             using var doc = JsonDocument.Parse(templateData);
             if (doc.RootElement.TryGetProperty("lines", out var lines) && lines.GetArrayLength() > 0)
             {
-                var line = lines[0];
-                var qty = line.TryGetProperty("quantity", out var q) ? q.GetDecimal() : 1m;
-                var price = line.TryGetProperty("unitPrice", out var p) ? p.GetDecimal() : 0m;
-                return qty * price;
+                decimal total = 0;
+                foreach (var line in lines.EnumerateArray())
+                {
+                    var qty = line.TryGetProperty("quantity", out var q) ? q.GetDecimal() : 1m;
+                    var price = line.TryGetProperty("unitPrice", out var p) ? p.GetDecimal() : 0m;
+                    total += qty * price;
+                }
+                return total;
             }
         }
         catch { }

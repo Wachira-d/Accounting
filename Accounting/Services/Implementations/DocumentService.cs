@@ -417,6 +417,14 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
 
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId &&
+            f.StartDate <= doc.DocumentDate &&
+            f.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"ไม่สามารถอนุมัติเอกสารที่มีวันที่ในงวด {period.Name} ได้ เนื่องจากงวดดังกล่าวมีสถานะ {period.Status}");
+
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
@@ -2191,6 +2199,7 @@ public class DocumentService : IDocumentService
             l.Id, l.LineOrder, l.Description, l.Quantity, l.Unit,
             l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
             l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount,
+            AccountId: l.AccountId,
             ProjectId: l.ProjectId)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,

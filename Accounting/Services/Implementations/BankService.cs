@@ -592,7 +592,7 @@ public partial class BankService : IBankService
                 return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts);
             }
 
-            if (lastBalance.HasValue && lastBalance.Value != 0)
+            if (imported > 0 && lastBalance.HasValue)
                 account.CurrentBalance = lastBalance.Value;
 
             await _db.SaveChangesAsync();

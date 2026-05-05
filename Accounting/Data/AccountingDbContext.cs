@@ -669,6 +669,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<RecurringTransaction>(e =>
         {
             e.Property(r => r.Name).HasMaxLength(256);
+            e.HasIndex(r => new { r.CompanyId, r.Status, r.NextRunDate })
+                .HasDatabaseName("IX_RecurringTransactions_CompanyId_Status_NextRunDate");
             e.HasQueryFilter(r => !r.IsDeleted);
         });
 
