@@ -109,7 +109,8 @@
               </select>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
-              <select class="form-select" id="fContact" onchange="Page.onContactChange()"><option value="">เลือกผู้ติดต่อ</option></select>
+              <input type="hidden" id="fContactId">
+              <input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี...">
             </div>
           </div>
           <div class="form-row">
@@ -405,8 +406,8 @@
        * previously generated template (so editing isn't clobbered).
        */
       onContactChange() {
-        const contactId = document.getElementById('fContact').value;
-        const c = this.contacts.find(x => x.id === contactId);
+        const contactId = document.getElementById('fContactId').value;
+        const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
         // Fill recipient email if empty (don't clobber user-entered address)
         if (c?.email) {
           const toEl = document.getElementById('fEmailTo');
@@ -450,10 +451,10 @@
        * contain the auto-generated text — preserves any manual edits.
        */
       refreshEmailTemplate() {
-        const contactId = document.getElementById('fContact').value;
+        const contactId = document.getElementById('fContactId').value;
         const docType = document.getElementById('fDocType').value;
         const dateStr = document.getElementById('fDate').value;
-        const c = this.contacts.find(x => x.id === contactId);
+        const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
         const docTypeLabel = Layout.docTypeLabel(docType) || 'เอกสาร';
         const customerName = c?.name || 'ลูกค้า';
         const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
@@ -522,9 +523,11 @@
         } catch(e) { Layout.toast(e.message, 'error'); }
       },
       populateContacts() {
-        const sel = document.getElementById('fContact');
-        sel.innerHTML = '<option value="">เลือกผู้ติดต่อ</option>' +
-          this.contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}${c.taxId ? ` (${Layout.esc(c.taxId)})` : ''}</option>`).join('');
+        if (!this._contactAC) {
+          this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId', {
+            onSelect: (c) => { this._selectedContact = c; this.onContactChange(); }
+          });
+        }
       },
       populateProjects() {
         const projects = this.projects || [];
@@ -687,7 +690,7 @@
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
-        document.getElementById('fContact').value = '';
+        if (this._contactAC) this._contactAC.clear();
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
@@ -715,7 +718,7 @@
           document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
           document.getElementById('fDocType').value = d.documentType;
           document.getElementById('fDocType').disabled = true;
-          document.getElementById('fContact').value = d.contactId || d.contact?.id || '';
+          if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
           document.getElementById('fRef').value = d.reference || '';
@@ -764,7 +767,7 @@
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           });
         });
-        const contactId = document.getElementById('fContact').value;
+        const contactId = document.getElementById('fContactId').value;
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }

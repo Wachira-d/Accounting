@@ -94,7 +94,7 @@
               </select>
             </div>
             <div class="form-group"><label class="form-label">ผู้จำหน่าย *</label>
-              <select class="form-select" id="fContact"><option value="">เลือกผู้จำหน่าย</option></select>
+              <input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี...">
             </div>
           </div>
           <div class="form-row">
@@ -206,7 +206,7 @@
         const pa = document.getElementById('pageActions');
         if (pa && window.ExportUtil) pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
         const api = Layout.api(); if (!api) return;
-        try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
+        this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
         await this.load();
         this.loadStats();
       },
@@ -289,11 +289,7 @@
           document.getElementById('statUnpaid').textContent = '฿' + Layout.money(unpaid.reduce((s,d) => s + d.balanceDue, 0));
         } catch(e) {}
       },
-      populateContacts() {
-        const sel = document.getElementById('fContact');
-        sel.innerHTML = '<option value="">เลือกผู้จำหน่าย</option>' +
-          this.contacts.map(c => `<option value="${c.id}">${Layout.esc(c.name)}${c.taxId ? ` (${Layout.esc(c.taxId)})` : ''}</option>`).join('');
-      },
+      populateContacts() {},
       setType(el) {
         document.querySelectorAll('#docTabs .tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -342,7 +338,7 @@
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
-        document.getElementById('fContact').value = '';
+        if (this._contactAC) this._contactAC.clear();
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
         this.addLine();
@@ -362,7 +358,7 @@
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           });
         });
-        const contactId = document.getElementById('fContact').value;
+        const contactId = document.getElementById('fContactId').value;
         if (!contactId) { Layout.toast('กรุณาเลือกผู้จำหน่าย', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }

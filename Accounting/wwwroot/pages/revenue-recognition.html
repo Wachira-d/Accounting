@@ -38,7 +38,7 @@
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group"><label class="form-label">เลขที่สัญญา *</label><input type="text" class="form-input" id="fNumber"></div>
-            <div class="form-group"><label class="form-label">ลูกค้า *</label><select class="form-select" id="fContact"></select></div>
+            <div class="form-group"><label class="form-label">ลูกค้า *</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
@@ -112,19 +112,17 @@ const Page = {
   },
 
   async openCreate() {
-    const api = Layout.api(); if (!api) return;
-    try {
-      const res = await api.getContacts('?pageSize=200');
-      const items = res.data?.items || res.data || [];
-      document.getElementById('fContact').innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
-    } catch (err) { /* ignore */ }
+    if (!this._contactAC) {
+      this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+    }
+    this._contactAC.clear();
     ['fNumber','fStart','fEnd','fAmount','fDesc'].forEach(id => document.getElementById(id).value = '');
     Layout.openModal('formModal');
   },
 
   async save() {
     const api = Layout.api(); if (!api) return;
-    const data = { contractNumber: document.getElementById('fNumber').value, contactId: document.getElementById('fContact').value, startDate: document.getElementById('fStart').value, endDate: document.getElementById('fEnd').value, totalAmount: parseFloat(document.getElementById('fAmount').value) || 0, recognitionMethod: document.getElementById('fMethod').value, description: document.getElementById('fDesc').value };
+    const data = { contractNumber: document.getElementById('fNumber').value, contactId: document.getElementById('fContactId').value, startDate: document.getElementById('fStart').value, endDate: document.getElementById('fEnd').value, totalAmount: parseFloat(document.getElementById('fAmount').value) || 0, recognitionMethod: document.getElementById('fMethod').value, description: document.getElementById('fDesc').value };
     if (!data.contractNumber || !data.totalAmount) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
     try { await api.createRevenueContract(data); Layout.toast('สร้างสัญญาสำเร็จ'); Layout.closeModal('formModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
   },

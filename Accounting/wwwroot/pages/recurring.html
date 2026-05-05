@@ -65,7 +65,7 @@
             <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEndDate"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><select class="form-select" id="fContact"><option value="">-- เลือก --</option></select></div>
+            <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
             <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
           </div>
           <div class="form-row">
@@ -190,18 +190,16 @@ const Page = {
     document.getElementById('fAutoApprove').checked = false;
     document.getElementById('fAutoWht').checked = true;
     await this.loadFormData();
+    if (this._contactAC) this._contactAC.clear();
     this.onDocTypeChange();
     Layout.openModal('formModal');
   },
 
   async loadFormData() {
     const api = Layout.api(); if (!api) return;
-    try {
-      const res = await api.getContacts('?pageSize=200');
-      const items = res.data?.items || res.data || [];
-      const sel = document.getElementById('fContact');
-      sel.innerHTML = '<option value="">-- เลือก --</option>' + items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
-    } catch (err) { /* ignore */ }
+    if (!this._contactAC) {
+      this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+    }
     try {
       const [baRes, pcRes] = await Promise.all([
         api.getBankAccounts().catch(() => ({ data: [] })),
@@ -282,7 +280,7 @@ const Page = {
       frequency: document.getElementById('fFrequency').value,
       startDate,
       endDate: document.getElementById('fEndDate').value || null,
-      contactId: document.getElementById('fContact').value || null,
+      contactId: document.getElementById('fContactId').value || null,
       templateData,
       autoApprove: document.getElementById('fAutoApprove').checked,
       notifyBeforeRun: true,
@@ -379,7 +377,7 @@ const Page = {
       } catch {}
 
       await this.loadFormData();
-      if (r.contactId) document.getElementById('fContact').value = r.contactId;
+      if (r.contactId && this._contactAC) this._contactAC.setValue(r.contactId, r.contactName || '');
       if (savedPaymentChannelVal) document.getElementById('fPaymentChannel').value = savedPaymentChannelVal;
       if (savedExpenseCategoryId) document.getElementById('fExpenseCategory').value = savedExpenseCategoryId;
       this.onDocTypeChange();

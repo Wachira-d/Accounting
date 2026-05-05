@@ -1215,4 +1215,61 @@ const Layout = {
     win.document.close();
     win.onload = () => { win.print(); win.close(); };
   },
+
+  contactAutocomplete(inputId, hiddenId, { placeholder = 'พิมพ์ชื่อหรือเลขผู้เสียภาษี...', onSelect } = {}) {
+    const input = document.getElementById(inputId);
+    const hidden = document.getElementById(hiddenId);
+    if (!input || !hidden) return;
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('placeholder', placeholder);
+    let dropdown = input.parentElement.querySelector('.ac-dropdown');
+    if (!dropdown) {
+      dropdown = document.createElement('div');
+      dropdown.className = 'ac-dropdown';
+      dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:999;background:#fff;border:1px solid var(--gray-200);border-radius:8px;max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12);display:none';
+      input.parentElement.style.position = 'relative';
+      input.parentElement.appendChild(dropdown);
+    }
+    let contacts = [], debounce = null;
+    const search = async (q) => {
+      const api = Layout.api(); if (!api) return;
+      try {
+        const res = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
+        contacts = res.data?.items || res.data || [];
+      } catch { contacts = []; }
+      if (!contacts.length) { dropdown.style.display = 'none'; return; }
+      dropdown.innerHTML = contacts.map(c => `<div class="ac-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100);font-size:13px">
+        <div class="font-medium">${Layout.esc(c.name)}</div>
+        <div class="text-xs text-gray-500">${Layout.esc(c.taxId || '')} ${c.isCustomer ? '(ลูกค้า)' : ''} ${c.isSupplier ? '(ผู้ขาย)' : ''}</div>
+      </div>`).join('');
+      dropdown.style.display = 'block';
+      dropdown.querySelectorAll('.ac-item').forEach(item => {
+        item.onmousedown = (e) => {
+          e.preventDefault();
+          const id = item.dataset.id;
+          const c = contacts.find(x => x.id === id);
+          hidden.value = id;
+          input.value = c ? c.name : '';
+          dropdown.style.display = 'none';
+          if (onSelect) onSelect(c);
+        };
+        item.onmouseenter = () => item.style.background = 'var(--gray-50)';
+        item.onmouseleave = () => item.style.background = '';
+      });
+    };
+    input.addEventListener('input', () => {
+      hidden.value = '';
+      clearTimeout(debounce);
+      const q = input.value.trim();
+      if (q.length < 1) { dropdown.style.display = 'none'; return; }
+      debounce = setTimeout(() => search(q), 250);
+    });
+    input.addEventListener('focus', () => { if (input.value.trim().length >= 1) search(input.value.trim()); });
+    input.addEventListener('blur', () => { setTimeout(() => dropdown.style.display = 'none', 200); });
+    return {
+      setValue(id, name) { hidden.value = id || ''; input.value = name || ''; },
+      getValue() { return hidden.value; },
+      clear() { hidden.value = ''; input.value = ''; }
+    };
+  },
 };

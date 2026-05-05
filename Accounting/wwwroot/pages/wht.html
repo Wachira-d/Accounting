@@ -59,7 +59,7 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">ออกหนังสือรับรองหัก ณ ที่จ่าย</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-group"><label class="form-label">ผู้ถูกหักภาษี (ผู้ติดต่อ) *</label>
-            <select class="form-select" id="fContact"><option value="">เลือกผู้ติดต่อ</option></select>
+            <input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact">
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">แบบ *</label>
@@ -158,13 +158,7 @@
       async init() {
         if (!Layout.init('wht')) return;
         Layout.setTitle('หนังสือรับรองหัก ณ ที่จ่าย');
-        const api = Layout.api(); if (!api) return;
-        try {
-          const r = await api.getContacts('?pageSize=500');
-          this.contacts = r.data?.items || r.data || [];
-          const sel = document.getElementById('fContact');
-          this.contacts.forEach(c => { sel.innerHTML += `<option value="${c.id}">${Layout.esc(c.name)} ${c.taxId ? '('+Layout.esc(c.taxId)+')' : ''}</option>`; });
-        } catch(e){}
+        this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
         await this.load();
       },
       async load() {
@@ -568,10 +562,11 @@
         Layout.openModal('pdfModal');
       },
       addLine() {
+        const today = new Date().toISOString().slice(0, 10);
         const row = document.createElement('tr');
         row.innerHTML = `
           <td><select class="form-select" data-f="code" style="font-size:12px"><option value="1">40(1) เงินเดือน</option><option value="2">40(2) รับจ้าง</option><option value="3">40(3) ค่าลิขสิทธิ์</option><option value="5">40(5) ค่าเช่า</option><option value="6">40(6) วิชาชีพ</option><option value="8">40(8) อื่นๆ</option></select></td>
-          <td><input type="date" class="form-input" data-f="date" style="font-size:12px"></td>
+          <td><input type="date" class="form-input" data-f="date" value="${today}" style="font-size:12px"></td>
           <td><input type="number" class="form-input text-right" data-f="income" step="0.01" style="font-size:12px"></td>
           <td><input type="number" class="form-input text-right" data-f="rate" value="3" step="0.01" style="font-size:12px;width:60px"></td>
           <td><input type="number" class="form-input text-right" data-f="tax" step="0.01" style="font-size:12px" readonly></td>
@@ -587,7 +582,7 @@
       },
       openCreate() {
         document.getElementById('formTitle').textContent = 'ออกหนังสือรับรองหัก ณ ที่จ่าย';
-        document.getElementById('fContact').value = '';
+        if (this._contactAC) this._contactAC.clear();
         document.getElementById('fFormType').value = 'WithholdingTax3';
         document.getElementById('fCertType').value = 'Withhold';
         document.getElementById('fYear').value = new Date().getFullYear();
@@ -685,19 +680,26 @@
       },
       async save() {
         const api = Layout.api(); if (!api) return;
-        const contactId = document.getElementById('fContact').value;
+        const contactId = document.getElementById('fContactId').value;
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         const lines = [];
+        let valid = true;
         document.querySelectorAll('#linesBody tr').forEach(row => {
+          const date = row.querySelector('[data-f="date"]').value;
+          const income = parseFloat(row.querySelector('[data-f="income"]').value) || 0;
+          if (!date) { valid = false; }
+          if (income <= 0) { valid = false; }
           lines.push({
             incomeTypeCode: row.querySelector('[data-f="code"]').value,
             incomeDescription: '',
-            paymentDate: row.querySelector('[data-f="date"]').value,
-            incomeAmount: parseFloat(row.querySelector('[data-f="income"]').value) || 0,
+            paymentDate: date || new Date().toISOString().slice(0, 10),
+            incomeAmount: income,
             taxRate: parseFloat(row.querySelector('[data-f="rate"]').value) || 0,
             taxAmount: parseFloat(row.querySelector('[data-f="tax"]').value) || 0,
           });
         });
+        if (!valid) { Layout.toast('กรุณากรอกวันจ่ายและยอดเงินได้ให้ครบ', 'error'); return; }
+        if (lines.length === 0) { Layout.toast('กรุณาเพิ่มรายการเงินได้', 'error'); return; }
         try {
           await api.createWhtCert({
             payeeContactId: contactId,
