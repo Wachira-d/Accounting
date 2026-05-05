@@ -585,9 +585,11 @@
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
         const projectId = document.getElementById('projectFilter')?.value || '';
+        const urlParams = new URLSearchParams(window.location.search);
+        const contactIdFilter = this._contactIdFilter || urlParams.get('contactId') || '';
+        if (contactIdFilter) this._contactIdFilter = contactIdFilter;
         let q = `?page=${this.page}&pageSize=20`;
         if (this.docType) q += `&type=${this.docType}`;
-        // Filter by side (revenue/expense) if no specific type selected
         if (!this.docType && this.side) {
           const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
           types.forEach(t => q += `&types=${t}`);
@@ -595,6 +597,7 @@
         if (status) q += `&status=${status}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
+        if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
         try {
           const res = await api.getDocuments(q);
           const data = res.data;
@@ -869,7 +872,7 @@
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
               <div class="text-sm">ยอดรวมก่อน VAT: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
-              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong></div>
+              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong>${d.withholdingTaxAmount > 0 ? ` <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a>` : ''}</div>
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>

@@ -1513,11 +1513,42 @@ public class AccountingService : IAccountingService
         if (period.Status != FiscalPeriodStatus.Open)
             throw new InvalidOperationException("สามารถปิดได้เฉพาะงวดบัญชีที่เปิดอยู่เท่านั้น");
 
-        // Check for draft entries
-        var hasDrafts = await _db.JournalEntries.AnyAsync(j =>
+        // ===== Pre-closing checklist =====
+        var issues = new List<string>();
+
+        // 1. Draft journal entries
+        var draftCount = await _db.JournalEntries.CountAsync(j =>
             j.FiscalPeriodId == periodId && j.Status == JournalEntryStatus.Draft);
-        if (hasDrafts)
-            throw new InvalidOperationException("ยังมีใบสำคัญที่เป็น Draft อยู่ ต้อง post หรือ void ก่อน");
+        if (draftCount > 0)
+            issues.Add($"ยังมีใบสำคั��� Draft {draftCount} รายการ (ต้อง Post หรือ Void ก่อน)");
+
+        // 2. Draft documents in this period
+        var draftDocs = await _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId && !d.IsDeleted
+            && d.DocumentDate >= period.StartDate && d.DocumentDate <= period.EndDate
+            && d.Status == DocumentStatus.Draft);
+        if (draftDocs > 0)
+            issues.Add($"ยังมีเอกสาร Draft {draftDocs} ฉบับในงวดนี้");
+
+        // 3. Unbalanced journal entries (Dr != Cr)
+        var unbalanced = await _db.JournalEntries.CountAsync(j =>
+            j.FiscalPeriodId == periodId
+            && j.Status == JournalEntryStatus.Posted
+            && Math.Abs(j.TotalDebit - j.TotalCredit) > 0.01m);
+        if (unbalanced > 0)
+            issues.Add($"พบใบสำคัญไม่สมดุล (เดบิต≠เครดิต) {unbalanced} รายการ");
+
+        // 4. Unreconciled bank transactions
+        var unreconciledBank = await _db.BankTransactions.CountAsync(t =>
+            t.CompanyId == companyId
+            && t.TransactionDate >= period.StartDate && t.TransactionDate <= period.EndDate
+            && t.ReconciliationStatus == ReconciliationStatus.Unmatched);
+        if (unreconciledBank > 0)
+            issues.Add($"ยังมีรายการธนาคารที่ยังไม่กระทบยอด {unreconciledBank} รายการ (แนะนำให้กระทบยอดก่อน)");
+
+        if (issues.Count > 0)
+            throw new InvalidOperationException(
+                "ไม่สามารถปิดงวดได้ — พบปัญหาที่ต้องแก้ไข:\n• " + string.Join("\n• ", issues));
 
         period.Status = FiscalPeriodStatus.Closed;
         await _db.SaveChangesAsync();

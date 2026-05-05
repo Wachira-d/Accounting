@@ -85,6 +85,15 @@ public class DocumentService : IDocumentService
 
             if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
                 throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
+
+            if (line.AccountId.HasValue)
+            {
+                var acctExists = await _db.ChartOfAccounts.AnyAsync(a =>
+                    a.Id == line.AccountId.Value && a.CompanyId == companyId && a.IsActive);
+                if (!acctExists)
+                    throw new InvalidOperationException(
+                        $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
+            }
         }
 
         var prefix = request.DocumentType switch
@@ -382,42 +391,34 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
 
-        // Idempotency guard — if a Posted JE already exists for this document,
-        // don't create a duplicate. Per Thai accounting standard, voiding requires
-        // an explicit reversal entry (handled in VoidDocumentAsync), not a re-post.
-        var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
-            j.SourceDocumentId == documentId
-            && j.CompanyId == companyId
-            && j.Status == JournalEntryStatus.Posted);
-
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // Idempotency guard INSIDE transaction to prevent race condition
+                var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
+                    j.SourceDocumentId == documentId
+                    && j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted);
+
                 doc.Status = DocumentStatus.Approved;
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
-                // Auto-post to journal for document types that affect accounting.
-                // Operational-only docs (Quotation, DeliveryNote, BillingNote, PR, PO)
-                // are intentionally excluded — they don't create accounting entries.
                 var autoPostTypes = new[] {
-                    DocumentType.Invoice, DocumentType.TaxInvoice,          // ใบแจ้งหนี้/ใบกำกับภาษี → SV
-                    DocumentType.DebitNote, DocumentType.CreditNote,        // ใบเพิ่มหนี้/ใบลดหนี้ → SV (adjustment)
-                    DocumentType.PurchaseInvoice, DocumentType.Expense,     // ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย → UV
-                    DocumentType.Receipt, DocumentType.ReceiptVoucher,      // ใบเสร็จ/ใบสำคัญรับ → RV
-                    DocumentType.PaymentVoucher,                            // ใบสำคัญจ่าย → PV
+                    DocumentType.Invoice, DocumentType.TaxInvoice,
+                    DocumentType.DebitNote, DocumentType.CreditNote,
+                    DocumentType.PurchaseInvoice, DocumentType.Expense,
+                    DocumentType.Receipt, DocumentType.ReceiptVoucher,
+                    DocumentType.PaymentVoucher,
                 };
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
-                // Apply cross-document linkage: when a Receipt/CN/PaymentVoucher is
-                // approved with a RelatedDocumentId, the source document's balance
-                // must be updated so AR/AP aging and payment-status reports are correct.
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
 
                 await _db.SaveChangesAsync();
@@ -954,6 +955,18 @@ public class DocumentService : IDocumentService
                 description: $"{reason} - {payment.PaymentNumber}");
         }
 
+        // Reverse bank balance
+        if (payment.BankAccountId.HasValue)
+        {
+            var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
+                or DocumentType.Receipt or DocumentType.ReceiptVoucher
+                or DocumentType.DebitNote or DocumentType.BillingNote;
+            var delta = isInflow ? -payment.Amount : payment.Amount;
+            await _db.BankAccounts
+                .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
+        }
+
         // Soft-delete the payment record (keep for audit; mirrors how Reverse keeps original JE)
         payment.IsDeleted = true;
         payment.UpdatedAt = DateTime.UtcNow;
@@ -996,6 +1009,10 @@ public class DocumentService : IDocumentService
         var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
         var isDebitNote = doc.DocumentType == DocumentType.DebitNote;
         if (!isSettlement && !isCreditNote && !isDebitNote) return;
+
+        // Lock source row to prevent concurrent balance modifications (FOR UPDATE)
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} FOR UPDATE", doc.RelatedDocumentId.Value);
 
         var source = await _db.Documents.FirstOrDefaultAsync(d =>
             d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
@@ -1318,12 +1335,15 @@ public class DocumentService : IDocumentService
     {
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
-        var hasDocuments = await _db.Documents.AnyAsync(d => d.ContactId == contactId && d.CompanyId == companyId);
-        if (hasDocuments)
+        var docCount = await _db.Documents.CountAsync(d => d.ContactId == contactId && d.CompanyId == companyId && !d.IsDeleted);
+        var whtCount = await _db.WithholdingTaxCerts.CountAsync(w => w.ContactId == contactId && w.CompanyId == companyId && !w.IsDeleted);
+        if (docCount > 0 || whtCount > 0)
         {
             contact.IsActive = false;
             await _db.SaveChangesAsync();
-            return;
+            throw new InvalidOperationException(
+                $"ผู้ติดต่อมีเอกสาร {docCount} รายการ และใบหัก ณ ที่จ่าย {whtCount} รายการ — " +
+                $"ระบบปิดการใช้งานแทนการลบเพื่อรักษาข้อมูลทางบัญชี");
         }
         _db.Contacts.Remove(contact);
         await _db.SaveChangesAsync();
@@ -1432,6 +1452,18 @@ public class DocumentService : IDocumentService
             await CreatePaymentJournalAsync(companyId, doc, payment, createdBy);
 
             await _db.SaveChangesAsync();
+
+            // Sync BankAccount.CurrentBalance
+            if (payment.BankAccountId.HasValue)
+            {
+                var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
+                    or DocumentType.Receipt or DocumentType.ReceiptVoucher
+                    or DocumentType.DebitNote or DocumentType.BillingNote;
+                var delta = isInflow ? payment.Amount : -payment.Amount;
+                await _db.BankAccounts
+                    .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
+            }
 
             // Auto-generate WHT cert for purchase documents with WHT on first payment
             if (doc.WithholdingTaxAmount > 0
@@ -1557,6 +1589,17 @@ public class DocumentService : IDocumentService
             moneyAccount = bankAcc?.LinkedAccount;
         }
         moneyAccount ??= await FindAccountAsync(companyId, "111");
+
+        // Validate critical accounts exist — fail fast with clear error
+        var isSalesDoc = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
+            or DocumentType.DebitNote or DocumentType.CreditNote
+            or DocumentType.Receipt or DocumentType.ReceiptVoucher;
+        if (isSalesDoc && defaultRevenue == null)
+            throw new InvalidOperationException(
+                "ไม่พบบัญชีรายได้ (41000/42000) ในผังบัญชี — กรุณาเพิ่มบัญชีรายได้ก่อนอนุมัติเอกสารขาย");
+        if (!isSalesDoc && defaultExpense == null)
+            throw new InvalidOperationException(
+                "ไม่พบบัญชีค่าใช้จ่าย (51110/52110) ในผังบัญชี — กรุณาเพิ่มบัญชีค่าใช้จ่ายก่อนอนุมัติเอกสารซื้อ");
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
         JournalType journalType;
@@ -1781,7 +1824,23 @@ public class DocumentService : IDocumentService
                 var whtAccount = await FindAccountAsync(companyId, "21916")
                     ?? await FindAccountAsync(companyId, "21917");
                 if (whtAccount != null)
-                    AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                {
+                    // Group WHT by rate for clear audit trail
+                    var whtByRate = doc.Lines
+                        .Where(l => l.WithholdingTaxAmount > 0)
+                        .GroupBy(l => l.WithholdingTaxRate)
+                        .Select(g => new { Rate = g.Key, Amount = g.Sum(l => l.WithholdingTaxAmount) })
+                        .ToList();
+                    if (whtByRate.Count > 1)
+                    {
+                        foreach (var g in whtByRate)
+                            AddLine(whtAccount.Id, 0, g.Amount, $"ภาษีหัก ณ ที่จ่าย {g.Rate}%");
+                    }
+                    else
+                    {
+                        AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                    }
+                }
             }
         }
         // ============================================================
@@ -2029,8 +2088,10 @@ public class DocumentService : IDocumentService
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId &&
             f.StartDate <= payment.PaymentDate &&
-            f.EndDate >= payment.PaymentDate &&
-            f.Status == FiscalPeriodStatus.Open);
+            f.EndDate >= payment.PaymentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"ไม่สามารถบันทึกการชำระเงินในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว");
 
         var prefix = isRevenue ? "RV" : "PV";
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, prefix);

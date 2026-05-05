@@ -1314,4 +1314,53 @@ const Layout = {
       clear() { hidden.value = ''; input.value = ''; }
     };
   },
+
+  // ===== Form Validation Utilities =====
+  validateTaxId(taxId) {
+    if (!taxId) return true;
+    const digits = taxId.replace(/\D/g, '');
+    if (digits.length !== 13) return false;
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += parseInt(digits[i]) * (13 - i);
+    const check = (11 - (sum % 11)) % 10;
+    return check === parseInt(digits[12]);
+  },
+
+  validatePhone(phone) {
+    if (!phone) return true;
+    return /^0[0-9]{8,9}$/.test(phone.replace(/[\s-]/g, ''));
+  },
+
+  validatePostalCode(code) {
+    if (!code) return true;
+    return /^[0-9]{5}$/.test(code.trim());
+  },
+
+  validateForm(rules) {
+    for (const { field, value, label, checks } of rules) {
+      for (const check of checks) {
+        if (check === 'required' && !value?.trim()) {
+          this.toast(`กรุณากรอก${label}`, 'error');
+          document.getElementById(field)?.focus();
+          return false;
+        }
+        if (check === 'taxId' && !this.validateTaxId(value)) {
+          this.toast(`${label}ไม่ถูกต้อง (ต้องเป็นเลข 13 หลักตามรูปแบบกรมสรรพากร)`, 'error');
+          document.getElementById(field)?.focus();
+          return false;
+        }
+        if (check === 'phone' && !this.validatePhone(value)) {
+          this.toast(`${label}ไม่ถูกต้อง (รูปแบบ: 0XXXXXXXXX)`, 'error');
+          document.getElementById(field)?.focus();
+          return false;
+        }
+        if (check === 'postalCode' && !this.validatePostalCode(value)) {
+          this.toast(`${label}ต้องเป็นเลข 5 หลัก`, 'error');
+          document.getElementById(field)?.focus();
+          return false;
+        }
+      }
+    }
+    return true;
+  },
 };

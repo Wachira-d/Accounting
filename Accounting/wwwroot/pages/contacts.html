@@ -152,7 +152,7 @@
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <a class="btn btn-sm btn-ghost" href="/pages/documents.html?contactId=${c.id}" title="ดูเอกสารทั้งหมดของผู้ติดต่อ">เอกสาร</a> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -303,9 +303,22 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('editId').value;
         const ct = parseInt(document.getElementById('fContactType').value);
+        const name = document.getElementById('fName').value;
+        const taxId = document.getElementById('fTaxId').value || null;
+        const phone = document.getElementById('fPhone').value || null;
+        const postalCode = document.getElementById('fPostalCode').value || null;
+
+        const valid = Layout.validateForm([
+          { field: 'fName', value: name, label: 'ชื่อผู้ติดต่อ', checks: ['required'] },
+          { field: 'fTaxId', value: taxId, label: 'เลขประจำตัวผู้เสียภาษี', checks: ['taxId'] },
+          { field: 'fPhone', value: phone, label: 'เบอร์โทรศัพท์', checks: ['phone'] },
+          { field: 'fPostalCode', value: postalCode, label: 'รหัสไ���รษณีย์', checks: ['postalCode'] },
+        ]);
+        if (!valid) return;
+
         const data = {
-          name: document.getElementById('fName').value,
-          taxId: document.getElementById('fTaxId').value || null,
+          name: name,
+          taxId: taxId,
           branchCode: (ct === 2 || ct === 3) ? (document.getElementById('fBranch').value || '00000') : null,
           branchName: document.getElementById('fBranchName').value || null,
           contactType: ct,

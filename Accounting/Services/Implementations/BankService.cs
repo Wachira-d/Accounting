@@ -274,16 +274,28 @@ public partial class BankService : IBankService
         if (!request.MatchedPaymentId.HasValue && !request.MatchedJournalEntryId.HasValue)
             throw new InvalidOperationException("กรุณาระบุการชำระเงินหรือสมุดรายวันที่ต้องการจับคู่");
 
-        // Validate referenced entities exist
+        // Validate referenced entities exist and not already matched
         if (request.MatchedPaymentId.HasValue)
         {
             var paymentExists = await _db.Payments.AnyAsync(p => p.Id == request.MatchedPaymentId.Value && p.CompanyId == companyId);
             if (!paymentExists) throw new KeyNotFoundException("ไม่พบรายการชำระเงินที่ระบุ");
+            var alreadyMatched = await _db.Set<BankTransaction>().AnyAsync(t =>
+                t.MatchedPaymentId == request.MatchedPaymentId.Value
+                && t.Id != request.BankTransactionId
+                && t.ReconciliationStatus == ReconciliationStatus.Matched);
+            if (alreadyMatched)
+                throw new InvalidOperationException("รายการชำระเงินนี้ถูกจับคู่กับรายการธนาคารอื่นแล้ว");
         }
         if (request.MatchedJournalEntryId.HasValue)
         {
             var jeExists = await _db.JournalEntries.AnyAsync(j => j.Id == request.MatchedJournalEntryId.Value && j.CompanyId == companyId);
             if (!jeExists) throw new KeyNotFoundException("ไม่พบสมุดรายวันที่ระบุ");
+            var alreadyMatched = await _db.Set<BankTransaction>().AnyAsync(t =>
+                t.MatchedJournalEntryId == request.MatchedJournalEntryId.Value
+                && t.Id != request.BankTransactionId
+                && t.ReconciliationStatus == ReconciliationStatus.Matched);
+            if (alreadyMatched)
+                throw new InvalidOperationException("สมุดรายวันนี้ถูกจับคู่กับรายการธนาคารอื่นแล้ว");
         }
 
         transaction.ReconciliationStatus = ReconciliationStatus.Matched;
