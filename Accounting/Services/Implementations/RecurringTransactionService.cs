@@ -192,17 +192,39 @@ public class RecurringTransactionService : IRecurringTransactionService
 
         foreach (var recurring in dueItems)
         {
-            if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            try
             {
-                recurring.Status = RecurringStatus.Completed;
+                // Lock the row to prevent concurrent scheduler instances from processing the same item
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"RecurringTransactions\" WHERE \"Id\" = {0} FOR UPDATE SKIP LOCKED", recurring.Id);
+
+                // Re-read inside transaction to get the latest state
+                await _db.Entry(recurring).ReloadAsync();
+
+                if (recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now)
+                {
+                    await transaction.CommitAsync();
+                    continue;
+                }
+
+                if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
+                {
+                    recurring.Status = RecurringStatus.Completed;
+                    await _db.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    continue;
+                }
+
+                recurring.NextRunDate = GetNextRunDate(recurring);
                 await _db.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to lock recurring transaction {Id}", recurring.Id);
                 continue;
             }
-
-            // Advance NextRunDate immediately to prevent duplicate execution on concurrent scheduler runs
-            var scheduledDate = recurring.NextRunDate;
-            recurring.NextRunDate = GetNextRunDate(recurring);
-            await _db.SaveChangesAsync();
 
             try
             {
@@ -271,7 +293,10 @@ public class RecurringTransactionService : IRecurringTransactionService
             var root = doc.RootElement;
 
             var docType = recurring.DocumentType ?? DocumentType.Invoice;
-            var contactId = recurring.ContactId;
+            var contactId = recurring.ContactId
+                ?? throw new InvalidOperationException($"รายการที่เกิดซ้ำ '{recurring.Name}' ไม่มีผู้ติดต่อ (ContactId) กรุณาตั้งค่าผู้ติดต่อก่อนดำเนินการ");
+
+            Guid? projectId = root.TryGetProperty("projectId", out var pjEl) && pjEl.ValueKind == JsonValueKind.String && Guid.TryParse(pjEl.GetString(), out var pjId) ? pjId : null;
 
             // Extract lines from template
             var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
@@ -279,6 +304,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             {
                 foreach (var line in linesEl.EnumerateArray())
                 {
+                    Guid? lineProjectId = line.TryGetProperty("projectId", out var lpEl) && lpEl.ValueKind == JsonValueKind.String && Guid.TryParse(lpEl.GetString(), out var lpId) ? lpId : null;
+
                     lines.Add(new Models.DTOs.Document.DocumentLineRequest(
                         Description: line.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
                         Quantity: line.TryGetProperty("quantity", out var qty) ? qty.GetDecimal() : 1,
@@ -287,7 +314,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                         DiscountPercent: line.TryGetProperty("discountPercent", out var dp) ? dp.GetDecimal() : 0,
                         VatRate: line.TryGetProperty("vatRate", out var vr) ? vr.GetDecimal() : 7,
                         WithholdingTaxRate: line.TryGetProperty("withholdingTaxRate", out var wt) ? wt.GetDecimal() : 0,
-                        AccountId: line.TryGetProperty("accountId", out var aid) && aid.ValueKind == JsonValueKind.String ? Guid.Parse(aid.GetString()!) : null
+                        AccountId: line.TryGetProperty("accountId", out var aid) && aid.ValueKind == JsonValueKind.String ? Guid.Parse(aid.GetString()!) : null,
+                        ProjectId: lineProjectId
                     ));
                 }
             }
@@ -300,10 +328,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                 DocumentType: docType,
                 DocumentDate: DateTime.UtcNow,
                 DueDate: root.TryGetProperty("dueDays", out var dd) ? DateTime.UtcNow.AddDays(dd.GetInt32()) : DateTime.UtcNow.AddDays(30),
-                ContactId: contactId ?? Guid.Empty,
+                ContactId: contactId.Value,
                 Reference: $"AUTO-{recurring.Name}",
                 Notes: root.TryGetProperty("notes", out var notes) ? notes.GetString() : null,
                 Lines: lines,
+                ProjectId: projectId,
                 BankAccountId: bankAccountId,
                 PaymentAccountId: paymentAccountId,
                 ExpenseCategoryId: expenseCategoryId

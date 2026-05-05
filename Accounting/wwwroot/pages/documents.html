@@ -1123,7 +1123,7 @@
         try {
           await api.voidPayment(paymentId);
           Layout.toast('ยกเลิกการชำระเงินสำเร็จ');
-          if (this._currentDoc?.id) await this.openDetail(this._currentDoc.id);
+          if (this._currentDoc?.id) await this.detail(this._currentDoc.id);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },
