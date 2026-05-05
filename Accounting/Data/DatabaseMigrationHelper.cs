@@ -741,6 +741,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EmailGmailServiceAccountJson" text NULL;
             """,
 
+            // ===== RecurringTransactions: PreferredDay to prevent date drift on monthly schedules =====
+            """
+            ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "PreferredDay" integer NULL;
+            """,
+
             // ===== RevenueContracts: ProjectId (optional link to Projects) =====
             """
             ALTER TABLE "RevenueContracts" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;

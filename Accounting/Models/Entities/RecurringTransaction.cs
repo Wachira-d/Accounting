@@ -20,6 +20,7 @@ public class RecurringTransaction : TenantEntity
     public DateTime? LastRunDate { get; set; }
     public int TotalRuns { get; set; }
     public int? MaxRuns { get; set; }
+    public int? PreferredDay { get; set; } // day-of-month anchor (1-31) to prevent date drift
 
     // Template: which document/journal to create
     public string TemplateType { get; set; } = null!; // "Document" or "Journal"

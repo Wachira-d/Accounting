@@ -47,6 +47,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             StartDate = request.StartDate,
             EndDate = request.EndDate,
             NextRunDate = request.StartDate,
+            PreferredDay = request.StartDate.Day,
             MaxRuns = request.MaxRuns,
             TemplateType = request.TemplateType,
             DocumentType = request.DocumentType,
@@ -246,12 +247,21 @@ public class RecurringTransactionService : IRecurringTransactionService
         RecurringFrequency.Daily => r.NextRunDate.AddDays(1),
         RecurringFrequency.Weekly => r.NextRunDate.AddDays(7),
         RecurringFrequency.BiWeekly => r.NextRunDate.AddDays(14),
-        RecurringFrequency.Monthly => r.NextRunDate.AddMonths(1),
-        RecurringFrequency.Quarterly => r.NextRunDate.AddMonths(3),
-        RecurringFrequency.SemiAnnual => r.NextRunDate.AddMonths(6),
-        RecurringFrequency.Annual => r.NextRunDate.AddYears(1),
-        _ => r.NextRunDate.AddMonths(1)
+        RecurringFrequency.Monthly => AdvanceMonths(r, 1),
+        RecurringFrequency.Quarterly => AdvanceMonths(r, 3),
+        RecurringFrequency.SemiAnnual => AdvanceMonths(r, 6),
+        RecurringFrequency.Annual => AdvanceMonths(r, 12),
+        _ => AdvanceMonths(r, 1)
     };
+
+    private static DateTime AdvanceMonths(RecurringTransaction r, int months)
+    {
+        var preferredDay = r.PreferredDay ?? r.StartDate.Day;
+        var next = r.NextRunDate.AddMonths(months);
+        var daysInMonth = DateTime.DaysInMonth(next.Year, next.Month);
+        var day = Math.Min(preferredDay, daysInMonth);
+        return new DateTime(next.Year, next.Month, day, 0, 0, 0, DateTimeKind.Utc);
+    }
 
     private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions)
     {
