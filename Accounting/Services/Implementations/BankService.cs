@@ -86,7 +86,10 @@ public partial class BankService : IBankService
         var parent = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == parentCode && a.IsActive);
 
-        if (parent == null) return null;
+        if (parent == null)
+            throw new InvalidOperationException(
+                $"ไม่พบบัญชีผังบัญชีหลัก {parentCode} สำหรับประเภท {request.AccountType} — " +
+                "กรุณาสร้างบัญชีกลุ่มเงินฝากธนาคารในผังบัญชีก่อน หรือระบุ LinkedAccountId โดยตรง");
 
         var existingChildren = await _db.ChartOfAccounts
             .Where(a => a.CompanyId == companyId && a.ParentAccountId == parent.Id)

@@ -48,6 +48,8 @@
 
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่เอกสาร / ชื่อลูกค้า..." id="searchInput" oninput="Page.load()">
+      <input type="date" class="form-input" id="dateFrom" onchange="Page.load()" title="ตั้งแต่วันที่" style="width:140px">
+      <input type="date" class="form-input" id="dateTo" onchange="Page.load()" title="ถึงวันที่" style="width:140px">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -598,6 +600,10 @@
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
         if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
+        const dateFrom = document.getElementById('dateFrom')?.value;
+        const dateTo = document.getElementById('dateTo')?.value;
+        if (dateFrom) q += `&fromDate=${dateFrom}`;
+        if (dateTo) q += `&toDate=${dateTo}`;
         try {
           const res = await api.getDocuments(q);
           const data = res.data;
@@ -877,6 +883,30 @@
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
             ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
+
+          // Load related payments and journal entries
+          try {
+            const [paymentsRes, journalsRes] = await Promise.all([
+              api.getPayments ? api.getPayments(`?documentId=${d.id}`) : Promise.resolve({data:[]}),
+              api.getJournals(`?sourceDocumentId=${d.id}&pageSize=10`)
+            ]);
+            const payments = paymentsRes?.data?.items || paymentsRes?.data || [];
+            const journals = journalsRes?.data?.items || journalsRes?.data || [];
+            let extraSections = '';
+            if (payments.length) {
+              extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">ประวัติการชำระเงิน (${payments.length})</h4>
+                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>วิธี</th></tr></thead>
+                <tbody>${payments.map(p => `<tr><td>${p.paymentNumber}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${Layout.money(p.amount)}</td><td>${p.paymentMethod||'-'}</td></tr>`).join('')}</tbody></table></div>`;
+            }
+            if (journals.length) {
+              extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">รายการบัญชี (${journals.length})</h4>
+                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th></tr></thead>
+                <tbody>${journals.map(j => `<tr><td><a href="/pages/accounting.html?entryId=${j.id}">${j.entryNumber}</a></td><td>${Layout.date(j.entryDate)}</td><td>${j.journalType||'-'}</td><td class="text-right">${Layout.money(j.totalDebit)}</td><td class="text-right">${Layout.money(j.totalCredit)}</td><td>${Layout.statusBadge(j.status)}</td></tr>`).join('')}</tbody></table></div>`;
+            }
+            if (extraSections) {
+              document.getElementById('detailContent').innerHTML += extraSections;
+            }
+          } catch(e) { /* non-critical */ }
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;

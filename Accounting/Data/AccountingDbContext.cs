@@ -1888,6 +1888,10 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(t => new { t.BankAccountId, t.TransactionDate })
                 .HasDatabaseName("IX_BankTransactions_BankAccId_TxDate");
+            e.HasIndex(t => new { t.BankAccountId, t.ReconciliationStatus })
+                .HasDatabaseName("IX_BankTransactions_BankAccId_ReconStatus");
+            e.HasIndex(t => t.MatchedPaymentId)
+                .HasDatabaseName("IX_BankTransactions_MatchedPaymentId");
         });
 
         // Payment: lookup by document

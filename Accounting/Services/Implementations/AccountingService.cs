@@ -775,8 +775,17 @@ public class AccountingService : IAccountingService
 
         foreach (var entry in entries)
         {
-            entry.Status = JournalEntryStatus.Voided;
-            entry.UpdatedAt = DateTime.UtcNow;
+            if (entry.Status == JournalEntryStatus.Posted)
+            {
+                await ReverseJournalEntryAsync(companyId, entry.Id,
+                    reversalDate: DateTime.UtcNow.Date,
+                    description: $"Batch void: {entry.EntryNumber}");
+            }
+            else
+            {
+                entry.Status = JournalEntryStatus.Voided;
+                entry.UpdatedAt = DateTime.UtcNow;
+            }
         }
 
         await _db.SaveChangesAsync();

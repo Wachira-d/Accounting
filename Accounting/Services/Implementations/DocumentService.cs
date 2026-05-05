@@ -41,10 +41,24 @@ public class DocumentService : IDocumentService
         if (!await _subscriptionService.CheckFeatureAccessAsync(companyId, FeatureFlags.DocumentEngine))
             throw new InvalidOperationException("ไม่มีสิทธิ์ใช้ระบบเอกสาร");
 
-        // Validate ContactId exists in company contacts
-        var contactExists = await _db.Contacts.AnyAsync(c => c.Id == request.ContactId && c.CompanyId == companyId);
-        if (!contactExists)
+        // Validate ContactId exists and has correct type for document
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.ContactId && c.CompanyId == companyId);
+        if (contact == null)
             throw new InvalidOperationException("ไม่พบผู้ติดต่อในบริษัทนี้");
+
+        var revenueDocTypes = new[] {
+            DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.DebitNote,
+            DocumentType.CreditNote, DocumentType.DeliveryNote, DocumentType.BillingNote
+        };
+        var purchaseDocTypes = new[] {
+            DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+        };
+        if (revenueDocTypes.Contains(request.DocumentType) && !contact.IsCustomer)
+            throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย");
+        if (purchaseDocTypes.Contains(request.DocumentType) && !contact.IsSupplier)
+            throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นผู้จำหน่าย — กรุณาเปิดสถานะ 'ผู้จำหน่าย' ก่อนออกเอกสารซื้อ");
 
         // Validate project tags belong to this company (security: prevent cross-tenant tagging)
         if (request.ProjectId.HasValue)
@@ -228,7 +242,7 @@ public class DocumentService : IDocumentService
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
@@ -245,6 +259,18 @@ public class DocumentService : IDocumentService
         if (projectId.HasValue)
             query = query.Where(d => d.ProjectId == projectId.Value
                 || d.Lines.Any(l => l.ProjectId == projectId.Value));
+
+        if (contactId.HasValue)
+            query = query.Where(d => d.ContactId == contactId.Value);
+
+        if (!string.IsNullOrEmpty(status) && Enum.TryParse<DocumentStatus>(status, true, out var statusEnum))
+            query = query.Where(d => d.Status == statusEnum);
+
+        if (fromDate.HasValue)
+            query = query.Where(d => d.DocumentDate >= fromDate.Value);
+
+        if (toDate.HasValue)
+            query = query.Where(d => d.DocumentDate <= toDate.Value);
 
         if (!string.IsNullOrEmpty(request.Search))
         {
@@ -551,7 +577,20 @@ public class DocumentService : IDocumentService
                     etax.UpdatedAt = DateTime.UtcNow;
                 }
 
-                // 4) Restore source document's balance if this was a derivative
+                // 4) Unlink BankTransactions matched to this document's journal entries
+                if (postedJournalIds.Any())
+                {
+                    await _db.BankTransactions
+                        .Where(t => t.CompanyId == companyId
+                            && t.MatchedJournalEntryId.HasValue
+                            && postedJournalIds.Contains(t.MatchedJournalEntryId.Value))
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(t => t.MatchedJournalEntryId, (Guid?)null)
+                            .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Unmatched)
+                            .SetProperty(t => t.ReconciledAt, (DateTime?)null));
+                }
+
+                // 5) Restore source document's balance if this was a derivative
                 //    (Receipt/CN/PaymentVoucher referencing another doc). Mirrors
                 //    the adjustment applied during ApproveDocumentAsync.
                 await RevertSourceDocumentAdjustmentsAsync(companyId, doc);
@@ -1436,6 +1475,7 @@ public class DocumentService : IDocumentService
                 PaymentMethod = request.PaymentMethod,
                 Reference = request.Reference,
                 BankAccount = request.BankAccount,
+                BankAccountId = doc.BankAccountId,
                 Notes = request.Notes,
                 CreatedBy = createdBy
             };
@@ -1486,7 +1526,8 @@ public class DocumentService : IDocumentService
             return new PaymentResponse(
                 payment.Id, payment.PaymentNumber, payment.DocumentId,
                 payment.PaymentDate, payment.Amount, payment.PaymentMethod,
-                payment.Reference, payment.BankAccount, payment.CreatedAt);
+                payment.Reference, payment.BankAccount, payment.BankAccountId,
+                payment.Notes, payment.CreatedAt);
         }
         catch
         {
@@ -1504,7 +1545,8 @@ public class DocumentService : IDocumentService
         return payments.Select(p => new PaymentResponse(
             p.Id, p.PaymentNumber, p.DocumentId,
             p.PaymentDate, p.Amount, p.PaymentMethod,
-            p.Reference, p.BankAccount, p.CreatedAt)).ToList();
+            p.Reference, p.BankAccount, p.BankAccountId,
+            p.Notes, p.CreatedAt)).ToList();
     }
 
     // ==================== Private ====================

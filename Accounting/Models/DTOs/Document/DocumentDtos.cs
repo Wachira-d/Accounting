@@ -204,6 +204,8 @@ public record PaymentResponse(
     PaymentMethod PaymentMethod,
     string? Reference,
     string? BankAccount,
+    Guid? BankAccountId,
+    string? Notes,
     DateTime CreatedAt);
 
 
