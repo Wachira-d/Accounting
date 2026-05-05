@@ -890,6 +890,24 @@ const Layout = {
     return this.currentCompany?.id || '';
   },
 
+  // Ensures currentCompany.myRole is populated. Falls back to fetching from
+  // /api/company/{id} when stale localStorage lacks the field. Returns the role string.
+  async ensureMyRole() {
+    if (this.currentCompany?.myRole) return this.currentCompany.myRole;
+    const id = this.getCompanyId();
+    if (!id) return null;
+    try {
+      const res = await API.get(`/api/company/${id}`);
+      const data = res?.data;
+      if (data?.myRole) {
+        this.currentCompany = { ...this.currentCompany, ...data };
+        localStorage.setItem('currentCompany', JSON.stringify(this.currentCompany));
+        return data.myRole;
+      }
+    } catch {}
+    return null;
+  },
+
   api() {
     const cid = this.getCompanyId();
     if (!cid) { return null; }

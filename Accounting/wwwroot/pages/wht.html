@@ -254,7 +254,7 @@
             footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" data-i18n="common.print">พิมพ์</button>
               <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
           }
-          const myRole = Layout.currentCompany?.myRole;
+          const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
             footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}','${Layout.esc(d.certificateNumber || '')}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           }

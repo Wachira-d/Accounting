@@ -23,6 +23,7 @@ public interface IAccountingService
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
     Task DeleteJournalEntryAsync(Guid companyId, Guid entryId);
     Task<JournalEntryResponse> ReverseJournalEntryAsync(Guid companyId, Guid entryId, DateTime? reversalDate = null, string? description = null);
+    Task<CorrectJournalEntryResponse> CorrectJournalEntryAsync(Guid companyId, Guid entryId, string createdBy);
     Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
     Task<int> BatchDeleteJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
     Task<int> BatchPostJournalEntriesAsync(Guid companyId);

@@ -101,6 +101,10 @@ public record ReverseJournalEntryRequest(
     DateTime? ReversalDate,
     string? Description);
 
+public record CorrectJournalEntryResponse(
+    JournalEntryResponse ReversalEntry,
+    JournalEntryResponse DraftEntry);
+
 public record JournalLineResponse(
     Guid Id,
     Guid AccountId,

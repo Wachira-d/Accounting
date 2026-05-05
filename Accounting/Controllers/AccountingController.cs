@@ -138,6 +138,15 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<JournalEntryResponse>(true, result, "กลับรายการสำเร็จ"));
     }
 
+    [HttpPost("journals/{entryId:guid}/correct")]
+    public async Task<ActionResult<ApiResponse<CorrectJournalEntryResponse>>> CorrectJournalEntry(
+        Guid companyId, Guid entryId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _accountingService.CorrectJournalEntryAsync(companyId, entryId, userId.ToString());
+        return Ok(new ApiResponse<CorrectJournalEntryResponse>(true, result, "กลับรายการและสร้าง Draft ใหม่สำเร็จ"));
+    }
+
     [HttpPost("journals/batch-void")]
     public async Task<ActionResult<ApiResponse<string>>> BatchVoidJournalEntries(
         Guid companyId, [FromBody] BatchVoidRequest request)

@@ -719,6 +719,54 @@ public class AccountingService : IAccountingService
         }
     }
 
+    public async Task<CorrectJournalEntryResponse> CorrectJournalEntryAsync(Guid companyId, Guid entryId, string createdBy)
+    {
+        var original = await _db.JournalEntries
+            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+
+        if (original.Status != JournalEntryStatus.Posted)
+            throw new InvalidOperationException("สามารถแก้ไขด้วยการกลับรายการได้เฉพาะใบที่ Posted แล้วเท่านั้น");
+
+        if (original.ReversedByEntryId.HasValue)
+            throw new InvalidOperationException("รายการนี้ถูกกลับรายการไปแล้ว");
+
+        // Step 1: Reverse the original entry
+        var reversalEntry = await ReverseJournalEntryAsync(companyId, entryId, null,
+            $"แก้ไข (กลับรายการ) {original.EntryNumber}");
+
+        // Step 2: Create a new Draft clone with same data for user to correct
+        var cloneRequest = new CreateJournalEntryRequest(
+            EntryDate: original.EntryDate,
+            Description: $"แก้ไขจาก {original.EntryNumber}: {original.Description}",
+            Reference: original.Reference,
+            Lines: original.Lines.OrderBy(l => l.LineOrder).Select(l => new JournalLineRequest(
+                AccountId: l.AccountId,
+                DebitAmount: l.DebitAmount,
+                CreditAmount: l.CreditAmount,
+                Description: l.Description,
+                ProjectId: l.ProjectId,
+                BranchId: l.BranchId,
+                DimensionId: l.DimensionId,
+                Tags: l.Tags
+            )).ToList(),
+            JournalType: original.JournalType,
+            ProjectId: original.ProjectId,
+            BranchId: original.BranchId,
+            DimensionId: original.DimensionId,
+            Note: original.Note,
+            Tags: original.Tags,
+            SourceDocumentId: original.SourceDocumentId,
+            SourceDocumentNumber: null,
+            ReplaceExistingForSource: false
+        );
+
+        var draftEntry = await CreateJournalEntryAsync(companyId, cloneRequest, createdBy);
+
+        return new CorrectJournalEntryResponse(reversalEntry, draftEntry);
+    }
+
     public async Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds)
     {
         var entries = await _db.JournalEntries

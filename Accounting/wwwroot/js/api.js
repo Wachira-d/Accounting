@@ -145,6 +145,7 @@ const API = {
       voidJournal: (id) => API.post(`${base}/accounting/journals/${id}/void`),
       deleteJournal: (id) => API.del(`${base}/accounting/journals/${id}`),
       reverseJournal: (id, data) => API.post(`${base}/accounting/journals/${id}/reverse`, data || {}),
+      correctJournal: (id) => API.post(`${base}/accounting/journals/${id}/correct`),
       batchVoidJournals: (ids) => API.post(`${base}/accounting/journals/batch-void`, { entryIds: ids }),
       batchDeleteJournals: (ids) => API.post(`${base}/accounting/journals/batch-delete`, { entryIds: ids }),
       batchPostJournals: () => API.post(`${base}/accounting/journals/batch-post`),

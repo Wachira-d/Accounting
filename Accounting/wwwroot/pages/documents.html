@@ -911,7 +911,7 @@
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
-          const myRole = Layout.currentCompany?.myRole;
+          const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
             actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           }
