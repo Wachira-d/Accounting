@@ -908,6 +908,7 @@
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
+          actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1000,8 +1001,6 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async deleteDoc(id) {
-        // Hard-delete — only for Draft documents that have not affected the books.
-        // Different from voidDoc: this removes the record entirely instead of reversing.
         const api = Layout.api(); if (!api) return;
         if (!(await Layout.confirmDanger({
           title: 'ลบเอกสารถาวร',
@@ -1013,6 +1012,21 @@
           await api.deleteDocument(id);
           Layout.closeModal('detailModal');
           Layout.toast('ลบเอกสารสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      async purgeDoc(id) {
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ลบเอกสารและข้อมูลทั้งหมด',
+          message: 'ระบบจะลบเอกสาร รายการบัญชี(JE) การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องทั้งหมด<br>' +
+                   '<strong style="color:#dc2626">ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้ เหมือนไม่เคยสร้าง</strong>',
+          mode: 'math'
+        }))) return;
+        try {
+          await api.purgeDocument(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },

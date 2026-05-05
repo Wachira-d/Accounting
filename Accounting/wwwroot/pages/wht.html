@@ -260,6 +260,7 @@
             footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" data-i18n="common.print">พิมพ์</button>
               <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
           }
+          footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -280,6 +281,16 @@
           await api.voidWhtCert(id);
           Layout.closeModal('detailModal');
           Layout.toast('ยกเลิกสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteCert(id) {
+        if (!(await Layout.confirmDanger({ title: 'ลบหนังสื���รับรองถาวร', message: 'หนังสือรับรองหัก ณ ที่จ่ายและข้อมูลทั้งหมดจะถูกลบออกจากระบบ<br><strong style="color:#dc2626">ไม่ส��มารถกู้คืนได้</strong>', mode: 'math' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteWhtCert(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบหนังสือรับรองสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
