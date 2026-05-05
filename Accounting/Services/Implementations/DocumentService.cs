@@ -623,10 +623,21 @@ public class DocumentService : IDocumentService
 
     public async Task PurgeDocumentAsync(Guid companyId, Guid documentId)
     {
+        await PurgeDocumentAsync(companyId, documentId, null);
+    }
+
+    public async Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId)
+    {
         var doc = await _db.Documents
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var auditSnapshot = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            doc.DocumentNumber, doc.DocumentType, doc.Status,
+            doc.TotalAmount, doc.ContactId, doc.DocumentDate
+        });
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -731,6 +742,21 @@ public class DocumentService : IDocumentService
             await _db.Database.ExecuteSqlRawAsync(
                 @"DELETE FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}",
                 documentId, companyId);
+
+            if (userId.HasValue)
+            {
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = userId,
+                    Action = AuditAction.Delete,
+                    EntityType = "Document",
+                    EntityId = documentId.ToString(),
+                    OldValues = auditSnapshot,
+                    Timestamp = DateTime.UtcNow
+                });
+                await _db.SaveChangesAsync();
+            }
 
             await transaction.CommitAsync();
         }

@@ -254,7 +254,10 @@
             footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" data-i18n="common.print">พิมพ์</button>
               <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
           }
-          footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          const myRole = Layout.currentCompany?.myRole;
+          if (myRole === 'Owner' || myRole === 'SystemAdmin') {
+            footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}','${Layout.esc(d.certificateNumber || '')}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -278,8 +281,15 @@
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      async deleteCert(id) {
-        if (!(await Layout.confirmDanger({ title: 'ลบหนังสื���รับรองถาวร', message: 'หนังสือรับรองหัก ณ ที่จ่ายและข้อมูลทั้งหมดจะถูกลบออกจากระบบ<br><strong style="color:#dc2626">ไม่ส��มารถกู้คืนได้</strong>', mode: 'math' }))) return;
+      async deleteCert(id, certNumber) {
+        if (!(await Layout.confirmDanger({
+          title: 'ลบหนังสือรับรองถาวร (Owner เท่านั้น)',
+          message: 'หนังสือรับรองหัก ณ ที่จ่ายและข้อมูลทั้งหมดจะถูกลบออกจากระบบ<br>' +
+                   '<strong style="color:#dc2626">⚠️ ผิดหลักบัญชี — ไม่สามารถกู้คืนได้</strong><br>' +
+                   '<span style="font-size:12px;color:#666">การดำเนินการนี้จะถูกบันทึกใน Audit Log</span>',
+          mode: 'doubleCheck',
+          confirmText: certNumber || 'DELETE'
+        }))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.deleteWhtCert(id);

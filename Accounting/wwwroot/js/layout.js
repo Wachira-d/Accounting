@@ -1010,7 +1010,8 @@ const Layout = {
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
 
   // Danger confirm: requires solving math problem OR typing "confirm"
-  // Usage: await Layout.confirmDanger({ title, message, mode: 'math'|'type', confirmText }) → boolean
+  // Usage: await Layout.confirmDanger({ title, message, mode: 'math'|'type'|'doubleCheck', confirmText }) → boolean
+  // doubleCheck mode: first solves math, then types confirmText
   confirmDanger(opts = {}) {
     return new Promise(resolve => {
       const title = opts.title || 'ยืนยันการดำเนินการ';
@@ -1019,10 +1020,19 @@ const Layout = {
       const confirmText = opts.confirmText || 'confirm';
       const a = Math.floor(Math.random() * 9) + 2;
       const b = Math.floor(Math.random() * 9) + 2;
-      const expected = mode === 'math' ? String(a + b) : confirmText;
-      const prompt = mode === 'math'
-        ? `เพื่อยืนยัน กรุณาคำนวณ: <b>${a} + ${b} = ?</b>`
-        : `เพื่อยืนยัน กรุณาพิมพ์ <b>${confirmText}</b>`;
+
+      let step = 1;
+      let expected, promptHtml;
+      if (mode === 'doubleCheck') {
+        expected = String(a + b);
+        promptHtml = `<b>ขั้นที่ 1/2</b> — กรุณาคำนวณ: <b>${a} + ${b} = ?</b>`;
+      } else if (mode === 'math') {
+        expected = String(a + b);
+        promptHtml = `เพื่อยืนยัน กรุณาคำนวณ: <b>${a} + ${b} = ?</b>`;
+      } else {
+        expected = confirmText;
+        promptHtml = `เพื่อยืนยัน กรุณาพิมพ์ <b>${confirmText}</b>`;
+      }
 
       let wrap = document.getElementById('dangerConfirmModal');
       if (!wrap) {
@@ -1049,8 +1059,8 @@ const Layout = {
         document.body.appendChild(wrap);
       }
       wrap.querySelector('#dcTitle').textContent = '⚠️ ' + title;
-      wrap.querySelector('#dcMessage').textContent = message;
-      wrap.querySelector('#dcPrompt').innerHTML = prompt;
+      wrap.querySelector('#dcMessage').innerHTML = message;
+      wrap.querySelector('#dcPrompt').innerHTML = promptHtml;
       const input = wrap.querySelector('#dcInput');
       const errDiv = wrap.querySelector('#dcError');
       input.value = '';
@@ -1067,8 +1077,22 @@ const Layout = {
         resolve(val);
       };
       const tryConfirm = () => {
-        if (input.value.trim() === expected) cleanup(true);
-        else { errDiv.textContent = 'คำตอบไม่ถูกต้อง กรุณาลองใหม่'; input.select(); }
+        if (input.value.trim() === expected) {
+          if (mode === 'doubleCheck' && step === 1) {
+            step = 2;
+            expected = confirmText;
+            wrap.querySelector('#dcPrompt').innerHTML = `<b>ขั้นที่ 2/2</b> — กรุณาพิมพ์เลขที่เอกสาร: <b>${Layout.esc(confirmText)}</b>`;
+            input.value = '';
+            input.placeholder = 'พิมพ์เลขที่เอกสาร...';
+            errDiv.textContent = '';
+            input.focus();
+          } else {
+            cleanup(true);
+          }
+        } else {
+          errDiv.textContent = 'คำตอบไม่ถูกต้อง กรุณาลองใหม่';
+          input.select();
+        }
       };
       wrap.querySelector('#dcOk').onclick = tryConfirm;
       wrap.querySelector('#dcCancel').onclick = () => cleanup(false);

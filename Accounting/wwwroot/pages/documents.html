@@ -911,7 +911,10 @@
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
-          actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          const myRole = Layout.currentCompany?.myRole;
+          if (myRole === 'Owner' || myRole === 'SystemAdmin') {
+            actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1018,13 +1021,15 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
-      async purgeDoc(id) {
+      async purgeDoc(id, docNumber) {
         const api = Layout.api(); if (!api) return;
         if (!(await Layout.confirmDanger({
-          title: 'ลบเอกสารและข้อมูลทั้งหมด',
+          title: 'ลบเอกสารและข้อมูลทั้งหมด (Owner เท่านั้น)',
           message: 'ระบบจะลบเอกสาร รายการบัญชี(JE) การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องทั้งหมด<br>' +
-                   '<strong style="color:#dc2626">ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้ เหมือนไม่เคยสร้าง</strong>',
-          mode: 'math'
+                   '<strong style="color:#dc2626">⚠️ ผิดหลักบัญชี — ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้</strong><br>' +
+                   '<span style="font-size:12px;color:#666">การดำเนินการนี้จะถูกบันทึกใน Audit Log</span>',
+          mode: 'doubleCheck',
+          confirmText: docNumber || 'DELETE'
         }))) return;
         try {
           await api.purgeDocument(id);

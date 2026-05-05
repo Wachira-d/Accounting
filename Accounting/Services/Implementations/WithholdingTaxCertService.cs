@@ -144,10 +144,34 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
     public async Task DeleteAsync(Guid companyId, Guid certId)
     {
-        var exists = await _db.WithholdingTaxCerts
+        await DeleteAsync(companyId, certId, null);
+    }
+
+    public async Task DeleteAsync(Guid companyId, Guid certId, Guid? userId)
+    {
+        var cert = await _db.WithholdingTaxCerts
             .IgnoreQueryFilters()
-            .AnyAsync(w => w.Id == certId && w.CompanyId == companyId);
-        if (!exists) throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+            .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+
+        if (userId.HasValue)
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = userId,
+                Action = AuditAction.Delete,
+                EntityType = "WithholdingTaxCert",
+                EntityId = certId.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    cert.CertificateNumber, cert.TaxFormType, cert.Status,
+                    cert.TotalIncomeAmount, cert.TotalTaxAmount, cert.PayeeContactId
+                }),
+                Timestamp = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
+        }
 
         await _db.Database.ExecuteSqlRawAsync(
             @"DELETE FROM ""WithholdingTaxCertLines"" WHERE ""WithholdingTaxCertId"" = {0}", certId);

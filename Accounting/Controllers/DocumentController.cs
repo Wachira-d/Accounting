@@ -1,3 +1,4 @@
+using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
@@ -7,6 +8,7 @@ using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -17,11 +19,13 @@ public class DocumentController : ControllerBase
 {
     private readonly IDocumentService _documentService;
     private readonly IDocumentEmailService _docEmailService;
+    private readonly AccountingDbContext _db;
 
-    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService)
+    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService, AccountingDbContext db)
     {
         _documentService = documentService;
         _docEmailService = docEmailService;
+        _db = db;
     }
 
     // ===== Send document via email =====
@@ -127,11 +131,24 @@ public class DocumentController : ControllerBase
     /// <summary>
     /// ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax)
     /// ลบถาวร ไม่สามารถกู้คืนได้ — เหมือนไม่เคยสร้างมาเลย
+    /// เฉพาะ Owner / SystemAdmin เท่านั้น + บันทึก Audit Log
     /// </summary>
     [HttpDelete("{documentId:guid}/purge")]
     public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId)
     {
-        await _documentService.PurgeDocumentAsync(companyId, documentId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var isSystemAdmin = User.IsInRole("SystemAdmin");
+        if (!isSystemAdmin)
+        {
+            var role = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+                .Select(cu => cu.Role)
+                .FirstOrDefaultAsync();
+            if (role != UserRole.Owner)
+                return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
+        }
+
+        await _documentService.PurgeDocumentAsync(companyId, documentId, userId);
         return Ok(new ApiResponse<string>(true, null, "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
     }
 
