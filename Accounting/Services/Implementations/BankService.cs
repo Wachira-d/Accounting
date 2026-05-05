@@ -601,6 +601,13 @@ public partial class BankService : IBankService
             _logger?.LogInformation("Bank CSV import: {Imported} imported, {Skipped} duplicates skipped, {Conflicts} conflicts",
                 imported, skipped, conflicts.Count);
 
+            // Auto-match imported transactions with existing payments
+            if (imported > 0)
+            {
+                try { await AutoMatchAsync(companyId, request.BankAccountId); }
+                catch (Exception ex) { _logger?.LogWarning(ex, "Auto-match after import failed (non-critical)"); }
+            }
+
             return new ImportBankStatementResponse(imported, skipped, 0);
         }
         catch

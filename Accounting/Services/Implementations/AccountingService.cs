@@ -348,12 +348,14 @@ public class AccountingService : IAccountingService
                     throw new InvalidOperationException("ไม่พบโครงการที่ระบุในบริษัทนี้");
             }
 
-            // Find fiscal period
+            // Find fiscal period — reject if closed
             var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId &&
                 f.StartDate <= request.EntryDate &&
-                f.EndDate >= request.EntryDate &&
-                f.Status == FiscalPeriodStatus.Open);
+                f.EndDate >= request.EntryDate);
+            if (period != null && period.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถบันทึกรายการในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว");
             if (period != null)
                 entry.FiscalPeriodId = period.Id;
 
@@ -653,8 +655,10 @@ public class AccountingService : IAccountingService
             var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId &&
                 f.StartDate <= effectiveDate &&
-                f.EndDate >= effectiveDate &&
-                f.Status == FiscalPeriodStatus.Open);
+                f.EndDate >= effectiveDate);
+            if (period != null && period.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถกลับรายการในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว");
             if (period != null)
                 reversal.FiscalPeriodId = period.Id;
 

@@ -357,7 +357,7 @@ public class FixedAssetService : IFixedAssetService
                 DepreciationMethod.StraightLine =>
                     (asset.PurchaseCost - asset.SalvageValue) / asset.UsefulLifeMonths,
                 DepreciationMethod.DecliningBalance =>
-                    asset.NetBookValue * (2.0m / asset.UsefulLifeMonths) / 2,
+                    asset.NetBookValue * (1.0m / asset.UsefulLifeMonths),
                 DepreciationMethod.DoubleDecliningBalance =>
                     asset.NetBookValue * (2.0m / asset.UsefulLifeMonths),
                 _ => 0
@@ -571,7 +571,7 @@ public class FixedAssetService : IFixedAssetService
                 DepreciationMethod.StraightLine =>
                     (asset.PurchaseCost - asset.SalvageValue) / asset.UsefulLifeMonths,
                 DepreciationMethod.DecliningBalance =>
-                    nbv * (2.0m / asset.UsefulLifeMonths) / 2,
+                    nbv * (1.0m / asset.UsefulLifeMonths),
                 DepreciationMethod.DoubleDecliningBalance =>
                     nbv * (2.0m / asset.UsefulLifeMonths),
                 _ => 0

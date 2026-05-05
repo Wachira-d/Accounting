@@ -129,7 +129,7 @@ public class TaxService : ITaxService
                 vatExemptAmount += exemptLines.Sum(l => l.Amount);
             }
 
-            // Output VAT - only from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30
+            // Output VAT - from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30
             if (doc.DocumentType == DocumentType.TaxInvoice)
             {
                 outputVat += doc.VatAmount;
@@ -146,6 +146,70 @@ public class TaxService : ITaxService
                     TaxAmount = doc.VatAmount,
                     DocumentId = doc.Id
                 });
+            }
+            // CreditNote — reduces output/input VAT
+            else if (doc.DocumentType == DocumentType.CreditNote)
+            {
+                var label = doc.Lines.Any(l => l.AccountId.HasValue) ? "[ใบลดหนี้-ภาษีซื้อ]" : "[ใบลดหนี้-ภาษีขาย]";
+                var isPurchaseSide = doc.RelatedDocumentId.HasValue &&
+                    docs.Any(d => d.Id == doc.RelatedDocumentId.Value &&
+                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense));
+                if (isPurchaseSide)
+                {
+                    inputVat -= doc.VatAmount;
+                    label = "[ใบลดหนี้-ภาษีซื้อ]";
+                }
+                else
+                {
+                    outputVat -= doc.VatAmount;
+                    label = "[ใบลดหนี้-ภาษีขาย]";
+                }
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id,
+                    LineOrder = lineOrder++,
+                    TaxPayerId = doc.Contact?.TaxId,
+                    TaxPayerName = doc.Contact?.Name ?? "",
+                    TransactionDate = doc.DocumentDate,
+                    Description = $"{label} {doc.DocumentNumber}",
+                    IncomeAmount = -doc.SubTotal,
+                    TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                    TaxAmount = -doc.VatAmount,
+                    DocumentId = doc.Id
+                });
+            }
+            // DebitNote — increases output/input VAT
+            else if (doc.DocumentType == DocumentType.DebitNote)
+            {
+                var isPurchaseSide = doc.RelatedDocumentId.HasValue &&
+                    docs.Any(d => d.Id == doc.RelatedDocumentId.Value &&
+                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense));
+                if (isPurchaseSide)
+                {
+                    inputVat += doc.VatAmount;
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id, LineOrder = lineOrder++,
+                        TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
+                        TransactionDate = doc.DocumentDate,
+                        Description = $"[ใบเพิ่มหนี้-ภาษีซื้อ] {doc.DocumentNumber}",
+                        IncomeAmount = doc.SubTotal, TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        TaxAmount = doc.VatAmount, DocumentId = doc.Id, IncomeTypeCode = "INPUT"
+                    });
+                }
+                else
+                {
+                    outputVat += doc.VatAmount;
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id, LineOrder = lineOrder++,
+                        TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
+                        TransactionDate = doc.DocumentDate,
+                        Description = $"[ใบเพิ่มหนี้-ภาษีขาย] {doc.DocumentNumber}",
+                        IncomeAmount = doc.SubTotal, TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        TaxAmount = doc.VatAmount, DocumentId = doc.Id
+                    });
+                }
             }
             // Input VAT - from purchase documents
             else if (doc.DocumentType == DocumentType.PurchaseInvoice

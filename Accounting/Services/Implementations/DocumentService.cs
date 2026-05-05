@@ -1267,7 +1267,10 @@ public class DocumentService : IDocumentService
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, DateTime.UtcNow, source.DueDate, source.ContactId,
             source.DocumentNumber, source.Notes, lines,
-            ProjectId: source.ProjectId), createdBy);
+            ProjectId: source.ProjectId,
+            BankAccountId: source.BankAccountId,
+            PaymentAccountId: source.PaymentAccountId,
+            ExpenseCategoryId: source.ExpenseCategoryId), createdBy);
 
         // Link
         var created = await _db.Documents.FindAsync(newDoc.Id);

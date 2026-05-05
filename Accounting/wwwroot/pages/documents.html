@@ -177,7 +177,7 @@
                 </div>
               </div>
               <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
-              <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint" style="display:none">
+              <label style="display:none;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint">
                 <input type="checkbox" id="fEmailAsEtax" onchange="Page.toggleEtaxByEmail()">
                 <span>ส่งในรูปแบบ <strong>e-Tax by Email</strong> (CC สรรพากร + แนบ XML, หัวข้อตามรูปแบบ RD)</span>
               </label>
@@ -932,6 +932,11 @@
           if (hasEtaxId) {
             actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
           }
+          // Payment recording: for approved+ docs with balance due
+          const payableStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
+          if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
+            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue})">บันทึกชำระเงิน</button>`;
+          }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
           const outstandingStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
@@ -1070,6 +1075,25 @@
           Layout.toast('ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      async recordPayment(docId, balanceDue) {
+        const amount = prompt(`บันทึกชำระเงิน\nยอดค้างชำระ: ${Layout.money(balanceDue)}\n\nจำนวนเงินที่ชำระ:`, balanceDue);
+        if (!amount) return;
+        const parsed = parseFloat(amount);
+        if (isNaN(parsed) || parsed <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
+        if (parsed > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createPayment({
+            documentId: docId,
+            paymentDate: new Date().toISOString().split('T')[0],
+            amount: parsed,
+            paymentMethod: 'Transfer'
+          });
+          Layout.toast('บันทึกชำระเงินสำเร็จ');
+          Layout.closeModal('detailModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
