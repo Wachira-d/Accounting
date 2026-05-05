@@ -42,6 +42,7 @@ const Layout = {
     this.loadNotificationCount();
     this.initServiceWorker();
     this.initSignalR();
+    this.applySiteBranding();
     // Page-level feature check — redirect to subscription if locked
     this._enforcePageAccess();
     // Show banner if user has a legacy weak password
@@ -941,6 +942,27 @@ const Layout = {
     document.getElementById('notifPanel').classList.remove('active');
   },
 
+  applySiteBranding() {
+    fetch('/api/site/landing').then(r => r.json()).then(json => {
+      const d = json.data;
+      if (!d) return;
+      this._siteName = d.siteName || 'Next Acc';
+      if (d.siteLogoUrl) {
+        const logo = document.querySelector('.sidebar-logo');
+        if (logo) logo.innerHTML = `<img src="${d.siteLogoUrl}" alt="${this._siteName}" style="height:28px;object-fit:contain">`;
+      } else if (d.siteName) {
+        const logo = document.querySelector('.sidebar-logo span');
+        if (logo) logo.textContent = d.siteName;
+      }
+      if (d.primaryColor) document.documentElement.style.setProperty('--primary', d.primaryColor);
+      if (d.faviconUrl) {
+        let link = document.querySelector("link[rel~='icon']");
+        if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+        link.href = d.faviconUrl;
+      }
+    }).catch(() => {});
+  },
+
   logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -950,7 +972,7 @@ const Layout = {
 
   setTitle(title) {
     document.getElementById('headerTitle').textContent = title;
-    document.title = title + ' - Next Acc';
+    document.title = title + ' - ' + (this._siteName || 'Next Acc');
   },
 
   // Toast notifications (with deduplication - max 3 visible, no duplicate messages)

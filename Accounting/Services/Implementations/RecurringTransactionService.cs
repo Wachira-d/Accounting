@@ -72,9 +72,12 @@ public class RecurringTransactionService : IRecurringTransactionService
         return MapToResponse(recurring);
     }
 
-    public async Task<PagedResponse<RecurringTransactionResponse>> GetAllAsync(Guid companyId, PagedRequest request)
+    public async Task<PagedResponse<RecurringTransactionResponse>> GetAllAsync(Guid companyId, PagedRequest request, string? status = null)
     {
         var query = _db.RecurringTransactions.Include(r => r.Contact).Where(r => r.CompanyId == companyId);
+
+        if (!string.IsNullOrEmpty(status) && Enum.TryParse<RecurringStatus>(status, true, out var statusEnum))
+            query = query.Where(r => r.Status == statusEnum);
 
         if (!string.IsNullOrEmpty(request.Search))
             query = query.Where(r => r.Name.Contains(request.Search));
@@ -129,6 +132,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task<RecurringTransactionResponse> PauseAsync(Guid companyId, Guid id)
     {
         var recurring = await _db.RecurringTransactions
+            .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
 
@@ -143,6 +147,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task<RecurringTransactionResponse> ResumeAsync(Guid companyId, Guid id)
     {
         var recurring = await _db.RecurringTransactions
+            .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
 

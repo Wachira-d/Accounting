@@ -7,7 +7,7 @@ public interface IRecurringTransactionService
 {
     Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy);
     Task<RecurringTransactionResponse> GetByIdAsync(Guid companyId, Guid id);
-    Task<PagedResponse<RecurringTransactionResponse>> GetAllAsync(Guid companyId, PagedRequest request);
+    Task<PagedResponse<RecurringTransactionResponse>> GetAllAsync(Guid companyId, PagedRequest request, string? status = null);
     Task<RecurringTransactionResponse> UpdateAsync(Guid companyId, Guid id, UpdateRecurringTransactionRequest request);
     Task DeleteAsync(Guid companyId, Guid id);
     Task<RecurringTransactionResponse> PauseAsync(Guid companyId, Guid id);
