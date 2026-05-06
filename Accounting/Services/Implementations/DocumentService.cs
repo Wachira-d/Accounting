@@ -1397,7 +1397,7 @@ public class DocumentService : IDocumentService
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
         var docCount = await _db.Documents.CountAsync(d => d.ContactId == contactId && d.CompanyId == companyId && !d.IsDeleted);
-        var whtCount = await _db.WithholdingTaxCerts.CountAsync(w => w.ContactId == contactId && w.CompanyId == companyId && !w.IsDeleted);
+        var whtCount = await _db.WithholdingTaxCerts.CountAsync(w => w.PayeeContactId == contactId && w.CompanyId == companyId && !w.IsDeleted);
         if (docCount > 0 || whtCount > 0)
         {
             contact.IsActive = false;
