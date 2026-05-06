@@ -2217,7 +2217,7 @@ public class DocumentService : IDocumentService
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
         d.SubTotal, d.DiscountAmount, d.VatAmount, d.WithholdingTaxAmount,
-        d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Notes,
+        d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Reference, d.Notes,
         d.Lines.OrderBy(l => l.LineOrder).Select(l => new DocumentLineResponse(
             l.Id, l.LineOrder, l.Description, l.Quantity, l.Unit,
             l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,

@@ -37,7 +37,8 @@ public class AccountingService : IAccountingService
         var level = 1;
         if (request.ParentAccountId.HasValue)
         {
-            var parent = await _db.ChartOfAccounts.FindAsync(request.ParentAccountId.Value);
+            var parent = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == request.ParentAccountId.Value && a.CompanyId == companyId);
             if (parent != null) level = parent.Level + 1;
         }
 
@@ -803,6 +804,7 @@ public class AccountingService : IAccountingService
             .Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id)
                 && j.Status != JournalEntryStatus.Reversed
+                && j.Status != JournalEntryStatus.Posted
                 && !j.SourceDocumentId.HasValue)
             .ToListAsync();
 
@@ -837,14 +839,21 @@ public class AccountingService : IAccountingService
             .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Draft)
             .ToListAsync();
 
+        var closedPeriodIds = await _db.FiscalPeriods
+            .Where(f => f.CompanyId == companyId && f.Status != FiscalPeriodStatus.Open)
+            .Select(f => f.Id)
+            .ToListAsync();
+
         foreach (var entry in entries)
         {
+            if (entry.FiscalPeriodId.HasValue && closedPeriodIds.Contains(entry.FiscalPeriodId.Value))
+                continue;
             entry.Status = JournalEntryStatus.Posted;
             entry.UpdatedAt = DateTime.UtcNow;
         }
 
         await _db.SaveChangesAsync();
-        return entries.Count;
+        return entries.Count(e => e.Status == JournalEntryStatus.Posted);
     }
 
     // ==================== General Ledger ====================
@@ -1146,7 +1155,8 @@ public class AccountingService : IAccountingService
         totalFixed += badStockMoves.Count;
 
         var badTaxLines = await _db.TaxReportLines
-            .Where(l => l.TransactionDate.Year < 1900)
+            .Where(l => _db.TaxReports.Any(r => r.Id == l.TaxReportId && r.CompanyId == companyId)
+                && l.TransactionDate.Year < 1900)
             .ToListAsync();
         foreach (var l in badTaxLines)
         {
@@ -1738,6 +1748,10 @@ public class AccountingService : IAccountingService
     {
         var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
         var pattern = $"{prefix}-{yearMonth}-";
+
+        // Advisory lock to prevent duplicate entry numbers under concurrency
+        var lockKey = Math.Abs($"je_number_{companyId}_{pattern}".GetHashCode());
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
 
         var lastEntry = await _db.JournalEntries
             .IgnoreQueryFilters()

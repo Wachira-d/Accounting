@@ -27,6 +27,10 @@ public class FileAttachmentController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "กรุณาอัพโหลดไฟล์"));
 
+        var allowedEntityTypes = new[] { "Document", "Contact", "Payment", "JournalEntry", "FixedAsset", "Expense", "Product", "Project" };
+        if (!allowedEntityTypes.Contains(entityType))
+            return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "ประเภทไม่ถูกต้อง"));
+
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var shortGuid = Guid.NewGuid().ToString("N")[..8];
         var fileName = $"{entityType}_{entityId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{Path.GetExtension(file.FileName)}";
