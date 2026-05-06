@@ -336,7 +336,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!string.IsNullOrEmpty(cert.PayeeContact.BranchCode))
             sb.Append($"<span class='wf-lbl' style='margin-left:8px'>สาขาที่</span><span class='wf-val' style='max-width:80px'>{WebUtility.HtmlEncode(cert.PayeeContact.BranchCode)}</span>");
         sb.AppendLine("</div>");
-        sb.AppendLine($"<div class='wf-row'><span class='wf-lbl'>ที่อยู่</span><span class='wf-val'>{WebUtility.HtmlEncode(cert.PayeeContact.Address ?? "")}</span></div></div>");
+        var payeeFullAddress = string.Join(" ", new[] { cert.PayeeContact.Address, cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode }.Where(s => !string.IsNullOrEmpty(s)));
+        sb.AppendLine($"<div class='wf-row'><span class='wf-lbl'>ที่อยู่</span><span class='wf-val'>{WebUtility.HtmlEncode(payeeFullAddress)}</span></div></div>");
 
         // ===== Income Table =====
         sb.AppendLine("<table class='wf-tbl'><thead><tr><th rowspan='2' style='width:46%'>ประเภทเงินได้พึงประเมินที่จ่าย</th><th rowspan='2' style='width:14%'>วัน เดือน ปี<br>ที่จ่าย</th><th colspan='2'>จำนวนเงินที่จ่าย<br>และภาษีที่หักไว้</th></tr><tr><th style='width:20%'>จำนวนเงินที่จ่าย</th><th style='width:20%'>ภาษีที่หักและ<br>นำส่งไว้</th></tr></thead><tbody>");

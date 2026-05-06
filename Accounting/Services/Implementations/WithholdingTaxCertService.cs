@@ -400,12 +400,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         };
     }
 
+    private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode)
+        => string.Join(" ", new[] { address, subDistrict, district, province, postalCode }.Where(s => !string.IsNullOrEmpty(s)));
+
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
-        company.Address ?? "",
+        ComposeFullAddress(company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode),
         w.PayeeContactId, w.PayeeContact.Name, w.PayeeContact.TaxId,
-        w.PayeeContact.BranchCode, w.PayeeContact.Address,
+        w.PayeeContact.BranchCode,
+        ComposeFullAddress(w.PayeeContact.Address, w.PayeeContact.SubDistrict, w.PayeeContact.District, w.PayeeContact.Province, w.PayeeContact.PostalCode),
         w.TaxFormType, GetTaxFormName(w.TaxFormType),
         w.TaxYear, w.TaxMonth, w.CertificateType, w.Status,
         w.TotalIncomeAmount, w.TotalTaxAmount,
