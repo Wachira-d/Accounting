@@ -322,12 +322,20 @@ public class ECommerceService : IECommerceService
 
     private async Task<Document> CreateInvoiceFromOrder(Guid companyId, ECommerceOrder order, Contact contact)
     {
-        var vatRate = 7m;
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-        if (company != null) vatRate = company.VatRate;
 
-        var subTotal = order.TotalAmount / (1 + vatRate / 100);
-        var vatAmount = order.TotalAmount - subTotal;
+        decimal subTotal, vatAmount;
+        if (company is { IsVatRegistered: true })
+        {
+            var vatRate = company.VatRate;
+            subTotal = order.TotalAmount / (1 + vatRate / 100);
+            vatAmount = order.TotalAmount - subTotal;
+        }
+        else
+        {
+            subTotal = order.TotalAmount;
+            vatAmount = 0;
+        }
 
         var doc = new Document
         {
