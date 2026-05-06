@@ -66,4 +66,46 @@ public class LineNotifyService : ILineNotifyService
             _logger.LogError(ex, "Failed to send LINE message");
         }
     }
+
+    public async Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount)
+    {
+        var msg = $"✅ เอกสารอนุมัติแล้ว\n📄 {documentNumber}\n👤 {contactName}\n💰 {amount:N2} บาท";
+        await SendMessageAsync(msg);
+    }
+
+    public async Task NotifyPaymentReceivedAsync(Guid companyId, string documentNumber, decimal amount)
+    {
+        var msg = $"💵 รับชำระเงินแล้ว\n📄 {documentNumber}\n💰 {amount:N2} บาท\n🕐 {DateTime.Now:dd/MM/yyyy HH:mm}";
+        await SendMessageAsync(msg);
+    }
+
+    public async Task NotifyOverdueInvoiceAsync(Guid companyId, string documentNumber, string contactName, decimal amount, int daysOverdue)
+    {
+        var msg = $"⚠️ ใบแจ้งหนี้เกินกำหนด\n📄 {documentNumber}\n👤 {contactName}\n💰 ค้างชำระ {amount:N2} บาท\n📅 เกินกำหนด {daysOverdue} วัน";
+        await SendMessageAsync(msg);
+    }
+
+    public async Task NotifyBankSyncCompleteAsync(Guid companyId, string bankName, int newTransactions)
+    {
+        var msg = $"🏦 Sync ธนาคารสำเร็จ\n🔄 {bankName}\n📊 รายการใหม่ {newTransactions} รายการ\n🕐 {DateTime.Now:dd/MM/yyyy HH:mm}";
+        await SendMessageAsync(msg);
+    }
+
+    public async Task NotifyECommerceSyncAsync(Guid companyId, string platform, int newOrders, decimal totalAmount)
+    {
+        var msg = $"🛒 Sync {platform} สำเร็จ\n📦 ออเดอร์ใหม่ {newOrders} รายการ\n💰 ยอดรวม {totalAmount:N2} บาท\n🕐 {DateTime.Now:dd/MM/yyyy HH:mm}";
+        await SendMessageAsync(msg);
+    }
+
+    public async Task NotifyPayrollCompletedAsync(Guid companyId, string runName, int employeeCount, decimal totalNet)
+    {
+        var msg = $"💼 คำนวณเงินเดือนเสร็จสิ้น\n📋 {runName}\n👥 {employeeCount} คน\n💰 รวมจ่ายสุทธิ {totalNet:N2} บาท";
+        await SendMessageAsync(msg);
+    }
+
+    public async Task NotifyLowBalanceAsync(Guid companyId, string accountName, decimal balance, decimal threshold)
+    {
+        var msg = $"🔴 แจ้งเตือน: ยอดเงินต่ำ\n🏦 {accountName}\n💰 คงเหลือ {balance:N2} บาท\n⚠️ ต่ำกว่าเกณฑ์ {threshold:N2} บาท";
+        await SendMessageAsync(msg);
+    }
 }

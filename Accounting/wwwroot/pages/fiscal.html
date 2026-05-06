@@ -48,6 +48,19 @@
         </div>
       </div>
     </div>
+
+    <!-- Pre-Closing Checklist Modal -->
+    <div class="modal-overlay" id="checklistModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title">ตรวจสอบก่อนปิดงวด</h3><button class="modal-close" onclick="Layout.closeModal('checklistModal')">&times;</button></div>
+        <div class="modal-body" id="checklistContent" style="padding:20px">
+          <p class="text-center text-gray-400">กำลังตรวจสอบ...</p>
+        </div>
+        <div class="modal-footer" id="checklistFooter">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('checklistModal')">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -61,11 +74,13 @@
         Layout.setTitle('งวดบัญชี');
         await this.load();
       },
+      _periods: [],
       async load() {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getFiscalPeriods();
           const items = res.data?.items || res.data || [];
+          this._periods = items;
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีงวดบัญชี — กดปุ่ม "สร้างงวดบัญชี" เพื่อเริ่มต้น</td></tr>'; return; }
           tbody.innerHTML = items.map(p => `<tr>
@@ -112,13 +127,83 @@
           Layout.closeModal('formModal'); Layout.toast('สร้างงวดบัญชีสำเร็จ'); await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      _closeId: null,
       async closePeriod(id) {
-        if (!confirm('ยืนยันปิดงวดบัญชีนี้? เมื่อปิดแล้วจะไม่สามารถบันทึกรายการในงวดนี้ได้')) return;
+        this._closeId = id;
         const api = Layout.api(); if (!api) return;
+        const content = document.getElementById('checklistContent');
+        const footer = document.getElementById('checklistFooter');
+        content.innerHTML = '<p class="text-center text-gray-400">กำลังตรวจสอบ...</p>';
+        footer.innerHTML = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'checklistModal\')">ยกเลิก</button>';
+        Layout.openModal('checklistModal');
+
         try {
-          await api.closeFiscalPeriod(id);
-          Layout.toast('ปิดงวดบัญชีสำเร็จ'); await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+          const period = this._periods.find(p => p.id === id);
+          const pStart = period?.startDate?.split('T')[0] || '';
+          const pEnd = period?.endDate?.split('T')[0] || '';
+          const pName = period?.name || id;
+
+          const [jRes, dRes, tbRes] = await Promise.all([
+            api.getJournals(`?status=Draft&fromDate=${pStart}&toDate=${pEnd}&pageSize=1`),
+            api.getDocuments(`?status=Draft&fromDate=${pStart}&toDate=${pEnd}&pageSize=1`),
+            api.trialBalance(`?asOfDate=${pEnd}`)
+          ]);
+
+          const draftJEs = jRes.data?.totalCount ?? jRes.data?.items?.length ?? 0;
+          const draftDocs = dRes.data?.totalCount ?? dRes.data?.items?.length ?? 0;
+          const tb = tbRes.data;
+          const tbBalanced = Math.abs((tb?.totalDebit || 0) - (tb?.totalCredit || 0)) < 0.02;
+
+          const checks = [
+            { label: 'รายการ Draft (สมุดรายวัน)', value: draftJEs === 0, detail: draftJEs === 0 ? 'ไม่มี' : `${draftJEs} รายการ — ต้อง Post หรือ Void ก่อน` },
+            { label: 'เอกสาร Draft', value: draftDocs === 0, detail: draftDocs === 0 ? 'ไม่มี' : `${draftDocs} รายการ — ต้องอนุมัติหรือยกเลิก` },
+            { label: 'งบทดลองสมดุล', value: tbBalanced, detail: tbBalanced ? `Dr ${Layout.money(tb?.totalDebit)} = Cr ${Layout.money(tb?.totalCredit)}` : `Dr ${Layout.money(tb?.totalDebit)} ≠ Cr ${Layout.money(tb?.totalCredit)}` },
+          ];
+
+          const allPassed = checks.every(c => c.value);
+
+          content.innerHTML = `
+            <p class="text-sm text-gray-500" style="margin-bottom:16px">งวด: <strong>${Layout.esc(pName)}</strong> (${pStart} — ${pEnd})</p>
+            <div style="display:flex;flex-direction:column;gap:12px">
+              ${checks.map(c => `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:${c.value ? '#f0fdf4' : '#fef2f2'}">
+                  <span style="font-size:18px">${c.value ? '✅' : '❌'}</span>
+                  <div>
+                    <div class="font-medium" style="font-size:13px">${c.label}</div>
+                    <div class="text-xs" style="color:${c.value ? 'var(--success)' : 'var(--danger)'}">${c.detail}</div>
+                  </div>
+                </div>`).join('')}
+            </div>
+            ${allPassed ? '<p class="text-success text-sm" style="margin-top:16px;text-align:center">✓ ผ่านการตรวจสอบทุกรายการ — พร้อมปิดงวด</p>'
+              : '<p class="text-danger text-sm" style="margin-top:16px;text-align:center">⚠ มีรายการที่ต้องแก้ไข (ระบบจะตรวจสอบอีกครั้งเมื่อปิดจริง)</p>'}
+            <div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:8px;font-size:12px;color:var(--gray-600)">
+              <strong>สิ่งที่ระบบจะทำเมื่อปิดงวด:</strong>
+              <ul style="margin:4px 0 0 16px;padding:0">
+                <li>สร้างใบปิดสมุด (Closing Entries) — ปิดบัญชีรายได้/ค่าใช้จ่ายเข้ากำไรสะสม</li>
+                <li>ตั้งสถานะงวดเป็น "ปิด" — ไม่สามารถบันทึกรายการเพิ่มในงวดนี้ได้</li>
+              </ul>
+            </div>`;
+
+          footer.innerHTML = `
+            <button class="btn btn-secondary" onclick="Layout.closeModal('checklistModal')">ยกเลิก</button>
+            <button class="btn btn-warning" onclick="Page.confirmClose()">ยืนยันปิดงวด</button>`;
+        } catch (e) {
+          content.innerHTML = `<div class="text-danger text-center" style="padding:20px">${Layout.esc(e.message)}</div>`;
+        }
+      },
+      async confirmClose() {
+        const api = Layout.api(); if (!api) return;
+        const btn = document.querySelector('#checklistFooter .btn-warning');
+        if (btn) { btn.disabled = true; btn.textContent = 'กำลังปิดงวด...'; }
+        try {
+          await api.closeFiscalPeriod(this._closeId);
+          Layout.closeModal('checklistModal');
+          Layout.toast('ปิดงวดบัญชีสำเร็จ — สร้างใบปิดสมุดเรียบร้อยแล้ว');
+          await this.load();
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+          if (btn) { btn.disabled = false; btn.textContent = 'ยืนยันปิดงวด'; }
+        }
       }
     };
     Page.init();

@@ -87,6 +87,7 @@ public record DocumentLineResponse(
     decimal VatAmount,
     decimal WithholdingTaxRate,
     decimal WithholdingTaxAmount,
+    Guid? AccountId = null,
     Guid? ProjectId = null);
 
 public record ContactBrief(Guid Id, string Name, string? TaxId);
@@ -204,6 +205,8 @@ public record PaymentResponse(
     PaymentMethod PaymentMethod,
     string? Reference,
     string? BankAccount,
+    Guid? BankAccountId,
+    string? Notes,
     DateTime CreatedAt);
 
 

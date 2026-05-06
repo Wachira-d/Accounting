@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -86,18 +87,42 @@ public class BackgroundJobService : BackgroundService
     {
         try
         {
-            // Log overdue invoice count for monitoring
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var lineNotify = scope.ServiceProvider.GetRequiredService<ILineNotifyService>();
             var today = DateTime.UtcNow.Date;
-            var overdueCount = db.Documents
-                .Count(d => d.DocumentType == DocumentType.Invoice
-                    && d.Status == DocumentStatus.Approved
+
+            var overdueDocuments = await db.Documents
+                .Include(d => d.Contact)
+                .Where(d => (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                    && d.Status != DocumentStatus.Paid
                     && d.DueDate.HasValue
                     && d.DueDate < today
-                    && d.BalanceDue > 0);
+                    && d.BalanceDue > 0)
+                .ToListAsync(ct);
 
-            if (overdueCount > 0)
-                _logger.LogWarning("Found {Count} overdue invoices requiring attention", overdueCount);
+            if (overdueDocuments.Count > 0)
+                _logger.LogWarning("Found {Count} overdue invoices requiring attention", overdueDocuments.Count);
+
+            foreach (var doc in overdueDocuments)
+            {
+                if (doc.Status != DocumentStatus.Overdue)
+                    doc.Status = DocumentStatus.Overdue;
+
+                var daysOverdue = (today - doc.DueDate!.Value).Days;
+                try
+                {
+                    await lineNotify.NotifyOverdueInvoiceAsync(
+                        doc.CompanyId, doc.DocumentNumber,
+                        doc.Contact?.Name ?? "ไม่ระบุ", doc.BalanceDue, daysOverdue);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "LINE notify skipped for overdue doc {DocId}", doc.Id);
+                }
+            }
+
+            await db.SaveChangesAsync(ct);
         }
         catch (Exception ex)
         {

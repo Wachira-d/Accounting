@@ -12,6 +12,7 @@ public interface IWithholdingTaxCertService
     Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId);
     Task VoidAsync(Guid companyId, Guid certId);
     Task DeleteAsync(Guid companyId, Guid certId);
+    Task DeleteAsync(Guid companyId, Guid certId, Guid? userId);
     Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null);
 
     // Auto-generate from document/payment

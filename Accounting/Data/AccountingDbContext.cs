@@ -669,6 +669,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<RecurringTransaction>(e =>
         {
             e.Property(r => r.Name).HasMaxLength(256);
+            e.HasIndex(r => new { r.CompanyId, r.Status, r.NextRunDate })
+                .HasDatabaseName("IX_RecurringTransactions_CompanyId_Status_NextRunDate");
             e.HasQueryFilter(r => !r.IsDeleted);
         });
 
@@ -1888,6 +1890,10 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(t => new { t.BankAccountId, t.TransactionDate })
                 .HasDatabaseName("IX_BankTransactions_BankAccId_TxDate");
+            e.HasIndex(t => new { t.BankAccountId, t.ReconciliationStatus })
+                .HasDatabaseName("IX_BankTransactions_BankAccId_ReconStatus");
+            e.HasIndex(t => t.MatchedPaymentId)
+                .HasDatabaseName("IX_BankTransactions_MatchedPaymentId");
         });
 
         // Payment: lookup by document

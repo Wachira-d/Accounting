@@ -304,7 +304,7 @@ public class AccountingService : IAccountingService
             if (string.IsNullOrWhiteSpace(reference) && !string.IsNullOrWhiteSpace(sourceDocNumber))
                 reference = sourceDocNumber;
 
-            // Re-sync support: void existing posted journals linked to this source document
+            // Re-sync support: reverse existing posted journals linked to this source document
             // before creating a new one. This enables idempotent re-syncs from external systems.
             if (request.ReplaceExistingForSource && sourceDocId.HasValue)
             {
@@ -315,8 +315,9 @@ public class AccountingService : IAccountingService
                     .ToListAsync();
                 foreach (var old in existing)
                 {
-                    old.Status = JournalEntryStatus.Voided;
-                    old.UpdatedAt = DateTime.UtcNow;
+                    await ReverseJournalEntryAsync(companyId, old.Id,
+                        reversalDate: request.EntryDate,
+                        description: $"Re-sync reversal: {old.EntryNumber}");
                 }
             }
 
@@ -348,12 +349,14 @@ public class AccountingService : IAccountingService
                     throw new InvalidOperationException("ไม่พบโครงการที่ระบุในบริษัทนี้");
             }
 
-            // Find fiscal period
+            // Find fiscal period — reject if closed
             var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId &&
                 f.StartDate <= request.EntryDate &&
-                f.EndDate >= request.EntryDate &&
-                f.Status == FiscalPeriodStatus.Open);
+                f.EndDate >= request.EntryDate);
+            if (period != null && period.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถบันทึกรายการในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว");
             if (period != null)
                 entry.FiscalPeriodId = period.Id;
 
@@ -653,8 +656,10 @@ public class AccountingService : IAccountingService
             var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId &&
                 f.StartDate <= effectiveDate &&
-                f.EndDate >= effectiveDate &&
-                f.Status == FiscalPeriodStatus.Open);
+                f.EndDate >= effectiveDate);
+            if (period != null && period.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถกลับรายการในงวด {period.Name} ได้ เนื่องจากงวดถูกปิดแล้ว");
             if (period != null)
                 reversal.FiscalPeriodId = period.Id;
 
@@ -719,6 +724,54 @@ public class AccountingService : IAccountingService
         }
     }
 
+    public async Task<CorrectJournalEntryResponse> CorrectJournalEntryAsync(Guid companyId, Guid entryId, string createdBy)
+    {
+        var original = await _db.JournalEntries
+            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+
+        if (original.Status != JournalEntryStatus.Posted)
+            throw new InvalidOperationException("สามารถแก้ไขด้วยการกลับรายการได้เฉพาะใบที่ Posted แล้วเท่านั้น");
+
+        if (original.ReversedByEntryId.HasValue)
+            throw new InvalidOperationException("รายการนี้ถูกกลับรายการไปแล้ว");
+
+        // Step 1: Reverse the original entry
+        var reversalEntry = await ReverseJournalEntryAsync(companyId, entryId, null,
+            $"แก้ไข (กลับรายการ) {original.EntryNumber}");
+
+        // Step 2: Create a new Draft clone with same data for user to correct
+        var cloneRequest = new CreateJournalEntryRequest(
+            EntryDate: original.EntryDate,
+            Description: $"แก้ไขจาก {original.EntryNumber}: {original.Description}",
+            Reference: original.Reference,
+            Lines: original.Lines.OrderBy(l => l.LineOrder).Select(l => new JournalLineRequest(
+                AccountId: l.AccountId,
+                DebitAmount: l.DebitAmount,
+                CreditAmount: l.CreditAmount,
+                Description: l.Description,
+                ProjectId: l.ProjectId,
+                BranchId: l.BranchId,
+                DimensionId: l.DimensionId,
+                Tags: l.Tags
+            )).ToList(),
+            JournalType: original.JournalType,
+            ProjectId: original.ProjectId,
+            BranchId: original.BranchId,
+            DimensionId: original.DimensionId,
+            Note: original.Note,
+            Tags: original.Tags,
+            SourceDocumentId: original.SourceDocumentId,
+            SourceDocumentNumber: null,
+            ReplaceExistingForSource: false
+        );
+
+        var draftEntry = await CreateJournalEntryAsync(companyId, cloneRequest, createdBy);
+
+        return new CorrectJournalEntryResponse(reversalEntry, draftEntry);
+    }
+
     public async Task<int> BatchVoidJournalEntriesAsync(Guid companyId, List<Guid> entryIds)
     {
         var entries = await _db.JournalEntries
@@ -727,8 +780,17 @@ public class AccountingService : IAccountingService
 
         foreach (var entry in entries)
         {
-            entry.Status = JournalEntryStatus.Voided;
-            entry.UpdatedAt = DateTime.UtcNow;
+            if (entry.Status == JournalEntryStatus.Posted)
+            {
+                await ReverseJournalEntryAsync(companyId, entry.Id,
+                    reversalDate: DateTime.UtcNow.Date,
+                    description: $"Batch void: {entry.EntryNumber}");
+            }
+            else
+            {
+                entry.Status = JournalEntryStatus.Voided;
+                entry.UpdatedAt = DateTime.UtcNow;
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -1244,11 +1306,13 @@ public class AccountingService : IAccountingService
         var equity = trial.Items.Where(i => i.AccountType == AccountType.Equity)
             .Select(i => new BalanceSheetSection(i.AccountCode, i.AccountName, i.CreditBalance - i.DebitBalance, null)).ToList();
 
-        // Add net income to equity
+        // Current period P&L not yet closed to Retained Earnings — show as separate equity line
+        // This follows standard ERP practice for interim financial statements (TAS 34)
         var revenue = trial.Items.Where(i => i.AccountType == AccountType.Revenue).Sum(i => i.CreditBalance - i.DebitBalance);
         var expenses = trial.Items.Where(i => i.AccountType == AccountType.Expense).Sum(i => i.DebitBalance - i.CreditBalance);
         var netIncome = revenue - expenses;
-        equity.Add(new BalanceSheetSection("", "กำไร(ขาดทุน)สุทธิ", netIncome, null));
+        if (Math.Abs(netIncome) > 0.01m)
+            equity.Add(new BalanceSheetSection("", "กำไร(ขาดทุน)สุทธิงวดปัจจุบัน", netIncome, null));
 
         return new BalanceSheetResponse(
             asOfDate, assets, liabilities, equity,
@@ -1465,14 +1529,174 @@ public class AccountingService : IAccountingService
         if (period.Status != FiscalPeriodStatus.Open)
             throw new InvalidOperationException("สามารถปิดได้เฉพาะงวดบัญชีที่เปิดอยู่เท่านั้น");
 
-        // Check for draft entries
-        var hasDrafts = await _db.JournalEntries.AnyAsync(j =>
+        // ===== Pre-closing checklist =====
+        var issues = new List<string>();
+
+        // 1. Draft journal entries
+        var draftCount = await _db.JournalEntries.CountAsync(j =>
             j.FiscalPeriodId == periodId && j.Status == JournalEntryStatus.Draft);
-        if (hasDrafts)
-            throw new InvalidOperationException("ยังมีใบสำคัญที่เป็น Draft อยู่ ต้อง post หรือ void ก่อน");
+        if (draftCount > 0)
+            issues.Add($"ยังมีใบสำคั��� Draft {draftCount} รายการ (ต้อง Post หรือ Void ก่อน)");
+
+        // 2. Draft documents in this period
+        var draftDocs = await _db.Documents.CountAsync(d =>
+            d.CompanyId == companyId && !d.IsDeleted
+            && d.DocumentDate >= period.StartDate && d.DocumentDate <= period.EndDate
+            && d.Status == DocumentStatus.Draft);
+        if (draftDocs > 0)
+            issues.Add($"ยังมีเอกสาร Draft {draftDocs} ฉบับในงวดนี้");
+
+        // 3. Unbalanced journal entries (Dr != Cr)
+        var unbalanced = await _db.JournalEntries.CountAsync(j =>
+            j.FiscalPeriodId == periodId
+            && j.Status == JournalEntryStatus.Posted
+            && Math.Abs(j.TotalDebit - j.TotalCredit) > 0.01m);
+        if (unbalanced > 0)
+            issues.Add($"พบใบสำคัญไม่สมดุล (เดบิต≠เครดิต) {unbalanced} รายการ");
+
+        // 4. Unreconciled bank transactions
+        var unreconciledBank = await _db.BankTransactions.CountAsync(t =>
+            t.CompanyId == companyId
+            && t.TransactionDate >= period.StartDate && t.TransactionDate <= period.EndDate
+            && t.ReconciliationStatus == ReconciliationStatus.Unmatched);
+        if (unreconciledBank > 0)
+            issues.Add($"ยังมีรายการธนาคารที่ยังไม่กระทบยอด {unreconciledBank} รายการ (แนะนำให้กระทบยอดก่อน)");
+
+        if (issues.Count > 0)
+            throw new InvalidOperationException(
+                "ไม่สามารถปิดงวดได้ — พบปัญหาที่ต้องแก้ไข:\n• " + string.Join("\n• ", issues));
+
+        // ===== Create closing journal entries (ปิดบัญชีรายได้/ค่าใช้จ่ายเข้ากำไรสะสม) =====
+        await CreateClosingEntriesAsync(companyId, period);
 
         period.Status = FiscalPeriodStatus.Closed;
         await _db.SaveChangesAsync();
+    }
+
+    private async Task CreateClosingEntriesAsync(Guid companyId, FiscalPeriod period)
+    {
+        var retainedEarningsAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                && a.AccountCode.StartsWith("32020") && a.IsActive)
+            ?? await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountCode.StartsWith("3202") && a.IsActive)
+            ?? await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountType == AccountType.Equity
+                    && a.AccountCode.StartsWith("32") && a.Level >= 4 && a.IsActive);
+
+        if (retainedEarningsAccount == null)
+            throw new InvalidOperationException(
+                "ไม่พบบัญชีกำไรสะสม (32020) ในผังบัญชี — กรุณาเพิ่มก่อนปิดงวด");
+
+        var postedLines = await _db.JournalEntryLines
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                    || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                && l.JournalEntry.EntryDate >= period.StartDate
+                && l.JournalEntry.EntryDate <= period.EndDate
+                && (l.Account!.AccountType == AccountType.Revenue
+                    || l.Account!.AccountType == AccountType.Expense))
+            .ToListAsync();
+
+        if (postedLines.Count == 0) return;
+
+        var grouped = postedLines
+            .Where(l => l.Account != null)
+            .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
+            .Select(g => new
+            {
+                g.Key.AccountId,
+                g.Key.AccountCode,
+                g.Key.AccountName,
+                g.Key.AccountType,
+                TotalDebit = g.Sum(l => l.DebitAmount),
+                TotalCredit = g.Sum(l => l.CreditAmount)
+            })
+            .Where(g => g.TotalDebit != 0 || g.TotalCredit != 0)
+            .ToList();
+
+        if (grouped.Count == 0) return;
+
+        var closingLines = new List<JournalEntryLine>();
+
+        foreach (var acct in grouped)
+        {
+            if (acct.AccountType == AccountType.Revenue)
+            {
+                var netCredit = acct.TotalCredit - acct.TotalDebit;
+                if (netCredit == 0) continue;
+                closingLines.Add(new JournalEntryLine
+                {
+                    AccountId = acct.AccountId,
+                    DebitAmount = netCredit > 0 ? netCredit : 0,
+                    CreditAmount = netCredit < 0 ? Math.Abs(netCredit) : 0,
+                    Description = $"ปิดบัญชี {acct.AccountCode} {acct.AccountName}"
+                });
+            }
+            else
+            {
+                var netDebit = acct.TotalDebit - acct.TotalCredit;
+                if (netDebit == 0) continue;
+                closingLines.Add(new JournalEntryLine
+                {
+                    AccountId = acct.AccountId,
+                    DebitAmount = netDebit < 0 ? Math.Abs(netDebit) : 0,
+                    CreditAmount = netDebit > 0 ? netDebit : 0,
+                    Description = $"ปิดบัญชี {acct.AccountCode} {acct.AccountName}"
+                });
+            }
+        }
+
+        if (closingLines.Count == 0) return;
+
+        var totalClosingDebit = closingLines.Sum(l => l.DebitAmount);
+        var totalClosingCredit = closingLines.Sum(l => l.CreditAmount);
+        var netToRE = totalClosingCredit - totalClosingDebit;
+
+        closingLines.Add(new JournalEntryLine
+        {
+            AccountId = retainedEarningsAccount.Id,
+            DebitAmount = netToRE > 0 ? netToRE : 0,
+            CreditAmount = netToRE < 0 ? Math.Abs(netToRE) : 0,
+            Description = "ปิดกำไร(ขาดทุน)สุทธิเข้ากำไรสะสม"
+        });
+
+        var finalDebit = closingLines.Sum(l => l.DebitAmount);
+        var finalCredit = closingLines.Sum(l => l.CreditAmount);
+        if (Math.Abs(finalDebit - finalCredit) > 0.01m)
+            throw new InvalidOperationException(
+                $"Closing entries ไม่สมดุล: Dr={finalDebit:N2} Cr={finalCredit:N2}");
+
+        var yearMonth = period.EndDate.ToString("yyyyMM");
+        var entryNumber = $"CL-{yearMonth}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
+
+        var closingEntry = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = entryNumber,
+            EntryDate = period.EndDate,
+            JournalType = JournalType.General,
+            Description = $"ปิดบัญชีรายได้/ค่าใช้จ่ายประจำงวด {period.Name}",
+            Status = JournalEntryStatus.Posted,
+            IsAutoGenerated = true,
+            TotalDebit = finalDebit,
+            TotalCredit = finalCredit,
+            CreatedBy = "System",
+            FiscalPeriodId = period.Id
+        };
+
+        for (var i = 0; i < closingLines.Count; i++)
+        {
+            closingLines[i].JournalEntryId = closingEntry.Id;
+            closingLines[i].LineOrder = i + 1;
+            closingEntry.Lines.Add(closingLines[i]);
+        }
+
+        _db.JournalEntries.Add(closingEntry);
     }
 
     // ==================== Helpers ====================

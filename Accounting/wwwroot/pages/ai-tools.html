@@ -217,19 +217,20 @@ const Page = {
     try {
       const formData = new FormData();
       formData.append('file', fileInput.files[0]);
-      const uploadRes = await api.uploadAttachment('ocr', 'scan', formData);
-      const fileId = uploadRes.data?.id || uploadRes.data?.fileId;
-      if (fileId) {
-        const scanRes = await api.ocrScan(fileId);
-        const d = scanRes.data || {};
+      const scanRes = await api.ocrUploadAndScan(formData);
+      const d = scanRes.data || {};
+      if (d.id) {
         result.innerHTML = `<div class="card" style="padding:16px;background:var(--gray-50)">
-          <div class="text-sm font-medium text-success">สแกนสำเร็จ!</div>
-          ${d.extractedData ? `<div class="text-sm" style="margin-top:8px">
-            <div><strong>ประเภท:</strong> ${d.extractedData.documentType || '-'}</div>
-            <div><strong>ผู้ขาย:</strong> ${d.extractedData.vendorName || '-'}</div>
-            <div><strong>ยอด:</strong> ${Layout.money(d.extractedData.totalAmount)}</div>
-            <div><strong>วันที่:</strong> ${d.extractedData.date || '-'}</div>
-          </div>` : ''}
+          <div class="text-sm font-medium text-success">สแกนสำเร็จ! (ความเชื่อมั่น ${((d.confidence || 0) * 100).toFixed(0)}%)</div>
+          <div class="text-sm" style="margin-top:8px">
+            <div><strong>ประเภท:</strong> ${d.documentType || '-'}</div>
+            <div><strong>ผู้ขาย:</strong> ${d.extractedVendorName || '-'}</div>
+            <div><strong>เลขผู้เสียภาษี:</strong> ${d.extractedVendorTaxId || '-'}</div>
+            <div><strong>เลขที่เอกสาร:</strong> ${d.extractedDocumentNumber || '-'}</div>
+            <div><strong>ยอดรวม:</strong> ${Layout.money(d.extractedTotalAmount)}</div>
+            <div><strong>VAT:</strong> ${Layout.money(d.extractedVatAmount)}</div>
+            <div><strong>วันที่:</strong> ${d.extractedDate ? new Date(d.extractedDate).toLocaleDateString('th-TH') : '-'}</div>
+          </div>
           <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="Page.createDocFromOcr('${d.id}')">สร้างเอกสาร</button>
         </div>`;
         this.loadOcrResults();

@@ -1,3 +1,4 @@
+using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
@@ -7,6 +8,7 @@ using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -17,11 +19,13 @@ public class DocumentController : ControllerBase
 {
     private readonly IDocumentService _documentService;
     private readonly IDocumentEmailService _docEmailService;
+    private readonly AccountingDbContext _db;
 
-    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService)
+    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService, AccountingDbContext db)
     {
         _documentService = documentService;
         _docEmailService = docEmailService;
+        _db = db;
     }
 
     // ===== Send document via email =====
@@ -70,9 +74,10 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<DocumentResponse>>>> GetDocuments(
         Guid companyId, [FromQuery] DocumentType? type = null,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
-        [FromQuery] Guid? projectId = null)
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? contactId = null,
+        [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
     {
-        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search), projectId);
+        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search), projectId, contactId, status, fromDate, toDate);
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
 
@@ -127,11 +132,24 @@ public class DocumentController : ControllerBase
     /// <summary>
     /// ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax)
     /// ลบถาวร ไม่สามารถกู้คืนได้ — เหมือนไม่เคยสร้างมาเลย
+    /// เฉพาะ Owner / SystemAdmin เท่านั้น + บันทึก Audit Log
     /// </summary>
     [HttpDelete("{documentId:guid}/purge")]
     public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId)
     {
-        await _documentService.PurgeDocumentAsync(companyId, documentId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var isSystemAdmin = User.IsInRole("SystemAdmin");
+        if (!isSystemAdmin)
+        {
+            var role = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+                .Select(cu => cu.Role)
+                .FirstOrDefaultAsync();
+            if (role != UserRole.Owner)
+                return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
+        }
+
+        await _documentService.PurgeDocumentAsync(companyId, documentId, userId);
         return Ok(new ApiResponse<string>(true, null, "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
     }
 

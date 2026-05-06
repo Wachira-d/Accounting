@@ -145,6 +145,7 @@ const API = {
       voidJournal: (id) => API.post(`${base}/accounting/journals/${id}/void`),
       deleteJournal: (id) => API.del(`${base}/accounting/journals/${id}`),
       reverseJournal: (id, data) => API.post(`${base}/accounting/journals/${id}/reverse`, data || {}),
+      correctJournal: (id) => API.post(`${base}/accounting/journals/${id}/correct`),
       batchVoidJournals: (ids) => API.post(`${base}/accounting/journals/batch-void`, { entryIds: ids }),
       batchDeleteJournals: (ids) => API.post(`${base}/accounting/journals/batch-delete`, { entryIds: ids }),
       batchPostJournals: () => API.post(`${base}/accounting/journals/batch-post`),
@@ -500,6 +501,7 @@ const API = {
       createForecast: (d) => API.post(`${base}/ai/forecast`, d),
       getForecasts: () => API.get(`${base}/ai/forecasts`),
       // OCR
+      ocrUploadAndScan: (formData) => fetch(`${base}/ocr/upload`, { method: 'POST', headers: { 'Authorization': `Bearer ${API.token}` }, body: formData }).then(r => r.json()),
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
@@ -675,6 +677,20 @@ const API = {
       getIntegrationDepositSummary: (q = '') => API.get(`${base}/integrations/reports/deposit-summary${q}`),
       getIntegrationDailyRevenue: (q = '') => API.get(`${base}/integrations/reports/daily-revenue${q}`),
 
+      // E-Commerce
+      getECommerceConnections: () => API.get(`${base}/ecommerce/connections`),
+      connectECommerce: (d) => API.post(`${base}/ecommerce/connect`, d),
+      syncECommerceOrders: (id, since) => API.post(`${base}/ecommerce/connections/${id}/sync${since ? '?since=' + since : ''}`),
+      syncAllECommerce: () => API.post(`${base}/ecommerce/sync-all`),
+      testECommerceConnection: (id) => API.post(`${base}/ecommerce/connections/${id}/test`),
+      disconnectECommerce: (id) => API.del(`${base}/ecommerce/connections/${id}`),
+      // Bank Feeds
+      getBankFeedConnections: () => API.get(`${base}/bank-feeds/connections`),
+      createBankFeedConnection: (d) => API.post(`${base}/bank-feeds/connections`, d),
+      syncBankFeed: (id) => API.post(`${base}/bank-feeds/connections/${id}/sync`),
+      syncAllBankFeeds: () => API.post(`${base}/bank-feeds/sync-all`),
+      testBankFeedConnection: (id) => API.post(`${base}/bank-feeds/connections/${id}/test`),
+      deleteBankFeedConnection: (id) => API.del(`${base}/bank-feeds/connections/${id}`),
       // Executive Reports
       getExecutiveSummary: (q = '') => API.get(`${base}/executive-reports/summary${q}`),
       getFinancialRatios: (q = '') => API.get(`${base}/executive-reports/ratios${q}`),

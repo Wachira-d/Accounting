@@ -48,6 +48,8 @@
 
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่เอกสาร / ชื่อลูกค้า..." id="searchInput" oninput="Page.load()">
+      <input type="date" class="form-input" id="dateFrom" onchange="Page.load()" title="ตั้งแต่วันที่" style="width:140px">
+      <input type="date" class="form-input" id="dateTo" onchange="Page.load()" title="ถึงวันที่" style="width:140px">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -175,7 +177,7 @@
                 </div>
               </div>
               <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
-              <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint" style="display:none">
+              <label style="display:none;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint">
                 <input type="checkbox" id="fEmailAsEtax" onchange="Page.toggleEtaxByEmail()">
                 <span>ส่งในรูปแบบ <strong>e-Tax by Email</strong> (CC สรรพากร + แนบ XML, หัวข้อตามรูปแบบ RD)</span>
               </label>
@@ -585,9 +587,11 @@
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
         const projectId = document.getElementById('projectFilter')?.value || '';
+        const urlParams = new URLSearchParams(window.location.search);
+        const contactIdFilter = this._contactIdFilter || urlParams.get('contactId') || '';
+        if (contactIdFilter) this._contactIdFilter = contactIdFilter;
         let q = `?page=${this.page}&pageSize=20`;
         if (this.docType) q += `&type=${this.docType}`;
-        // Filter by side (revenue/expense) if no specific type selected
         if (!this.docType && this.side) {
           const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
           types.forEach(t => q += `&types=${t}`);
@@ -595,6 +599,11 @@
         if (status) q += `&status=${status}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
+        if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
+        const dateFrom = document.getElementById('dateFrom')?.value;
+        const dateTo = document.getElementById('dateTo')?.value;
+        if (dateFrom) q += `&fromDate=${dateFrom}`;
+        if (dateTo) q += `&toDate=${dateTo}`;
         try {
           const res = await api.getDocuments(q);
           const data = res.data;
@@ -857,7 +866,7 @@
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
-              <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact?.name || '-'}</div></div>
+              <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
@@ -869,11 +878,35 @@
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
               <div class="text-sm">ยอดรวมก่อน VAT: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
-              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong></div>
+              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong>${d.withholdingTaxAmount > 0 ? ` <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a>` : ''}</div>
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
             ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
+
+          // Load related payments and journal entries
+          try {
+            const [paymentsRes, journalsRes] = await Promise.all([
+              api.getPayments ? api.getPayments(`?documentId=${d.id}`) : Promise.resolve({data:[]}),
+              api.getJournals(`?sourceDocumentId=${d.id}&pageSize=10`)
+            ]);
+            const payments = paymentsRes?.data?.items || paymentsRes?.data || [];
+            const journals = journalsRes?.data?.items || journalsRes?.data || [];
+            let extraSections = '';
+            if (payments.length) {
+              extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">ประวัติการชำระเงิน (${payments.length})</h4>
+                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>วิธี</th></tr></thead>
+                <tbody>${payments.map(p => `<tr><td>${p.paymentNumber}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${Layout.money(p.amount)}</td><td>${p.paymentMethod||'-'}</td></tr>`).join('')}</tbody></table></div>`;
+            }
+            if (journals.length) {
+              extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">รายการบัญชี (${journals.length})</h4>
+                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th></tr></thead>
+                <tbody>${journals.map(j => `<tr><td><a href="/pages/journals.html?entryId=${j.id}">${j.entryNumber}</a></td><td>${Layout.date(j.entryDate)}</td><td>${j.journalType||'-'}</td><td class="text-right">${Layout.money(j.totalDebit)}</td><td class="text-right">${Layout.money(j.totalCredit)}</td><td>${Layout.statusBadge(j.status)}</td></tr>`).join('')}</tbody></table></div>`;
+            }
+            if (extraSections) {
+              document.getElementById('detailContent').innerHTML += extraSections;
+            }
+          } catch(e) { /* non-critical */ }
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -899,6 +932,11 @@
           if (hasEtaxId) {
             actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
           }
+          // Payment recording: for approved+ docs with balance due
+          const payableStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
+          if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
+            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue})">บันทึกชำระเงิน</button>`;
+          }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
           const outstandingStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
@@ -911,7 +949,10 @@
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
-          actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          const myRole = await Layout.ensureMyRole();
+          if (myRole === 'Owner' || myRole === 'SystemAdmin') {
+            actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1018,13 +1059,15 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
-      async purgeDoc(id) {
+      async purgeDoc(id, docNumber) {
         const api = Layout.api(); if (!api) return;
         if (!(await Layout.confirmDanger({
-          title: 'ลบเอกสารและข้อมูลทั้งหมด',
+          title: 'ลบเอกสารและข้อมูลทั้งหมด (Owner เท่านั้น)',
           message: 'ระบบจะลบเอกสาร รายการบัญชี(JE) การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องทั้งหมด<br>' +
-                   '<strong style="color:#dc2626">ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้ เหมือนไม่เคยสร้าง</strong>',
-          mode: 'math'
+                   '<strong style="color:#dc2626">⚠️ ผิดหลักบัญชี — ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้</strong><br>' +
+                   '<span style="font-size:12px;color:#666">การดำเนินการนี้จะถูกบันทึกใน Audit Log</span>',
+          mode: 'doubleCheck',
+          confirmText: docNumber || 'DELETE'
         }))) return;
         try {
           await api.purgeDocument(id);
@@ -1032,6 +1075,25 @@
           Layout.toast('ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      async recordPayment(docId, balanceDue) {
+        const amount = prompt(`บันทึกชำระเงิน\nยอดค้างชำระ: ${Layout.money(balanceDue)}\n\nจำนวนเงินที่ชำระ:`, balanceDue);
+        if (!amount) return;
+        const parsed = parseFloat(amount);
+        if (isNaN(parsed) || parsed <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
+        if (parsed > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createPayment({
+            documentId: docId,
+            paymentDate: new Date().toISOString().split('T')[0],
+            amount: parsed,
+            paymentMethod: 'Transfer'
+          });
+          Layout.toast('บันทึกชำระเงินสำเร็จ');
+          Layout.closeModal('detailModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
@@ -1061,7 +1123,7 @@
         try {
           await api.voidPayment(paymentId);
           Layout.toast('ยกเลิกการชำระเงินสำเร็จ');
-          if (this._currentDoc?.id) await this.openDetail(this._currentDoc.id);
+          if (this._currentDoc?.id) await this.detail(this._currentDoc.id);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },

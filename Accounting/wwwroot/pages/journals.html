@@ -191,12 +191,15 @@
         } catch(e) {}
         this.renderHeaderActions();
         await this.loadDimensionFilters();
-        const urlType = new URLSearchParams(window.location.search).get('type');
+        const params = new URLSearchParams(window.location.search);
+        const urlType = params.get('type');
         if (urlType) this.currentType = urlType;
         this.updateTabs();
         await this.load();
         this.loadCounts();
         this.checkDraftCount();
+        const entryId = params.get('entryId');
+        if (entryId) this.detail(entryId);
       },
       renderHeaderActions() {
         const holder = document.getElementById('pageActions');
@@ -410,6 +413,7 @@
               : Layout.statusBadge(j.status);
             let actBtns = `<button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')" data-i18n="common.view">ดู</button>`;
             if (j.status === 'Posted') {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#d97706" onclick="Page.correctEntry('${j.id}')" title="แก้ไขด้วยการกลับรายการ — สร้าง Draft ใหม่ให้แก้ผังบัญชี">แก้ไข</button>`;
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#7c3aed" onclick="Page.reverseEntry('${j.id}')" title="กลับรายการ (สร้างรายการตรงข้าม)">กลับรายการ</button>`;
             }
             if (j.status !== 'Reversed') {
@@ -551,7 +555,7 @@
               <div class="detail-item"><span class="detail-label" data-i18n="common.date">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
               <div class="detail-item"><span class="detail-label" data-i18n="common.status">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
               <div class="detail-item"><span class="detail-label" data-i18n="common.reference">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
-              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value">${j.sourceDocumentNumber}${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
+              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value"><a href="/pages/documents.html?search=${encodeURIComponent(j.sourceDocumentNumber)}" style="color:var(--primary)">${j.sourceDocumentNumber}</a>${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
               ${reversalInfo}
             </div>
             <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>
@@ -571,6 +575,7 @@
             actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
           }
           if (j.status === 'Posted') {
+            actions += ` <button class="btn btn-warning" onclick="Page.correctEntry('${j.id}')">แก้ไข (กลับรายการ)</button>`;
             actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">กลับรายการ</button>`;
           }
           if (j.status !== 'Reversed') {
@@ -620,6 +625,25 @@
           await this.load();
           this.loadCounts();
           this.updateBatchBar();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async correctEntry(id) {
+        const ok = await Layout.confirmDanger({
+          title: 'แก้ไขด้วยการกลับรายการ',
+          message: 'ระบบจะ:<br>1. <b>กลับรายการ</b>ใบเดิม (สลับ Dr↔Cr เพื่อหักล้าง)<br>2. <b>สร้าง Draft ใหม่</b> ที่ copy ข้อมูลจากใบเดิม<br><br>คุณสามารถแก้ผังบัญชีที่ผิดใน Draft ใหม่ แล้ว Post ได้เลย<br><small class="text-gray-500">Audit trail สมบูรณ์: ต้นฉบับ (Reversed) → ใบกลับ (Posted) → ใบใหม่ (Draft)</small>',
+          mode: 'math'
+        });
+        if (!ok) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.correctJournal(id);
+          Layout.closeModal('detailModal');
+          const draft = res.data?.draftEntry;
+          Layout.toast(`แก้ไขสำเร็จ — สร้าง Draft ใหม่ ${draft?.entryNumber || ''} พร้อมให้แก้ไขผังบัญชี`);
+          await this.load();
+          this.loadCounts();
+          this.updateBatchBar();
+          if (draft?.id) setTimeout(() => this.detail(draft.id), 300);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async batchDelete() {

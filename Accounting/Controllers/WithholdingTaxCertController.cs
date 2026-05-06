@@ -1,3 +1,4 @@
+using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
@@ -5,6 +6,7 @@ using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -14,10 +16,12 @@ namespace Accounting.Controllers;
 public class WithholdingTaxCertController : ControllerBase
 {
     private readonly IWithholdingTaxCertService _whtService;
+    private readonly AccountingDbContext _db;
 
-    public WithholdingTaxCertController(IWithholdingTaxCertService whtService)
+    public WithholdingTaxCertController(IWithholdingTaxCertService whtService, AccountingDbContext db)
     {
         _whtService = whtService;
+        _db = db;
     }
 
     [HttpPost]
@@ -63,7 +67,19 @@ public class WithholdingTaxCertController : ControllerBase
     [HttpDelete("{certId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid certId)
     {
-        await _whtService.DeleteAsync(companyId, certId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var isSystemAdmin = User.IsInRole("SystemAdmin");
+        if (!isSystemAdmin)
+        {
+            var role = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+                .Select(cu => cu.Role)
+                .FirstOrDefaultAsync();
+            if (role != UserRole.Owner)
+                return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบหนังสือรับรองถาวรได้"));
+        }
+
+        await _whtService.DeleteAsync(companyId, certId, userId);
         return Ok(new ApiResponse<string>(true, null, "ลบหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
     }
 
