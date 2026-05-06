@@ -208,6 +208,7 @@
           <td class="flex gap-1">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
             ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" data-i18n="common.print">พิมพ์</button>` : ''}
+            ${w.status === 'Draft' || w.status === 'Issued' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidCert('${w.id}')" title="ยกเลิกหนังสือรับรอง">ยกเลิก</button>` : ''}
           </td>
         </tr>`).join('');
       },
