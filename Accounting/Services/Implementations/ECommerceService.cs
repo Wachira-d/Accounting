@@ -293,9 +293,16 @@ public class ECommerceService : IECommerceService
 
     private async Task<Contact> GetOrCreateECommerceCustomer(Guid companyId, ECommerceOrder order, string platform)
     {
-        var existing = await _db.Contacts
+        // Match by phone first (more unique than name), then by name+phone combo
+        Contact? existing = null;
+        if (!string.IsNullOrEmpty(order.CustomerPhone))
+            existing = await _db.Contacts
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Phone == order.CustomerPhone && c.IsCustomer);
+
+        existing ??= await _db.Contacts
             .FirstOrDefaultAsync(c => c.CompanyId == companyId
-                && c.Name == order.CustomerName && c.IsCustomer);
+                && c.Name == order.CustomerName && c.IsCustomer
+                && (c.Notes != null && c.Notes.Contains(platform)));
 
         if (existing != null) return existing;
 

@@ -81,6 +81,9 @@ public class BankFeedService : IBankFeedService
         if (conn.Status == "Disabled")
             throw new InvalidOperationException("การเชื่อมต่อถูกปิดใช้งาน");
 
+        if (!conn.LinkedBankAccountId.HasValue)
+            throw new InvalidOperationException("กรุณาเชื่อมโยงบัญชีธนาคารก่อนทำ Sync");
+
         try
         {
             var transactions = await FetchTransactionsFromBankAsync(conn);
@@ -95,7 +98,7 @@ public class BankFeedService : IBankFeedService
 
             foreach (var txn in transactions)
             {
-                if (existingRefs.Contains(txn.Reference))
+                if (!string.IsNullOrEmpty(txn.Reference) && existingRefs.Contains(txn.Reference))
                 {
                     duplicateCount++;
                     continue;
@@ -104,7 +107,7 @@ public class BankFeedService : IBankFeedService
                 var bankTxn = new BankTransaction
                 {
                     CompanyId = companyId,
-                    BankAccountId = conn.LinkedBankAccountId ?? Guid.Empty,
+                    BankAccountId = conn.LinkedBankAccountId!.Value,
                     TransactionDate = txn.Date,
                     Amount = Math.Abs(txn.Amount),
                     TransactionType = txn.Amount >= 0
@@ -274,9 +277,15 @@ public class BankFeedService : IBankFeedService
         if (string.IsNullOrWhiteSpace(txn.Description) && string.IsNullOrWhiteSpace(txn.Reference))
             return false;
 
+        // Deposits match revenue docs (Invoice/TaxInvoice), withdrawals match expense docs (PurchaseInvoice)
+        var revenueTypes = new[] { Models.Enums.DocumentType.Invoice, Models.Enums.DocumentType.TaxInvoice };
+        var expenseTypes = new[] { Models.Enums.DocumentType.PurchaseInvoice };
+        var matchTypes = txn.TransactionType == Models.Enums.BankTransactionType.Deposit ? revenueTypes : expenseTypes;
+
         var matchedDoc = await _db.Documents
             .FirstOrDefaultAsync(d => d.CompanyId == companyId
                 && d.TotalAmount == txn.Amount
+                && matchTypes.Contains(d.DocumentType)
                 && d.Status != Models.Enums.DocumentStatus.Paid
                 && d.Status != Models.Enums.DocumentStatus.Voided
                 && d.Status != Models.Enums.DocumentStatus.Draft

@@ -501,6 +501,7 @@ const API = {
       createForecast: (d) => API.post(`${base}/ai/forecast`, d),
       getForecasts: () => API.get(`${base}/ai/forecasts`),
       // OCR
+      ocrUploadAndScan: (formData) => fetch(`${base}/ocr/upload`, { method: 'POST', headers: { 'Authorization': `Bearer ${API.token}` }, body: formData }).then(r => r.json()),
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),

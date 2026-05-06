@@ -211,10 +211,9 @@ public class TaxService : ITaxService
                     });
                 }
             }
-            // Input VAT - from purchase documents
+            // Input VAT - from purchase documents (PurchaseOrder excluded: no VAT obligation)
             else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                  || doc.DocumentType == DocumentType.Expense
-                  || doc.DocumentType == DocumentType.PurchaseOrder)
+                  || doc.DocumentType == DocumentType.Expense)
             {
                 inputVat += doc.VatAmount;
                 report.Lines.Add(new TaxReportLine

@@ -352,17 +352,18 @@ public class DashboardService : IDashboardService
 
     private async Task<VatWhtSummary?> GetVatWhtSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
+        // Per Revenue Code §86: only TaxInvoice creates VAT obligation
         var outputVat = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && d.DocumentType == DocumentType.TaxInvoice
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .SumAsync(d => d.VatAmount);
 
         var inputVat = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && d.DocumentType == DocumentType.PurchaseInvoice
+                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense)
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .SumAsync(d => d.VatAmount);
 
@@ -372,11 +373,9 @@ public class DashboardService : IDashboardService
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .SumAsync(d => d.WithholdingTaxAmount);
 
-        var whtCount = await _db.Documents
-            .CountAsync(d => d.CompanyId == companyId
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && d.WithholdingTaxAmount > 0
-                && d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
+        var whtCount = await _db.WithholdingTaxCerts
+            .CountAsync(c => c.CompanyId == companyId
+                && c.IssuedDate >= fromDate && c.IssuedDate <= toDate);
 
         var period = $"{fromDate:MMM yyyy} – {toDate:MMM yyyy}";
 

@@ -257,8 +257,8 @@ public class FixedAssetService : IFixedAssetService
             {
                 var lossAccount = await FindAccountAsync(companyId, "57110")
                     ?? await FindAccountAsync(companyId, "571")
-                    ?? await FindAccountAsync(companyId, "57");
-                if (lossAccount != null)
+                    ?? await FindAccountAsync(companyId, "57")
+                    ?? throw new InvalidOperationException("ไม่พบบัญชีขาดทุนจากการตัดจำหน่าย (571xx) — กรุณาสร้างบัญชีก่อน");
                 {
                     journalEntry.Lines.Add(new JournalEntryLine
                     {

@@ -216,24 +216,14 @@ public class RecurringTransactionService : IRecurringTransactionService
                     continue;
                 }
 
+                await ExecuteRecurringAsync(recurring, "System");
                 recurring.NextRunDate = GetNextRunDate(recurring);
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to lock recurring transaction {Id}", recurring.Id);
-                continue;
-            }
-
-            try
-            {
-                await ExecuteRecurringAsync(recurring, "System");
-                await _db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to execute recurring transaction {Id} ({Name})", recurring.Id, recurring.Name);
+                _logger.LogError(ex, "Failed to process recurring transaction {Id} ({Name})", recurring.Id, recurring.Name);
                 await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.Execute/{recurring.Id}");
             }
         }

@@ -28,7 +28,7 @@ public class OcrService : IOcrService
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
     {
         var file = await _db.FileAttachments
-            .FirstOrDefaultAsync(f => f.Id == fileAttachmentId)
+            .FirstOrDefaultAsync(f => f.Id == fileAttachmentId && f.CompanyId == companyId)
             ?? throw new InvalidOperationException("File attachment not found.");
 
         var scanResult = new OcrScanResult

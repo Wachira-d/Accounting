@@ -18,10 +18,12 @@ public class DocumentService : IDocumentService
     private readonly IWithholdingTaxCertService _whtService;
     private readonly IEtaxInvoiceService _etaxService;
     private readonly ILogger<DocumentService> _logger;
+    private readonly ILineNotifyService _lineNotify;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
-        IEtaxInvoiceService etaxService, ILogger<DocumentService> logger)
+        IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
+        ILineNotifyService lineNotify)
     {
         _db = db;
         _accountingService = accountingService;
@@ -29,6 +31,7 @@ public class DocumentService : IDocumentService
         _whtService = whtService;
         _etaxService = etaxService;
         _logger = logger;
+        _lineNotify = lineNotify;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -471,6 +474,14 @@ public class DocumentService : IDocumentService
         // roll back the approval. Failures are logged; the user can still
         // generate the e-Tax manually from the detail modal.
         await TryAutoGenerateEtaxAsync(companyId, doc);
+
+        // LINE notification (best-effort)
+        try
+        {
+            var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+            await _lineNotify.NotifyDocumentApprovedAsync(companyId, doc.DocumentNumber, contactName, doc.TotalAmount);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "LINE notification failed for document {DocNum}", doc.DocumentNumber); }
 
         return await GetDocumentAsync(companyId, documentId);
     }
@@ -1450,7 +1461,13 @@ public class DocumentService : IDocumentService
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
             throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
 
-        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+        // Lock document row to prevent concurrent overpayment
+        var doc = await _db.Documents
+            .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", request.DocumentId, companyId)
+            .FirstOrDefaultAsync()
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         // Validate document status allows payment
@@ -1534,6 +1551,12 @@ public class DocumentService : IDocumentService
 
             await transaction.CommitAsync();
 
+            try
+            {
+                await _lineNotify.NotifyPaymentReceivedAsync(companyId, doc.DocumentNumber, payment.Amount);
+            }
+            catch { /* best-effort notification */ }
+
             return new PaymentResponse(
                 payment.Id, payment.PaymentNumber, payment.DocumentId,
                 payment.PaymentDate, payment.Amount, payment.PaymentMethod,
@@ -1545,6 +1568,7 @@ public class DocumentService : IDocumentService
             await transaction.RollbackAsync();
             throw;
         }
+        }); // end ExecutionStrategy
     }
 
     public async Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null)
