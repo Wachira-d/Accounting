@@ -55,6 +55,7 @@ public record DocumentResponse(
     decimal TotalAmount,
     decimal PaidAmount,
     decimal BalanceDue,
+    string? Reference,
     string? Notes,
     List<DocumentLineResponse> Lines,
     DateTime CreatedAt,

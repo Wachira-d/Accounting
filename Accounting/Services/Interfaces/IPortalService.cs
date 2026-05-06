@@ -15,6 +15,8 @@ public interface IPortalService
     Task<PortalLoginResponse> LoginAsync(PortalLoginRequest request);
     Task<PortalLoginResponse> RefreshTokenAsync(string refreshToken);
 
+    Guid? ExtractContactIdFromToken(string token);
+
     // Portal data (by customer/supplier)
     Task<List<PortalDocumentResponse>> GetMyDocumentsAsync(Guid companyId, Guid contactId, string? documentType = null);
     Task<PortalDocumentResponse> GetDocumentAsync(Guid companyId, Guid contactId, Guid documentId);

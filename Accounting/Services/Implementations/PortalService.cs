@@ -338,6 +338,19 @@ public class PortalService : IPortalService
         return Convert.ToBase64String(tokenBytes);
     }
 
+    public Guid? ExtractContactIdFromToken(string token)
+    {
+        try
+        {
+            var (_, contactId, _) = DecodeJwtToken(token);
+            return contactId;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private (Guid portalAccessId, Guid contactId, Guid companyId) DecodeJwtToken(string token)
     {
         try

@@ -490,6 +490,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<DocumentLine>(e =>
         {
             e.HasOne(l => l.Document).WithMany(d => d.Lines).HasForeignKey(l => l.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.Account).WithMany().HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(l => l.Project).WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(l => l.ProjectId);
             e.Property(l => l.Quantity).HasPrecision(18, 4);
@@ -1872,7 +1873,7 @@ public class AccountingDbContext : DbContext
                 .HasDatabaseName("IX_Documents_ContactId");
             // Partial index: only overdue documents (for dashboard counts)
             e.HasIndex(d => new { d.CompanyId, d.DueDate })
-                .HasFilter("\"Status\" = 5") // DocumentStatus.Overdue
+                .HasFilter("\"Status\" = 7") // DocumentStatus.Overdue
                 .HasDatabaseName("IX_Documents_Overdue");
         });
 

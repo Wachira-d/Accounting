@@ -114,6 +114,9 @@ public class FixedAssetService : IFixedAssetService
 
         var gainLoss = request.DisposalAmount - asset.NetBookValue;
 
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
         if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
         {
             var entryNumber = $"DEP-DISP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
@@ -208,8 +211,18 @@ public class FixedAssetService : IFixedAssetService
             _db.JournalEntries.Add(journalEntry);
         }
 
+        asset.AccumulatedDepreciation = asset.PurchaseCost;
+        asset.NetBookValue = 0;
+
         await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return MapToResponse(asset);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<FixedAssetResponse> WriteOffAsync(Guid companyId, Guid assetId, WriteOffAssetRequest request, string performedBy)
@@ -226,6 +239,9 @@ public class FixedAssetService : IFixedAssetService
         asset.DisposalDate = request.WriteOffDate;
         asset.DisposalAmount = 0;
 
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
         // Journal entry: ตัดจำหน่ายสินทรัพย์ (NBV เหลือ 0, ไม่ได้รับเงิน)
         if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
         {
@@ -289,7 +305,14 @@ public class FixedAssetService : IFixedAssetService
         asset.NetBookValue = 0;
 
         await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return MapToResponse(asset);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<FixedAssetResponse> AdjustUsefulLifeAsync(Guid companyId, Guid assetId, AdjustUsefulLifeRequest request)

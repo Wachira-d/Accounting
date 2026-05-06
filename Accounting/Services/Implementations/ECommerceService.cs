@@ -356,6 +356,33 @@ public class ECommerceService : IECommerceService
         };
 
         _db.Documents.Add(doc);
+
+        var lineOrder = 1;
+        var vatRate = company is { IsVatRegistered: true } ? company.VatRate : 0m;
+        foreach (var item in order.Items)
+        {
+            decimal lineVatAmount = 0;
+            decimal lineSubTotal = item.Total;
+            if (vatRate > 0)
+            {
+                lineSubTotal = item.Total / (1 + vatRate / 100);
+                lineVatAmount = item.Total - lineSubTotal;
+            }
+
+            _db.DocumentLines.Add(new DocumentLine
+            {
+                DocumentId = doc.Id,
+                LineOrder = lineOrder++,
+                Description = item.Name,
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice,
+                Amount = Math.Round(lineSubTotal, 2),
+                VatRate = vatRate,
+                VatAmount = Math.Round(lineVatAmount, 2),
+                Unit = "ชิ้น"
+            });
+        }
+
         return doc;
     }
 

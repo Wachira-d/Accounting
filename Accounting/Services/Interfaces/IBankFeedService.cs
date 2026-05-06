@@ -4,16 +4,16 @@ namespace Accounting.Services.Interfaces;
 
 public interface IBankFeedService
 {
-    Task<BankConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankConnectionRequest request);
-    Task<List<BankConnectionResponse>> GetConnectionsAsync(Guid companyId);
-    Task<BankConnectionResponse> GetConnectionAsync(Guid companyId, Guid connectionId);
+    Task<BankFeedConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankFeedConnectionRequest request);
+    Task<List<BankFeedConnectionResponse>> GetConnectionsAsync(Guid companyId);
+    Task<BankFeedConnectionResponse> GetConnectionAsync(Guid companyId, Guid connectionId);
     Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId);
     Task<BankFeedSyncResult> SyncAllAsync(Guid companyId);
     Task DeleteConnectionAsync(Guid companyId, Guid connectionId);
-    Task<BankConnectionResponse> TestConnectionAsync(Guid companyId, Guid connectionId);
+    Task<BankFeedConnectionResponse> TestConnectionAsync(Guid companyId, Guid connectionId);
 }
 
-public record CreateBankConnectionRequest(
+public record CreateBankFeedConnectionRequest(
     string BankCode,
     string BankName,
     string ConnectionType,
@@ -25,7 +25,7 @@ public record CreateBankConnectionRequest(
     int SyncIntervalMinutes = 60,
     Guid? LinkedBankAccountId = null);
 
-public record BankConnectionResponse(
+public record BankFeedConnectionResponse(
     Guid Id,
     string BankCode,
     string BankName,

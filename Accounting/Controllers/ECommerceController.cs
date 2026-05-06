@@ -1,3 +1,4 @@
+using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -5,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Accounting.Controllers;
 
 [ApiController]
-[Route("api/companies/{companyId}/ecommerce")]
+[Route("api/companies/{companyId:guid}/ecommerce")]
 [Authorize]
 public class ECommerceController : ControllerBase
 {
@@ -22,14 +23,14 @@ public class ECommerceController : ControllerBase
     public async Task<IActionResult> GetConnections(Guid companyId)
     {
         var result = await _service.GetConnectionsAsync(companyId);
-        return Ok(new { data = result });
+        return Ok(new ApiResponse<object>(true, result));
     }
 
     [HttpPost("connect")]
     public async Task<IActionResult> Connect(Guid companyId, [FromBody] ConnectECommerceRequest request)
     {
         var result = await _service.ConnectAsync(companyId, request);
-        return Created($"api/companies/{companyId}/ecommerce/connections/{result.Id}", new { data = result });
+        return Created($"api/companies/{companyId}/ecommerce/connections/{result.Id}", new ApiResponse<object>(true, result));
     }
 
     [HttpPost("connections/{connectionId}/sync")]
@@ -38,27 +39,27 @@ public class ECommerceController : ControllerBase
         var result = await _service.SyncOrdersAsync(companyId, connectionId, since);
         if (result.Status == "Success" && result.NewOrders > 0)
             await _lineNotify.NotifyECommerceSyncAsync(companyId, result.Platform, result.NewOrders, result.TotalAmount);
-        return Ok(new { data = result });
+        return Ok(new ApiResponse<object>(true, result));
     }
 
     [HttpPost("sync-all")]
     public async Task<IActionResult> SyncAll(Guid companyId)
     {
         var result = await _service.SyncAllAsync(companyId);
-        return Ok(new { data = result });
+        return Ok(new ApiResponse<object>(true, result));
     }
 
     [HttpPost("connections/{connectionId}/test")]
     public async Task<IActionResult> TestConnection(Guid companyId, Guid connectionId)
     {
         var result = await _service.TestConnectionAsync(companyId, connectionId);
-        return Ok(new { data = result });
+        return Ok(new ApiResponse<object>(true, result));
     }
 
     [HttpDelete("connections/{connectionId}")]
     public async Task<IActionResult> Disconnect(Guid companyId, Guid connectionId)
     {
         await _service.DisconnectAsync(companyId, connectionId);
-        return NoContent();
+        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกการเชื่อมต่อสำเร็จ"));
     }
 }
