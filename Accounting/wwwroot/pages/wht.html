@@ -339,7 +339,7 @@
         const r5 = row(['5','6','7','8','40(5)','40(6)','40(7)','40(8)']);
         const r6 = row(['9','99','other']);
         const mk = (r) => r.has
-          ? `<td class="tc">${Layout.date(r.date)}</td><td class="tr">${Layout.money(r.inc)}</td><td class="tr">${Layout.money(r.tax)}</td>`
+          ? `<td class="dtc">${Layout.date(r.date)}</td><td class="amt">${Layout.money(r.inc)}</td><td class="amt">${Layout.money(r.tax)}</td>`
           : '<td></td><td></td><td></td>';
 
         const formRef = d.taxFormType === 'WithholdingTax1' ? 'ภ.ง.ด.1' :
@@ -380,192 +380,235 @@
         const payeeIsHQ = !d.payeeBranchCode || d.payeeBranchCode === '00000' || d.payeeBranchCode === '';
 
         const buildCopy = (copyNum) => {
-          const copyLabel = copyNum === 1
-            ? 'ฉบับที่ 1 (สำหรับผู้ถูกหักภาษี ณ ที่จ่ายใช้แนบพร้อมกับแบบแสดงรายการภาษี)'
-            : 'ฉบับที่ 2 (สำหรับผู้มีหน้าที่หักภาษี ณ ที่จ่ายเก็บไว้เป็นหลักฐาน)';
           return `
-          <div class="wf-page${copyNum === 2 ? ' wf-page2' : ''}">
-            <div class="wf-copy-label">
-              <span class="wf-copy-num">ฉบับที่ ${copyNum}</span>
-              <span class="wf-copy-desc">${copyNum === 1 ? '(สำหรับผู้ถูกหักภาษี ณ ที่จ่ายใช้แนบพร้อมกับแบบแสดงรายการภาษี)' : '(สำหรับผู้มีหน้าที่หักภาษี ณ ที่จ่ายเก็บไว้เป็นหลักฐาน)'}</span>
+          <div class="wht-page">
+            <!-- Copy labels -->
+            <div class="copy-labels">
+              <div${copyNum===1?' class="copy-active"':''}>ฉบับที่ 1 (สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบพร้อมกับแบบแสดงรายการภาษี)</div>
+              <div${copyNum===2?' class="copy-active"':''}>ฉบับที่ 2 (สำหรับผู้มีหน้าที่หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)</div>
             </div>
-            <div class="wf-outer">
 
-              <div class="wf-title-row">
-                <div class="wf-title-center">
-                  <div class="wf-title-main">หนังสือรับรองการหักภาษี ณ ที่จ่าย</div>
-                  <div class="wf-title-sub">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</div>
-                </div>
-              </div>
+            <!-- ========== MAIN FRAME ========== -->
+            <table class="F" cellspacing="0" cellpadding="0">
 
-              <div class="wf-form-row">
-                <div class="wf-form-left">
-                  <div class="wf-form-line1">
-                    <label><span class="ck">${fc('WithholdingTax1')}</span> <span>ภ.ง.ด.1</span></label>
-                    <label><span class="ck">&#9744;</span> <span>ภ.ง.ด.1ก</span></label>
-                    <label><span class="ck">&#9744;</span> <span>ภ.ง.ด.1ก พิเศษ</span></label>
-                    <label><span class="ck">&#9744;</span> <span>ภ.ง.ด.2</span></label>
-                    <label><span class="ck">&#9744;</span> <span>ภ.ง.ด.2ก</span></label>
-                  </div>
-                  <div class="wf-form-line2">
-                    <label><span class="ck">${fc('WithholdingTax3')}</span> <span>ภ.ง.ด.3</span></label>
-                    <label><span class="ck">&#9744;</span> <span>ภ.ง.ด.3ก</span></label>
-                    <label><span class="ck">${fc('WithholdingTax53')}</span> <span>ภ.ง.ด.53</span></label>
-                  </div>
-                </div>
-                <div class="wf-form-right">
-                  <div>เล่มที่ <span class="wf-dotline">.............</span></div>
-                  <div>เลขที่ <b class="wf-cert-no">${d.certificateNumber || '.............'}</b></div>
-                </div>
-              </div>
+              <!-- TITLE -->
+              <tr><td class="title-cell">
+                <table class="inner" cellspacing="0"><tr>
+                  <td style="text-align:center">
+                    <div class="title-main">หนังสือรับรองการหักภาษี ณ ที่จ่าย</div>
+                    <div class="title-sub">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</div>
+                  </td>
+                  <td style="text-align:right;vertical-align:top;white-space:nowrap;width:100px;padding-top:4px">
+                    เล่มที่ .............
+                  </td>
+                </tr></table>
+              </td></tr>
 
-              <div class="wf-ref-row">
-                ลำดับที่ <span class="wf-dotline" style="width:40px">.....</span> ในแบบ <span class="wf-dotline">${formRef}</span>
-              </div>
+              <!-- ===== PAYER ===== -->
+              <tr><td class="sec-cell">
+                <table class="inner" cellspacing="0"><tr>
+                  <td class="sec-hdr" style="width:210px">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย :-</td>
+                  <td style="white-space:nowrap">เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)</td>
+                  <td class="sec-hdr" style="text-align:right;white-space:nowrap">เลขประจำตัวผู้เสียภาษีอากร</td>
+                </tr></table>
+                <table class="inner" cellspacing="0"><tr>
+                  <td style="width:210px"></td>
+                  <td style="white-space:nowrap">${taxIdBoxes(d.payerTaxId)}</td>
+                  <td></td>
+                </tr></table>
+                <table class="inner" cellspacing="0"><tr>
+                  <td class="f-lbl">ชื่อ</td>
+                  <td class="f-val"><u class="ul">&nbsp;${d.payerName || ''}&nbsp;</u></td>
+                  <td class="f-branch" style="white-space:nowrap">
+                    <span class="ck">${chk(isHQ)}</span> สำนักงานใหญ่&nbsp;&nbsp;
+                    <span class="ck">${chk(!isHQ)}</span> สาขาที่ <u class="ul">&nbsp;${!isHQ?(d.payerBranchCode||''):'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;</u>
+                  </td>
+                </tr></table>
+                <table class="inner" cellspacing="0"><tr>
+                  <td class="f-lbl">ที่อยู่</td>
+                  <td class="f-val"><u class="ul">&nbsp;${d.payerAddress || ''}&nbsp;</u></td>
+                </tr></table>
+              </td></tr>
 
-              <div class="wf-sec wf-sec-payer">
-                <div class="wf-sec-head">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>
-                <div class="wf-row">
-                  <span class="wf-lbl">เลขประจำตัวผู้เสียภาษีอากร</span>
-                  <span class="wf-taxid">${taxIdBoxes(d.payerTaxId)}</span>
-                </div>
-                <div class="wf-row">
-                  <span class="wf-lbl">ชื่อ</span>
-                  <span class="wf-val">${d.payerName || ''}</span>
-                  <span class="wf-branch-box">
-                    <span class="ck">${chk(isHQ)}</span> สำนักงานใหญ่
-                    <span class="ck" style="margin-left:6px">${chk(!isHQ)}</span> สาขาที่ <span class="wf-dotline" style="min-width:40px">${!isHQ ? (d.payerBranchCode||'') : ''}</span>
-                  </span>
-                </div>
-                <div class="wf-row">
-                  <span class="wf-lbl">ที่อยู่</span>
-                  <span class="wf-val">${d.payerAddress || ''}</span>
-                </div>
-              </div>
+              <!-- ===== PAYEE ===== -->
+              <tr><td class="sec-cell">
+                <table class="inner" cellspacing="0"><tr>
+                  <td class="sec-hdr" style="width:210px">ผู้ถูกหักภาษี ณ ที่จ่าย :-</td>
+                  <td style="white-space:nowrap">เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)</td>
+                  <td class="sec-hdr" style="text-align:right;white-space:nowrap">เลขประจำตัวผู้เสียภาษีอากร</td>
+                </tr></table>
+                <table class="inner" cellspacing="0"><tr>
+                  <td style="width:210px"></td>
+                  <td style="white-space:nowrap">${taxIdBoxes(d.payeeTaxId)}</td>
+                  <td></td>
+                </tr></table>
+                <table class="inner" cellspacing="0"><tr>
+                  <td class="f-lbl">ชื่อ</td>
+                  <td class="f-val"><u class="ul">&nbsp;${d.payeeName || ''}&nbsp;</u></td>
+                  <td class="f-branch" style="white-space:nowrap">
+                    <span class="ck">${chk(payeeIsHQ)}</span> สำนักงานใหญ่&nbsp;&nbsp;
+                    <span class="ck">${chk(!payeeIsHQ)}</span> สาขาที่ <u class="ul">&nbsp;${!payeeIsHQ?(d.payeeBranchCode||''):'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;</u>
+                  </td>
+                </tr></table>
+                <div style="font-size:12px;padding-left:48px;color:#555">(ในกรณีบุคคลธรรมดา บุคคลเดียว มีเพียงบริษัท ห้างหุ้นส่วน ฉ สาขา ๆ หรือพนักงานบุคคลธรรมดา)</div>
+                <table class="inner" cellspacing="0"><tr>
+                  <td class="f-lbl">ที่อยู่</td>
+                  <td class="f-val"><u class="ul">&nbsp;${d.payeeAddress || ''}&nbsp;</u></td>
+                </tr></table>
+              </td></tr>
 
-              <div class="wf-sec wf-sec-payee">
-                <div class="wf-sec-head">ผู้ถูกหักภาษี ณ ที่จ่าย</div>
-                <div class="wf-row">
-                  <span class="wf-lbl">เลขประจำตัวผู้เสียภาษีอากร</span>
-                  <span class="wf-taxid">${taxIdBoxes(d.payeeTaxId)}</span>
-                </div>
-                <div class="wf-row">
-                  <span class="wf-lbl">ชื่อ</span>
-                  <span class="wf-val">${d.payeeName || ''}</span>
-                  <span class="wf-branch-box">
-                    <span class="ck">${chk(payeeIsHQ)}</span> สำนักงานใหญ่
-                    <span class="ck" style="margin-left:6px">${chk(!payeeIsHQ)}</span> สาขาที่ <span class="wf-dotline" style="min-width:40px">${!payeeIsHQ ? (d.payeeBranchCode||'') : ''}</span>
-                  </span>
-                </div>
-                <div class="wf-row-note">(ในกรณีที่มีการจดทะเบียนเป็นนิติบุคคล)</div>
-                <div class="wf-row">
-                  <span class="wf-lbl">ที่อยู่</span>
-                  <span class="wf-val">${d.payeeAddress || ''}</span>
-                </div>
-              </div>
+              <!-- ===== FORM TYPE (ลำดับที่ ในแบบ) ===== -->
+              <tr><td class="ftype-cell">
+                <table class="inner" cellspacing="0">
+                  <tr>
+                    <td style="white-space:nowrap;width:160px">ลำดับที่ <span class="sq">${d.certificateNumber||'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}</span> ในแบบ</td>
+                    <td><span class="ck">${fc('WithholdingTax1')}</span> (1) ภ.ง.ด.1ก</td>
+                    <td><span class="ck">&#9744;</span> (2) ภ.ง.ด.1ก พิเศษ</td>
+                    <td><span class="ck">&#9744;</span> (3) ก.ง.ด.2</td>
+                    <td style="text-align:right"><span class="ck">&#9744;</span> ≡ ภ.ง.ด.3</td>
+                  </tr>
+                  <tr>
+                    <td></td>
+                    <td><span class="ck">&#9744;</span> (4) ภ.ง.ด.2ก</td>
+                    <td><span class="ck">${fc('WithholdingTax3')}</span> (5) ภ.ง.ด.3</td>
+                    <td></td>
+                    <td style="text-align:right"><span class="ck">${fc('WithholdingTax53')}</span> ≡ ภ.ง.ด.53</td>
+                  </tr>
+                  <tr>
+                    <td></td>
+                    <td></td>
+                    <td><span class="ck">&#9744;</span> (6) ภ.ง.ด.3ก</td>
+                    <td><span class="ck">${fc('WithholdingTax53')}</span> (7) ภ.ง.ด.53</td>
+                    <td></td>
+                  </tr>
+                </table>
+              </td></tr>
 
-              <table class="wf-tbl">
-                <thead>
-                  <tr>
-                    <th rowspan="2" class="wf-th-type">ประเภทเงินได้พึงประเมินที่จ่าย</th>
-                    <th rowspan="2" class="wf-th-date">วัน เดือน ปี<br>ที่จ่าย</th>
-                    <th colspan="2">จำนวนเงินที่จ่าย และภาษีที่หักไว้</th>
-                  </tr>
-                  <tr>
-                    <th class="wf-th-amt">จำนวนเงินที่จ่าย</th>
-                    <th class="wf-th-tax">ภาษีที่หักและ<br>นำส่งไว้</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td class="wf-td-type"><span class="ck">${r1.has?'&#9745;':'&#9744;'}</span> 1. เงินเดือน ค่าจ้าง เบี้ยเลี้ยง โบนัส ฯลฯ ตามมาตรา 40(1)</td>
-                    ${mk(r1)}
-                  </tr>
-                  <tr>
-                    <td class="wf-td-type"><span class="ck">${r2.has?'&#9745;':'&#9744;'}</span> 2. ค่าธรรมเนียม ค่านายหน้า ฯลฯ ตามมาตรา 40(2)</td>
-                    ${mk(r2)}
-                  </tr>
-                  <tr>
-                    <td class="wf-td-type"><span class="ck">${r3.has?'&#9745;':'&#9744;'}</span> 3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40(3)</td>
-                    ${mk(r3)}
-                  </tr>
-                  <tr>
-                    <td class="wf-td-type"><span class="ck">${r4a.has?'&#9745;':'&#9744;'}</span> 4. (ก) ค่าดอกเบี้ย ฯลฯ ตามมาตรา 40(4)(ก)</td>
-                    ${mk(r4a)}
-                  </tr>
-                  <tr>
-                    <td class="wf-td-type wf-indent2"><span class="ck">${r4b.has?'&#9745;':'&#9744;'}</span> (ข) เงินปันผล เงินส่วนแบ่งของกำไร ฯลฯ ตามมาตรา 40(4)(ข)</td>
-                    ${mk(r4b)}
-                  </tr>
-                  <tr class="wf-div-row">
-                    <td colspan="4">
-                      <div class="wf-div-block">
-                        <div class="wf-div-title">ในกรณีจ่ายเงินปันผลหรือเงินส่วนแบ่งของกำไร ผู้จ่ายเงินเป็น</div>
-                        <div class="wf-div-opts">
-                          <label><span class="ck">&#9744;</span> (ก) บริษัทจดทะเบียนในตลาดหลักทรัพย์แห่งประเทศไทย</label>
-                          <label><span class="ck">&#9744;</span> (ข) กิจการเงินร่วมลงทุน / บริษัทจดทะเบียนที่ไม่ได้จดทะเบียนในตลาดหลักทรัพย์ฯ</label>
-                          <label><span class="ck">&#9744;</span> (ค) บริษัทจำกัดที่มิใช่บริษัทจดทะเบียน</label>
+              <!-- ===== INCOME TABLE ===== -->
+              <tr><td style="padding:0">
+                <table class="IT" cellspacing="0">
+                  <thead>
+                    <tr>
+                      <th rowspan="2" style="width:44%">ประเภทเงินได้พึงประเมินที่จ่าย</th>
+                      <th rowspan="2" style="width:12%">วัน เดือน ปี<br>ที่จ่าย</th>
+                      <th rowspan="2" style="width:2%">หรือถึง<br>เดือน ที่จ่าย</th>
+                      <th style="width:21%">จำนวนเงินที่จ่าย</th>
+                      <th style="width:21%">ภาษีที่หัก<br>และนำส่งไว้</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="it-type">1. เงินเดือน ค่าจ้าง เบี้ยเลี้ยง โบนัส ฯลฯ ตามมาตรา 40 (1)</td>
+                      ${mk(r1)}
+                    </tr>
+                    <tr>
+                      <td class="it-type">2. ค่าธรรมเนียม ค่านายหน้า ฯลฯ ตามมาตรา 40 (2)</td>
+                      ${mk(r2)}
+                    </tr>
+                    <tr>
+                      <td class="it-type">3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40 (3)</td>
+                      ${mk(r3)}
+                    </tr>
+                    <tr>
+                      <td class="it-type">4. (ก) ค่าดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)</td>
+                      ${mk(r4a)}
+                    </tr>
+                    <tr>
+                      <td class="it-type" style="padding-left:30px">(ข) เงินปันผล เงินส่วนแบ่งของกำไร ฯลฯ ตามมาตรา 40 (4) (ข)</td>
+                      ${mk(r4b)}
+                    </tr>
+                    <!-- Dividend sub-section -->
+                    <tr>
+                      <td colspan="5" class="div-cell">
+                        <div class="div-block">
+                          ในกรณีจ่ายเงินปันผลให้ระบุเพิ่มเติม โดยระบุว่า<br>
+                          กรณีผู้จ่ายเงินปันผลได้รับเครดิตภาษี โดยระบุว่าจำนวนเงินที่จ่ายจากกำไรสุทธิของกิจการที่ได้รับนี้<br>
+                          <div class="div-indent">
+                            (1) กรณีผู้ได้รับเงินปันผลได้รับเครดิตภาษี โดยระบุว่า<br>
+                            <div class="div-indent">
+                              (1.1) กิจการร้อยละ 30 ของกำไรสุทธิ<br>
+                              (1.2) กิจการร้อยละ 25 ของกำไรสุทธิ<br>
+                              (1.3) กิจการร้อยละ 20 ของกำไรสุทธิ<br>
+                            </div>
+                            (2) กรณีผู้ได้รับเงินปันผลไม่ได้รับเครดิตภาษี เนื่องจากจ่ายจาก<br>
+                            <div class="div-indent">
+                              (2.1) กำไรสุทธิของกิจการที่ได้รับยกเว้นภาษีเงินได้นิติบุคคล<br>
+                              (2.2) เงินปันผลหรือส่วนแบ่งของกำไรที่ได้รับยกเว้นไม่ต้องนำมารวมคำนวณเป็นรายได้ จำนวนเงินปันผลที่ได้รับเครดิตภาษีเงินได้หักในสาม ปี<br>
+                              (2.3) กำไรสุทธิส่วนที่ได้หักรายจ่ายตามมาตรการส่งเสริมลงทุนของทางราชการฯ<br>
+                            </div>
+                            (3) กำไรที่ได้รับยกเว้นมิให้นำมารวมคำนวณเพื่อเสียภาษีเงินได้นิติบุคคล<br>
+                          </div>
                         </div>
-                        <div class="wf-div-pay-title">เงินที่จ่ายชำระ</div>
-                        <div class="wf-div-pay-opts">
-                          <label><span class="ck">&#9744;</span> กำไรสุทธิของกิจการที่ได้รับยกเว้นภาษีเงินได้นิติบุคคล</label>
-                          <label><span class="ck">&#9744;</span> เงินปันผลหรือเงินส่วนแบ่งของกำไรที่ได้รับยกเว้นไม่ต้องนำมารวมคำนวณเป็นรายได้</label>
-                          <label><span class="ck">&#9744;</span> เงินปันผลหรือเงินส่วนแบ่งของกำไรจากกิจการที่ต้องเสียภาษีเงินได้นิติบุคคล ในอัตราร้อยละ 20 ของกำไรสุทธิ</label>
-                          <label><span class="ck">&#9744;</span> อื่นๆ (ระบุ) ................................</label>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td class="wf-td-type wf-td-s5"><span class="ck">${r5.has?'&#9745;':'&#9744;'}</span> 5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่ายตามคำสั่งกรมสรรพากร ที่ออกตามมาตรา 3 เตรส เช่น รางวัล ค่าจ้างทำของ ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ ค่าเบี้ยประกันวินาศภัย ฯลฯ</td>
-                    ${mk(r5)}
-                  </tr>
-                  <tr>
-                    <td class="wf-td-type"><span class="ck">${r6.has?'&#9745;':'&#9744;'}</span> 6. อื่นๆ (ระบุ) <span class="wf-dotline" style="min-width:120px"></span></td>
-                    ${mk(r6)}
-                  </tr>
-                  <tr class="wf-total-row">
-                    <td colspan="2" class="tc">รวมเงินที่จ่ายและภาษีที่หักนำส่ง</td>
-                    <td class="tr">${Layout.money(d.totalIncomeAmount)}</td>
-                    <td class="tr">${Layout.money(d.totalTaxAmount)}</td>
-                  </tr>
-                </tbody>
-              </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="it-type it-s5">5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่ายตามคำสั่งกรมสรรพากร ที่ออกตามมาตรา 3 เตรส เช่น รางวัล ส่วนลด ค่าแสดงของนักแสดงสาธารณะ ค่าจ้างทำของ ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ ค่าเบี้ยประกันวินาศภัย รางวัล ส่วนลด หรือประโยชน์ใดๆ เนื่องจากการส่งเสริมการขาย ฯลฯ</td>
+                      ${mk(r5)}
+                    </tr>
+                    <tr>
+                      <td class="it-type">6. อื่น ๆ (ระบุ) ........................................................................................</td>
+                      ${mk(r6)}
+                    </tr>
+                    <tr class="total-row">
+                      <td colspan="3" style="text-align:center">รวมเงินที่จ่ายและภาษีที่หักนำส่ง</td>
+                      <td class="amt">${Layout.money(d.totalIncomeAmount)}</td>
+                      <td class="amt">${Layout.money(d.totalTaxAmount)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td></tr>
 
-              <div class="wf-total-text">
-                รวมเงินภาษีที่หักนำส่ง (ตัวอักษร) <span class="wf-dotline wf-total-words">${thaiBahtText(d.totalTaxAmount)}</span>
-              </div>
+              <!-- TOTAL TEXT -->
+              <tr><td class="totxt-cell">
+                รวมเงินภาษีที่หักนำส่ง (ตัวอักษร) <u class="ul">&nbsp;<b>${thaiBahtText(d.totalTaxAmount)}</b>&nbsp;</u>
+              </td></tr>
 
-              <div class="wf-conditions">
-                <div class="wf-cond-grid">
-                  <label><span class="ck">${chk(d.certificateType === 'Withhold')}</span> (1) หักภาษี ณ ที่จ่าย</label>
-                  <label><span class="ck">${chk(d.certificateType === 'PayAlways')}</span> (2) ออกภาษีให้ตลอดไป</label>
-                  <label><span class="ck">${chk(d.certificateType === 'PayOnce')}</span> (3) ออกภาษีให้ครั้งเดียว</label>
-                  <label><span class="ck">${chk(d.certificateType === 'Other')}</span> (4) อื่นๆ (ระบุ) <span class="wf-dotline" style="min-width:80px"></span></label>
-                </div>
-              </div>
+              <!-- CONDITIONS -->
+              <tr><td class="cond-cell">
+                <table class="inner" cellspacing="0"><tr>
+                  <td style="white-space:nowrap;width:80px"><b>ผู้จ่ายเงิน</b></td>
+                  <td><span class="ck">${chk(d.certificateType === 'Withhold')}</span> (1) หัก ณ ที่จ่าย</td>
+                  <td><span class="ck">${chk(d.certificateType === 'PayAlways')}</span> (2) ออกภาษีให้ตลอดไป</td>
+                  <td><span class="ck">${chk(d.certificateType === 'PayOnce')}</span> (3) ออกให้ครั้งเดียว</td>
+                  <td><span class="ck">${chk(d.certificateType === 'Other')}</span> (4) อื่น ๆ (ระบุ)</td>
+                </tr></table>
+              </td></tr>
 
-              <div class="wf-certify">
-                <span class="ck">&#9745;</span> ผู้จ่ายเงิน ขอรับรองว่า ข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ
-              </div>
+              <!-- WARNING + SIGNATURE (side by side like official form) -->
+              <tr><td style="padding:0;border-top:3px solid #000 !important">
+                <table class="inner bottom-split" cellspacing="0"><tr>
+                  <td class="bottom-left">
+                    <b>คำเตือน</b><br>
+                    ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย<br>
+                    ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ<br>
+                    แห่งประมวลรัษฎากร มาตรา 35
+                  </td>
+                  <td class="bottom-right">
+                    ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ<br><br>
+                    <div style="text-align:center">
+                      ลงชื่อ ............................................. ผู้จ่ายเงิน<br>
+                      <span style="font-size:13px">( ${d.payerName || '.............................................'} )</span><br><br>
+                      (วัน เดือน ปี ที่ออกหนังสือรับรอง) ${thaiDate(d.issuedDate)}
+                    </div>
+                    <div class="stamp-area">ประทับตรา<br>นิติบุคคล<br>(ถ้ามี)</div>
+                  </td>
+                </tr></table>
+              </td></tr>
+            </table>
 
-              <div class="wf-signature">
-                <div class="wf-sig-block">
-                  <div class="wf-sig-line">ลงชื่อ .......................................... ผู้จ่ายเงิน/ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>
-                  <div class="wf-sig-name">( ${d.payerName || '........................................'} )</div>
-                  <div class="wf-sig-pos">ตำแหน่ง <span class="wf-dotline" style="min-width:160px"></span></div>
-                  <div class="wf-sig-date">วันที่ ${thaiDate(d.issuedDate)}</div>
-                </div>
-              </div>
-
-              <div class="wf-warning">
-                <b>คำเตือน :</b> ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร
+            <!-- หมายเหตุ (outside frame) -->
+            <div class="footnote">
+              <b>หมายเหตุ</b>&nbsp; เลขประจำตัวผู้เสียภาษีอากร (13 หลัก) หมายถึง
+              <div style="padding-left:24px">
+                1. กรณีบุคคลธรรมดาชาวไทย ให้ใช้เลขประจำตัวประชาชนตามกฎหมายว่าด้วยทะเบียนราษฎร<br>
+                2. กรณีนิติบุคคล ให้ใช้เลขทะเบียนนิติบุคคลที่ได้จากกรมพัฒนาธุรกิจการค้ากระทรวงพาณิชย์<br>
+                3. กรณีที่ 1 บุตรตามกฎหมาย 1 และ 2 ให้ใช้เลขประจำตัวผู้เสียภาษีอากร (13 หลัก) ของหน้าที่ฯ
               </div>
             </div>
           </div>`;
         };
 
-        const printWin = window.open('', '_blank', 'width=800,height=1000');
+        const printWin = window.open('', '_blank', 'width=820,height=1100');
         printWin.document.write(`<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -573,306 +616,112 @@
 <title>หนังสือรับรองการหักภาษี ณ ที่จ่าย - ${d.certificateNumber || ''}</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
-  @page {
-    size: A4;
-    margin: 8mm 10mm 8mm 10mm;
-  }
+  @page { size: A4; margin: 6mm 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'Sarabun', 'TH Sarabun New', 'Noto Sans Thai', sans-serif;
-    font-size: 13px;
-    line-height: 1.4;
+    font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Thai', sans-serif;
+    font-size: 15px;
+    line-height: 1.3;
     color: #000;
     background: #fff;
   }
 
-  .wf-page {
-    width: 190mm;
-    max-width: 100%;
-    margin: 0 auto;
-    padding: 0;
-    page-break-after: always;
-  }
-  .wf-page:last-child { page-break-after: auto; }
+  /* PAGE */
+  .wht-page { width: 190mm; max-width:100%; margin:0 auto; page-break-after:always; }
+  .wht-page:last-child { page-break-after:auto; }
 
-  .wf-copy-label {
-    text-align: right;
-    margin-bottom: 1px;
-    font-size: 12px;
-    line-height: 1.3;
-  }
-  .wf-copy-num {
-    display: inline-block;
-    background: #000;
-    color: #fff;
-    padding: 1px 10px;
-    font-weight: 700;
-    font-size: 13px;
-    letter-spacing: 1px;
-  }
-  .wf-copy-desc { font-size: 11px; }
+  /* COPY LABELS - left-aligned, plain text, both listed */
+  .copy-labels { font-size:13px; line-height:1.4; margin-bottom:2px; }
+  .copy-labels div { color:#555; }
+  .copy-labels .copy-active { color:#000; font-weight:700; }
 
-  .wf-outer {
-    border: 2px solid #000;
-  }
+  /* MAIN FRAME TABLE */
+  .F { width:100%; border:2.5px solid #000; border-collapse:collapse; }
+  .F > tbody > tr > td { border-bottom:1px solid #000; }
+  .F > tbody > tr:last-child > td { border-bottom:none; }
 
-  /* ===== TITLE ===== */
-  .wf-title-row {
-    border-bottom: 2px solid #000;
-    padding: 3px 0 2px;
-    text-align: center;
-  }
-  .wf-title-main {
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 2px;
-  }
-  .wf-title-sub {
-    font-size: 12px;
-    font-weight: 400;
-  }
+  /* inner utility table */
+  .inner { width:100%; border:none; border-collapse:collapse; }
+  .inner td { border:none; padding:1px 0; vertical-align:baseline; }
 
-  /* ===== FORM TYPE ===== */
-  .wf-form-row {
-    display: flex;
-    border-bottom: 1px solid #000;
-    padding: 2px 8px;
-    align-items: center;
-  }
-  .wf-form-left {
-    flex: 1;
-  }
-  .wf-form-line1, .wf-form-line2 {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    font-size: 12.5px;
-    line-height: 1.6;
-  }
-  .wf-form-line1 label, .wf-form-line2 label {
-    white-space: nowrap;
-    display: inline-flex;
-    align-items: center;
-    gap: 1px;
-  }
-  .wf-form-right {
-    white-space: nowrap;
-    font-size: 12px;
-    text-align: right;
-    padding-left: 8px;
-    line-height: 1.6;
-    border-left: 1px solid #000;
-    padding: 0 0 0 8px;
-    min-width: 130px;
-  }
-  .wf-cert-no { font-size: 13px; }
+  /* TITLE */
+  .title-cell { padding:4px 8px 2px; border-bottom:2.5px solid #000 !important; }
+  .title-main { font-size:20px; font-weight:700; letter-spacing:2px; text-align:center; }
+  .title-sub { font-size:14px; text-align:center; margin-top:-1px; }
 
-  .ck { font-size: 15px; vertical-align: -1px; }
-
-  /* ===== REF ===== */
-  .wf-ref-row {
-    text-align: right;
-    padding: 1px 8px;
-    border-bottom: 1px solid #000;
-    font-size: 12px;
-  }
-
-  /* ===== SECTIONS ===== */
-  .wf-sec {
-    padding: 3px 8px 4px;
-    border-bottom: 1.5px solid #000;
-  }
-  .wf-sec-head {
-    font-weight: 700;
-    font-size: 13px;
-    margin-bottom: 1px;
-  }
-  .wf-row {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-    margin-bottom: 1px;
-    font-size: 12.5px;
-    line-height: 1.5;
-  }
-  .wf-lbl { font-weight: 600; white-space: nowrap; }
-  .wf-val {
-    flex: 1;
-    border-bottom: 1px dotted #888;
-    min-height: 16px;
-    padding: 0 3px;
-    font-weight: 400;
-  }
-  .wf-branch-box {
-    white-space: nowrap;
-    font-size: 12px;
-    margin-left: 6px;
-  }
-  .wf-row-note {
-    font-size: 10px;
-    color: #555;
-    margin-left: 22px;
-    margin-bottom: 1px;
-  }
+  /* SECTIONS (payer/payee) */
+  .sec-cell { padding:3px 8px 4px; }
+  .sec-hdr { font-weight:700; font-size:15px; }
+  .f-lbl { font-weight:600; white-space:nowrap; padding-right:4px !important; width:45px; }
+  .f-val { }
+  .f-branch { white-space:nowrap; padding-left:6px !important; }
+  .ul { text-decoration:none; border-bottom:1px dotted #000; padding:0 2px; }
 
   /* Tax ID boxes */
-  .wf-taxid { white-space: nowrap; }
-  .tb {
-    display: inline-block;
-    width: 16px; height: 19px;
-    border: 1.5px solid #000;
-    text-align: center;
-    line-height: 19px;
-    font-size: 13px;
-    font-weight: 700;
-    margin: 0 0.5px;
-    background: #fff;
-  }
-  .ts {
-    display: inline-block;
-    width: 5px;
-    text-align: center;
-    font-weight: 700;
-    font-size: 11px;
+  .tb { display:inline-block; width:18px; height:22px; border:1.5px solid #000; text-align:center; line-height:22px; font-size:15px; font-weight:700; margin:0 0.5px; background:#fff; vertical-align:middle; }
+  .ts { display:inline-block; width:6px; text-align:center; font-weight:700; font-size:12px; vertical-align:middle; }
+
+  .ck { font-size:16px; vertical-align:-2px; }
+
+  /* FORM TYPE ROW */
+  .ftype-cell { padding:3px 8px; font-size:14px; }
+  .ftype-cell td { font-size:14px; padding:0 4px !important; }
+  .sq { display:inline-block; border:1.5px solid #000; min-width:60px; height:20px; text-align:center; line-height:20px; font-size:13px; vertical-align:middle; padding:0 4px; }
+
+  /* INCOME TABLE */
+  .IT { width:100%; border-collapse:collapse; font-size:14px; }
+  .IT th, .IT td { border:1px solid #000; padding:2px 5px; vertical-align:top; }
+  .IT th { text-align:center; font-weight:700; font-size:13px; }
+  .IT .amt { text-align:right; }
+  .IT .dtc { text-align:center; font-size:13px; }
+  .it-type { padding-left:22px !important; text-indent:-14px; font-size:13px; line-height:1.3; }
+  .it-s5 { font-size:12px; line-height:1.25; }
+  .total-row { font-weight:700; }
+  .total-row td { border-top:2.5px solid #000 !important; }
+  .div-cell { padding:0 !important; text-indent:0 !important; border-top:none !important; }
+  .div-block { padding:2px 8px 2px 24px; font-size:12px; line-height:1.45; }
+  .div-indent { padding-left:16px; }
+
+  /* TOTAL TEXT */
+  .totxt-cell { padding:3px 8px; font-size:15px; }
+
+  /* CONDITIONS */
+  .cond-cell { padding:3px 8px; font-size:14px; }
+  .cond-cell td { font-size:14px; }
+
+  /* BOTTOM SPLIT: warning left, signature right */
+  .bottom-split { }
+  .bottom-split td { vertical-align:top; padding:6px 8px; }
+  .bottom-left { width:45%; font-size:13px; line-height:1.4; border-right:1px solid #000 !important; }
+  .bottom-right { width:55%; font-size:13px; line-height:1.5; position:relative; }
+  .stamp-area {
+    position:absolute; right:8px; bottom:6px;
+    width:70px; height:70px;
+    border:1.5px solid #000; border-radius:50%;
+    text-align:center; font-size:11px; line-height:1.3;
+    display:flex; align-items:center; justify-content:center;
   }
 
-  /* ===== INCOME TABLE ===== */
-  .wf-tbl {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-  }
-  .wf-tbl th, .wf-tbl td {
-    border: 1px solid #000;
-    padding: 2px 4px;
-    vertical-align: top;
-  }
-  .wf-tbl th {
-    text-align: center;
-    font-weight: 700;
-    font-size: 11.5px;
-    background: #f5f5f5;
-    padding: 2px 3px;
-  }
-  .wf-th-type { width: 44%; }
-  .wf-th-date { width: 14%; }
-  .wf-th-amt { width: 21%; }
-  .wf-th-tax { width: 21%; }
-  .tr { text-align: right; }
-  .tc { text-align: center; }
-  .wf-td-type {
-    padding-left: 22px;
-    text-indent: -14px;
-    font-size: 11.5px;
-    line-height: 1.35;
-  }
-  .wf-indent2 { padding-left: 32px; }
-  .wf-td-s5 { font-size: 11px; line-height: 1.3; }
+  /* FOOTNOTE outside frame */
+  .footnote { font-size:12px; line-height:1.4; margin-top:3px; padding:0 2px; }
 
-  /* Dividend sub-section */
-  .wf-div-row td { padding: 0; border-top: none; }
-  .wf-div-block {
-    padding: 2px 8px 2px 24px;
-    font-size: 11px;
-    line-height: 1.5;
-  }
-  .wf-div-title { font-weight: 700; }
-  .wf-div-opts label { display: block; margin: 0; padding-left: 4px; }
-  .wf-div-pay-title { font-weight: 700; margin-top: 1px; }
-  .wf-div-pay-opts { padding-left: 14px; }
-  .wf-div-pay-opts label { display: block; margin: 0; }
-
-  /* Total row */
-  .wf-total-row { font-weight: 700; }
-  .wf-total-row td { border-top: 2px solid #000; font-size: 12.5px; }
-
-  /* ===== TOTAL TEXT ===== */
-  .wf-total-text {
-    padding: 2px 8px;
-    border-bottom: 1.5px solid #000;
-    font-size: 12.5px;
-  }
-  .wf-total-words { font-weight: 600; }
-
-  /* ===== CONDITIONS ===== */
-  .wf-conditions {
-    padding: 2px 8px;
-    border-bottom: 1px solid #000;
-    font-size: 12.5px;
-  }
-  .wf-cond-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0 12px;
-  }
-  .wf-cond-grid label { display: block; }
-
-  /* ===== CERTIFY ===== */
-  .wf-certify {
-    padding: 2px 8px;
-    font-size: 12.5px;
-  }
-
-  /* ===== SIGNATURE ===== */
-  .wf-signature {
-    text-align: center;
-    padding: 2px 8px 6px;
-  }
-  .wf-sig-block {
-    display: inline-block;
-    text-align: center;
-    min-width: 280px;
-  }
-  .wf-sig-line {
-    margin-top: 24px;
-    font-size: 12px;
-  }
-  .wf-sig-name { font-size: 12px; margin-top: 1px; }
-  .wf-sig-pos { font-size: 12px; margin-top: 1px; }
-  .wf-sig-date { font-size: 12px; margin-top: 1px; }
-
-  /* ===== WARNING ===== */
-  .wf-warning {
-    padding: 3px 8px;
-    border-top: 2px solid #000;
-    font-size: 11px;
-    line-height: 1.4;
-  }
-  .wf-warning b { color: #c00; }
-
-  /* ===== DOT LINE ===== */
-  .wf-dotline {
-    display: inline-block;
-    border-bottom: 1px dotted #555;
-    padding: 0 4px;
-    min-height: 1em;
-  }
-
+  /* PRINT / SCREEN */
   @media print {
-    body { margin: 0; padding: 0; }
-    .wf-page { width: 100%; }
-    .wf-noprint { display: none !important; }
+    body { margin:0; padding:0; }
+    .wht-page { width:100%; }
+    .noprint { display:none !important; }
   }
   @media screen {
-    body { background: #e0e0e0; padding: 20px 0; }
-    .wf-page { background: #fff; padding: 10mm; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
-    .wf-noprint { text-align: center; margin: 0 auto 20px; }
-    .wf-noprint button {
-      padding: 10px 32px;
-      font-size: 16px;
-      background: #2563eb;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .wf-noprint button:hover { background: #1d4ed8; }
+    body { background:#c8c8c8; padding:20px 0; }
+    .wht-page { background:#fff; padding:8mm 10mm; margin-bottom:20px; box-shadow:0 2px 12px rgba(0,0,0,.2); }
+    .noprint { text-align:center; margin:0 auto 16px; }
+    .noprint button { padding:10px 32px; font-size:16px; font-family:inherit; background:#1d4ed8; color:#fff; border:none; border-radius:6px; cursor:pointer; }
+    .noprint button:hover { background:#1e40af; }
   }
 </style>
 </head>
 <body>
-  <div class="wf-noprint"><button onclick="window.print()">พิมพ์หนังสือรับรอง / Print</button></div>
+  <div class="noprint"><button onclick="window.print()">พิมพ์หนังสือรับรอง / Print</button></div>
   ${buildCopy(1)}
   ${buildCopy(2)}
 </body>
