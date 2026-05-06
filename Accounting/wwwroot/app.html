@@ -133,10 +133,26 @@
       </div>
     </div>
 
+    <!-- VAT/WHT Summary -->
+    <div class="card dash-widget" data-widget="taxSummary" style="margin-top:24px">
+      <div class="card-header"><h3 class="card-title">สรุปภาษี (VAT/WHT)</h3></div>
+      <div id="taxSummaryContent" style="padding:16px">
+        <div class="text-center text-gray-400">กำลังโหลด...</div>
+      </div>
+    </div>
+
     <!-- Fiscal Period Status -->
     <div class="card dash-widget" data-widget="fiscalStatus" style="margin-top:24px">
       <div class="card-header"><h3 class="card-title">สถานะงวดบัญชี</h3></div>
       <div id="fiscalStatusContent" style="padding:16px">
+        <div class="text-center text-gray-400">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- Subscription Usage -->
+    <div class="card dash-widget" data-widget="subscription" style="margin-top:24px">
+      <div class="card-header"><h3 class="card-title">การใช้งานแพ็กเกจ</h3></div>
+      <div id="subscriptionContent" style="padding:16px">
         <div class="text-center text-gray-400">กำลังโหลด...</div>
       </div>
     </div>
@@ -167,7 +183,9 @@
         charts: 'กราฟแนวโน้มและกระแสเงินสด',
         topTables: 'ลูกค้า/ค่าใช้จ่ายสูงสุด',
         overdue: 'เกินกำหนด/ถึงกำหนด',
+        taxSummary: 'สรุปภาษี VAT/WHT',
         fiscalStatus: 'สถานะงวดบัญชี',
+        subscription: 'การใช้งานแพ็กเกจ',
         bank: 'ยอดธนาคาร'
       },
 
@@ -445,6 +463,60 @@
           document.getElementById('bankBalances').innerHTML = bb.length ? bb.map(b =>
             `<tr><td>${b.accountName}</td><td>${b.bankName}</td><td>${b.currency}</td><td class="text-right font-semibold">${Layout.money(b.balance)}</td></tr>`
           ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+
+          // VAT/WHT summary
+          const tax = d.taxSummary;
+          const taxEl = document.getElementById('taxSummaryContent');
+          if (taxEl && tax) {
+            const netColor = tax.netVat > 0 ? 'var(--danger)' : 'var(--success)';
+            const netLabel = tax.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน';
+            taxEl.innerHTML = `
+              <div class="grid grid-4 gap-4" style="text-align:center">
+                <div><div class="text-sm text-gray-500">ภาษีขาย (Output VAT)</div><div class="text-xl font-bold">${Layout.money(tax.outputVat)}</div></div>
+                <div><div class="text-sm text-gray-500">ภาษีซื้อ (Input VAT)</div><div class="text-xl font-bold">${Layout.money(tax.inputVat)}</div></div>
+                <div><div class="text-sm text-gray-500">VAT สุทธิ (${netLabel})</div><div class="text-xl font-bold" style="color:${netColor}">${Layout.money(Math.abs(tax.netVat))}</div></div>
+                <div><div class="text-sm text-gray-500">ภาษีหัก ณ ที่จ่าย</div><div class="text-xl font-bold">${Layout.money(tax.totalWht)}</div><div class="text-xs text-gray-500">${tax.whtCertificateCount} รายการ</div></div>
+              </div>`;
+          } else if (taxEl) {
+            taxEl.innerHTML = '<div class="text-center text-gray-400">ไม่มีข้อมูลภาษีในช่วงนี้</div>';
+          }
+
+          // Subscription usage
+          const sub = d.subscription;
+          const subEl = document.getElementById('subscriptionContent');
+          if (subEl && sub) {
+            const docPct = sub.documentsLimit > 0 ? Math.round(sub.documentsUsed / sub.documentsLimit * 100) : 0;
+            const userPct = sub.usersLimit > 0 ? Math.round(sub.usersCount / sub.usersLimit * 100) : 0;
+            const docColor = docPct > 80 ? 'var(--danger)' : docPct > 60 ? 'var(--warning)' : 'var(--success)';
+            const planLabels = { Free: 'ฟรี', Starter: 'Starter', Professional: 'Professional', Enterprise: 'Enterprise' };
+            const statusLabels = { Active: ['ใช้งาน', 'badge-success'], Trial: ['ทดลองใช้', 'badge-warning'], Expired: ['หมดอายุ', 'badge-danger'], Cancelled: ['ยกเลิก', 'badge-danger'] };
+            const [sLabel, sCls] = statusLabels[sub.status] || [sub.status, 'badge-secondary'];
+            subEl.innerHTML = `
+              <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+                <div>
+                  <div class="text-sm text-gray-500">แพ็กเกจ</div>
+                  <div class="font-semibold">${planLabels[sub.plan] || sub.plan} <span class="badge ${sCls}">${sLabel}</span></div>
+                </div>
+                <div style="flex:1;min-width:200px">
+                  <div class="text-sm text-gray-500">เอกสาร (${sub.documentsUsed}/${sub.documentsLimit})</div>
+                  <div style="background:var(--gray-100);border-radius:4px;height:8px;margin-top:4px">
+                    <div style="background:${docColor};border-radius:4px;height:100%;width:${Math.min(docPct,100)}%"></div>
+                  </div>
+                </div>
+                <div style="min-width:120px">
+                  <div class="text-sm text-gray-500">ผู้ใช้ (${sub.usersCount}/${sub.usersLimit})</div>
+                  <div style="background:var(--gray-100);border-radius:4px;height:8px;margin-top:4px">
+                    <div style="background:var(--primary);border-radius:4px;height:100%;width:${Math.min(userPct,100)}%"></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-sm text-gray-500">เหลืออีก</div>
+                  <div class="font-semibold">${sub.daysRemaining} วัน</div>
+                </div>
+              </div>`;
+          } else if (subEl) {
+            subEl.innerHTML = '<div class="text-center text-gray-400">ไม่มีข้อมูลแพ็กเกจ</div>';
+          }
 
           // Fiscal period status
           this.loadFiscalStatus(api);

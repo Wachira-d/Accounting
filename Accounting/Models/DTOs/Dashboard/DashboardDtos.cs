@@ -13,7 +13,16 @@ public record DashboardResponse(
     List<OverdueInvoice> OverdueInvoices,
     List<UpcomingPayable> UpcomingPayables,
     BankBalanceSummary BankBalances,
-    DashboardSubscriptionSummary? Subscription);
+    DashboardSubscriptionSummary? Subscription,
+    VatWhtSummary? TaxSummary = null);
+
+public record VatWhtSummary(
+    decimal OutputVat,
+    decimal InputVat,
+    decimal NetVat,
+    decimal TotalWht,
+    int WhtCertificateCount,
+    string CurrentPeriod);
 
 public record DashboardKpis(
     decimal TotalRevenue,
