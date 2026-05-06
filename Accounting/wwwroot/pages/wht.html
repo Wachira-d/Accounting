@@ -382,7 +382,10 @@
 
         const oldTaxIdBoxes = (taxId) => {
           const dg = (taxId || '').replace(/\D/g, '').slice(0, 10).padEnd(10, ' ');
-          return dg.split('').map(c => `<span class="tb">${c}</span>`).join('');
+          const groups = [dg.slice(0,3), dg.slice(3,7), dg.slice(7,10)];
+          return groups.map(g =>
+            g.split('').map(c => `<span class="tb">${c}</span>`).join('')
+          ).join('<span class="ts">&nbsp;</span>');
         };
 
         const buildCopy = (copyNum) => {
@@ -505,7 +508,7 @@
                       ${mk(r3)}
                     </tr>
                     <tr>
-                      <td class="it-type">4. (ก) ค่าดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)</td>
+                      <td class="it-type">4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)</td>
                       ${mk(r4a)}
                     </tr>
                     <tr>
@@ -585,7 +588,12 @@
                     <div style="margin-bottom:6px">ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>
                     <div class="sig-block">
                       <div class="sig-line" style="text-align:right">ลงชื่อ <span class="sig-dots"></span> ผู้จ่ายเงิน</div>
-                      <div class="sig-line" style="text-align:center;font-size:13px">(วัน เดือน ปี ที่ออกหนังสือรับรองฯ) ${thaiDate(d.issuedDate)}</div>
+                      <div class="sig-date">
+                        <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getDate() : '&nbsp;&nbsp;'}</span> /
+                        <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getMonth()+1 : '&nbsp;&nbsp;'}</span> /
+                        <span class="sig-dots-sm">${d.issuedDate ? (new Date(d.issuedDate).getFullYear()+543) : '&nbsp;&nbsp;&nbsp;&nbsp;'}</span>
+                      </div>
+                      <div style="text-align:center;font-size:11px;color:#444">(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div>
                     </div>
                     <div class="stamp-area">ประทับตรา<br>นิติบุคคล<br>(ถ้ามี)</div>
                   </td>
@@ -699,6 +707,8 @@
   .sig-block { padding:4px 14px 0; }
   .sig-line { margin-bottom:6px; }
   .sig-dots { display:inline-block; min-width:200px; border-bottom:1px dotted #000; }
+  .sig-date { text-align:center; margin:4px 0 0; font-size:14px; }
+  .sig-dots-sm { display:inline-block; min-width:40px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
   .stamp-area {
     position:absolute; right:8px; top:50%; transform:translateY(-50%);
     width:78px; height:78px;
