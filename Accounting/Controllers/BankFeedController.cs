@@ -34,7 +34,7 @@ public class BankFeedController : ControllerBase
     }
 
     [HttpPost("connections")]
-    public async Task<IActionResult> CreateConnection(Guid companyId, [FromBody] CreateBankConnectionRequest request)
+    public async Task<IActionResult> CreateConnection(Guid companyId, [FromBody] CreateBankFeedConnectionRequest request)
     {
         var result = await _service.CreateConnectionAsync(companyId, request);
         return Created($"api/companies/{companyId}/bank-feeds/connections/{result.Id}", new ApiResponse<object>(true, result));

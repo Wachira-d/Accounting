@@ -28,7 +28,7 @@ public class BankFeedService : IBankFeedService
         _logger = logger;
     }
 
-    public async Task<BankConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankConnectionRequest request)
+    public async Task<BankFeedConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankFeedConnectionRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.BankCode))
             throw new InvalidOperationException("กรุณาระบุรหัสธนาคาร");
@@ -55,7 +55,7 @@ public class BankFeedService : IBankFeedService
         return MapToResponse(conn);
     }
 
-    public async Task<List<BankConnectionResponse>> GetConnectionsAsync(Guid companyId)
+    public async Task<List<BankFeedConnectionResponse>> GetConnectionsAsync(Guid companyId)
     {
         return await _db.BankConnections
             .Where(c => c.CompanyId == companyId)
@@ -64,7 +64,7 @@ public class BankFeedService : IBankFeedService
             .ToListAsync();
     }
 
-    public async Task<BankConnectionResponse> GetConnectionAsync(Guid companyId, Guid connectionId)
+    public async Task<BankFeedConnectionResponse> GetConnectionAsync(Guid companyId, Guid connectionId)
     {
         var conn = await _db.BankConnections
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
@@ -194,7 +194,7 @@ public class BankFeedService : IBankFeedService
         await _db.SaveChangesAsync();
     }
 
-    public async Task<BankConnectionResponse> TestConnectionAsync(Guid companyId, Guid connectionId)
+    public async Task<BankFeedConnectionResponse> TestConnectionAsync(Guid companyId, Guid connectionId)
     {
         var conn = await _db.BankConnections
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
@@ -301,7 +301,7 @@ public class BankFeedService : IBankFeedService
         return false;
     }
 
-    private static BankConnectionResponse MapToResponse(BankConnection c) => new(
+    private static BankFeedConnectionResponse MapToResponse(BankConnection c) => new(
         c.Id, c.BankCode, c.BankName, c.ConnectionType, c.Status,
         c.LastSyncAt, c.LastSyncStatus, c.LastError, c.AutoSync,
         c.SyncIntervalMinutes, c.LinkedBankAccountId);
