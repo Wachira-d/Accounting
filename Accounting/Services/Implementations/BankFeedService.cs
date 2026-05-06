@@ -1,0 +1,306 @@
+using Accounting.Data;
+using Accounting.Models.Entities;
+using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+public class BankFeedService : IBankFeedService
+{
+    private readonly AccountingDbContext _db;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILogger<BankFeedService> _logger;
+
+    private static readonly Dictionary<string, string> BankApiEndpoints = new()
+    {
+        { "SCB", "https://api-sandbox.partners.scb/partners/sandbox" },
+        { "KBANK", "https://openapi.kasikornbank.com" },
+        { "BBL", "https://api.bangkokbank.com" },
+        { "BAY", "https://api.krungsri.com" },
+        { "KTB", "https://api.krungthai.com" },
+        { "TTB", "https://api.ttbbank.com" }
+    };
+
+    public BankFeedService(AccountingDbContext db, IHttpClientFactory httpClientFactory, ILogger<BankFeedService> logger)
+    {
+        _db = db;
+        _httpClientFactory = httpClientFactory;
+        _logger = logger;
+    }
+
+    public async Task<BankConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankConnectionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.BankCode))
+            throw new InvalidOperationException("กรุณาระบุรหัสธนาคาร");
+
+        var conn = new BankConnection
+        {
+            CompanyId = companyId,
+            BankCode = request.BankCode.ToUpper(),
+            BankName = request.BankName,
+            ConnectionType = request.ConnectionType ?? "API",
+            ApiEndpoint = request.ApiEndpoint ?? BankApiEndpoints.GetValueOrDefault(request.BankCode.ToUpper()),
+            ClientId = request.ClientId,
+            EncryptedCredentials = request.ClientSecret,
+            AccessToken = request.AccessToken,
+            AutoSync = request.AutoSync,
+            SyncIntervalMinutes = request.SyncIntervalMinutes,
+            LinkedBankAccountId = request.LinkedBankAccountId,
+            Status = "Pending"
+        };
+
+        _db.BankConnections.Add(conn);
+        await _db.SaveChangesAsync();
+
+        return MapToResponse(conn);
+    }
+
+    public async Task<List<BankConnectionResponse>> GetConnectionsAsync(Guid companyId)
+    {
+        return await _db.BankConnections
+            .Where(c => c.CompanyId == companyId)
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => MapToResponse(c))
+            .ToListAsync();
+    }
+
+    public async Task<BankConnectionResponse> GetConnectionAsync(Guid companyId, Guid connectionId)
+    {
+        var conn = await _db.BankConnections
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
+            ?? throw new KeyNotFoundException("ไม่พบการเชื่อมต่อธนาคาร");
+        return MapToResponse(conn);
+    }
+
+    public async Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId)
+    {
+        var conn = await _db.BankConnections
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
+            ?? throw new KeyNotFoundException("ไม่พบการเชื่อมต่อธนาคาร");
+
+        if (conn.Status == "Disabled")
+            throw new InvalidOperationException("การเชื่อมต่อถูกปิดใช้งาน");
+
+        try
+        {
+            var transactions = await FetchTransactionsFromBankAsync(conn);
+
+            var existingRefs = await _db.BankTransactions
+                .Where(t => t.CompanyId == companyId && t.BankAccountId == conn.LinkedBankAccountId)
+                .Select(t => t.Reference)
+                .Where(r => r != null)
+                .ToListAsync();
+
+            int newCount = 0, duplicateCount = 0, autoMatched = 0;
+
+            foreach (var txn in transactions)
+            {
+                if (existingRefs.Contains(txn.Reference))
+                {
+                    duplicateCount++;
+                    continue;
+                }
+
+                var bankTxn = new BankTransaction
+                {
+                    CompanyId = companyId,
+                    BankAccountId = conn.LinkedBankAccountId ?? Guid.Empty,
+                    TransactionDate = txn.Date,
+                    Amount = Math.Abs(txn.Amount),
+                    TransactionType = txn.Amount >= 0
+                        ? Models.Enums.BankTransactionType.Deposit
+                        : Models.Enums.BankTransactionType.Withdrawal,
+                    Description = txn.Description,
+                    Reference = txn.Reference,
+                    ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched
+                };
+
+                _db.BankTransactions.Add(bankTxn);
+                newCount++;
+
+                if (await TryAutoMatchAsync(companyId, bankTxn))
+                    autoMatched++;
+            }
+
+            var feedImport = new BankFeedImport
+            {
+                CompanyId = companyId,
+                BankConnectionId = connectionId,
+                ImportDate = DateTime.UtcNow,
+                PeriodStart = transactions.Any() ? transactions.Min(t => t.Date) : DateTime.UtcNow,
+                PeriodEnd = transactions.Any() ? transactions.Max(t => t.Date) : DateTime.UtcNow,
+                TotalTransactions = transactions.Count,
+                NewTransactions = newCount,
+                DuplicateSkipped = duplicateCount,
+                AutoMatched = autoMatched,
+                Status = "Completed"
+            };
+
+            _db.BankFeedImports.Add(feedImport);
+
+            conn.LastSyncAt = DateTime.UtcNow;
+            conn.LastSyncStatus = "Success";
+            conn.LastError = null;
+            conn.Status = "Active";
+
+            await _db.SaveChangesAsync();
+
+            return new BankFeedSyncResult(connectionId, conn.BankName,
+                transactions.Count, newCount, duplicateCount, autoMatched, "Success", null);
+        }
+        catch (Exception ex)
+        {
+            conn.LastSyncAt = DateTime.UtcNow;
+            conn.LastSyncStatus = "Failed";
+            conn.LastError = ex.Message;
+            await _db.SaveChangesAsync();
+
+            _logger.LogError(ex, "Bank feed sync failed for {BankCode} connection {ConnectionId}", conn.BankCode, connectionId);
+            return new BankFeedSyncResult(connectionId, conn.BankName, 0, 0, 0, 0, "Failed", ex.Message);
+        }
+    }
+
+    public async Task<BankFeedSyncResult> SyncAllAsync(Guid companyId)
+    {
+        var connections = await _db.BankConnections
+            .Where(c => c.CompanyId == companyId && c.AutoSync && c.Status == "Active")
+            .ToListAsync();
+
+        int totalNew = 0, totalDuplicates = 0, totalMatched = 0;
+
+        foreach (var conn in connections)
+        {
+            var result = await SyncAsync(companyId, conn.Id);
+            totalNew += result.NewTransactions;
+            totalDuplicates += result.DuplicateSkipped;
+            totalMatched += result.AutoMatched;
+        }
+
+        return new BankFeedSyncResult(Guid.Empty, "All Banks",
+            totalNew + totalDuplicates, totalNew, totalDuplicates, totalMatched, "Success", null);
+    }
+
+    public async Task DeleteConnectionAsync(Guid companyId, Guid connectionId)
+    {
+        var conn = await _db.BankConnections
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
+            ?? throw new KeyNotFoundException("ไม่พบการเชื่อมต่อธนาคาร");
+
+        conn.Status = "Disabled";
+        conn.IsDeleted = true;
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<BankConnectionResponse> TestConnectionAsync(Guid companyId, Guid connectionId)
+    {
+        var conn = await _db.BankConnections
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
+            ?? throw new KeyNotFoundException("ไม่พบการเชื่อมต่อธนาคาร");
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            if (!string.IsNullOrEmpty(conn.AccessToken))
+                client.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", conn.AccessToken);
+
+            var endpoint = conn.ApiEndpoint ?? BankApiEndpoints.GetValueOrDefault(conn.BankCode, "");
+            if (!string.IsNullOrEmpty(endpoint))
+            {
+                var response = await client.GetAsync($"{endpoint}/health");
+                conn.Status = response.IsSuccessStatusCode ? "Active" : "Error";
+                conn.LastSyncStatus = response.IsSuccessStatusCode ? "Connected" : $"HTTP {response.StatusCode}";
+            }
+            else
+            {
+                conn.Status = "Active";
+                conn.LastSyncStatus = "Connected (no endpoint test)";
+            }
+
+            conn.LastError = null;
+        }
+        catch (Exception ex)
+        {
+            conn.Status = "Error";
+            conn.LastSyncStatus = "Failed";
+            conn.LastError = ex.Message;
+        }
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(conn);
+    }
+
+    private async Task<List<BankFeedTransaction>> FetchTransactionsFromBankAsync(BankConnection conn)
+    {
+        var client = _httpClientFactory.CreateClient();
+
+        if (!string.IsNullOrEmpty(conn.AccessToken))
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", conn.AccessToken);
+
+        var fromDate = conn.LastSyncAt?.AddDays(-1) ?? DateTime.UtcNow.AddDays(-30);
+        var toDate = DateTime.UtcNow;
+
+        var endpoint = conn.ApiEndpoint ?? BankApiEndpoints.GetValueOrDefault(conn.BankCode, "");
+        if (string.IsNullOrEmpty(endpoint))
+            return new List<BankFeedTransaction>();
+
+        try
+        {
+            var url = $"{endpoint}/v1/accounts/transactions?from={fromDate:yyyy-MM-dd}&to={toDate:yyyy-MM-dd}";
+            var response = await client.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Bank API returned {StatusCode} for {BankCode}", response.StatusCode, conn.BankCode);
+                return new List<BankFeedTransaction>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var transactions = System.Text.Json.JsonSerializer.Deserialize<List<BankFeedTransaction>>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            return transactions ?? new List<BankFeedTransaction>();
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to fetch transactions from {BankCode}", conn.BankCode);
+            throw new InvalidOperationException($"ไม่สามารถเชื่อมต่อ {conn.BankName} ได้: {ex.Message}");
+        }
+    }
+
+    private async Task<bool> TryAutoMatchAsync(Guid companyId, BankTransaction txn)
+    {
+        if (string.IsNullOrWhiteSpace(txn.Description) && string.IsNullOrWhiteSpace(txn.Reference))
+            return false;
+
+        var matchedDoc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.CompanyId == companyId
+                && d.TotalAmount == txn.Amount
+                && d.Status != Models.Enums.DocumentStatus.Paid
+                && d.Status != Models.Enums.DocumentStatus.Voided
+                && d.Status != Models.Enums.DocumentStatus.Draft
+                && (d.DocumentNumber == txn.Reference
+                    || (txn.Description != null && d.Reference != null && txn.Description.Contains(d.Reference))));
+
+        if (matchedDoc != null)
+        {
+            txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Matched;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static BankConnectionResponse MapToResponse(BankConnection c) => new(
+        c.Id, c.BankCode, c.BankName, c.ConnectionType, c.Status,
+        c.LastSyncAt, c.LastSyncStatus, c.LastError, c.AutoSync,
+        c.SyncIntervalMinutes, c.LinkedBankAccountId);
+}
+
+internal record BankFeedTransaction(
+    DateTime Date,
+    decimal Amount,
+    string? Description,
+    string? Reference,
+    string? CounterParty);

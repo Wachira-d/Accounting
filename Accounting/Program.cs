@@ -168,8 +168,10 @@ builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 
-// External Integration (TakeTime, PMS, etc.)
+// External Integration (TakeTime, PMS, E-Commerce, Bank Feeds)
 builder.Services.AddScoped<IIntegrationService, IntegrationService>();
+builder.Services.AddScoped<IBankFeedService, BankFeedService>();
+builder.Services.AddScoped<IECommerceService, ECommerceService>();
 
 // Signature & Approval
 builder.Services.AddScoped<ISignatureApprovalService, SignatureApprovalService>();

@@ -676,6 +676,20 @@ const API = {
       getIntegrationDepositSummary: (q = '') => API.get(`${base}/integrations/reports/deposit-summary${q}`),
       getIntegrationDailyRevenue: (q = '') => API.get(`${base}/integrations/reports/daily-revenue${q}`),
 
+      // E-Commerce
+      getECommerceConnections: () => API.get(`${base}/ecommerce/connections`),
+      connectECommerce: (d) => API.post(`${base}/ecommerce/connect`, d),
+      syncECommerceOrders: (id, since) => API.post(`${base}/ecommerce/connections/${id}/sync${since ? '?since=' + since : ''}`),
+      syncAllECommerce: () => API.post(`${base}/ecommerce/sync-all`),
+      testECommerceConnection: (id) => API.post(`${base}/ecommerce/connections/${id}/test`),
+      disconnectECommerce: (id) => API.del(`${base}/ecommerce/connections/${id}`),
+      // Bank Feeds
+      getBankFeedConnections: () => API.get(`${base}/bank-feeds/connections`),
+      createBankFeedConnection: (d) => API.post(`${base}/bank-feeds/connections`, d),
+      syncBankFeed: (id) => API.post(`${base}/bank-feeds/connections/${id}/sync`),
+      syncAllBankFeeds: () => API.post(`${base}/bank-feeds/sync-all`),
+      testBankFeedConnection: (id) => API.post(`${base}/bank-feeds/connections/${id}/test`),
+      deleteBankFeedConnection: (id) => API.del(`${base}/bank-feeds/connections/${id}`),
       // Executive Reports
       getExecutiveSummary: (q = '') => API.get(`${base}/executive-reports/summary${q}`),
       getFinancialRatios: (q = '') => API.get(`${base}/executive-reports/ratios${q}`),
