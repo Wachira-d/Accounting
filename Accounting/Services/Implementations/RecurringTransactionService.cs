@@ -318,7 +318,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 DocumentType: docType,
                 DocumentDate: DateTime.UtcNow,
                 DueDate: root.TryGetProperty("dueDays", out var dd) ? DateTime.UtcNow.AddDays(dd.GetInt32()) : DateTime.UtcNow.AddDays(30),
-                ContactId: contactId.Value,
+                ContactId: contactId,
                 Reference: $"AUTO-{recurring.Name}",
                 Notes: root.TryGetProperty("notes", out var notes) ? notes.GetString() : null,
                 Lines: lines,
@@ -346,11 +346,11 @@ public class RecurringTransactionService : IRecurringTransactionService
 
             // Auto-generate WHT certificate if requested and there's WHT > 0
             var autoWht = root.TryGetProperty("autoGenerateWht", out var awEl) && awEl.ValueKind == JsonValueKind.True;
-            if (autoWht && result != null && result.WithholdingTaxAmount > 0 && contactId.HasValue)
+            if (autoWht && result != null && result.WithholdingTaxAmount > 0)
             {
                 try
                 {
-                    await GenerateWhtCertFromTemplateAsync(recurring.CompanyId, result.Id, contactId.Value, root, performedBy);
+                    await GenerateWhtCertFromTemplateAsync(recurring.CompanyId, result.Id, contactId, root, performedBy);
                 }
                 catch (Exception ex)
                 {

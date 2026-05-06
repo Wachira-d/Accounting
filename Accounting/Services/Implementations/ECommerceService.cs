@@ -302,7 +302,7 @@ public class ECommerceService : IECommerceService
         existing ??= await _db.Contacts
             .FirstOrDefaultAsync(c => c.CompanyId == companyId
                 && c.Name == order.CustomerName && c.IsCustomer
-                && (c.Notes != null && c.Notes.Contains(platform)));
+                && (c.ContactPerson != null && c.ContactPerson.Contains(platform)));
 
         if (existing != null) return existing;
 
@@ -313,7 +313,7 @@ public class ECommerceService : IECommerceService
             Phone = order.CustomerPhone,
             IsCustomer = true,
             IsSupplier = false,
-            Notes = $"ลูกค้าจาก {platform}",
+            ContactPerson = $"ลูกค้าจาก {platform}",
             CreatedBy = "system-ecommerce"
         };
         _db.Contacts.Add(contact);
@@ -358,14 +358,14 @@ public class ECommerceService : IECommerceService
         _db.Documents.Add(doc);
 
         var lineOrder = 1;
-        var vatRate = company is { IsVatRegistered: true } ? company.VatRate : 0m;
+        var lineVatRate = company is { IsVatRegistered: true } ? company.VatRate : 0m;
         foreach (var item in order.Items)
         {
             decimal lineVatAmount = 0;
             decimal lineSubTotal = item.Total;
-            if (vatRate > 0)
+            if (lineVatRate > 0)
             {
-                lineSubTotal = item.Total / (1 + vatRate / 100);
+                lineSubTotal = item.Total / (1 + lineVatRate / 100);
                 lineVatAmount = item.Total - lineSubTotal;
             }
 
@@ -377,7 +377,7 @@ public class ECommerceService : IECommerceService
                 Quantity = item.Quantity,
                 UnitPrice = item.UnitPrice,
                 Amount = Math.Round(lineSubTotal, 2),
-                VatRate = vatRate,
+                VatRate = lineVatRate,
                 VatAmount = Math.Round(lineVatAmount, 2),
                 Unit = "ชิ้น"
             });

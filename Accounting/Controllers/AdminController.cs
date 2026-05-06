@@ -854,8 +854,8 @@ public class AdminController : ControllerBase
         var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads");
         Directory.CreateDirectory(uploadsDir);
 
-        var allowedTypes = new[] { "general", "logo", "icon", "banner", "favicon" };
-        var safeType = allowedTypes.Contains(type) ? type : "general";
+        var allowedImageTypes = new[] { "general", "logo", "icon", "banner", "favicon" };
+        var safeType = allowedImageTypes.Contains(type) ? type : "general";
 
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         var fileName = $"{safeType}_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
