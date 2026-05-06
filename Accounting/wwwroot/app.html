@@ -43,10 +43,20 @@
       <div id="widgetList" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     </div>
 
+    <!-- Quick Actions -->
+    <div class="dash-widget" data-widget="quickActions" style="margin-bottom:24px;display:flex;gap:10px;flex-wrap:wrap">
+      <a href="/pages/documents.html?side=revenue&create=Quotation" class="btn btn-outline" style="gap:6px">📋 สร้างใบเสนอราคา</a>
+      <a href="/pages/documents.html?side=revenue&create=TaxInvoice" class="btn btn-outline" style="gap:6px">🧾 สร้างใบกำกับภาษี</a>
+      <a href="/pages/purchases.html?create=PurchaseInvoice" class="btn btn-outline" style="gap:6px">🛒 บันทึกซื้อสินค้า</a>
+      <a href="/pages/expense.html" class="btn btn-outline" style="gap:6px">💳 บันทึกค่าใช้จ่าย</a>
+      <a href="/pages/journals.html" class="btn btn-outline" style="gap:6px">📝 สมุดรายวัน</a>
+      <a href="/pages/reports.html" class="btn btn-outline" style="gap:6px">📊 รายงานการเงิน</a>
+    </div>
+
     <div class="grid grid-4 gap-4 dash-widget" data-widget="kpiMain" id="kpiCards" style="margin-bottom:24px">
-      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.totalRevenue">รายได้รวม</div><div class="kpi-value" id="kpiRevenue">-</div></div>
-      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.totalExpense">ค่าใช้จ่ายรวม</div><div class="kpi-value" id="kpiExpense">-</div></div>
-      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.netProfit">กำไรสุทธิ</div><div class="kpi-value" id="kpiNet">-</div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.totalRevenue">รายได้รวม</div><div class="kpi-value" id="kpiRevenue">-</div><div class="text-xs" id="kpiRevenueGrowth" style="margin-top:4px"></div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.totalExpense">ค่าใช้จ่ายรวม</div><div class="kpi-value" id="kpiExpense">-</div><div class="text-xs" id="kpiExpenseGrowth" style="margin-top:4px"></div></div>
+      <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.netProfit">กำไรสุทธิ</div><div class="kpi-value" id="kpiNet">-</div><div class="text-xs" id="kpiNetMargin" style="margin-top:4px"></div></div>
       <div class="kpi-card"><div class="kpi-label" data-i18n="dashboard.cashBalance">เงินสดคงเหลือ</div><div class="kpi-value" id="kpiCash">-</div></div>
     </div>
 
@@ -123,6 +133,14 @@
       </div>
     </div>
 
+    <!-- Fiscal Period Status -->
+    <div class="card dash-widget" data-widget="fiscalStatus" style="margin-top:24px">
+      <div class="card-header"><h3 class="card-title">สถานะงวดบัญชี</h3></div>
+      <div id="fiscalStatusContent" style="padding:16px">
+        <div class="text-center text-gray-400">กำลังโหลด...</div>
+      </div>
+    </div>
+
     <!-- Bank Balances -->
     <div class="card dash-widget" data-widget="bank" style="margin-top:24px">
       <div class="card-header"><h3 class="card-title" data-i18n="dashboard.bankBalances">ยอดเงินในบัญชีธนาคาร</h3></div>
@@ -143,11 +161,13 @@
   <script>
     const Dashboard = {
       WIDGETS: {
+        quickActions: 'ทางลัดด่วน',
         kpiMain: 'KPI หลัก (รายได้/ค่าใช้จ่าย/กำไร/เงินสด)',
         kpiSecondary: 'KPI รอง (AR/AP/ใบแจ้งหนี้/รออนุมัติ)',
         charts: 'กราฟแนวโน้มและกระแสเงินสด',
         topTables: 'ลูกค้า/ค่าใช้จ่ายสูงสุด',
         overdue: 'เกินกำหนด/ถึงกำหนด',
+        fiscalStatus: 'สถานะงวดบัญชี',
         bank: 'ยอดธนาคาร'
       },
 
@@ -280,6 +300,48 @@
         window.print();
       },
 
+      async loadFiscalStatus(api) {
+        try {
+          const res = await api.getFiscalPeriods();
+          const periods = res.data || [];
+          const el = document.getElementById('fiscalStatusContent');
+          if (!periods.length) {
+            el.innerHTML = '<div class="text-center text-gray-400">ยังไม่มีงวดบัญชี — <a href="/pages/fiscal.html" class="text-primary">สร้างงวดบัญชี</a></div>';
+            return;
+          }
+          const current = periods.find(p => p.status === 'Open') || periods[periods.length - 1];
+          const statusMap = { Open: ['เปิด', 'badge-success'], Closed: ['ปิดแล้ว', 'badge-warning'], Locked: ['ล็อค', 'badge-danger'] };
+          const [label, cls] = statusMap[current.status] || [current.status, 'badge-secondary'];
+          const fmtDate = d => d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+          const openCount = periods.filter(p => p.status === 'Open').length;
+          const closedCount = periods.filter(p => p.status === 'Closed').length;
+          el.innerHTML = `
+            <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+              <div>
+                <div class="text-sm text-gray-500">งวดปัจจุบัน</div>
+                <div class="font-semibold">${current.name || current.periodName || `${fmtDate(current.startDate)} – ${fmtDate(current.endDate)}`}</div>
+              </div>
+              <div>
+                <div class="text-sm text-gray-500">สถานะ</div>
+                <span class="badge ${cls}">${label}</span>
+              </div>
+              <div>
+                <div class="text-sm text-gray-500">ช่วงเวลา</div>
+                <div>${fmtDate(current.startDate)} – ${fmtDate(current.endDate)}</div>
+              </div>
+              <div>
+                <div class="text-sm text-gray-500">สรุป</div>
+                <div>เปิด ${openCount} • ปิด ${closedCount} • ทั้งหมด ${periods.length} งวด</div>
+              </div>
+              <a href="/pages/fiscal.html" class="btn btn-sm btn-outline" style="margin-left:auto">จัดการงวดบัญชี →</a>
+            </div>`;
+        } catch (e) {
+          console.warn('Fiscal status load failed:', e);
+          const el = document.getElementById('fiscalStatusContent');
+          if (el) el.innerHTML = '<div class="text-center text-gray-400">ไม่สามารถโหลดสถานะงวดบัญชี</div>';
+        }
+      },
+
       async load() {
         if (!Layout.init('dashboard')) return;
         Layout.setTitle('แดชบอร์ด');
@@ -307,6 +369,28 @@
           const breakdownEl = document.getElementById('kpiInvoicesBreakdown');
           if (breakdownEl) breakdownEl.textContent = `ใบแจ้งหนี้ ${inv} • ใบกำกับภาษี ${tinv}`;
           document.getElementById('kpiPending').textContent = k.pendingApprovals ?? '-';
+
+          // Growth indicators
+          const growthEl = document.getElementById('kpiRevenueGrowth');
+          if (growthEl && k.revenueGrowthPercent != null) {
+            const g = k.revenueGrowthPercent;
+            const arrow = g > 0 ? '▲' : g < 0 ? '▼' : '—';
+            const color = g > 0 ? 'var(--success)' : g < 0 ? 'var(--danger)' : 'var(--gray-500)';
+            growthEl.innerHTML = `<span style="color:${color}">${arrow} ${Math.abs(g).toFixed(1)}% จากเดือนก่อน</span>`;
+          }
+          const expGrowthEl = document.getElementById('kpiExpenseGrowth');
+          if (expGrowthEl && k.expenseGrowthPercent != null) {
+            const g = k.expenseGrowthPercent;
+            const arrow = g > 0 ? '▲' : g < 0 ? '▼' : '—';
+            const color = g > 0 ? 'var(--danger)' : g < 0 ? 'var(--success)' : 'var(--gray-500)';
+            expGrowthEl.innerHTML = `<span style="color:${color}">${arrow} ${Math.abs(g).toFixed(1)}% จากเดือนก่อน</span>`;
+          }
+          const marginEl = document.getElementById('kpiNetMargin');
+          if (marginEl && k.totalRevenue) {
+            const margin = (k.netIncome / k.totalRevenue * 100);
+            const color = margin >= 0 ? 'var(--success)' : 'var(--danger)';
+            marginEl.innerHTML = `<span style="color:${color}">อัตรากำไรสุทธิ ${margin.toFixed(1)}%</span>`;
+          }
 
           // Cash flow
           const cf = d.cashFlow || {};
@@ -361,6 +445,9 @@
           document.getElementById('bankBalances').innerHTML = bb.length ? bb.map(b =>
             `<tr><td>${b.accountName}</td><td>${b.bankName}</td><td>${b.currency}</td><td class="text-right font-semibold">${Layout.money(b.balance)}</td></tr>`
           ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
+
+          // Fiscal period status
+          this.loadFiscalStatus(api);
 
         } catch (e) {
           if (!Layout._companiesLoaded) return; // still loading — loadCompanies() will retry

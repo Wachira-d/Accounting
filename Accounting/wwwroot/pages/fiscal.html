@@ -74,11 +74,13 @@
         Layout.setTitle('งวดบัญชี');
         await this.load();
       },
+      _periods: [],
       async load() {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getFiscalPeriods();
           const items = res.data?.items || res.data || [];
+          this._periods = items;
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีงวดบัญชี — กดปุ่ม "สร้างงวดบัญชี" เพื่อเริ่มต้น</td></tr>'; return; }
           tbody.innerHTML = items.map(p => `<tr>
