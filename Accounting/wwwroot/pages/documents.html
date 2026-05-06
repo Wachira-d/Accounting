@@ -638,6 +638,8 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
+              ${d.status === 'Draft' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteDoc('${d.id}')" title="ลบเอกสารฉบับร่าง">ลบ</button>` : ''}
+              ${d.status !== 'Draft' && d.status !== 'Voided' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidDoc('${d.id}')" title="ยกเลิกเอกสาร">ยกเลิก</button>` : ''}
             </td>
           </tr>`;
           }).join('');
