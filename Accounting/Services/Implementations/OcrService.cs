@@ -88,8 +88,21 @@ public class OcrService : IOcrService
 
         try
         {
-            var extractedText = await ExtractTextAsync(file);
-            var extractedData = ParseThaiDocument(extractedText);
+            var ocrProvider = _configuration["Ocr:Provider"]?.ToLower();
+            OcrExtractedData extractedData;
+            string extractedText;
+
+            if (ocrProvider == "local")
+            {
+                var localResult = await ExtractWithLocalServiceAsync(file);
+                extractedText = localResult.RawText;
+                extractedData = localResult.Data;
+            }
+            else
+            {
+                extractedText = await ExtractTextAsync(file);
+                extractedData = ParseThaiDocument(extractedText);
+            }
 
             scanResult.DocumentType = extractedData.DocumentType;
             scanResult.Confidence = extractedData.Confidence;
@@ -162,6 +175,111 @@ public class OcrService : IOcrService
 
         await _db.SaveChangesAsync();
         return MapToResponse(scanResult);
+    }
+
+    private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)
+    {
+        var serviceUrl = _configuration["Ocr:LocalServiceUrl"] ?? "http://localhost:8501";
+        var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(120);
+
+        byte[] fileData;
+        try { fileData = await File.ReadAllBytesAsync(file.StoragePath); }
+        catch { return (ExtractFromFileName(file), new OcrExtractedData { Confidence = 0.3m }); }
+
+        using var form = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(fileData);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            file.ContentType ?? "application/octet-stream");
+        form.Add(fileContent, "file", file.OriginalFileName);
+
+        try
+        {
+            var response = await client.PostAsync($"{serviceUrl}/ocr/extract", form);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Local OCR service returned {Status}", response.StatusCode);
+                return (ExtractFromFileName(file), new OcrExtractedData { Confidence = 0.3m });
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var data = new OcrExtractedData
+            {
+                DocumentType = root.TryGetProperty("document_type", out var dt) ? dt.GetString() : null,
+                Confidence = root.TryGetProperty("confidence", out var cf) ? (decimal)cf.GetDouble() : 0.5m,
+                VendorName = root.TryGetProperty("vendor_name", out var vn) ? vn.GetString() : null,
+                VendorTaxId = root.TryGetProperty("vendor_tax_id", out var vt) ? vt.GetString() : null,
+                DocumentNumber = root.TryGetProperty("document_number", out var dn) ? dn.GetString() : null,
+                SubTotal = root.TryGetProperty("subtotal", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)st.GetDouble() : null,
+                VatAmount = root.TryGetProperty("vat_amount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null,
+                TotalAmount = root.TryGetProperty("total_amount", out var ta) && ta.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)ta.GetDouble() : null,
+            };
+
+            if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr && DateTime.TryParse(dateStr, out var parsedDate))
+                data.DocumentDate = parsedDate;
+
+            var rawText = root.TryGetProperty("raw_text", out var rt) ? rt.GetString() ?? "" : "";
+            return (rawText, data);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Local OCR service unavailable, falling back to built-in");
+            var text = await ExtractTextAsync(file);
+            return (text, ParseThaiDocument(text));
+        }
+    }
+
+    public async Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction)
+    {
+        var result = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+
+        // Update the scan result with corrected data
+        if (correction.DocumentType != null) result.DocumentType = correction.DocumentType;
+        if (correction.VendorName != null) result.ExtractedVendorName = correction.VendorName;
+        if (correction.VendorTaxId != null) result.ExtractedVendorTaxId = correction.VendorTaxId;
+        if (correction.DocumentNumber != null) result.ExtractedDocumentNumber = correction.DocumentNumber;
+        if (correction.DocumentDate.HasValue) result.ExtractedDate = correction.DocumentDate;
+        if (correction.SubTotal.HasValue) result.ExtractedSubTotal = correction.SubTotal;
+        if (correction.VatAmount.HasValue) result.ExtractedVatAmount = correction.VatAmount;
+        if (correction.TotalAmount.HasValue) result.ExtractedTotalAmount = correction.TotalAmount;
+
+        await _db.SaveChangesAsync();
+
+        // Forward correction to local AI service for learning
+        var serviceUrl = _configuration["Ocr:LocalServiceUrl"] ?? "http://localhost:8501";
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            var payload = new
+            {
+                original_text = result.RawTextContent ?? "",
+                original_result = new { document_type = result.DocumentType, confidence = result.Confidence },
+                corrected_result = new
+                {
+                    document_type = correction.DocumentType ?? result.DocumentType,
+                    vendor_name = correction.VendorName ?? result.ExtractedVendorName,
+                    vendor_tax_id = correction.VendorTaxId ?? result.ExtractedVendorTaxId,
+                    document_number = correction.DocumentNumber ?? result.ExtractedDocumentNumber,
+                    document_date = (correction.DocumentDate ?? result.ExtractedDate)?.ToString("yyyy-MM-dd"),
+                    subtotal = correction.SubTotal ?? result.ExtractedSubTotal,
+                    vat_amount = correction.VatAmount ?? result.ExtractedVatAmount,
+                    total_amount = correction.TotalAmount ?? result.ExtractedTotalAmount,
+                },
+                document_type = correction.DocumentType ?? result.DocumentType
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            await client.PostAsync($"{serviceUrl}/ocr/correct", content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to submit correction to learning service");
+        }
     }
 
     private async Task<string> ExtractTextAsync(FileAttachment file)

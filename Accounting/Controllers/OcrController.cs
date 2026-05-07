@@ -70,4 +70,11 @@ public class OcrController : ControllerBase
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchContact(Guid companyId, Guid scanId, Guid contactId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));
+
+    [HttpPost("{scanId:guid}/correct")]
+    public async Task<ActionResult<ApiResponse<object>>> SubmitCorrection(Guid companyId, Guid scanId, [FromBody] OcrCorrectionRequest correction)
+    {
+        await _service.SubmitCorrectionAsync(companyId, scanId, correction);
+        return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
+    }
 }
