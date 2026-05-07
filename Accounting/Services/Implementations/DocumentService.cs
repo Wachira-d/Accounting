@@ -266,7 +266,7 @@ public class DocumentService : IDocumentService
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
@@ -286,6 +286,12 @@ public class DocumentService : IDocumentService
 
         if (contactId.HasValue)
             query = query.Where(d => d.ContactId == contactId.Value);
+
+        if (relatedDocumentId.HasValue)
+            query = query.Where(d => d.RelatedDocumentId == relatedDocumentId.Value);
+
+        if (revenueContractId.HasValue)
+            query = query.Where(d => d.RevenueContractId == revenueContractId.Value);
 
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<DocumentStatus>(status, true, out var statusEnum))
             query = query.Where(d => d.Status == statusEnum);

@@ -65,9 +65,20 @@
       </select>
     </div>
 
-    <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
+    <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px;flex-wrap:wrap">
       <span>เลือกแล้ว <b id="docSelCount">0</b> เอกสาร</span>
       <span id="docSelExportSlot"></span>
+      <select id="batchConvertTarget" class="form-input" style="height:32px;font-size:12px;width:auto">
+        <option value="">— แปลงเป็น —</option>
+        <option value="Invoice">ใบแจ้งหนี้</option>
+        <option value="TaxInvoice">ใบกำกับภาษี</option>
+        <option value="Receipt">ใบเสร็จรับเงิน</option>
+        <option value="DeliveryNote">ใบส่งของ</option>
+        <option value="BillingNote">ใบวางบิล</option>
+        <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+        <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="Page.batchConvert()">⚡ แปลงทั้งหมด</button>
       <button class="btn btn-secondary btn-sm" onclick="Page.clearDocSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
@@ -137,6 +148,24 @@
           <div class="form-row">
             <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
+
+          <details style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+            <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">📝 หมายเหตุท้ายเอกสาร / เงื่อนไขเฉพาะฉบับนี้ (override ค่าเริ่มต้นจากบริษัท)</summary>
+            <div style="margin-top:12px;display:grid;gap:10px">
+              <div>
+                <label class="form-label" style="font-size:12px">ภาคผนวก/ข้อมูลเพิ่มเติม</label>
+                <textarea class="form-input" id="fCustomAppendix" rows="2" placeholder="ข้อมูลเพิ่มเติมที่จะแสดงเหนือ Footer (เช่น เงื่อนไขการรับประกัน)"></textarea>
+              </div>
+              <div>
+                <label class="form-label" style="font-size:12px">หมายเหตุท้ายเอกสาร (Footer)</label>
+                <textarea class="form-input" id="fCustomFooterNotes" rows="2" placeholder="ใช้แทน Footer Notes ของบริษัท เฉพาะเอกสารฉบับนี้"></textarea>
+              </div>
+              <div>
+                <label class="form-label" style="font-size:12px">เงื่อนไขข้อตกลง (Terms &amp; Conditions)</label>
+                <textarea class="form-input" id="fCustomTerms" rows="2" placeholder="เงื่อนไข/ข้อตกลงเฉพาะฉบับนี้"></textarea>
+              </div>
+            </div>
+          </details>
 
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
@@ -702,6 +731,9 @@
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
+        document.getElementById('fCustomAppendix').value = '';
+        document.getElementById('fCustomFooterNotes').value = '';
+        document.getElementById('fCustomTerms').value = '';
         if (this._contactAC) this._contactAC.clear();
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         document.getElementById('linesBody').innerHTML = '';
@@ -735,6 +767,9 @@
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
+          document.getElementById('fCustomAppendix').value = d.customAppendix || '';
+          document.getElementById('fCustomFooterNotes').value = d.customFooterNotes || '';
+          document.getElementById('fCustomTerms').value = d.customTermsAndConditions || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
           const fpc = document.getElementById('fPaymentChannel');
@@ -796,6 +831,9 @@
           contactId,
           reference: document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
+          customAppendix: document.getElementById('fCustomAppendix').value || null,
+          customFooterNotes: document.getElementById('fCustomFooterNotes').value || null,
+          customTermsAndConditions: document.getElementById('fCustomTerms').value || null,
           projectId,
           bankAccountId,
           paymentAccountId,
@@ -873,7 +911,10 @@
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
+              ${d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : ''}
+              ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
             </div>
+            <div id="docChain_${d.id}" style="margin-bottom:12px"></div>
             <div class="table-container">
               <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
@@ -910,6 +951,9 @@
               document.getElementById('detailContent').innerHTML += extraSections;
             }
           } catch(e) { /* non-critical */ }
+
+          // Document chain — render parent + siblings + children
+          this.loadDocumentChain(d.id, d.relatedDocumentId);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -1130,6 +1174,65 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },
+
+      async batchConvert() {
+        const target = document.getElementById('batchConvertTarget').value;
+        if (!target) { Layout.toast('กรุณาเลือกประเภทที่ต้องการแปลง', 'error'); return; }
+        const ids = [...this.selectedDocs];
+        if (!ids.length) { Layout.toast('กรุณาเลือกเอกสาร', 'error'); return; }
+        if (!confirm(`แปลง ${ids.length} เอกสารเป็น ${Layout.docTypeLabel(target)} หรือไม่?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.batchConvertDocuments(ids, target);
+          Layout.toast(res.message || `แปลงสำเร็จ ${res.data.length} ฉบับ`);
+          this.clearDocSelection();
+          await this.load();
+        } catch (e) {
+          Layout.toast(e.message || 'แปลงไม่สำเร็จ', 'error');
+        }
+      },
+
+      async loadDocumentChain(currentId, parentId) {
+        const api = Layout.api(); if (!api) return;
+        const container = document.getElementById('docChain_' + currentId);
+        if (!container) return;
+        try {
+          // Find children: documents whose relatedDocumentId === currentId
+          const childrenRes = await api.getDocuments(`?relatedDocumentId=${currentId}&pageSize=20`);
+          const children = childrenRes?.data?.items || [];
+          let parentInfo = null;
+          if (parentId) {
+            try {
+              const parentRes = await api.getDocument(parentId);
+              parentInfo = parentRes?.data;
+            } catch { /* parent may have been deleted */ }
+          }
+          if (!parentInfo && children.length === 0) return;
+
+          const renderDoc = (doc, label) => `
+            <a href="#" onclick="Page.detail('${doc.id}');return false"
+              style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;color:#475569;text-decoration:none;margin:2px">
+              <span style="font-weight:600;color:#6366f1">${label}</span>
+              <span>${doc.documentNumber}</span>
+              <span>${Layout.statusBadge(doc.status)}</span>
+            </a>`;
+
+          container.innerHTML = `
+            <div style="background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px">
+              <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">🔗 ลำดับเอกสารที่เกี่ยวข้อง</div>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">
+                ${parentInfo ? renderDoc(parentInfo, '⬅ ต้นทาง') : ''}
+                ${parentInfo ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                <span style="padding:6px 12px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;font-size:12px;font-weight:600;color:#1e40af;margin:2px">
+                  📄 (เอกสารนี้)
+                </span>
+                ${children.length > 0 ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                ${children.map(c => renderDoc(c, '➡ ปลายทาง')).join('')}
+              </div>
+            </div>`;
+        } catch (e) { /* non-critical */ }
+      },
+
       // Mirror of server-side ValidConversions in DocumentService.cs.
       // Keep these in sync — server is source of truth and will reject invalid
       // conversions, but pre-filtering improves UX.

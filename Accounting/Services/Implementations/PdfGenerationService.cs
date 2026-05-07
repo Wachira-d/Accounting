@@ -208,12 +208,22 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         sb.AppendLine("</div>");
 
-        // Footer
+        // Footer — per-document custom values override the template/global default.
+        // Order: Custom appendix → bank details → footer notes (custom or template) → T&C
+        if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
+            sb.AppendLine($"<div class='custom-appendix'>{doc.CustomAppendix}</div>");
+
         if (template.ShowBankDetails && template.BankDetailsText != null)
             sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
 
-        if (template.FooterNotes != null)
-            sb.AppendLine($"<div class='footer-notes'>{template.FooterNotes}</div>");
+        var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
+            ? doc.CustomFooterNotes
+            : template.FooterNotes;
+        if (!string.IsNullOrWhiteSpace(footerNotes))
+            sb.AppendLine($"<div class='footer-notes'>{footerNotes}</div>");
+
+        if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
+            sb.AppendLine($"<div class='terms-conditions'><strong>เงื่อนไข:</strong><br/>{doc.CustomTermsAndConditions}</div>");
 
         // Signatures
         if (template.ShowSignature)

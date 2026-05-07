@@ -144,8 +144,13 @@ const Page = {
           <div><span class="text-sm text-gray-500">มูลค่า:</span><br><strong class="text-primary">${Layout.money(c.totalAmount||c.contractValue)}</strong></div>
         </div>
         ${obligations.length ? `<h4 style="margin:16px 0 8px">ภาระผูกพัน (Performance Obligations)</h4>
-        <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">มูลค่า</th><th class="text-right">ความคืบหน้า</th></tr></thead>
-        <tbody>${obligations.map(o => `<tr><td>${o.description||o.name||'-'}</td><td class="text-right">${Layout.money(o.amount)}</td><td class="text-right">${o.progressPercentage||0}%</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">มูลค่า</th><th class="text-right">ความคืบหน้า</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody>${obligations.map(o => `<tr>
+          <td>${o.description||o.name||'-'}</td>
+          <td class="text-right">${Layout.money(o.allocatedPrice||o.amount)}</td>
+          <td class="text-right">${o.completionPercent||o.progressPercentage||0}%</td>
+          <td>${o.isSatisfied ? '<span class="text-xs text-success">รับรู้ครบแล้ว</span>' : `<button class="btn btn-sm btn-primary" onclick="Page.invoiceObligation('${o.id}')">⚡ ออกใบแจ้งหนี้</button>`}</td>
+        </tr>`).join('')}</tbody></table></div>` : ''}
         ${schedules.length ? `<h4 style="margin:16px 0 8px">ตารางรับรู้รายได้</h4>
         <div class="table-container"><table class="table"><thead><tr><th>งวด</th><th data-i18n="common.date">วันที่</th><th class="text-right">ยอดรับรู้</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
         <tbody>${schedules.map((s, i) => `<tr><td>${i+1}</td><td>${Layout.date(s.recognitionDate||s.date)}</td><td class="text-right">${Layout.money(s.amount)}</td><td>${Layout.statusBadge(s.status||'Pending')}</td><td>${s.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.recognize('${s.id}')">รับรู้</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
@@ -157,6 +162,20 @@ const Page = {
   async genSchedule(id) {
     const api = Layout.api(); if (!api) return;
     try { await api.generateRevenueSchedule(id); Layout.toast('สร้างตารางรับรู้สำเร็จ'); this.view(id); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async invoiceObligation(obligationId) {
+    const api = Layout.api(); if (!api) return;
+    if (!confirm('สร้างใบแจ้งหนี้จากภาระผูกพันนี้? (ระบบจะคำนวณยอดคงเหลือให้อัตโนมัติ)')) return;
+    try {
+      const res = await api.createInvoiceFromObligation(obligationId);
+      Layout.toast(res.message || 'สร้างใบแจ้งหนี้สำเร็จ');
+      if (res.data?.id && confirm('เปิดดูใบแจ้งหนี้ที่สร้าง?')) {
+        window.location.href = `/pages/documents.html?id=${res.data.id}`;
+      }
+    } catch (err) {
+      Layout.toast(err.message || 'สร้างใบแจ้งหนี้ไม่สำเร็จ', 'error');
+    }
   },
 
   async recognize(scheduleId) {

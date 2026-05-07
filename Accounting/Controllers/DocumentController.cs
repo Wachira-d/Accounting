@@ -75,9 +75,11 @@ public class DocumentController : ControllerBase
         Guid companyId, [FromQuery] DocumentType? type = null,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
         [FromQuery] Guid? projectId = null, [FromQuery] Guid? contactId = null,
-        [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+        [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
+        [FromQuery] Guid? relatedDocumentId = null, [FromQuery] Guid? revenueContractId = null)
     {
-        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search), projectId, contactId, status, fromDate, toDate);
+        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search),
+            projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId);
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
 
