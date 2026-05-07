@@ -742,15 +742,15 @@
           if (!this.site) throw new Error('ไม่พบเว็บไซต์');
           document.getElementById('siteTitleHeader').textContent = this.site.name;
           const isPublished = this.site.status === 1;
-          const url = this.site.customDomain ? `https://${this.site.customDomain}` : `https://${this.site.subdomain}.your-domain.com`;
-          document.getElementById('siteSubtitleHeader').innerHTML = `${this.site.subdomain}.your-domain.com · ${isPublished ? '<span style="color:#10B981">เผยแพร่แล้ว</span>' : '<span style="color:#92400E">ร่าง</span>'}`;
+          const pathUrl = `/site/${this.site.subdomain}`;
+          document.getElementById('siteSubtitleHeader').innerHTML = `${location.origin}/site/${this.site.subdomain} · ${isPublished ? '<span style="color:#10B981">เผยแพร่แล้ว</span>' : '<span style="color:#92400E">ร่าง</span>'}`;
           if (isPublished) {
             const btn = document.getElementById('viewLiveBtn');
-            btn.href = url;
+            btn.href = pathUrl;
             btn.style.display = '';
             document.getElementById('publishBtn').textContent = '🔄 เผยแพร่อีกครั้ง';
           }
-          document.getElementById('systemSubdomainText').textContent = `${this.site.subdomain}.your-domain.com`;
+          document.getElementById('systemSubdomainText').textContent = `${location.origin}/site/${this.site.subdomain}`;
           // Pre-fill SEO form
           document.getElementById('sMetaTitle').value = this.site.metaTitle || '';
           document.getElementById('sMetaDescription').value = this.site.metaDescription || '';
@@ -912,11 +912,10 @@
       },
 
       previewPage(slug) {
-        // Open storefront viewer in a new tab using siteId/companyId override —
-        // works regardless of host (the visitor flow uses host detection, but
-        // for admin preview we pass IDs explicitly so the published URL doesn't
-        // need to be reachable yet).
-        const u = `/storefront.html?siteId=${encodeURIComponent(this.siteId)}&companyId=${encodeURIComponent(this.site?.companyId || '')}&slug=${encodeURIComponent(slug || 'home')}&preview=1`;
+        const sub = this.site?.subdomain;
+        const u = sub
+          ? `/site/${encodeURIComponent(sub)}/${encodeURIComponent(slug || 'home')}?preview=1`
+          : `/storefront.html?siteId=${encodeURIComponent(this.siteId)}&companyId=${encodeURIComponent(this.site?.companyId || '')}&slug=${encodeURIComponent(slug || 'home')}&preview=1`;
         window.open(u, '_blank');
       },
 

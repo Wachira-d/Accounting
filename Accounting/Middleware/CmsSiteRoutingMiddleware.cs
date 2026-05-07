@@ -45,8 +45,38 @@ public class CmsSiteRoutingMiddleware
             return;
         }
 
-        // Try to match host to a published site.
-        var site = await db.Sites
+        // --- Path-based routing: /site/{subdomain} or /site/{subdomain}/{slug} ---
+        // Works without wildcard cert. When wildcard cert is added later, the
+        // host-based matching below takes over automatically.
+        if (path.StartsWith("/site/", StringComparison.OrdinalIgnoreCase) && path.Length > 6)
+        {
+            var remainder = path[6..]; // after "/site/"
+            var slashIdx = remainder.IndexOf('/');
+            var subdomain = (slashIdx >= 0 ? remainder[..slashIdx] : remainder).ToLowerInvariant().TrimEnd('/');
+
+            if (!string.IsNullOrEmpty(subdomain))
+            {
+                var site = await db.Sites
+                    .AsNoTracking()
+                    .Where(s => s.Subdomain == subdomain)
+                    .Select(s => new { s.Id, s.CompanyId, s.Subdomain, s.Status })
+                    .FirstOrDefaultAsync();
+
+                if (site != null)
+                {
+                    context.Items["CmsSiteId"] = site.Id;
+                    context.Items["CmsCompanyId"] = site.CompanyId;
+                    context.Items["CmsSiteSubdomain"] = site.Subdomain;
+                    context.Items["CmsPathBased"] = true;
+                    context.Request.Path = "/storefront.html";
+                    await _next(context);
+                    return;
+                }
+            }
+        }
+
+        // --- Host-based routing (for future wildcard cert) ---
+        var hostSite = await db.Sites
             .AsNoTracking()
             .Where(s => s.Status == SiteStatus.Published)
             .Where(s => s.Subdomain == host
@@ -55,21 +85,16 @@ public class CmsSiteRoutingMiddleware
             .Select(s => new { s.Id, s.CompanyId, s.Subdomain })
             .FirstOrDefaultAsync();
 
-        // If host doesn't match any published site, fall through — admin SPA
-        // is the default and will serve from the main domain.
-        if (site == null)
+        if (hostSite == null)
         {
             await _next(context);
             return;
         }
 
-        context.Items["CmsSiteId"] = site.Id;
-        context.Items["CmsCompanyId"] = site.CompanyId;
-        context.Items["CmsSiteSubdomain"] = site.Subdomain;
+        context.Items["CmsSiteId"] = hostSite.Id;
+        context.Items["CmsCompanyId"] = hostSite.CompanyId;
+        context.Items["CmsSiteSubdomain"] = hostSite.Subdomain;
 
-        // Rewrite the request to serve the public storefront viewer. The JS
-        // there reads location for slug/host so it knows what to render.
-        // Use Path.SetValue to avoid breaking query string.
         context.Request.Path = "/storefront.html";
         await _next(context);
     }

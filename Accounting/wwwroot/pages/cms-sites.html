@@ -80,8 +80,8 @@
             <div class="form-group">
               <label class="form-label">URL ย่อย (Subdomain) *</label>
               <div style="display:flex;align-items:center;gap:6px">
+                <span style="color:var(--gray-500);font-size:13px;white-space:nowrap">/site/</span>
                 <input type="text" class="form-input" id="fSubdomain" placeholder="my-shop" style="flex:1" oninput="Page.normalizeSubdomain(this)">
-                <span style="color:var(--gray-500);font-size:13px;white-space:nowrap">.your-domain.com</span>
               </div>
               <p style="font-size:12px;color:var(--gray-500);margin-top:4px">ใช้ได้เฉพาะตัวอักษร a-z, ตัวเลข, ขีดกลาง — สามารถเปลี่ยนหรือเชื่อม domain ของตัวเองภายหลังได้</p>
             </div>
@@ -294,7 +294,8 @@
         list.innerHTML = this.sites.map(s => {
           const [statusLabel, statusClass] = STATUS_LABEL[s.status] || ['?','draft'];
           const typeLabel = TYPE_LABEL[s.siteType] || '-';
-          const url = s.customDomain ? `https://${s.customDomain}` : `https://${s.subdomain}.your-domain.com`;
+          const pathUrl = `/site/${s.subdomain}`;
+          const displayUrl = `${location.origin}/site/${s.subdomain}`;
           const isPublished = s.status === 1;
           return `
             <div class="site-card">
@@ -312,8 +313,8 @@
               <div style="font-size:13px;color:var(--gray-600);margin-bottom:8px">
                 <span style="color:var(--gray-400)">URL:</span>
                 ${isPublished
-                  ? `<a href="${url}" target="_blank" style="color:var(--primary);text-decoration:underline">${Layout.esc(url)}</a>`
-                  : `<span style="color:var(--gray-500)">${Layout.esc(url)}</span>`}
+                  ? `<a href="${pathUrl}" target="_blank" style="color:var(--primary);text-decoration:underline">${Layout.esc(displayUrl)}</a>`
+                  : `<span style="color:var(--gray-500)">${Layout.esc(displayUrl)}</span>`}
               </div>
               <div style="font-size:12px;color:var(--gray-500);margin-bottom:14px">
                 สร้างเมื่อ ${new Date(s.createdAt).toLocaleDateString('th-TH', { day:'numeric', month:'short', year:'numeric' })}
@@ -321,9 +322,9 @@
               </div>
               <div class="flex gap-2" style="flex-wrap:wrap">
                 <a href="/pages/cms-edit.html?siteId=${s.id}" class="btn btn-sm btn-primary">✏️ แก้ไข</a>
-                <a href="/storefront.html?siteId=${s.id}&companyId=${Layout.getCompanyId()}&slug=home${!isPublished?'&preview=1':''}" target="_blank" class="btn btn-sm btn-secondary" title="ดูตัวอย่างเว็บไซต์">👁 ดูตัวอย่าง</a>
+                <a href="${pathUrl}/home${!isPublished?'?preview=1':''}" target="_blank" class="btn btn-sm btn-secondary" title="ดูตัวอย่างเว็บไซต์">👁 ดูตัวอย่าง</a>
                 ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publish('${s.id}')">🚀 เผยแพร่</button>` : ''}
-                ${isPublished ? `<a href="${url}" target="_blank" class="btn btn-sm btn-secondary" title="URL ที่เผยแพร่">🔗 ${Layout.esc(s.subdomain)}</a>` : ''}
+                ${isPublished ? `<a href="${pathUrl}" target="_blank" class="btn btn-sm btn-secondary" title="URL ที่เผยแพร่">🔗 ${Layout.esc(s.subdomain)}</a>` : ''}
                 <button class="btn btn-sm btn-danger" onclick="Page.deleteSite('${s.id}','${Layout.esc(s.name)}')" style="margin-left:auto">🗑</button>
               </div>
             </div>`;

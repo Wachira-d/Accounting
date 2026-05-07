@@ -124,7 +124,7 @@
 
   <header class="sf-header" id="sfHeader" style="display:none">
     <div class="sf-container sf-header-inner">
-      <a class="sf-logo" id="sfLogo" href="/">เว็บไซต์</a>
+      <a class="sf-logo" id="sfLogo" href="#">เว็บไซต์</a>
       <button class="sf-mobile-toggle" onclick="document.getElementById('sfNav').classList.toggle('open')">☰</button>
       <nav class="sf-nav" id="sfNav"></nav>
     </div>
@@ -165,11 +165,23 @@
       lang: 'th',
 
       async init() {
-        // Read overrides from query string (admin preview)
         const params = new URLSearchParams(location.search);
-        this.slug = (params.get('slug') || location.pathname.replace(/^\//, '') || 'home').replace(/\/$/, '') || 'home';
         this.lang = params.get('lang') || 'th';
         const isPreview = params.get('preview') === '1';
+
+        // Detect path-based routing: /site/{subdomain} or /site/{subdomain}/{slug}
+        const pathMatch = location.pathname.match(/^\/site\/([a-z0-9][a-z0-9-]*[a-z0-9]?)\/?(.*)$/i);
+        this.pathBased = !!pathMatch;
+        this.basePath = ''; // prefix for internal links
+        let pathSubdomain = null;
+
+        if (pathMatch) {
+          pathSubdomain = pathMatch[1].toLowerCase();
+          this.basePath = `/site/${pathSubdomain}`;
+          this.slug = (pathMatch[2] || '').replace(/\/$/, '') || params.get('slug') || 'home';
+        } else {
+          this.slug = (params.get('slug') || location.pathname.replace(/^\//, '') || 'home').replace(/\/$/, '') || 'home';
+        }
 
         try {
           // 1. Resolve site
@@ -177,7 +189,7 @@
           let companyId = params.get('companyId');
           if (!siteId || !companyId) {
             const host = location.hostname.toLowerCase();
-            const sub = params.get('subdomain') || (host.includes('.') ? host.split('.')[0] : host);
+            const sub = pathSubdomain || params.get('subdomain') || (host.includes('.') ? host.split('.')[0] : host);
             const resolved = await this.resolveSite(sub, host);
             if (!resolved) {
               this.renderNotFound();
@@ -187,8 +199,7 @@
             companyId = resolved.companyId;
             this.site = resolved;
           } else {
-            // Fetch site info via resolve as best effort
-            const resolved = await this.resolveSite(params.get('subdomain') || '', location.hostname);
+            const resolved = await this.resolveSite(params.get('subdomain') || pathSubdomain || '', location.hostname);
             this.site = resolved;
           }
 
@@ -266,6 +277,7 @@
         const navEl = document.getElementById('sfNav');
 
         // Logo
+        logoEl.href = this.pathBased ? `${this.basePath}/home` : '/';
         if (site.logoUrl) {
           logoEl.innerHTML = `<img src="${this.esc(site.logoUrl)}" alt="${this.esc(site.name||'')}">`;
         } else {
@@ -275,7 +287,10 @@
         // Nav items — fallback to common pages if no nav defined
         const items = headerNav?.items?.length ? headerNav.items : this.defaultNavItems();
         navEl.innerHTML = items.map(it => {
-          const url = it.url || (it.pageSlug ? `?slug=${this.esc(it.pageSlug)}` : '#');
+          let url = it.url || '#';
+          if (!it.url && it.pageSlug) {
+            url = this.pathBased ? `${this.basePath}/${it.pageSlug}` : `?slug=${this.esc(it.pageSlug)}`;
+          }
           const isActive = (it.pageSlug || '').replace(/^\//,'') === this.slug;
           return `<a href="${url}" class="${isActive ? 'active' : ''}">${this.esc(it.label)}</a>`;
         }).join('');
@@ -504,7 +519,8 @@
             grid.innerHTML = items.map(p => {
               const price = p.overrideSellingPrice ?? p.erpSellingPrice ?? 0;
               const compare = p.compareAtPrice;
-              return `<a href="?slug=product/${this.esc(p.slug||'')}" class="product-card">
+              const prodUrl = this.pathBased ? `${this.basePath}/product/${this.esc(p.slug||'')}` : `?slug=product/${this.esc(p.slug||'')}`;
+              return `<a href="${prodUrl}" class="product-card">
                 ${p.featuredImageUrl?`<img src="${this.esc(p.featuredImageUrl)}" alt="${this.esc(p.displayName||'')}">`:`<div style="aspect-ratio:1/1;background:#F3F4F6"></div>`}
                 <div class="info">
                   <div class="name">${this.esc(p.displayName||'')}</div>
@@ -559,12 +575,13 @@
       },
 
       renderNotFound() {
+        const homeUrl = this.pathBased ? `${this.basePath}/home` : '/';
         document.getElementById('sfMain').innerHTML = `
           <div class="sf-loader" style="flex-direction:column;gap:14px">
             <div style="font-size:64px">🔍</div>
             <h1 style="font-size:32px">404 — ไม่พบหน้านี้</h1>
             <p>หน้าที่คุณค้นหาไม่มีอยู่หรือยังไม่ได้เผยแพร่</p>
-            <a href="/" class="btn btn-primary">กลับสู่หน้าแรก</a>
+            <a href="${homeUrl}" class="btn btn-primary">กลับสู่หน้าแรก</a>
           </div>`;
         document.title = '404 — ไม่พบหน้านี้';
       },
