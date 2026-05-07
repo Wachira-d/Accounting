@@ -64,6 +64,28 @@ public class BackgroundJobService : BackgroundService
 
         // 6. Auto-sync open banking transactions
         await ProcessOpenBankingAutoSync(scope, ct);
+
+        // 7. OCR self-correction loop: prune stale patterns, cap inflation, GC
+        await ProcessOcrSelfCorrection(scope, ct);
+    }
+
+    private async Task ProcessOcrSelfCorrection(IServiceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            // Daily-cadence work — only run between 02:00–03:00 UTC to avoid hot path
+            if (DateTime.UtcNow.Hour != 2) return;
+
+            var svc = scope.ServiceProvider.GetRequiredService<Ocr.OcrSelfCorrectionService>();
+            await svc.RunMaintenanceAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to run OCR self-correction");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.OcrSelfCorrection");
+        }
     }
 
     private async Task ProcessRecurringTransactions(IServiceScope scope, CancellationToken ct)

@@ -262,6 +262,20 @@
         </div>
       </div>
 
+      <!-- OCR Accuracy & Self-Correction -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">ความแม่นยำ OCR (30 วันล่าสุด)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">การ self-correction loop จะ prune patterns เก่าและ cap คะแนนทุก 02:00 UTC</div>
+          </div>
+          <button class="btn-secondary" onclick="runMaintenance()">รัน Maintenance ตอนนี้</button>
+        </div>
+        <div id="accuracyTable">
+          <p style="color:#94a3b8;font-size:14px">กำลังโหลด...</p>
+        </div>
+      </div>
+
       <!-- Grant Bonus Section -->
       <div class="admin-card">
         <div class="admin-card-header">
@@ -292,18 +306,56 @@
 
     async function loadConfig() {
       try {
-        const [configRes, summaryRes, creditsRes] = await Promise.all([
+        const [configRes, summaryRes, creditsRes, accuracyRes] = await Promise.all([
           AdminAPI.get('/ocr-config'),
           AdminAPI.get('/ocr-usage-summary'),
-          AdminAPI.get('/ocr-credits/pending')
+          AdminAPI.get('/ocr-credits/pending'),
+          AdminAPI.get('/ocr-accuracy')
         ]);
 
         currentConfig = configRes.data;
         populateForm(currentConfig);
         populateSummary(summaryRes.data);
         populatePendingCredits(creditsRes.data);
+        populateAccuracy(accuracyRes.data);
       } catch (err) {
         console.error('Error loading OCR config:', err);
+      }
+    }
+
+    function populateAccuracy(reports) {
+      const el = document.getElementById('accuracyTable');
+      if (!reports || reports.length === 0) {
+        el.innerHTML = '<p style="color:#94a3b8;font-size:14px">ยังไม่มีข้อมูลความแม่นยำในช่วง 30 วันที่ผ่านมา</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table class="credit-table">
+          <thead><tr><th>Company</th><th>สแกน</th><th>แก้ไข</th><th>%แก้ไข</th><th>Patterns</th><th>Negative</th><th>มั่นใจสูง</th></tr></thead>
+          <tbody>
+            ${reports.map(r => `
+              <tr>
+                <td style="font-size:11px;color:#64748b">${r.companyId.substring(0,8)}...</td>
+                <td>${r.totalScans}</td>
+                <td>${r.correctedScans}</td>
+                <td>${(r.correctionRate*100).toFixed(1)}%</td>
+                <td>${r.totalLearnedPatterns}</td>
+                <td>${r.negativeExamples}</td>
+                <td>${r.highConfidencePatterns}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    async function runMaintenance() {
+      if (!confirm('รัน OCR maintenance ตอนนี้? (จะ prune patterns เก่าและ cap คะแนน)')) return;
+      try {
+        await AdminAPI.post('/ocr-maintenance/run');
+        showToast('Maintenance เสร็จสิ้น', 'success');
+        await loadConfig();
+      } catch (err) {
+        showToast(err.message, 'error');
       }
     }
 

@@ -1227,6 +1227,24 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object>(true, new { sub.OcrBonusPages },
             $"เพิ่มโบนัส {req.Pages} หน้าให้บริษัทสำเร็จ"));
     }
+
+    // ===== OCR Self-Correction & Accuracy =====
+
+    [HttpGet("ocr-accuracy")]
+    public async Task<ActionResult<ApiResponse<object>>> GetOcrAccuracy(
+        [FromServices] Services.Implementations.Ocr.OcrSelfCorrectionService selfCorrection)
+    {
+        var reports = await selfCorrection.ComputeAccuracyAsync();
+        return Ok(new ApiResponse<object>(true, reports));
+    }
+
+    [HttpPost("ocr-maintenance/run")]
+    public async Task<ActionResult<ApiResponse<object>>> RunOcrMaintenance(
+        [FromServices] Services.Implementations.Ocr.OcrSelfCorrectionService selfCorrection)
+    {
+        await selfCorrection.RunMaintenanceAsync();
+        return Ok(new ApiResponse<object>(true, null, "เริ่ม OCR self-correction maintenance สำเร็จ"));
+    }
 }
 
 // ===== Admin-specific DTOs =====
