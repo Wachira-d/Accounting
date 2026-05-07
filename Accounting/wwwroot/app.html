@@ -310,8 +310,7 @@
             to = document.getElementById('dashTo').value ? new Date(document.getElementById('dashTo').value) : now;
             break;
         }
-        const fmt = d => d.toISOString().split('T')[0];
-        return { fromDate: fmt(from), toDate: fmt(to) };
+        return { fromDate: Layout.toDateInput(from), toDate: Layout.toDateInput(to) };
       },
 
       exportPDF() {

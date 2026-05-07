@@ -175,8 +175,8 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
-      _today: new Date().toISOString().split('T')[0],
-      _firstOfYear: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
+      _today: Layout.toDateInput(new Date()),
+      _firstOfYear: Layout.toDateInput(new Date(new Date().getFullYear(), 0, 1)),
 
       async init() {
         if (!Layout.init('inventory-reports')) return;

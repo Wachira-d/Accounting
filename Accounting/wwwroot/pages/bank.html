@@ -1468,7 +1468,7 @@
       // === ADD TRANSACTION ===
       openAddTrans() {
         if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
-        document.getElementById('tDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('tDate').value = Layout.toDateInput(new Date());
         document.getElementById('tType').value = 'Deposit';
         document.getElementById('tAmount').value = '';
         document.getElementById('tPayee').value = '';

@@ -170,8 +170,8 @@
     setDefaultDates() {
       const now = new Date();
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-      document.getElementById('usageFrom').value = firstDay.toISOString().slice(0, 10);
-      document.getElementById('usageTo').value = now.toISOString().slice(0, 10);
+      document.getElementById('usageFrom').value = Layout.toDateInput(firstDay);
+      document.getElementById('usageTo').value = Layout.toDateInput(now);
     },
 
     switchTab(tab) {

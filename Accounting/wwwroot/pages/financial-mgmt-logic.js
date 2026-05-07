@@ -82,7 +82,7 @@ const Page = {
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
   async processAmortization() {
-    const date = new Date().toISOString().slice(0, 10);
+    const date = Layout.toDateInput(new Date());
     try {
       const res = await this.api.processAmortization(date);
       if (res?.success) { Layout.toast(res.message || 'ตัดจ่ายสำเร็จ', 'success'); this.loadPrepaid(); }
@@ -394,11 +394,11 @@ Page.showModal = function(id) {
     Page.fillAccountSelect('depCashAcc', '111');
     const dir = document.getElementById('depDir').value;
     Page.fillAccountSelect('depAcc', dir === 'Paid' ? '11' : '216');
-    document.getElementById('depDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('depDate').value = Layout.toDateInput(new Date());
   }
   if (id === 'accruedModal') { Page.fillAccountSelect('acrExpAcc', '54'); Page.fillAccountSelect('acrAccAcc', '215'); }
-  if (id === 'capitalModal') { document.getElementById('capDate').value = new Date().toISOString().slice(0, 10); }
-  if (id === 'investmentModal') { Page.fillAccountSelect('invAcc', '112'); document.getElementById('invDate').value = new Date().toISOString().slice(0, 10); }
+  if (id === 'capitalModal') { document.getElementById('capDate').value = Layout.toDateInput(new Date()); }
+  if (id === 'investmentModal') { Page.fillAccountSelect('invAcc', '112'); document.getElementById('invDate').value = Layout.toDateInput(new Date()); }
 };
 
 document.addEventListener('DOMContentLoaded', () => Page.init());

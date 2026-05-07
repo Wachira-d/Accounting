@@ -401,7 +401,7 @@
       async createStockCount() {
         const api=Layout.api(); if(!api)return;
         try {
-          await api.createStockCount({countDate:new Date().toISOString().split('T')[0]});
+          await api.createStockCount({countDate:Layout.toDateInput(new Date())});
           Layout.toast('สร้างใบตรวจนับสำเร็จ');this.showStockCount();
         } catch(e) { Layout.toast(e.message,'error'); }
       },

@@ -19,6 +19,20 @@ const Layout = {
     return d.innerHTML;
   },
 
+  // Format a Date as YYYY-MM-DD using LOCAL components.
+  // Required because `.toISOString()` converts to UTC and shifts the calendar
+  // date by the user's timezone offset (UTC+7 → previous-day rollover for any
+  // local-midnight date), which leaks prior-month entries into "this month"
+  // reports and date-range filters.
+  toDateInput(d) {
+    const x = (d instanceof Date) ? d : new Date(d);
+    if (isNaN(x.getTime())) return '';
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const day = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  },
+
   init(pageName) {
     // Prevent double-initialization (loadCompanies calls Page.init which calls Layout.init again)
     if (this._initialized && this.currentPage === pageName) return true;

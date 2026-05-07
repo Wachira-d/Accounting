@@ -241,7 +241,7 @@
         document.getElementById('fName').value = '';
         document.getElementById('fCategory').value = '';
         document.getElementById('fLocation').value = '';
-        document.getElementById('fPurchaseDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fPurchaseDate').value = Layout.toDateInput(new Date());
         document.getElementById('fCost').value = '';
         document.getElementById('fSalvage').value = '0';
         document.getElementById('fLife').value = '60';
@@ -366,7 +366,7 @@
       },
       openDispose(id) {
         document.getElementById('dId').value = id;
-        document.getElementById('dDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('dDate').value = Layout.toDateInput(new Date());
         document.getElementById('dPrice').value = '0';
         document.getElementById('dReason').value = '';
         Layout.closeModal('detailModal'); Layout.openModal('disposeModal');
@@ -383,7 +383,7 @@
       },
       openWriteOff(id) {
         document.getElementById('woId').value = id;
-        document.getElementById('woDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('woDate').value = Layout.toDateInput(new Date());
         document.getElementById('woReason').value = '';
         Layout.closeModal('detailModal'); Layout.openModal('writeOffModal');
       },
@@ -400,7 +400,7 @@
       openRevalue(id, currentValue) {
         document.getElementById('rvId').value = id;
         document.getElementById('rvNewValue').value = currentValue || '';
-        document.getElementById('rvDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('rvDate').value = Layout.toDateInput(new Date());
         document.getElementById('rvReason').value = '';
         Layout.closeModal('detailModal'); Layout.openModal('revalueModal');
       },

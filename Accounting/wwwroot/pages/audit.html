@@ -117,8 +117,8 @@
         // default date range: last 30 days
         const now = new Date();
         const ago = new Date(); ago.setDate(ago.getDate() - 30);
-        document.getElementById('sumFrom').value = ago.toISOString().split('T')[0];
-        document.getElementById('sumTo').value = now.toISOString().split('T')[0];
+        document.getElementById('sumFrom').value = Layout.toDateInput(ago);
+        document.getElementById('sumTo').value = Layout.toDateInput(now);
         await this.load();
       },
       setTab(tab, el) {
@@ -149,7 +149,7 @@
       },
       updateStats() {
         const items = this.allLogs;
-        const today = new Date().toISOString().split('T')[0];
+        const today = Layout.toDateInput(new Date());
         document.getElementById('statToday').textContent = items.filter(i => (i.timestamp || '').startsWith(today)).length;
         document.getElementById('statCreate').textContent = items.filter(i => i.action === 'Create').length;
         document.getElementById('statUpdate').textContent = items.filter(i => i.action === 'Update').length;
@@ -291,7 +291,7 @@
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = `audit-logs-${new Date().toISOString().split('T')[0]}.csv`;
+        a.href = url; a.download = `audit-logs-${Layout.toDateInput(new Date())}.csv`;
         a.click(); URL.revokeObjectURL(url);
         Layout.toast('ส่งออกสำเร็จ');
       }

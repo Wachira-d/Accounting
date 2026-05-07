@@ -164,7 +164,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openCreate() {
-        document.getElementById('fStart').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fStart').value = Layout.toDateInput(new Date());
         Layout.openModal('formModal');
       },
       async save() {
@@ -261,7 +261,7 @@
       },
       openPayment(id) {
         document.getElementById('payLoanId').value = id;
-        document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('payDate').value = Layout.toDateInput(new Date());
         document.getElementById('payAmount').value = '';
         document.getElementById('payPrincipal').value = '';
         document.getElementById('payInterest').value = '';

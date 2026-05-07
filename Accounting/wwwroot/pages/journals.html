@@ -512,7 +512,7 @@
       async openCreate() {
         document.getElementById('formTitle').textContent = 'บันทึกรายการใหม่';
         document.getElementById('fType').value = this.currentType || 'General';
-        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fRef').value = '';
         document.getElementById('fDesc').value = '';
         document.getElementById('fTags').value = '';

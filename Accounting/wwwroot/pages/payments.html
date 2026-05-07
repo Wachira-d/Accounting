@@ -132,7 +132,7 @@
       },
       async openCreate() {
         document.getElementById('formTitle').textContent = 'บันทึกการชำระเงิน';
-        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fAmount').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
