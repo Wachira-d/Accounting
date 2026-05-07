@@ -1101,8 +1101,6 @@ public class AdminController : ControllerBase
             AzureDiLastTestStatus: s.AzureDiLastTestStatus,
             OcrProvider: s.OcrProvider,
             OcrLocalServiceUrl: s.OcrLocalServiceUrl,
-            OcrHasGoogleKey: !string.IsNullOrEmpty(s.OcrGoogleApiKey),
-            OcrHasTesseractKey: !string.IsNullOrEmpty(s.OcrTesseractApiKey),
             OcrAutoCreateThreshold: s.OcrAutoCreateThreshold,
             OcrFreePagesTrial: s.OcrFreePagesTrial,
             OcrFreePagesBasic: s.OcrFreePagesBasic,
@@ -1132,8 +1130,6 @@ public class AdminController : ControllerBase
         if (req.AzureDiEnabled.HasValue) s.AzureDiEnabled = req.AzureDiEnabled.Value;
         if (req.OcrProvider != null) s.OcrProvider = req.OcrProvider;
         if (req.OcrLocalServiceUrl != null) s.OcrLocalServiceUrl = req.OcrLocalServiceUrl;
-        if (req.OcrGoogleApiKey != null) s.OcrGoogleApiKey = req.OcrGoogleApiKey;
-        if (req.OcrTesseractApiKey != null) s.OcrTesseractApiKey = req.OcrTesseractApiKey;
         if (req.OcrAutoCreateThreshold.HasValue) s.OcrAutoCreateThreshold = req.OcrAutoCreateThreshold.Value;
         if (req.OcrFreePagesTrial.HasValue) s.OcrFreePagesTrial = req.OcrFreePagesTrial.Value;
         if (req.OcrFreePagesBasic.HasValue) s.OcrFreePagesBasic = req.OcrFreePagesBasic.Value;
@@ -1154,8 +1150,6 @@ public class AdminController : ControllerBase
         var changedFields = new List<string>();
         if (req.AzureDiEndpoint != null) changedFields.Add("AzureDiEndpoint");
         if (req.AzureDiApiKey != null) changedFields.Add("AzureDiApiKey:[redacted]");
-        if (req.OcrGoogleApiKey != null) changedFields.Add("OcrGoogleApiKey:[redacted]");
-        if (req.OcrTesseractApiKey != null) changedFields.Add("OcrTesseractApiKey:[redacted]");
         if (req.AzureDiEnabled.HasValue) changedFields.Add($"AzureDiEnabled={req.AzureDiEnabled.Value}");
         if (req.OcrProvider != null) changedFields.Add($"OcrProvider={req.OcrProvider}");
 
@@ -1340,7 +1334,7 @@ public record ToggleAdminRequest(bool IsAdmin);
 public record OcrConfigResponse(
     string? AzureDiEndpoint, bool AzureDiHasKey, string? AzureDiModelId, string? AzureDiApiVersion,
     bool AzureDiEnabled, DateTime? AzureDiLastTestedAt, string? AzureDiLastTestStatus,
-    string? OcrProvider, string? OcrLocalServiceUrl, bool OcrHasGoogleKey, bool OcrHasTesseractKey,
+    string? OcrProvider, string? OcrLocalServiceUrl,
     decimal OcrAutoCreateThreshold,
     int OcrFreePagesTrial, int OcrFreePagesBasic, int OcrFreePagesPro, int OcrFreePagesEnterprise,
     decimal OcrCreditPricePerPage, int OcrCreditMinPurchase,
@@ -1354,7 +1348,6 @@ public record UpdateOcrConfigRequest(
     string? AzureDiModelId = null, string? AzureDiApiVersion = null,
     bool? AzureDiEnabled = null,
     string? OcrProvider = null, string? OcrLocalServiceUrl = null,
-    string? OcrGoogleApiKey = null, string? OcrTesseractApiKey = null,
     decimal? OcrAutoCreateThreshold = null,
     int? OcrFreePagesTrial = null, int? OcrFreePagesBasic = null,
     int? OcrFreePagesPro = null, int? OcrFreePagesEnterprise = null,

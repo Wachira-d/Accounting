@@ -99,8 +99,7 @@ public class OcrService : IOcrService
         // Load SiteSettings ONCE per scan — feeds gateway config + provider routing + Azure DI.
         // Avoids 3 separate roundtrips for the same single-row table.
         var siteSettings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
-        var effectiveConfig = BuildEffectiveOcrConfig(siteSettings);
-        var ocrProvider = effectiveConfig.Provider;
+        var ocrProvider = GetEffectiveProvider(siteSettings);
         OcrExtractedData? extractedData = null;
 
         var scanStartedAt = DateTime.UtcNow;
@@ -113,13 +112,13 @@ public class OcrService : IOcrService
             string extractedText;
 
             // ─── Strict provider chain: Azure DI (if configured) → Local (PaddleOCR+EasyOCR) ───
-            // Legacy providers (Google Vision, Azure v3.x, standalone Tesseract/EasyOCR) are
-            // intentionally removed — their accuracy on Thai invoices is consistently
-            // worse than Azure DI v4 and the local PaddleOCR+EasyOCR combo.
+            // Legacy providers (Google Vision, Azure OCR v3.x, standalone Tesseract) were
+            // removed — their accuracy on Thai invoices was consistently worse than
+            // Azure DI v4 and the local PaddleOCR+EasyOCR ensemble.
             //
             // The local microservice (default http://localhost:8501) runs PaddleOCR for
-            // primary recognition + Tesseract for verification on low-confidence regions.
-            // It serves as the bedrock fallback when Azure DI is unavailable.
+            // primary recognition + EasyOCR (different architecture) for verification on
+            // low-confidence regions. Both are pure-Python (pip-installable, no apt-get).
 
             var azureEnabled = siteSettings?.AzureDiEnabled == true
                 && !string.IsNullOrEmpty(siteSettings.AzureDiEndpoint)
@@ -548,17 +547,11 @@ public class OcrService : IOcrService
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
     }
 
-    private record EffectiveOcrConfig(string Provider, string? LocalServiceUrl, string? ApiKey, string? AzureEndpoint, decimal AutoCreateThreshold);
-
-    private EffectiveOcrConfig BuildEffectiveOcrConfig(SiteSettings? siteSettings)
-    {
-        return new EffectiveOcrConfig(
-            Provider: (siteSettings?.OcrProvider ?? _configuration["Ocr:Provider"] ?? "local").ToLower(),
-            LocalServiceUrl: siteSettings?.OcrLocalServiceUrl ?? _configuration["Ocr:LocalServiceUrl"] ?? "http://localhost:8501",
-            ApiKey: _configuration["Ocr:ApiKey"],
-            AzureEndpoint: siteSettings?.AzureDiEndpoint ?? _configuration["Ocr:AzureEndpoint"],
-            AutoCreateThreshold: siteSettings?.OcrAutoCreateThreshold ?? (decimal.TryParse(_configuration["Ocr:AutoCreateThreshold"], out var t2) ? t2 : 0.85m));
-    }
+    /// <summary>Resolve the active OCR provider name from SiteSettings → appsettings.json
+    /// → "local" default. Returns lowercase. Other config (LocalServiceUrl, AzureEndpoint,
+    /// AutoCreateThreshold) is consumed at the point of use directly from SiteSettings.</summary>
+    private string GetEffectiveProvider(SiteSettings? siteSettings)
+        => (siteSettings?.OcrProvider ?? _configuration["Ocr:Provider"] ?? "").ToLowerInvariant();
 
     private record AzureExtractionResult(bool Success, string Text, OcrExtractedData Data, string? Error);
 
@@ -1067,81 +1060,6 @@ public class OcrService : IOcrService
         {
             _logger.LogWarning(ex, "Failed to record DBD mismatch for {Field}", fieldName);
         }
-    }
-
-    private async Task<OcrExtractedData> AnalyzeWithZones(Guid companyId, string text)
-    {
-        List<OcrLearnedPattern>? patterns = null;
-        try
-        {
-            patterns = await _db.OcrLearnedPatterns
-                .Where(p => p.CompanyId == companyId && !p.IsDeleted)
-                .OrderByDescending(p => p.TimesConfirmed)
-                .Take(200)
-                .ToListAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not load learned patterns — table may not exist yet");
-        }
-
-        // Load our company's TaxId so analyzer can disambiguate seller vs buyer
-        string? ourTaxId = null;
-        try
-        {
-            var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-            ourTaxId = company?.TaxId;
-        }
-        catch { /* non-fatal */ }
-
-        var zoneResult = DocumentZoneAnalyzer.Analyze(text, patterns, ourTaxId);
-
-        // GL account suggestions map
-        var glMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn, string? Vc, string? Vn)>
-        {
-            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "1140", "ภาษีซื้อ"),
-            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", null, null),
-            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด", null, null),
-            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า", null, null),
-            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด", null, null),
-            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย", null, null),
-            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", null, null),
-        };
-
-        var data = new OcrExtractedData
-        {
-            DocumentType = zoneResult.DocumentType ?? "Receipt",
-            Confidence = zoneResult.Confidence,
-            DocumentNumber = zoneResult.DocumentNumber,
-            DocumentDate = zoneResult.DocumentDate,
-            VendorName = zoneResult.SellerName,
-            VendorTaxId = zoneResult.SellerTaxId,
-            SubTotal = zoneResult.SubTotal,
-            VatAmount = zoneResult.VatAmount,
-            TotalAmount = zoneResult.TotalAmount,
-            ExpenseCategory = zoneResult.ExpenseCategory,
-            HasWht = zoneResult.HasWht,
-            WhtRate = zoneResult.WhtRate,
-            PaymentTermsDays = zoneResult.PaymentTermsDays,
-        };
-
-        if (data.DocumentType != null && glMap.TryGetValue(data.DocumentType, out var gl))
-        {
-            data.DebitAccountCode = gl.Dc;
-            data.DebitAccountName = gl.Dn;
-            data.CreditAccountCode = gl.Cc;
-            data.CreditAccountName = gl.Cn;
-            data.VatAccountCode = gl.Vc;
-            data.VatAccountName = gl.Vn;
-        }
-
-        data.ZoneSummary = zoneResult.ZoneSummary;
-        data.BuyerName = zoneResult.BuyerName;
-        data.BuyerTaxId = zoneResult.BuyerTaxId;
-        data.FieldConfidence = zoneResult.FieldConfidence;
-        data.ReasoningTrace = zoneResult.ReasoningTrace;
-
-        return data;
     }
 
     private static OcrExtractedData ParseThaiDocument(string text)

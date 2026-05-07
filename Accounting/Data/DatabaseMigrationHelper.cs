@@ -1116,12 +1116,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrLocalServiceUrl" text NULL;
             """,
-            """
-            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGoogleApiKey" text NULL;
-            """,
-            """
-            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrTesseractApiKey" text NULL;
-            """,
+            // OcrGoogleApiKey + OcrTesseractApiKey columns are intentionally not created
+            // for new installs — those providers were removed in favor of Azure DI v4 +
+            // Local (PaddleOCR+EasyOCR). Existing installs keep the columns harmlessly;
+            // a future cleanup migration can DROP them when no rows reference them.
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrAutoCreateThreshold" decimal(5,2) NOT NULL DEFAULT 0.85;
             """,

@@ -87,10 +87,11 @@ public class SiteSettings : BaseEntity
     public string? AzureDiLastTestStatus { get; set; }
 
     // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
+    // Provider chain is strictly Azure DI v4 → Local (PaddleOCR + EasyOCR).
+    // Legacy provider keys (Google Vision, Tesseract) were removed when those
+    // engines were dropped — see OcrService.cs ScanAsync routing.
     public string? OcrProvider { get; set; }
     public string? OcrLocalServiceUrl { get; set; }
-    public string? OcrGoogleApiKey { get; set; }
-    public string? OcrTesseractApiKey { get; set; }
     public decimal OcrAutoCreateThreshold { get; set; } = 0.85m;
 
     // ===== OCR Quota Defaults =====

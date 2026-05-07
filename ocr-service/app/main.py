@@ -133,7 +133,7 @@ async def extract_document(file: UploadFile = File(...)):
     """Extract structured data from uploaded document image/PDF.
 
     Pipeline:
-      1. OCR (PaddleOCR primary + Tesseract verification on low-confidence regions)
+      1. OCR (PaddleOCR primary + EasyOCR ensemble on low-confidence regions)
       2. AI structured extraction (Ollama if configured, else rule-based)
       3. Build per-field confidence map (parity with Azure DI output shape)
       4. Detect multi-page / multi-document warnings
@@ -154,7 +154,7 @@ async def extract_document(file: UploadFile = File(...)):
     if len(file_bytes) > 50 * 1024 * 1024:
         raise HTTPException(400, "File too large (max 50MB)")
 
-    # Step 1: OCR (with Tesseract verification baked into extract_text)
+    # Step 1: OCR (with EasyOCR ensemble verification baked into extract_text)
     warnings: list[str] = []
     pages_text: list[str] = []
     page_count = 1
