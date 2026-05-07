@@ -102,7 +102,7 @@ public class OcrService : IOcrService
             else
             {
                 extractedText = await ExtractTextAsync(file);
-                extractedData = ParseThaiDocument(extractedText);
+                extractedData = await AnalyzeWithZones(companyId, extractedText);
             }
 
             scanResult.DocumentType = extractedData.DocumentType;
@@ -129,6 +129,12 @@ public class OcrService : IOcrService
             scanResult.HasWht = extractedData.HasWht;
             scanResult.WhtRate = extractedData.WhtRate;
             scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
+
+            // Store zone analysis info for debugging
+            if (!string.IsNullOrEmpty(extractedData.ZoneSummary))
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Zone Analysis]\n" + extractedData.ZoneSummary;
+            if (!string.IsNullOrEmpty(extractedData.BuyerName))
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Buyer] {extractedData.BuyerName} TaxID:{extractedData.BuyerTaxId ?? "N/A"}";
 
             if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
             {
@@ -176,6 +182,24 @@ public class OcrService : IOcrService
                     scanResult.IsDuplicate = true;
                     scanResult.DuplicateOfScanId = docDuplicate.Id;
                     scanResult.ProcessingNotes = $"Possible duplicate: same doc number {extractedData.DocumentNumber} and amount {extractedData.TotalAmount}";
+                }
+            }
+
+            // If the seller is our own company, the real vendor is the buyer
+            if (!string.IsNullOrEmpty(extractedData.VendorTaxId) || !string.IsNullOrEmpty(extractedData.BuyerTaxId))
+            {
+                var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
+                if (company != null && !string.IsNullOrEmpty(company.TaxId))
+                {
+                    if (extractedData.VendorTaxId == company.TaxId && !string.IsNullOrEmpty(extractedData.BuyerName))
+                    {
+                        // Seller = our company → actual vendor is the buyer
+                        extractedData.VendorName = extractedData.BuyerName;
+                        extractedData.VendorTaxId = extractedData.BuyerTaxId;
+                        scanResult.ExtractedVendorName = extractedData.VendorName;
+                        scanResult.ExtractedVendorTaxId = extractedData.VendorTaxId;
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Swap] Seller is our company — using Buyer as vendor";
+                    }
                 }
             }
 
@@ -324,7 +348,7 @@ public class OcrService : IOcrService
         {
             _logger.LogWarning(ex, "Local OCR service unavailable, falling back to built-in");
             var text = await ExtractTextAsync(file);
-            return (text, ParseThaiDocument(text));
+            return (text, ParseThaiDocument(text)); // fallback uses simple parser since we don't have companyId here
         }
     }
 
@@ -375,6 +399,45 @@ public class OcrService : IOcrService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to submit correction to learning service");
+        }
+
+        // Learn patterns from correction using zone analyzer
+        try
+        {
+            if (!string.IsNullOrEmpty(result.RawTextContent))
+            {
+                var learnedPatterns = DocumentZoneAnalyzer.LearnFromCorrection(
+                    result.RawTextContent, companyId,
+                    correction.VendorTaxId ?? result.ExtractedVendorTaxId,
+                    correction.VendorName, correction.VendorTaxId,
+                    correction.DocumentNumber, correction.TotalAmount);
+
+                foreach (var newPattern in learnedPatterns)
+                {
+                    var existing = await _db.OcrLearnedPatterns
+                        .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                            && p.FieldName == newPattern.FieldName
+                            && p.ContextKeyword == newPattern.ContextKeyword
+                            && (p.VendorTaxId == newPattern.VendorTaxId || (p.VendorTaxId == null && newPattern.VendorTaxId == null)));
+
+                    if (existing != null)
+                    {
+                        existing.TimesConfirmed++;
+                        existing.LastConfirmedAt = DateTime.UtcNow;
+                        existing.ExtractionRegex = newPattern.ExtractionRegex;
+                        existing.SearchRadius = Math.Max(existing.SearchRadius, newPattern.SearchRadius);
+                    }
+                    else
+                    {
+                        _db.OcrLearnedPatterns.Add(newPattern);
+                    }
+                }
+                await _db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to learn patterns from correction");
         }
     }
 
@@ -476,6 +539,70 @@ public class OcrService : IOcrService
     private static string ExtractFromFileName(FileAttachment file)
     {
         return file.OriginalFileName ?? "";
+    }
+
+    private async Task<OcrExtractedData> AnalyzeWithZones(Guid companyId, string text)
+    {
+        List<OcrLearnedPattern>? patterns = null;
+        try
+        {
+            patterns = await _db.OcrLearnedPatterns
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted)
+                .OrderByDescending(p => p.TimesConfirmed)
+                .Take(200)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not load learned patterns — table may not exist yet");
+        }
+
+        var zoneResult = DocumentZoneAnalyzer.Analyze(text, patterns);
+
+        // GL account suggestions map
+        var glMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn, string? Vc, string? Vn)>
+        {
+            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "1140", "ภาษีซื้อ"),
+            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", null, null),
+            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด", null, null),
+            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า", null, null),
+            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด", null, null),
+            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย", null, null),
+            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", null, null),
+        };
+
+        var data = new OcrExtractedData
+        {
+            DocumentType = zoneResult.DocumentType ?? "Receipt",
+            Confidence = zoneResult.Confidence,
+            DocumentNumber = zoneResult.DocumentNumber,
+            DocumentDate = zoneResult.DocumentDate,
+            VendorName = zoneResult.SellerName,
+            VendorTaxId = zoneResult.SellerTaxId,
+            SubTotal = zoneResult.SubTotal,
+            VatAmount = zoneResult.VatAmount,
+            TotalAmount = zoneResult.TotalAmount,
+            ExpenseCategory = zoneResult.ExpenseCategory,
+            HasWht = zoneResult.HasWht,
+            WhtRate = zoneResult.WhtRate,
+            PaymentTermsDays = zoneResult.PaymentTermsDays,
+        };
+
+        if (data.DocumentType != null && glMap.TryGetValue(data.DocumentType, out var gl))
+        {
+            data.DebitAccountCode = gl.Dc;
+            data.DebitAccountName = gl.Dn;
+            data.CreditAccountCode = gl.Cc;
+            data.CreditAccountName = gl.Cn;
+            data.VatAccountCode = gl.Vc;
+            data.VatAccountName = gl.Vn;
+        }
+
+        data.ZoneSummary = zoneResult.ZoneSummary;
+        data.BuyerName = zoneResult.BuyerName;
+        data.BuyerTaxId = zoneResult.BuyerTaxId;
+
+        return data;
     }
 
     private static OcrExtractedData ParseThaiDocument(string text)
@@ -1049,6 +1176,9 @@ internal class OcrExtractedData
     public bool HasWht { get; set; }
     public decimal? WhtRate { get; set; }
     public int? PaymentTermsDays { get; set; }
+    public string? ZoneSummary { get; set; }
+    public string? BuyerName { get; set; }
+    public string? BuyerTaxId { get; set; }
     public List<OcrExtractedLineItem> Items { get; set; } = new();
 }
 

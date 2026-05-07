@@ -138,6 +138,21 @@ public class OcrScanResult : TenantEntity
     public Guid? DuplicateOfScanId { get; set; }
 }
 
+/// <summary>
+/// Learned extraction patterns from user corrections.
+/// The zone analyzer uses these to improve accuracy over time.
+/// </summary>
+public class OcrLearnedPattern : TenantEntity
+{
+    public string? VendorTaxId { get; set; }
+    public string FieldName { get; set; } = "";          // SellerName, SellerTaxId, DocumentNumber, etc.
+    public string ContextKeyword { get; set; } = "";      // The keyword found near the field value
+    public string? ExtractionRegex { get; set; }           // Regex to extract the value near the keyword
+    public int SearchRadius { get; set; } = 300;           // How far from keyword to search
+    public int TimesConfirmed { get; set; } = 1;           // Increases each time this pattern is confirmed
+    public DateTime LastConfirmedAt { get; set; } = DateTime.UtcNow;
+}
+
 // ===== Custom Report Builder =====
 
 /// <summary>

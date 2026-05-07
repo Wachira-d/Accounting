@@ -1126,8 +1126,8 @@
 
                 ${scan.processingNotes ? `
                 <div style="margin-bottom:12px">
-                  <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Processing Notes</div>
-                  <pre style="font-size:11px;background:var(--gray-50);padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--gray-200);max-height:120px;overflow:auto">${Layout.esc(scan.processingNotes)}</pre>
+                  <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Processing Notes & Zone Analysis</div>
+                  <pre style="font-size:11px;background:var(--gray-50);padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--gray-200);max-height:250px;overflow:auto;line-height:1.6">${Layout.esc(scan.processingNotes).replace(/\[Zone Analysis\]/g,'<strong style="color:var(--primary)">[Zone Analysis]</strong>').replace(/\[(Seller|Buyer|Header|Items|Summary|Payment)\]/g,'<span style="color:#2563eb;font-weight:600">[$1]</span>').replace(/\[Swap\]/g,'<strong style="color:#d97706">[Swap]</strong>')}</pre>
                 </div>` : ''}
 
                 <div>
