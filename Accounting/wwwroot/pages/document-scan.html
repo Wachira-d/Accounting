@@ -390,7 +390,7 @@
         </div>
         <div class="modal-footer" id="reviewFooter">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
-          <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()">💾 บันทึกการแก้ไข</button>
+          <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()">สร้างเอกสาร</button>
         </div>
       </div>
@@ -465,6 +465,8 @@
         });
       },
 
+      _inFlightUploads: new Set(),
+
       async handleFiles(fileList) {
         const files = Array.from(fileList);
         const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
@@ -474,8 +476,22 @@
         }
         if (!validFiles.length) return;
 
+        // Client-side dedup: skip files already being uploaded right now
+        const fingerprint = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+        const toUpload = [];
         for (const file of validFiles) {
-          await this.processFile(file);
+          const key = fingerprint(file);
+          if (this._inFlightUploads.has(key)) {
+            console.warn('Skipping duplicate in-flight upload:', file.name);
+            continue;
+          }
+          this._inFlightUploads.add(key);
+          toUpload.push({ file, key });
+        }
+
+        for (const { file, key } of toUpload) {
+          try { await this.processFile(file); }
+          finally { this._inFlightUploads.delete(key); }
         }
       },
 
@@ -817,7 +833,8 @@
           actionsHtml += `<a href="/pages/documents.html?id=${scan.createdDocumentId}" class="btn btn-sm btn-success">สร้างแล้ว &rarr;</a>`;
         }
         if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
-          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สอนระบบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; Debug</button>`;
         }
         if (scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
@@ -932,7 +949,7 @@
       },
 
       // ==================== Review Modal ====================
-      async openReview(scanId) {
+      async openReview(scanId, options = {}) {
         const api = Layout.api();
         if (!api) return;
 
@@ -940,6 +957,7 @@
           const res = await api.getOcrResult(scanId);
           const scan = res.data || res;
           this._reviewScan = scan;
+          this._reviewOpenDebug = !!options.debug;
 
           const confPercent = scan.confidence != null ? Math.round(scan.confidence * 100) : null;
           const confLevel = confPercent === null ? 'low' : confPercent >= 85 ? 'high' : confPercent >= 60 ? 'medium' : 'low';
@@ -1004,6 +1022,10 @@
           document.getElementById('reviewBody').innerHTML = `
             ${imagePreview}
             ${dbdBanner}
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:12px;color:#1e3a8a;line-height:1.6">
+              <strong>&#x1F4A1; การสอนระบบ:</strong> หากมีข้อมูลที่ระบบแกะไม่ถูกต้อง แก้ไขในช่องด้านล่างแล้วกดปุ่ม "บันทึก &amp; สอนระบบ"
+              ระบบจะจดจำตำแหน่งและคำใกล้เคียงในเอกสาร ครั้งต่อไปจาก vendor นี้จะแกะข้อมูลถูกต้องอัตโนมัติ
+            </div>
             <div class="review-section">
               <div class="review-section-title">ข้อมูลที่สกัดได้ ${confPercent !== null ? `<span style="float:right;font-size:12px;font-weight:400;color:var(--gray-500)">ความเชื่อมั่นรวม: <strong class="confidence-label ${confLevel}">${confPercent}%</strong></span>` : ''}</div>
               <div class="review-field">
@@ -1219,6 +1241,15 @@
 
           Layout.openModal('reviewModal');
 
+          // Auto-expand debug panel + scroll to it when opened with {debug:true}
+          if (this._reviewOpenDebug) {
+            const debugPanel = document.getElementById('debugPanel');
+            if (debugPanel) {
+              debugPanel.style.display = 'block';
+              setTimeout(() => debugPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+            }
+          }
+
           // Load chart of accounts for dropdowns
           this._loadAccountDropdowns(scan);
 
@@ -1336,14 +1367,14 @@
 
         try {
           await api.ocrCorrect(this._reviewScan.id, correction);
-          Layout.toast('บันทึกการแก้ไขสำเร็จ — ระบบเรียนรู้จากการแก้ไขของคุณ');
-          btn.textContent = '✅ บันทึกแล้ว';
+          Layout.toast('บันทึกการแก้ไขสำเร็จ — ระบบเรียนรู้จากการแก้ไขของคุณแล้ว ครั้งต่อไปจะแกะข้อมูลแม่นยำขึ้น', 'success');
+          btn.textContent = '✅ บันทึกและสอนแล้ว';
           btn.className = 'btn btn-success';
           this.loadScans();
         } catch (err) {
           Layout.toast('บันทึกไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;
-          btn.textContent = '💾 บันทึกการแก้ไข';
+          btn.textContent = '💾 บันทึก & สอนระบบ';
         }
       },
 

@@ -26,13 +26,38 @@ public class OcrController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
 
+        // === Pre-upload dedup: read file bytes once, hash, and check for an
+        // already-uploaded copy within the last 60 seconds. This catches double
+        // form-submits, drag+change race conditions, and rapid retries before
+        // we ever create a duplicate FileAttachment + OcrScanResult. ===
+        byte[] fileBytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms);
+            fileBytes = ms.ToArray();
+        }
+        var fileHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fileBytes)).ToLowerInvariant();
+
+        var recentCutoff = DateTime.UtcNow.AddSeconds(-60);
+        var recentDuplicate = await _db.Set<OcrScanResult>()
+            .Where(r => r.CompanyId == companyId && r.FileHash == fileHash && r.CreatedAt >= recentCutoff)
+            .OrderByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (recentDuplicate != null)
+        {
+            // Same file uploaded within the last minute — return the existing scan
+            // instead of creating a parallel duplicate.
+            var existing = await _service.GetResultAsync(companyId, recentDuplicate.Id);
+            return Ok(new ApiResponse<OcrResultResponse>(true, existing,
+                "ไฟล์นี้เพิ่งถูกอัปโหลดไปแล้ว — แสดงผลเดิม"));
+        }
+
         var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "ocr");
         Directory.CreateDirectory(uploadsDir);
         var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
         var filePath = Path.Combine(uploadsDir, fileName);
 
-        await using (var stream = new FileStream(filePath, FileMode.Create))
-            await file.CopyToAsync(stream);
+        await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
 
         var attachment = new FileAttachment
         {
