@@ -207,7 +207,8 @@
           <td>${w.documentNumber ? `<a href="/pages/documents.html" onclick="event.preventDefault();window.location='/pages/documents.html?search=${w.documentNumber}'">${w.documentNumber}</a>` : '-'}</td>
           <td class="flex gap-1">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
-            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" data-i18n="common.print">พิมพ์</button>` : ''}
+            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" data-i18n="common.print">พิมพ์</button>
+            <button class="btn btn-sm btn-success" onclick="Page.downloadPdf('${w.id}','${(w.certificateNumber||'').replace(/'/g,"\\'")}')" title="ดาวน์โหลดเป็นไฟล์ PDF">📥 PDF</button>` : ''}
             ${w.status === 'Draft' || w.status === 'Issued' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidCert('${w.id}')" title="ยกเลิกหนังสือรับรอง">ยกเลิก</button>` : ''}
             <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteCert('${w.id}','${(w.certificateNumber||'').replace(/'/g,"\\'")}')" title="ลบหนังสือรับรองถาวร (Owner เท่านั้น)" style="background:var(--red-700)">ลบ</button>
           </td>
@@ -255,6 +256,7 @@
               <button class="btn btn-success" onclick="Page.issueCert('${d.id}')">ออกหนังสือรับรอง</button>` + footer;
           } else if (d.status === 'Issued') {
             footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" data-i18n="common.print">พิมพ์</button>
+              <button class="btn btn-success" onclick="Page.downloadPdf('${d.id}','${Layout.esc(d.certificateNumber||'')}')">📥 ดาวน์โหลด PDF</button>
               <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
           }
           const myRole = await Layout.ensureMyRole();
@@ -283,6 +285,29 @@
           Layout.toast('ยกเลิกสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async downloadPdf(id, certNumber) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังสร้าง PDF ...', 'info');
+          const url = api.generateWhtPdfUrl(id);
+          const token = localStorage.getItem('token');
+          const resp = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) {
+            let msg = '';
+            try { const j = await resp.json(); msg = j?.message || ''; } catch(_) {}
+            throw new Error(msg || `โหลดไม่สำเร็จ (${resp.status})`);
+          }
+          const blob = await resp.blob();
+          const filename = `WHT-${(certNumber || id).replace(/[\\/:*?"<>|]/g,'_')}.pdf`;
+          const a = document.createElement('a');
+          const u = URL.createObjectURL(blob);
+          a.href = u; a.download = filename;
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(u), 1000);
+          Layout.toast('ดาวน์โหลด PDF สำเร็จ', 'success');
+        } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error'); }
       },
       async deleteCert(id, certNumber) {
         if (!(await Layout.confirmDanger({

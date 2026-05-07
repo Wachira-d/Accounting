@@ -304,6 +304,11 @@ const API = {
       autoGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/auto-generate`, d),
       getPendingWht: (q = '') => API.get(`${base}/withholding-tax-certs/pending${q}`),
       bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
+      // Server-side PDF generation. Endpoints return raw PDF bytes (not JSON), so we
+      // expose URLs for the page to fetch as Blobs and trigger a download.
+      generateDocPdfUrl: () => `${base}/document-templates/generate-pdf`,
+      generateWhtPdfUrl: (certId) => `${base}/document-templates/withholding-tax/${certId}/pdf`,
+      generateReceiptPdfUrl: (paymentId) => `${base}/document-templates/receipt/${paymentId}/pdf`,
       // Fixed Assets
       getAssets: (q = '') => API.get(`${base}/fixedasset${q}`),
       getAsset: (id) => API.get(`${base}/fixedasset/${id}`),
