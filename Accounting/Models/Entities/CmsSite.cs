@@ -52,6 +52,10 @@ public class Site : TenantEntity
     public string DefaultLanguage { get; set; } = "th";
     public string DefaultCurrency { get; set; } = "THB";
 
+    // CAPTCHA (hcaptcha / recaptcha)
+    public string? CaptchaProvider { get; set; } // "hcaptcha" or "recaptcha"
+    public string? CaptchaSiteKey { get; set; }
+
     // PDPA / GDPR
     public bool CookieConsentEnabled { get; set; } = true;
     public string? PrivacyPolicyUrl { get; set; }

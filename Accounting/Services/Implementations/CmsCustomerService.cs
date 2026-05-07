@@ -434,6 +434,23 @@ public class CmsCustomerService : ICmsCustomerService
         var form = await _db.SiteForms.Include(f => f.Fields).FirstOrDefaultAsync(f => f.Id == formId && f.SiteId == siteId && f.IsActive)
             ?? throw new KeyNotFoundException("Form not found or inactive.");
 
+        // CAPTCHA verification
+        if (form.RequireCaptcha)
+        {
+            var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId);
+            if (!string.IsNullOrEmpty(site?.CaptchaProvider) && !string.IsNullOrEmpty(site?.CaptchaSiteKey))
+            {
+                if (string.IsNullOrEmpty(request.CaptchaToken))
+                    throw new InvalidOperationException("CAPTCHA token is required.");
+                var secretKey = _config["Captcha:SecretKey"];
+                if (!string.IsNullOrEmpty(secretKey))
+                {
+                    var verified = await VerifyCaptchaAsync(site.CaptchaProvider, secretKey, request.CaptchaToken);
+                    if (!verified) throw new InvalidOperationException("CAPTCHA verification failed.");
+                }
+            }
+        }
+
         // Rate limiting
         if (form.RateLimitPerHour.HasValue && !string.IsNullOrEmpty(ipAddress))
         {
@@ -516,6 +533,25 @@ public class CmsCustomerService : ICmsCustomerService
 
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    private static async Task<bool> VerifyCaptchaAsync(string provider, string secretKey, string token)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        string verifyUrl;
+        if (provider.Equals("hcaptcha", StringComparison.OrdinalIgnoreCase))
+            verifyUrl = "https://api.hcaptcha.com/siteverify";
+        else
+            verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
+
+        var resp = await http.PostAsync(verifyUrl, new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["secret"] = secretKey,
+            ["response"] = token
+        }));
+        if (!resp.IsSuccessStatusCode) return false;
+        var json = await resp.Content.ReadAsStringAsync();
+        return json.Contains("\"success\":true") || json.Contains("\"success\": true");
     }
 
     private static CustomerAddressResponse MapAddressResponse(SiteCustomerAddress a) => new()
