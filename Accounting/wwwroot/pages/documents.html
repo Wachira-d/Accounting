@@ -926,7 +926,12 @@
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
-            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
+            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}
+            <!-- Attachments section — file upload/list/delete for this document -->
+            <div id="docAttachments_${d.id}" style="margin-top:20px"></div>`;
+
+          // Load attachments asynchronously (doesn't block other sections)
+          this.renderAttachmentSection(d.id);
 
           // Load related payments and journal entries
           try {
@@ -1189,6 +1194,157 @@
           await this.load();
         } catch (e) {
           Layout.toast(e.message || 'แปลงไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ───────── Attachments ─────────
+      // Renders the file-attachment block for a Document detail modal.
+      // Lists existing files (download/delete) + provides drag-drop upload.
+      // Re-rendered after every upload/delete for instant feedback.
+      async renderAttachmentSection(documentId) {
+        const api = Layout.api(); if (!api) return;
+        const container = document.getElementById('docAttachments_' + documentId);
+        if (!container) return;
+
+        let attachments = [];
+        try {
+          const res = await api.getAttachments('Document', documentId);
+          attachments = res?.data || [];
+        } catch (e) {
+          container.innerHTML = `<div class="text-xs text-danger">โหลดรายการไฟล์ไม่สำเร็จ: ${e.message || e}</div>`;
+          return;
+        }
+
+        const fmtSize = (bytes) => {
+          if (!bytes) return '0';
+          if (bytes < 1024) return `${bytes} B`;
+          if (bytes < 1024*1024) return `${(bytes/1024).toFixed(1)} KB`;
+          return `${(bytes/1024/1024).toFixed(2)} MB`;
+        };
+        const fileIcon = (contentType) => {
+          if (!contentType) return '📎';
+          if (contentType.startsWith('image/')) return '🖼️';
+          if (contentType === 'application/pdf') return '📄';
+          if (contentType.includes('spreadsheet') || contentType.includes('excel')) return '📊';
+          if (contentType.includes('word')) return '📝';
+          return '📎';
+        };
+        const list = attachments.length === 0
+          ? `<div style="padding:12px;text-align:center;color:var(--gray-400);font-size:13px;background:var(--gray-50);border-radius:8px;border:1px dashed var(--gray-200)">ยังไม่มีไฟล์แนบ</div>`
+          : attachments.map(a => `
+              <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:#fff;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px">
+                <span style="font-size:24px">${fileIcon(a.contentType)}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(a.originalFileName)}</div>
+                  <div style="font-size:11px;color:var(--gray-500)">
+                    ${fmtSize(a.fileSize)} • ${this.escapeHtml(a.uploadedByName || 'ไม่ระบุ')} • ${Layout.date(a.createdAt)}
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-outline" onclick="Page.downloadAttachment('${a.id}', '${this.escapeHtml(a.originalFileName).replace(/'/g, "\\'")}')" title="ดาวน์โหลด">⬇</button>
+                <button class="btn btn-sm btn-outline" onclick="Page.deleteAttachment('${a.id}', '${documentId}')" title="ลบ" style="color:var(--danger)">🗑</button>
+              </div>`).join('');
+
+        container.innerHTML = `
+          <h4 style="font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+            📎 ไฟล์แนบ
+            <span style="font-size:11px;font-weight:400;color:var(--gray-500)">(${attachments.length} ไฟล์)</span>
+          </h4>
+          <div>${list}</div>
+          <div id="dropZone_${documentId}"
+            style="margin-top:8px;padding:16px;border:2px dashed var(--gray-300);border-radius:8px;text-align:center;cursor:pointer;background:#fafbfc;transition:all .2s">
+            <input type="file" id="attachFile_${documentId}" multiple style="display:none">
+            <div style="font-size:13px;color:var(--gray-600)">
+              <span style="font-size:24px;display:block;margin-bottom:4px">📥</span>
+              คลิกหรือลากไฟล์มาวางที่นี่เพื่อแนบ
+              <div style="font-size:11px;color:var(--gray-400);margin-top:4px">
+                รองรับ: PDF, รูปภาพ, Excel, Word — สูงสุด 25MB
+              </div>
+            </div>
+          </div>`;
+
+        // Wire up drag-drop + click-to-pick
+        const dropZone = document.getElementById('dropZone_' + documentId);
+        const fileInput = document.getElementById('attachFile_' + documentId);
+        if (dropZone && fileInput) {
+          dropZone.addEventListener('click', () => fileInput.click());
+          dropZone.addEventListener('dragover', e => {
+            e.preventDefault(); e.stopPropagation();
+            dropZone.style.borderColor = 'var(--primary)';
+            dropZone.style.background = '#eff6ff';
+          });
+          dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'var(--gray-300)';
+            dropZone.style.background = '#fafbfc';
+          });
+          dropZone.addEventListener('drop', async e => {
+            e.preventDefault(); e.stopPropagation();
+            dropZone.style.borderColor = 'var(--gray-300)';
+            dropZone.style.background = '#fafbfc';
+            await this.uploadAttachments(documentId, e.dataTransfer.files);
+          });
+          fileInput.addEventListener('change', async e => {
+            await this.uploadAttachments(documentId, e.target.files);
+            e.target.value = ''; // reset so same file can be picked again
+          });
+        }
+      },
+
+      async uploadAttachments(documentId, files) {
+        const api = Layout.api(); if (!api) return;
+        if (!files || files.length === 0) return;
+
+        for (const file of files) {
+          if (file.size > 25 * 1024 * 1024) {
+            Layout.toast(`${file.name}: ใหญ่เกิน 25MB`, 'error');
+            continue;
+          }
+          try {
+            const fd = new FormData();
+            fd.append('file', file);
+            await api.uploadAttachment('Document', documentId, fd);
+            Layout.toast(`อัปโหลด ${file.name} สำเร็จ`);
+          } catch (e) {
+            Layout.toast(`อัปโหลด ${file.name} ล้มเหลว: ${e.message || e}`, 'error');
+          }
+        }
+        // Re-render list after all uploads finish
+        await this.renderAttachmentSection(documentId);
+      },
+
+      async downloadAttachment(attachmentId, originalFileName) {
+        // Authenticated fetch — pulls the file via the JWT-protected /download
+        // endpoint instead of exposing static URLs that could leak via browser
+        // history or server logs. Streams as blob and triggers a save dialog.
+        const api = Layout.api(); if (!api) return;
+        const url = api.downloadAttachmentUrl(attachmentId);
+        const token = localStorage.getItem('access_token');
+        try {
+          const res = await fetch(url, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = objUrl;
+          a.download = originalFileName || 'attachment';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          // Release blob memory after a short delay to let the download start
+          setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+        } catch (e) {
+          Layout.toast('ดาวน์โหลดไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
+      },
+
+      async deleteAttachment(attachmentId, documentId) {
+        if (!confirm('ลบไฟล์แนบนี้? การกระทำนี้ไม่สามารถย้อนกลับได้')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteAttachment(attachmentId);
+          Layout.toast('ลบไฟล์แนบสำเร็จ');
+          await this.renderAttachmentSection(documentId);
+        } catch (e) {
+          Layout.toast('ลบไฟล์แนบไม่สำเร็จ: ' + (e.message || e), 'error');
         }
       },
 
