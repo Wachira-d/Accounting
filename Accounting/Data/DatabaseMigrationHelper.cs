@@ -930,6 +930,14 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "RetryCount" integer NOT NULL DEFAULT 0;
             """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ContentFingerprint" varchar(64) NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrScanResults_CompanyId_ContentFingerprint"
+            ON "OcrScanResults" ("CompanyId", "ContentFingerprint")
+            WHERE "ContentFingerprint" IS NOT NULL;
+            """,
 
             // ===== Performance indexes — added after audit identified hot-path query slowdowns =====
             // 60-second pre-upload duplicate check (OcrController.UploadAndScan):
@@ -1188,6 +1196,31 @@ public static class DatabaseMigrationHelper
             // ===== TrialConfigs: OCR quota fields =====
             """
             ALTER TABLE "TrialConfigs" ADD COLUMN IF NOT EXISTS "TrialMaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+
+            // ===== OcrCategoryMappings: learned vendor → expense-account mappings =====
+            """
+            CREATE TABLE IF NOT EXISTS "OcrCategoryMappings" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "VendorKey" varchar(200) NOT NULL DEFAULT '',
+                "DescriptionKeyword" varchar(200) NOT NULL DEFAULT '',
+                "AccountCode" varchar(20) NOT NULL DEFAULT '',
+                "AccountName" text NULL,
+                "TimesUsed" integer NOT NULL DEFAULT 1,
+                "LastUsedAt" timestamp NOT NULL DEFAULT now(),
+                "TrainedByUserId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrCategoryMappings" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrCategoryMappings_CompanyId_VendorKey_Description"
+            ON "OcrCategoryMappings" ("CompanyId", "VendorKey", "DescriptionKeyword");
             """,
 
             // ===== OcrCreditPurchases table =====

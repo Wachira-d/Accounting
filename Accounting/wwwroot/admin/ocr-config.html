@@ -110,13 +110,11 @@
         <div class="form-group">
           <label>Provider หลัก</label>
           <select id="ocrProvider">
-            <option value="">ใช้ค่าจาก appsettings.json</option>
-            <option value="local">Local (PaddleOCR + Typhoon)</option>
-            <option value="azure-di">Azure Document Intelligence v4.0</option>
-            <option value="google">Google Cloud Vision</option>
-            <option value="tesseract">Tesseract</option>
+            <option value="">อัตโนมัติ (Azure DI ถ้าตั้งค่าแล้ว, มิฉะนั้นใช้ Local)</option>
+            <option value="azure-di">บังคับใช้ Azure Document Intelligence v4.0</option>
+            <option value="local">บังคับใช้ Local (PaddleOCR + Tesseract)</option>
           </select>
-          <div class="hint">หากไม่เลือก จะใช้ค่าจาก appsettings.json (ปัจจุบัน: local)</div>
+          <div class="hint">โหมด <b>อัตโนมัติ</b> = Azure DI เป็นหลัก, fallback ไป Local ถ้า Azure ล่ม. <b>Local</b> รวม PaddleOCR + Tesseract ในตัวเดียว</div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -183,27 +181,31 @@
         </div>
       </div>
 
-      <!-- Google Vision & Tesseract Keys -->
+      <!-- Local Service Health -->
       <div class="admin-card">
-        <div class="admin-card-header">
-          <div class="admin-card-title">API Keys (Provider อื่น)</div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Google Cloud Vision API Key</label>
-            <div class="password-field">
-              <input type="password" id="ocrGoogleApiKey" placeholder="ใส่ key ใหม่">
-              <span class="keep-existing" id="googleKeyHint" style="display:none">มี key อยู่แล้ว</span>
-            </div>
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">🐍 Local OCR Service (PaddleOCR + Tesseract)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">Microservice ที่รวม PaddleOCR สำหรับตัวอักษร + Tesseract สำหรับ verification — ใช้เป็น fallback หลักของระบบ</div>
           </div>
-          <div class="form-group">
-            <label>Tesseract API Key</label>
-            <div class="password-field">
-              <input type="password" id="ocrTesseractApiKey" placeholder="ใส่ key ใหม่">
-              <span class="keep-existing" id="tesseractKeyHint" style="display:none">มี key อยู่แล้ว</span>
-            </div>
-          </div>
+          <span id="localStatusBadge" class="status-badge status-pending">ยังไม่ทดสอบ</span>
         </div>
+        <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
+          <button class="btn-secondary" onclick="testLocalService()">🧪 ทดสอบการเชื่อมต่อ</button>
+          <span id="localTestResult" style="font-size:13px;line-height:40px;color:#64748b"></span>
+        </div>
+        <details style="margin-top:12px;background:#f8fafc;padding:12px;border-radius:8px">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#475569">📋 วิธีตั้งค่า Local OCR Service</summary>
+          <div style="margin-top:12px;font-size:13px;color:#334155;line-height:1.6">
+            <p style="margin:0 0 8px"><b>1. รัน microservice:</b></p>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px">cd ocr-service
+pip install paddleocr pytesseract pillow fastapi uvicorn
+uvicorn app:app --host 0.0.0.0 --port 8501</pre>
+            <p style="margin:12px 0 8px"><b>2. ระบุ URL ที่ฟิลด์ "Local Service URL" ด้านบน</b> (ค่าเริ่มต้น: <code>http://localhost:8501</code>)</p>
+            <p style="margin:8px 0"><b>3. คลิกปุ่ม "ทดสอบการเชื่อมต่อ"</b> — ระบบจะส่ง health check ไปที่ <code>{url}/health</code></p>
+            <p style="margin:8px 0"><b>4. Endpoint ที่ใช้งาน:</b> <code>POST {url}/ocr/extract</code> (multipart/form-data)</p>
+          </div>
+        </details>
       </div>
 
       <!-- Confidence Gateway Tuning -->
@@ -425,8 +427,6 @@
       document.getElementById('azureDiApiVersion').value = c.azureDiApiVersion || '2024-11-30';
 
       if (c.azureDiHasKey) document.getElementById('azureKeyHint').style.display = '';
-      if (c.ocrHasGoogleKey) document.getElementById('googleKeyHint').style.display = '';
-      if (c.ocrHasTesseractKey) document.getElementById('tesseractKeyHint').style.display = '';
 
       // Azure status badge
       const badge = document.getElementById('azureStatusBadge');
@@ -525,10 +525,6 @@
 
         const azureKey = document.getElementById('azureDiApiKey').value;
         if (azureKey) body.azureDiApiKey = azureKey;
-        const googleKey = document.getElementById('ocrGoogleApiKey').value;
-        if (googleKey) body.ocrGoogleApiKey = googleKey;
-        const tesseractKey = document.getElementById('ocrTesseractApiKey').value;
-        if (tesseractKey) body.ocrTesseractApiKey = tesseractKey;
 
         await AdminAPI.put('/ocr-config', body);
         showToast('บันทึกการตั้งค่าสำเร็จ', 'success');
@@ -553,6 +549,32 @@
       } catch (err) {
         el.textContent = err.message;
         el.style.color = '#dc2626';
+      }
+    }
+
+    async function testLocalService() {
+      const el = document.getElementById('localTestResult');
+      const badge = document.getElementById('localStatusBadge');
+      el.textContent = 'กำลังทดสอบ...';
+      el.style.color = '#64748b';
+      badge.className = 'status-badge status-pending';
+      badge.textContent = 'กำลังทดสอบ...';
+      try {
+        const res = await AdminAPI.post('/ocr-config/test-local');
+        el.textContent = res.message;
+        el.style.color = res.success ? '#16a34a' : '#dc2626';
+        if (res.success) {
+          badge.className = 'status-badge status-ok';
+          badge.textContent = 'พร้อมใช้งาน';
+        } else {
+          badge.className = 'status-badge status-error';
+          badge.textContent = 'ใช้ไม่ได้';
+        }
+      } catch (err) {
+        el.textContent = err.message;
+        el.style.color = '#dc2626';
+        badge.className = 'status-badge status-error';
+        badge.textContent = 'ใช้ไม่ได้';
       }
     }
 

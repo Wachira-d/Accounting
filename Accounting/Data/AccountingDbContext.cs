@@ -193,6 +193,7 @@ public class AccountingDbContext : DbContext
     public DbSet<OcrScanResult> OcrScanResults => Set<OcrScanResult>();
     public DbSet<OcrLearnedPattern> OcrLearnedPatterns => Set<OcrLearnedPattern>();
     public DbSet<OcrCreditPurchase> OcrCreditPurchases => Set<OcrCreditPurchase>();
+    public DbSet<OcrCategoryMapping> OcrCategoryMappings => Set<OcrCategoryMapping>();
 
     // Custom Reports
     public DbSet<CustomReport> CustomReports => Set<CustomReport>();
@@ -1391,6 +1392,16 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.Status).HasMaxLength(20);
             e.Property(p => p.Currency).HasMaxLength(3);
             e.HasIndex(p => new { p.CompanyId, p.SubscriptionId });
+        });
+
+        // ===== OcrCategoryMapping =====
+        modelBuilder.Entity<OcrCategoryMapping>(e =>
+        {
+            e.Property(p => p.VendorKey).HasMaxLength(200);
+            e.Property(p => p.DescriptionKeyword).HasMaxLength(200);
+            e.Property(p => p.AccountCode).HasMaxLength(20);
+            // Composite lookup index: scan-time queries filter by (CompanyId, VendorKey)
+            e.HasIndex(p => new { p.CompanyId, p.VendorKey, p.DescriptionKeyword });
         });
 
         // ===== CustomReport =====

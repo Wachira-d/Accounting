@@ -1164,6 +1164,33 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object>(true, null, "บันทึกการตั้งค่า OCR สำเร็จ"));
     }
 
+    [HttpPost("ocr-config/test-local")]
+    public async Task<ActionResult<ApiResponse<object>>> TestLocalOcrService(
+        [FromServices] IHttpClientFactory httpClientFactory)
+    {
+        var s = await GetOrCreateSiteSettings();
+        var url = string.IsNullOrEmpty(s.OcrLocalServiceUrl) ? "http://localhost:8501" : s.OcrLocalServiceUrl;
+        try
+        {
+            using var client = httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(10);
+            var response = await client.GetAsync($"{url.TrimEnd('/')}/health");
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                return Ok(new ApiResponse<object>(true, new { url, status = (int)response.StatusCode, body },
+                    $"เชื่อมต่อ Local OCR Service สำเร็จ ({url})"));
+            }
+            return Ok(new ApiResponse<object>(false, null,
+                $"Local OCR Service ตอบ HTTP {(int)response.StatusCode} — ตรวจสอบว่า microservice รันอยู่ที่ {url}"));
+        }
+        catch (Exception ex)
+        {
+            return Ok(new ApiResponse<object>(false, null,
+                $"เชื่อมต่อ Local OCR Service ไม่ได้: {ex.Message} — ตรวจสอบ URL/firewall/microservice"));
+        }
+    }
+
     [HttpPost("ocr-config/test-azure")]
     public async Task<ActionResult<ApiResponse<object>>> TestAzureDi()
     {

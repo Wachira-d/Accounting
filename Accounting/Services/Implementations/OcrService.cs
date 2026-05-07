@@ -19,11 +19,13 @@ public class OcrService : IOcrService
     private readonly ILogger<OcrService> _logger;
     private readonly IDbdLookupService _dbdLookup;
     private readonly AzureDocumentIntelligenceService _azureDi;
+    private readonly ExpenseCategoryLearner _categoryLearner;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
         IDbdLookupService dbdLookup,
-        AzureDocumentIntelligenceService azureDi)
+        AzureDocumentIntelligenceService azureDi,
+        ExpenseCategoryLearner categoryLearner)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -31,6 +33,7 @@ public class OcrService : IOcrService
         _logger = logger;
         _dbdLookup = dbdLookup;
         _azureDi = azureDi;
+        _categoryLearner = categoryLearner;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -109,7 +112,20 @@ public class OcrService : IOcrService
         {
             string extractedText;
 
-            if (ocrProvider == "azure-di" || ocrProvider == "azuredi")
+            // ─── Strict provider chain: Azure DI (if configured) → Local (PaddleOCR+Tesseract) ───
+            // Legacy providers (Google Vision, Azure v3.x, standalone Tesseract) are
+            // intentionally removed — their accuracy on Thai invoices is consistently
+            // worse than Azure DI v4 and the local PaddleOCR+Tesseract combo.
+            //
+            // The local microservice (default http://localhost:8501) runs PaddleOCR for
+            // primary recognition + Tesseract for verification on low-confidence regions.
+            // It serves as the bedrock fallback when Azure DI is unavailable.
+
+            var azureEnabled = siteSettings?.AzureDiEnabled == true
+                && !string.IsNullOrEmpty(siteSettings.AzureDiEndpoint)
+                && !string.IsNullOrEmpty(siteSettings.AzureDiApiKey);
+
+            if (azureEnabled && ocrProvider != "local")
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)
@@ -119,27 +135,36 @@ public class OcrService : IOcrService
                 }
                 else
                 {
-                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to local pipeline", azureResult.Error ?? "unknown");
+                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to local PaddleOCR+Tesseract", azureResult.Error ?? "unknown");
                     var localResult = await ExtractWithLocalServiceAsync(file);
                     extractedText = localResult.RawText;
                     extractedData = localResult.Data;
-                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {azureResult.Error ?? "unknown"}");
+                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {azureResult.Error ?? "unknown"} — used local pipeline");
                 }
-            }
-            else if (ocrProvider == "local")
-            {
-                var localResult = await ExtractWithLocalServiceAsync(file);
-                extractedText = localResult.RawText;
-                extractedData = localResult.Data;
             }
             else
             {
-                extractedText = await ExtractTextAsync(file);
-                extractedData = await AnalyzeWithZones(companyId, extractedText);
+                // Local pipeline (PaddleOCR + Tesseract combined inside the microservice)
+                var localResult = await ExtractWithLocalServiceAsync(file);
+                extractedText = localResult.RawText;
+                extractedData = localResult.Data;
+                if (!azureEnabled)
+                    extractedData.ReasoningTrace.Insert(0, "[Provider] Azure DI ไม่เปิดใช้ — ใช้ Local (PaddleOCR+Tesseract)");
             }
 
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
             var gatewayConfig = BuildGatewayConfig(siteSettings);
+            var lineItemsForValidation = extractedData.Items
+                .Select(i => new OcrConfidenceGateway.LineItemForValidation(i.Quantity, i.UnitPrice, i.Amount))
+                .ToList();
+            var whtRatePct = extractedData.HasWht && extractedData.WhtRate.HasValue
+                ? extractedData.WhtRate.Value
+                : (decimal?)null;
+            decimal? whtAmt = null;
+            // Calculate expected WHT from subTotal × rate when not extracted (for sanity validation)
+            if (whtRatePct.HasValue && extractedData.SubTotal.HasValue)
+                whtAmt = Math.Round(extractedData.SubTotal.Value * whtRatePct.Value / 100m, 2);
+
             var gatewayResult = OcrConfidenceGateway.Validate(
                 extractedData.Confidence,
                 extractedData.DocumentDate,
@@ -149,7 +174,12 @@ public class OcrService : IOcrService
                 extractedData.VendorTaxId,
                 extractedData.BuyerTaxId,
                 extractedData.FieldConfidence.ToDictionary(kv => kv.Key, kv => (decimal)kv.Value),
-                config: gatewayConfig);
+                config: gatewayConfig,
+                lineItems: lineItemsForValidation,
+                whtAmount: whtAmt,
+                whtRatePercent: whtRatePct,
+                documentNumber: extractedData.DocumentNumber,
+                vendorName: extractedData.VendorName);
 
             extractedData.Confidence = gatewayResult.AdjustedConfidence;
             foreach (var w in gatewayResult.Warnings)
@@ -192,6 +222,33 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
                     string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
 
+            // ───── Learned category prediction ─────
+            // If we have a learned mapping for this vendor, prefer it over generic
+            // industry-based defaults. Per-line predictions also override individual
+            // line item.SuggestedAccountCode when learner is more confident.
+            var bestDescription = extractedData.Items.FirstOrDefault()?.Description
+                ?? extractedData.ExpenseCategory;
+            var (learnedCode, learnedName, learnedConf) = await _categoryLearner.PredictAsync(
+                companyId, extractedData.VendorTaxId, extractedData.VendorName, bestDescription);
+            if (learnedCode != null && learnedConf >= 0.55m)
+            {
+                extractedData.DebitAccountCode = learnedCode;
+                extractedData.DebitAccountName = learnedName;
+                extractedData.ReasoningTrace.Add($"[Learner] เคยใช้รหัส {learnedCode} กับผู้ขายนี้ (confidence {learnedConf:P0})");
+
+                // Per-line override
+                foreach (var item in extractedData.Items)
+                {
+                    if (string.IsNullOrEmpty(item.SuggestedAccountCode))
+                    {
+                        var (perLineCode, _, perLineConf) = await _categoryLearner.PredictAsync(
+                            companyId, extractedData.VendorTaxId, extractedData.VendorName, item.Description);
+                        if (perLineCode != null && perLineConf >= 0.55m)
+                            item.SuggestedAccountCode = perLineCode;
+                    }
+                }
+            }
+
             if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
             {
                 scanResult.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
@@ -224,7 +281,33 @@ public class OcrService : IOcrService
                 }
             }
 
-            // Check for duplicate by document number + amount
+            // ───── CONTENT FINGERPRINT (cross-format dedup) ─────
+            // Catches the case where same invoice is uploaded as JPG once + PDF later.
+            // File hash differs but the semantic content matches. Stored on the row for
+            // indexed lookups and surfaced to user as "เคยอัปโหลดมาแล้วในรูปแบบอื่น".
+            scanResult.ContentFingerprint = ComputeContentFingerprint(extractedData);
+
+            if (!string.IsNullOrEmpty(scanResult.ContentFingerprint))
+            {
+                var contentDup = await _db.Set<OcrScanResult>()
+                    .Where(r => r.CompanyId == companyId
+                        && r.Id != scanResult.Id
+                        && r.ContentFingerprint == scanResult.ContentFingerprint
+                        && r.ScanStatus == "Completed"
+                        && r.CreatedAt > DateTime.UtcNow.AddDays(-90))
+                    .OrderByDescending(r => r.CreatedAt)
+                    .Select(r => new { r.Id, r.OriginalFileName, r.CreatedAt })
+                    .FirstOrDefaultAsync();
+                if (contentDup != null)
+                {
+                    scanResult.IsDuplicate = true;
+                    scanResult.DuplicateOfScanId = contentDup.Id;
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") +
+                        $"\n[Content Duplicate] เนื้อหาเอกสารตรงกับไฟล์ที่เคยอัปโหลดเมื่อ {contentDup.CreatedAt:yyyy-MM-dd HH:mm} ({contentDup.OriginalFileName}) — ระบบไม่สร้างเอกสารซ้ำ";
+                }
+            }
+
+            // Check for duplicate by document number + amount (legacy fallback when fingerprint missing)
             if (!string.IsNullOrEmpty(extractedData.DocumentNumber) && extractedData.TotalAmount.HasValue)
             {
                 var docDuplicate = await _db.Set<OcrScanResult>()
@@ -284,28 +367,51 @@ public class OcrService : IOcrService
                 scanResult.MatchedContactId = matchedContact?.Id;
             }
 
-            // Auto-create contact if not found but we have vendor info
+            // ═══════ DBD-GATED CONTACT AUTO-CREATION ═══════
+            // Only auto-create when we have a verified TaxId from DBD/RD VAT lookup.
+            // Without this gate, a misread "12345678901" would spawn a junk Contact.
+            // For OCR-only data (no DBD match), we leave Contact unmatched and let the
+            // user create it manually after reviewing the scan.
             if (!scanResult.MatchedContactId.HasValue
-                && (!string.IsNullOrEmpty(extractedData.VendorName) || !string.IsNullOrEmpty(extractedData.VendorTaxId)))
+                && extractedData.DbdMatched
+                && !string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
+                // Parse address into structured fields when DBD provides a single string.
+                var addressParts = ParseAddressIntoParts(extractedData.DbdAddress);
+
                 var newContact = new Contact
                 {
                     CompanyId = companyId,
-                    Name = extractedData.VendorName ?? $"ผู้ขาย (TaxID: {extractedData.VendorTaxId})",
+                    Name = extractedData.DbdCanonicalName ?? extractedData.VendorName ?? $"ผู้ขาย (TaxID: {extractedData.VendorTaxId})",
                     TaxId = extractedData.VendorTaxId,
                     IsCustomer = false,
                     IsSupplier = true,
-                    CreatedBy = "OCR-AutoCreate"
+                    ContactType = ContactType.JuristicPerson,
+                    Address = extractedData.DbdAddress,
+                    BuildingNumber = addressParts.BuildingNumber,
+                    StreetName = addressParts.StreetName,
+                    SubDistrict = addressParts.SubDistrict,
+                    District = addressParts.District,
+                    Province = addressParts.Province,
+                    PostalCode = addressParts.PostalCode,
+                    CountryCode = "TH",
+                    CreatedBy = "OCR-DBD-AutoCreate"
                 };
-                // Apply DBD-enriched fields if we got them
-                if (extractedData.DbdCanonicalName != null)
-                    newContact.Name = extractedData.DbdCanonicalName;
-                if (!string.IsNullOrEmpty(extractedData.DbdAddress))
-                    newContact.Address = extractedData.DbdAddress;
                 _db.Contacts.Add(newContact);
                 await _db.SaveChangesAsync();
                 scanResult.MatchedContactId = newContact.Id;
-                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-created contact: {newContact.Name}";
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + $"\n[Auto-Create] สร้าง Contact ใหม่จากข้อมูล DBD: {newContact.Name} (TaxID {newContact.TaxId})";
+                _logger.LogInformation("Auto-created DBD-verified contact for company {CompanyId} TaxId={TaxId} Name={Name}",
+                    companyId, newContact.TaxId, newContact.Name);
+            }
+            else if (!scanResult.MatchedContactId.HasValue
+                && !string.IsNullOrEmpty(extractedData.VendorTaxId)
+                && !extractedData.DbdMatched)
+            {
+                // Surface to user that no contact was created — they need to review TaxId
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + $"\n[Manual Review Required] ไม่สามารถยืนยัน TaxID {extractedData.VendorTaxId} จาก DBD/RD — กรุณาตรวจสอบและสร้าง Contact ด้วยตนเอง";
             }
             else if (scanResult.MatchedContactId.HasValue && extractedData.DbdCanonicalName != null)
             {
@@ -390,6 +496,58 @@ public class OcrService : IOcrService
     private static decimal ClampPct(decimal value, decimal min, decimal max, decimal fallback)
         => (value <= 0 || value > 1) ? fallback : Math.Clamp(value, min, max);
 
+    /// <summary>
+    /// Best-effort parse of a free-text Thai address into ETDA-compliant structured parts.
+    /// We extract what we can with regex; downstream UI lets user fix the rest. Better
+    /// to populate partial structure than leave Contact with only a free-text Address.
+    /// </summary>
+    private static (string? BuildingNumber, string? StreetName, string? SubDistrict, string? District, string? Province, string? PostalCode)
+        ParseAddressIntoParts(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+            return (null, null, null, null, null, null);
+
+        string? Match(string pattern)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(address, pattern);
+            return m.Success ? m.Groups[1].Value.Trim() : null;
+        }
+
+        var building = Match(@"(?:เลขที่\s*)?(\d+(?:/\d+)?)");
+        var street = Match(@"ถนน\s*([^\s]+)");
+        var subDistrict = Match(@"(?:ตำบล|แขวง)\s*([^\s]+)");
+        var district = Match(@"(?:อำเภอ|เขต)\s*([^\s]+)");
+        var province = Match(@"(?:จังหวัด)\s*([^\s]+)");
+        var postal = Match(@"(\d{5})(?!\d)");
+
+        return (building, street, subDistrict, district, province, postal);
+    }
+
+    /// <summary>
+    /// Build a content-based fingerprint from extracted fields. Same logical document
+    /// uploaded as PDF and JPG produces matching fingerprints (different file hashes).
+    /// Returns null when not enough fields are present to make a reliable fingerprint —
+    /// avoids false-positive collisions between blank/partial scans.
+    /// </summary>
+    private static string? ComputeContentFingerprint(OcrExtractedData data)
+    {
+        if (string.IsNullOrWhiteSpace(data.VendorTaxId) && string.IsNullOrWhiteSpace(data.VendorName))
+            return null;
+        if (string.IsNullOrWhiteSpace(data.DocumentNumber) && !data.TotalAmount.HasValue)
+            return null;
+
+        var vendorKey = string.IsNullOrWhiteSpace(data.VendorTaxId)
+            ? (data.VendorName ?? "").Trim().ToLowerInvariant()
+            : new string(data.VendorTaxId.Where(char.IsDigit).ToArray());
+        var docKey = (data.DocumentNumber ?? "").Trim().ToLowerInvariant();
+        var dateKey = data.DocumentDate?.ToString("yyyy-MM-dd") ?? "";
+        var amtKey = data.TotalAmount.HasValue
+            ? Math.Round(data.TotalAmount.Value, 2).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+            : "";
+        var input = $"{vendorKey}|{docKey}|{dateKey}|{amtKey}";
+        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
+    }
+
     private record EffectiveOcrConfig(string Provider, string? LocalServiceUrl, string? ApiKey, string? AzureEndpoint, decimal AutoCreateThreshold);
 
     private EffectiveOcrConfig BuildEffectiveOcrConfig(SiteSettings? siteSettings)
@@ -449,11 +607,14 @@ public class OcrService : IOcrService
             data.FieldConfidence[k] = (double)v;
 
         // Reasoning trace
-        data.ReasoningTrace.Add($"[Azure DI] Model: {azure.ModelId}");
+        data.ReasoningTrace.Add($"[Azure DI] Model: {azure.ModelId} | Pages: {azure.PageCount} | Documents: {azure.MultiDocumentCount}");
         if (!string.IsNullOrEmpty(azure.VendorName))
             data.ReasoningTrace.Add($"[Azure DI] Vendor: {azure.VendorName}");
         if (!string.IsNullOrEmpty(azure.CustomerName))
             data.ReasoningTrace.Add($"[Azure DI] Customer: {azure.CustomerName}");
+        // Surface multi-document warnings to user
+        foreach (var w in azure.Warnings)
+            data.ReasoningTrace.Add($"[Azure DI Warning] {w}");
         if (azure.InvoiceTotal.HasValue)
             data.ReasoningTrace.Add($"[Azure DI] Total: {azure.InvoiceTotal.Value:N2}");
 
@@ -578,9 +739,15 @@ public class OcrService : IOcrService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Local OCR service unavailable, falling back to built-in");
-            var text = await ExtractTextAsync(file);
-            return (text, ParseThaiDocument(text)); // fallback uses simple parser since we don't have companyId here
+            // Local PaddleOCR+Tesseract microservice unavailable. Without external providers
+            // (Google/Azure v3.x), the only thing we can return is the original filename so
+            // user can manually re-upload or fix infrastructure.
+            _logger.LogError(ex, "Local OCR service unreachable at {Url} — admin must verify the microservice is running",
+                _configuration["Ocr:LocalServiceUrl"] ?? "(unset)");
+            var fallbackText = ExtractFromFileName(file);
+            var stub = ParseThaiDocument(fallbackText);
+            stub.ReasoningTrace.Insert(0, "[Critical] Local OCR microservice ไม่ตอบสนอง — กรุณาตรวจสอบการตั้งค่า admin OR พิจารณาเปิด Azure DI");
+            return (fallbackText, stub);
         }
     }
 
@@ -606,6 +773,24 @@ public class OcrService : IOcrService
         if (correction.TotalAmount.HasValue) result.ExtractedTotalAmount = correction.TotalAmount;
 
         await _db.SaveChangesAsync();
+
+        // ───── Train the category learner from this correction ─────
+        // When user manually picks a debit account (the expense category) for a vendor,
+        // remember it so future scans of the same vendor pre-fill that account.
+        if (!string.IsNullOrEmpty(correction.DebitAccountCode))
+        {
+            var debitName = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountCode == correction.DebitAccountCode && !a.IsDeleted)
+                .Select(a => a.AccountName)
+                .FirstOrDefaultAsync();
+            await _categoryLearner.RecordAsync(
+                companyId,
+                correction.VendorTaxId ?? result.ExtractedVendorTaxId,
+                correction.VendorName ?? result.ExtractedVendorName,
+                correction.ExpenseCategory ?? result.ExpenseCategory,
+                correction.DebitAccountCode,
+                debitName);
+        }
 
         // Forward correction to local AI service for learning
         var serviceUrl = _configuration["Ocr:LocalServiceUrl"] ?? "http://localhost:8501";
@@ -702,101 +887,6 @@ public class OcrService : IOcrService
         {
             _logger.LogWarning(ex, "Failed to learn patterns from correction");
         }
-    }
-
-    private async Task<string> ExtractTextAsync(FileAttachment file)
-    {
-        var ocrProvider = _configuration["Ocr:Provider"];
-        var apiKey = _configuration["Ocr:ApiKey"];
-
-        if (!string.IsNullOrEmpty(ocrProvider) && !string.IsNullOrEmpty(apiKey))
-        {
-            return ocrProvider.ToLower() switch
-            {
-                "google" => await ExtractWithGoogleVisionAsync(file, apiKey),
-                "azure" => await ExtractWithAzureOcrAsync(file, apiKey),
-                "tesseract" => await ExtractWithTesseractAsync(file),
-                _ => ExtractFromFileName(file)
-            };
-        }
-
-        return ExtractFromFileName(file);
-    }
-
-    private async Task<string> ExtractWithGoogleVisionAsync(FileAttachment file, string apiKey)
-    {
-        var client = _httpClientFactory.CreateClient();
-        var url = $"https://vision.googleapis.com/v1/images:annotate?key={apiKey}";
-
-        byte[] fileData;
-        try { fileData = await File.ReadAllBytesAsync(file.StoragePath); }
-        catch { return ExtractFromFileName(file); }
-        var base64 = Convert.ToBase64String(fileData);
-
-        var payload = new
-        {
-            requests = new[]
-            {
-                new
-                {
-                    image = new { content = base64 },
-                    features = new[] { new { type = "TEXT_DETECTION" } }
-                }
-            }
-        };
-
-        var json = System.Text.Json.JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-        var response = await client.PostAsync(url, content);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogWarning("Google Vision API returned {Status}", response.StatusCode);
-            return ExtractFromFileName(file);
-        }
-
-        var result = await response.Content.ReadAsStringAsync();
-        using var doc = System.Text.Json.JsonDocument.Parse(result);
-        var annotations = doc.RootElement.GetProperty("responses")[0];
-        if (annotations.TryGetProperty("textAnnotations", out var texts) && texts.GetArrayLength() > 0)
-            return texts[0].GetProperty("description").GetString() ?? "";
-
-        return "";
-    }
-
-    private async Task<string> ExtractWithAzureOcrAsync(FileAttachment file, string apiKey)
-    {
-        var endpoint = _configuration["Ocr:AzureEndpoint"] ?? "";
-        var client = _httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", apiKey);
-
-        byte[] fileData;
-        try { fileData = await File.ReadAllBytesAsync(file.StoragePath); }
-        catch { return ExtractFromFileName(file); }
-        var content = new ByteArrayContent(fileData);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
-
-        var response = await client.PostAsync($"{endpoint}/vision/v3.2/read/analyze", content);
-        if (!response.IsSuccessStatusCode)
-            return ExtractFromFileName(file);
-
-        var resultUrl = response.Headers.GetValues("Operation-Location").FirstOrDefault();
-        if (string.IsNullOrEmpty(resultUrl)) return "";
-
-        await Task.Delay(2000);
-        var readResult = await client.GetStringAsync(resultUrl);
-        using var doc = System.Text.Json.JsonDocument.Parse(readResult);
-        var pages = doc.RootElement.GetProperty("analyzeResult").GetProperty("readResults");
-        var text = string.Join("\n", pages.EnumerateArray()
-            .SelectMany(p => p.GetProperty("lines").EnumerateArray())
-            .Select(l => l.GetProperty("text").GetString()));
-
-        return text;
-    }
-
-    private Task<string> ExtractWithTesseractAsync(FileAttachment file)
-    {
-        return Task.FromResult(ExtractFromFileName(file));
     }
 
     private static string ExtractFromFileName(FileAttachment file)

@@ -28,16 +28,23 @@ public class OcrController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
 
-        // === Pre-upload dedup: read file bytes once, hash, and check for an
-        // already-uploaded copy within the last 60 seconds. This catches double
-        // form-submits, drag+change race conditions, and rapid retries before
-        // we ever create a duplicate FileAttachment + OcrScanResult. ===
+        // === Read bytes once, then run quality preflight BEFORE consuming quota ===
+        // Rejecting low-resolution / corrupt files here means the user doesn't get
+        // charged a quota page for an obviously-unscannable file.
         byte[] fileBytes;
         await using (var ms = new MemoryStream())
         {
             await file.CopyToAsync(ms);
             fileBytes = ms.ToArray();
         }
+
+        var preflight = Accounting.Services.Implementations.Ocr.OcrPreprocessor.Check(
+            fileBytes,
+            file.ContentType ?? "",
+            file.FileName);
+        if (!preflight.Ok)
+            return BadRequest(new ApiResponse<object>(false, null, preflight.ErrorMessage ?? "ไฟล์ไม่ผ่านการตรวจสอบ"));
+
         var fileHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fileBytes)).ToLowerInvariant();
 
         var recentCutoff = DateTime.UtcNow.AddSeconds(-60);

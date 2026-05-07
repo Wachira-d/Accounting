@@ -25,6 +25,10 @@ public static class OcrConfidenceGateway
         public static readonly GatewayConfig Default = new();
     }
 
+    /// <summary>Line-item shape used by validation. Mirrors OcrExtractedLineItem
+    /// — kept simple so callers can pass either internal or DTO objects.</summary>
+    public sealed record LineItemForValidation(decimal? Quantity, decimal? UnitPrice, decimal? Amount);
+
     public static GatewayResult Validate(
         decimal modelConfidence,
         DateTime? documentDate,
@@ -34,7 +38,12 @@ public static class OcrConfidenceGateway
         string? vendorTaxId,
         string? buyerTaxId,
         Dictionary<string, decimal>? fieldConfidences = null,
-        GatewayConfig? config = null)
+        GatewayConfig? config = null,
+        IReadOnlyList<LineItemForValidation>? lineItems = null,
+        decimal? whtAmount = null,
+        decimal? whtRatePercent = null,
+        string? documentNumber = null,
+        string? vendorName = null)
     {
         config ??= GatewayConfig.Default;
         var warnings = new List<string>();
@@ -114,6 +123,63 @@ public static class OcrConfidenceGateway
             warnings.Add($"ยอดรวมติดลบ ({total:N2})");
             penalty += config.MathPenalty;
         }
+
+        // 7. Line-item math: sum of Item.Amount should ≈ SubTotal
+        if (lineItems != null && lineItems.Count > 0 && subTotal.HasValue)
+        {
+            var withAmounts = lineItems.Where(i => i.Amount.HasValue).ToList();
+            if (withAmounts.Count > 0)
+            {
+                var lineSum = withAmounts.Sum(i => i.Amount!.Value);
+                var diff = Math.Abs(lineSum - subTotal.Value);
+                if (diff > config.MathTolerance)
+                {
+                    warnings.Add($"ผลรวมรายการ {lineSum:N2} ≠ ยอดก่อน VAT {subTotal:N2} (ห่าง {diff:N2})");
+                    penalty += config.MathPenalty * 0.75m;
+                    mathConsistent = false;
+                }
+            }
+
+            // Per-line: Quantity × UnitPrice should ≈ Amount
+            var brokenLines = 0;
+            foreach (var item in lineItems)
+            {
+                if (item.Quantity.HasValue && item.UnitPrice.HasValue && item.Amount.HasValue)
+                {
+                    var expected = item.Quantity.Value * item.UnitPrice.Value;
+                    if (Math.Abs(expected - item.Amount.Value) > config.MathTolerance)
+                        brokenLines++;
+                }
+            }
+            if (brokenLines > 0)
+            {
+                warnings.Add($"พบรายการที่ Qty × UnitPrice ≠ Amount จำนวน {brokenLines} บรรทัด");
+                penalty += config.MathPenalty * 0.5m;
+            }
+        }
+
+        // 8. WHT formula sanity: WhtAmount ≈ SubTotal × WhtRate / 100
+        if (whtAmount.HasValue && whtRatePercent.HasValue && subTotal.HasValue
+            && subTotal.Value > 0 && whtRatePercent.Value > 0)
+        {
+            var expectedWht = Math.Round(subTotal.Value * whtRatePercent.Value / 100m, 2);
+            var diff = Math.Abs(expectedWht - whtAmount.Value);
+            if (diff > config.MathTolerance)
+            {
+                warnings.Add($"ภาษีหัก ณ ที่จ่ายไม่ตรงสูตร: {whtRatePercent}% × {subTotal:N2} = {expectedWht:N2} ≠ {whtAmount:N2}");
+                penalty += config.MathPenalty * 0.5m;
+            }
+        }
+
+        // 9. Missing critical fields — flag (no penalty, but surface for review)
+        if (string.IsNullOrWhiteSpace(documentNumber))
+            warnings.Add("ไม่พบเลขที่เอกสาร — กรุณาตรวจสอบ");
+        if (!documentDate.HasValue)
+            warnings.Add("ไม่พบวันที่เอกสาร — กรุณาตรวจสอบ");
+        if (string.IsNullOrWhiteSpace(vendorName))
+            warnings.Add("ไม่พบชื่อผู้ขาย — กรุณาตรวจสอบ");
+        if (!total.HasValue || total.Value == 0)
+            warnings.Add("ไม่พบยอดรวม — กรุณาตรวจสอบ");
 
         // Cap penalty
         if (penalty > config.MaxPenalty) penalty = config.MaxPenalty;

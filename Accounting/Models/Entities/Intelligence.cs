@@ -113,6 +113,13 @@ public class OcrScanResult : TenantEntity
     // Retries do NOT consume additional quota (quota was charged on initial scan).
     public int RetryCount { get; set; } = 0;
 
+    // Content-based fingerprint for cross-format duplicate detection.
+    // Computed AFTER extraction as SHA256 of:
+    //   "{VendorTaxId}|{DocumentNumber}|{DocumentDate:yyyy-MM-dd}|{TotalAmount:0.00}"
+    // Catches the case where same invoice is uploaded as JPG one time and PDF another —
+    // file hash differs but the content fingerprint matches.
+    public string? ContentFingerprint { get; set; }
+
     // Extracted data
     public string? ExtractedVendorName { get; set; }
     public string? ExtractedVendorTaxId { get; set; }
@@ -162,6 +169,28 @@ public class OcrLearnedPattern : TenantEntity
     public bool IsNegativeExample { get; set; } = false;
     public string? NegativeValue { get; set; }              // The wrong value that was rejected
     public int FailureCount { get; set; } = 0;              // How many times this pattern was wrong
+}
+
+/// <summary>
+/// Learned mapping: vendor + line-item description keyword → chart-of-account code.
+/// Built incrementally from user corrections and from approved auto-created documents.
+/// On a new scan, OcrService queries this table to suggest expense categories that
+/// match the company's actual booking habits — far more accurate than generic rules.
+/// </summary>
+public class OcrCategoryMapping : TenantEntity
+{
+    /// <summary>Vendor TaxId (preferred) or normalized vendor name when TaxId missing.</summary>
+    public string VendorKey { get; set; } = "";
+    /// <summary>Lower-cased substring match key from line description / expense category text.</summary>
+    public string DescriptionKeyword { get; set; } = "";
+    /// <summary>Suggested debit account code from CoA (e.g. "5402" for fuel).</summary>
+    public string AccountCode { get; set; } = "";
+    public string? AccountName { get; set; }
+    /// <summary>How many times user confirmed/booked with this account for this vendor+keyword.</summary>
+    public int TimesUsed { get; set; } = 1;
+    public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>Optional: which user originally trained this mapping (for audit).</summary>
+    public Guid? TrainedByUserId { get; set; }
 }
 
 /// <summary>

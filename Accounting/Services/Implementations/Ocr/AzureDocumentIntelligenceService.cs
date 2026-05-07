@@ -128,6 +128,19 @@ public class AzureDocumentIntelligenceService
         if (!analyze.TryGetProperty("documents", out var documents) || documents.GetArrayLength() == 0)
             return result;
 
+        // Multi-document PDF warning — Azure DI splits multi-invoice PDFs into multiple
+        // documents, but we only book the first. Surface this so users know to split
+        // the PDF and re-upload pages individually if there are 2+ invoices in one file.
+        result.MultiDocumentCount = documents.GetArrayLength();
+        if (result.MultiDocumentCount > 1)
+        {
+            result.Warnings.Add($"พบ {result.MultiDocumentCount} เอกสารใน PDF เดียว — ระบบประมวลผลเฉพาะเอกสารแรก กรุณาแยกไฟล์ก่อนอัปโหลด");
+        }
+
+        // Page count for transparency in processing notes
+        if (analyze.TryGetProperty("pages", out var pagesArr))
+            result.PageCount = pagesArr.GetArrayLength();
+
         var firstDoc = documents[0];
 
         if (firstDoc.TryGetProperty("confidence", out var conf))
@@ -265,6 +278,12 @@ public class AzureDiResult
 
     public Dictionary<string, decimal> FieldConfidence { get; set; } = new();
     public List<AzureDiLineItem> Items { get; set; } = new();
+
+    /// <summary>Number of separate "document objects" detected in the input file.
+    /// > 1 indicates a multi-invoice PDF — only the first is processed.</summary>
+    public int MultiDocumentCount { get; set; } = 0;
+    public int PageCount { get; set; } = 0;
+    public List<string> Warnings { get; set; } = new();
 }
 
 public class AzureDiLineItem
