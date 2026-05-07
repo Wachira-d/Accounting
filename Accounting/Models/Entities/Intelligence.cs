@@ -124,6 +124,11 @@ public class OcrScanResult : TenantEntity
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }
+
+    // Duplicate detection
+    public string? FileHash { get; set; }
+    public bool IsDuplicate { get; set; }
+    public Guid? DuplicateOfScanId { get; set; }
 }
 
 // ===== Custom Report Builder =====

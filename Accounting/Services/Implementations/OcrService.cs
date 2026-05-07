@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Models.DTOs;
@@ -31,17 +32,59 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(f => f.Id == fileAttachmentId && f.CompanyId == companyId)
             ?? throw new InvalidOperationException("File attachment not found.");
 
+        // Compute file hash for duplicate detection
+        string? fileHash = null;
+        try
+        {
+            if (File.Exists(file.StoragePath))
+            {
+                var bytes = await File.ReadAllBytesAsync(file.StoragePath);
+                fileHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            }
+        }
+        catch { /* hash is optional */ }
+
+        // Check for duplicate by file hash
+        OcrScanResult? duplicateOf = null;
+        if (!string.IsNullOrEmpty(fileHash))
+        {
+            duplicateOf = await _db.Set<OcrScanResult>()
+                .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.FileHash == fileHash && r.ScanStatus == "Completed");
+        }
+
         var scanResult = new OcrScanResult
         {
             CompanyId = companyId,
             FileAttachmentId = fileAttachmentId,
             OriginalFileName = file.OriginalFileName,
             ScanStatus = "Processing",
-            Confidence = 0m
+            Confidence = 0m,
+            FileHash = fileHash,
+            IsDuplicate = duplicateOf != null,
+            DuplicateOfScanId = duplicateOf?.Id
         };
 
         _db.Set<OcrScanResult>().Add(scanResult);
         await _db.SaveChangesAsync();
+
+        if (duplicateOf != null)
+        {
+            scanResult.ScanStatus = "Completed";
+            scanResult.DocumentType = duplicateOf.DocumentType;
+            scanResult.Confidence = duplicateOf.Confidence;
+            scanResult.ExtractedDocumentNumber = duplicateOf.ExtractedDocumentNumber;
+            scanResult.ExtractedDate = duplicateOf.ExtractedDate;
+            scanResult.ExtractedVendorName = duplicateOf.ExtractedVendorName;
+            scanResult.ExtractedVendorTaxId = duplicateOf.ExtractedVendorTaxId;
+            scanResult.ExtractedSubTotal = duplicateOf.ExtractedSubTotal;
+            scanResult.ExtractedVatAmount = duplicateOf.ExtractedVatAmount;
+            scanResult.ExtractedTotalAmount = duplicateOf.ExtractedTotalAmount;
+            scanResult.MatchedContactId = duplicateOf.MatchedContactId;
+            scanResult.ProcessingNotes = $"Duplicate of scan {duplicateOf.Id}";
+            scanResult.ProcessedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return MapToResponse(scanResult);
+        }
 
         try
         {
@@ -57,8 +100,26 @@ public class OcrService : IOcrService
             scanResult.ExtractedSubTotal = extractedData.SubTotal;
             scanResult.ExtractedVatAmount = extractedData.VatAmount;
             scanResult.ExtractedTotalAmount = extractedData.TotalAmount;
+            scanResult.RawTextContent = extractedText;
             scanResult.ScanStatus = "Completed";
             scanResult.ProcessedAt = DateTime.UtcNow;
+
+            // Check for duplicate by document number + amount
+            if (!string.IsNullOrEmpty(extractedData.DocumentNumber) && extractedData.TotalAmount.HasValue)
+            {
+                var docDuplicate = await _db.Set<OcrScanResult>()
+                    .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                        && r.Id != scanResult.Id
+                        && r.ExtractedDocumentNumber == extractedData.DocumentNumber
+                        && r.ExtractedTotalAmount == extractedData.TotalAmount
+                        && r.ScanStatus == "Completed");
+                if (docDuplicate != null)
+                {
+                    scanResult.IsDuplicate = true;
+                    scanResult.DuplicateOfScanId = docDuplicate.Id;
+                    scanResult.ProcessingNotes = $"Possible duplicate: same doc number {extractedData.DocumentNumber} and amount {extractedData.TotalAmount}";
+                }
+            }
 
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
@@ -72,6 +133,24 @@ public class OcrService : IOcrService
                     .FirstOrDefaultAsync(c => c.CompanyId == companyId
                         && c.Name.Contains(extractedData.VendorName));
                 scanResult.MatchedContactId = matchedContact?.Id;
+            }
+
+            // Auto-create document if confidence >= threshold (85%)
+            var autoCreateThreshold = decimal.TryParse(_configuration["Ocr:AutoCreateThreshold"], out var t) ? t : 0.85m;
+            if (scanResult.Confidence >= autoCreateThreshold
+                && scanResult.MatchedContactId.HasValue
+                && !scanResult.IsDuplicate
+                && !scanResult.CreatedDocumentId.HasValue)
+            {
+                try
+                {
+                    await AutoCreateDocumentAsync(companyId, scanResult);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Auto-create document failed for scan {ScanId}", scanResult.Id);
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-create failed: {ex.Message}";
+                }
             }
         }
         catch (Exception ex)
@@ -408,22 +487,44 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
+    private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan)
+    {
+        var docType = scan.DocumentType switch
+        {
+            "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
+            "Receipt" => DocumentType.Expense,
+            _ => DocumentType.Expense
+        };
+
+        var document = new Document
+        {
+            CompanyId = companyId,
+            DocumentNumber = $"OCR-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            DocumentType = docType,
+            Status = DocumentStatus.Draft,
+            DocumentDate = scan.ExtractedDate ?? DateTime.UtcNow.Date,
+            ContactId = scan.MatchedContactId!.Value,
+            SubTotal = scan.ExtractedSubTotal ?? 0,
+            VatAmount = scan.ExtractedVatAmount ?? 0,
+            TotalAmount = scan.ExtractedTotalAmount ?? 0,
+            BalanceDue = scan.ExtractedTotalAmount ?? 0,
+            Reference = scan.ExtractedDocumentNumber,
+            Notes = $"Auto-created from OCR scan (confidence: {scan.Confidence:P0}): {scan.OriginalFileName}",
+            CreatedBy = "OCR-AutoCreate"
+        };
+
+        _db.Documents.Add(document);
+        scan.CreatedDocumentId = document.Id;
+        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + " Auto-created document.";
+        await _db.SaveChangesAsync();
+    }
+
     private static OcrResultResponse MapToResponse(OcrScanResult r) => new(
-        r.Id,
-        r.OriginalFileName,
-        r.ScanStatus,
-        r.DocumentType,
-        r.Confidence,
-        r.ExtractedVendorName,
-        r.ExtractedVendorTaxId,
-        r.ExtractedDocumentNumber,
-        r.ExtractedDate,
-        r.ExtractedSubTotal,
-        r.ExtractedVatAmount,
-        r.ExtractedTotalAmount,
-        r.MatchedContactId,
-        r.CreatedDocumentId,
-        r.ProcessedAt);
+        r.Id, r.OriginalFileName, r.ScanStatus, r.DocumentType, r.Confidence,
+        r.ExtractedVendorName, r.ExtractedVendorTaxId, r.ExtractedDocumentNumber,
+        r.ExtractedDate, r.ExtractedSubTotal, r.ExtractedVatAmount, r.ExtractedTotalAmount,
+        r.MatchedContactId, r.CreatedDocumentId, r.ProcessedAt,
+        r.IsDuplicate, r.DuplicateOfScanId, r.FileHash, r.ProcessingNotes);
 }
 
 internal class OcrExtractedData
