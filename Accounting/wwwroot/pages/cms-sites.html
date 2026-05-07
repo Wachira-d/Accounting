@@ -321,8 +321,9 @@
               </div>
               <div class="flex gap-2" style="flex-wrap:wrap">
                 <a href="/pages/cms-edit.html?siteId=${s.id}" class="btn btn-sm btn-primary">✏️ แก้ไข</a>
+                <a href="/storefront.html?siteId=${s.id}&companyId=${Layout.getCompanyId()}&slug=home${!isPublished?'&preview=1':''}" target="_blank" class="btn btn-sm btn-secondary" title="ดูตัวอย่างเว็บไซต์">👁 ดูตัวอย่าง</a>
                 ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publish('${s.id}')">🚀 เผยแพร่</button>` : ''}
-                ${isPublished ? `<a href="${url}" target="_blank" class="btn btn-sm btn-secondary">🔗 เปิดเว็บ</a>` : ''}
+                ${isPublished ? `<a href="${url}" target="_blank" class="btn btn-sm btn-secondary" title="URL ที่เผยแพร่">🔗 ${Layout.esc(s.subdomain)}</a>` : ''}
                 <button class="btn btn-sm btn-danger" onclick="Page.deleteSite('${s.id}','${Layout.esc(s.name)}')" style="margin-left:auto">🗑</button>
               </div>
             </div>`;

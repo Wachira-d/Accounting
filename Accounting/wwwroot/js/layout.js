@@ -404,7 +404,7 @@ const Layout = {
     { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation', _i18nKey: 'nav.consolidation' },
 
     { section: 'เว็บไซต์ของฉัน' },
-    { id: 'cms-sites', label: 'เว็บไซต์ของฉัน', icon: '🌐', href: '/pages/cms-sites.html', _i18nKey: 'nav.cmsSites' },
+    { id: 'cms-sites', label: 'เว็บไซต์ของฉัน', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites' },
 
     { section: 'คลังเอกสาร' },
     { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport' },

@@ -44,10 +44,16 @@
       </div>
     </div>
 
-    <div class="editor-tabs">
+    <div class="editor-tabs" style="flex-wrap:wrap">
       <div class="editor-tab active" data-tab="pages" onclick="Page.switchTab('pages')">📄 หน้าเว็บ</div>
+      <div class="editor-tab" data-tab="nav" onclick="Page.switchTab('nav')">🧭 เมนู</div>
+      <div class="editor-tab" data-tab="media" onclick="Page.switchTab('media')">🖼️ คลังภาพ</div>
       <div class="editor-tab" data-tab="theme" onclick="Page.switchTab('theme')">🎨 ธีม</div>
-      <div class="editor-tab" data-tab="seo" onclick="Page.switchTab('seo')">🔍 SEO &amp; Analytics</div>
+      <div class="editor-tab" data-tab="products" onclick="Page.switchTab('products')" id="tabProducts" style="display:none">🛒 สินค้า</div>
+      <div class="editor-tab" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
+      <div class="editor-tab" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
+      <div class="editor-tab" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
+      <div class="editor-tab" data-tab="seo" onclick="Page.switchTab('seo')">🔍 SEO</div>
       <div class="editor-tab" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
     </div>
 
@@ -106,6 +112,64 @@
           <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO &amp; Analytics</button>
         </div>
       </div>
+    </div>
+
+    <!-- ====================== NAVIGATION TAB ====================== -->
+    <div class="tab-pane" id="tab-nav">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">เมนู Header / Footer</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openCreateNav()">+ เพิ่มเมนู</button>
+      </div>
+      <div id="navList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== MEDIA TAB ====================== -->
+    <div class="tab-pane" id="tab-media">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">คลังภาพ &amp; ไฟล์มีเดีย</h3>
+        <div>
+          <input type="file" id="mediaUpload" accept="image/*,video/*" style="display:none" onchange="Page.uploadMedia(this)">
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('mediaUpload').click()">📤 อัพโหลด</button>
+        </div>
+      </div>
+      <div id="mediaGrid" class="grid grid-4 gap-3"><div class="text-center text-gray-400" style="padding:30px;grid-column:1/-1">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== PRODUCTS TAB ====================== -->
+    <div class="tab-pane" id="tab-products">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">สินค้าในเว็บไซต์</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openCreateProduct()">+ เพิ่มสินค้า</button>
+      </div>
+      <div class="text-sm text-gray-500" style="margin-bottom:12px">เลือกสินค้าจากระบบบัญชีมาแสดงในเว็บ + กำหนดราคา/ภาพ/คำอธิบาย</div>
+      <div id="productsList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== ORDERS TAB ====================== -->
+    <div class="tab-pane" id="tab-orders">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">คำสั่งซื้อ</h3>
+        <button class="btn btn-secondary btn-sm" onclick="Page.loadOrders()">🔄 รีเฟรช</button>
+      </div>
+      <div id="ordersList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== BOOKING SERVICES TAB ====================== -->
+    <div class="tab-pane" id="tab-booking">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">บริการที่เปิดให้จอง</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openCreateBookingService()">+ เพิ่มบริการ</button>
+      </div>
+      <div id="bookingServicesList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== BOOKINGS TAB ====================== -->
+    <div class="tab-pane" id="tab-bookings">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">รายการจองทั้งหมด</h3>
+        <button class="btn btn-secondary btn-sm" onclick="Page.loadBookings()">🔄 รีเฟรช</button>
+      </div>
+      <div id="bookingsList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
     </div>
 
     <!-- ====================== DOMAIN TAB ====================== -->
@@ -219,6 +283,150 @@
       </div>
     </div>
 
+    <!-- Navigation modal -->
+    <div class="modal-overlay" id="navModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="navModalTitle">จัดการเมนู</h3>
+          <button class="modal-close" onclick="Layout.closeModal('navModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="navId">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ชื่อเมนู</label>
+              <input type="text" class="form-input" id="navName" placeholder="เมนูหลัก">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ตำแหน่ง</label>
+              <select class="form-input" id="navLocation">
+                <option value="header">Header</option>
+                <option value="footer">Footer</option>
+                <option value="sidebar">Sidebar</option>
+              </select>
+            </div>
+          </div>
+          <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200)">
+          <h4 style="font-size:14px;margin-bottom:12px">รายการเมนู</h4>
+          <div id="navItemsList" style="margin-bottom:14px"></div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">ข้อความ</label>
+              <input type="text" class="form-input" id="newItemLabel" placeholder="หน้าแรก">
+            </div>
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">URL หรือ slug หน้า</label>
+              <input type="text" class="form-input" id="newItemUrl" placeholder="/about หรือ ?slug=about">
+            </div>
+            <button class="btn btn-secondary" onclick="Page.addMenuItem()" style="white-space:nowrap">+ เพิ่ม</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('navModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product modal -->
+    <div class="modal-overlay" id="productModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="productModalTitle">เพิ่มสินค้าในเว็บ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('productModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="prdId">
+          <div class="form-group">
+            <label class="form-label">เลือกสินค้าจากระบบ *</label>
+            <select class="form-input" id="prdProductId"></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ชื่อแสดง (ไทย)</label>
+              <input type="text" class="form-input" id="prdDisplayName">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ชื่อแสดง (อังกฤษ)</label>
+              <input type="text" class="form-input" id="prdDisplayNameEn">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">URL Slug *</label>
+            <input type="text" class="form-input" id="prdSlug" oninput="Page.normalizeSlug(this)">
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบายสั้น</label>
+            <textarea class="form-input" id="prdShortDesc" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบายเต็ม (HTML)</label>
+            <textarea class="form-input" id="prdFullDesc" rows="4"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ราคาแสดง (บาท)</label>
+              <input type="number" class="form-input" id="prdPrice" step="0.01">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ราคาก่อนลด (บาท)</label>
+              <input type="number" class="form-input" id="prdComparePrice" step="0.01">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">URL ภาพหลัก</label>
+            <input type="text" class="form-input" id="prdImageUrl">
+          </div>
+          <div class="form-row">
+            <div class="form-group form-checkbox"><input type="checkbox" id="prdVisible" checked><label for="prdVisible">แสดงในเว็บ</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="prdFeatured"><label for="prdFeatured">สินค้าแนะนำ</label></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('productModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveProduct()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Booking service modal -->
+    <div class="modal-overlay" id="bookingServiceModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="bookingServiceModalTitle">เพิ่มบริการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bookingServiceModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="bsId">
+          <div class="form-group">
+            <label class="form-label">ชื่อบริการ *</label>
+            <input type="text" class="form-input" id="bsName" placeholder="เช่น ตัดผม">
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบาย</label>
+            <textarea class="form-input" id="bsDesc" rows="3"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ระยะเวลา (นาที) *</label>
+              <input type="number" class="form-input" id="bsDuration" value="30" min="5">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ราคา (บาท)</label>
+              <input type="number" class="form-input" id="bsPrice" step="0.01" value="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">รับพร้อมกัน (คน)</label>
+              <input type="number" class="form-input" id="bsCapacity" value="1" min="1">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bookingServiceModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveBookingService()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Add domain modal -->
     <div class="modal-overlay" id="domainModal">
       <div class="modal" style="max-width:500px">
@@ -265,12 +473,14 @@
       13:{n:'คำถามที่พบบ่อย',i:'❓',f:'faq'},
       14:{n:'ตารางราคา',i:'💰',f:'pricing'},
       15:{n:'Call-to-Action',i:'📢',f:'cta'},
+      17:{n:'สมัครรับข่าวสาร',i:'📧',f:'newsletter'},
       19:{n:'เส้นแบ่ง',i:'➖',f:'divider'},
       20:{n:'HTML กำหนดเอง',i:'</>',f:'html'},
       23:{n:'สรุปตะกร้า',i:'🛒',f:'cart'},
     };
     const PAGE_STATUS = { 0:['ร่าง','draft'], 1:['เผยแพร่','published'], 2:['กำหนดเวลา','draft'], 3:['เก็บถาวร','draft'] };
-    const DOM_VERIFY = { 0:['รอยืนยัน','pending'], 1:['ยืนยันแล้ว','verified'], 2:['ล้มเหลว','failed'] };
+    // Match DomainVerificationStatus enum: Pending=0, Verifying=1, Verified=2, Failed=3
+    const DOM_VERIFY = { 0:['รอยืนยัน','pending'], 1:['กำลังตรวจสอบ','pending'], 2:['ยืนยันแล้ว','verified'], 3:['ล้มเหลว','failed'] };
 
     const Page = {
       siteId: null,
@@ -320,6 +530,7 @@
           document.getElementById('sGaId').value = this.site.googleAnalyticsId || '';
           document.getElementById('sGtmId').value = this.site.googleTagManagerId || '';
           document.getElementById('sMetaPixel').value = this.site.metaPixelId || '';
+          this.applyTabsBySiteType();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -328,6 +539,27 @@
         document.querySelectorAll('.tab-pane').forEach(el => el.classList.toggle('active', el.id === `tab-${tab}`));
         if (tab === 'theme' && !this._themeLoaded) this.loadTheme();
         if (tab === 'domain' && !this._domainLoaded) this.loadDomains();
+        if (tab === 'nav' && !this._navLoaded) this.loadNavigations();
+        if (tab === 'media' && !this._mediaLoaded) this.loadMedia();
+        if (tab === 'products' && !this._productsLoaded) this.loadProducts();
+        if (tab === 'orders' && !this._ordersLoaded) this.loadOrders();
+        if (tab === 'booking' && !this._bookingLoaded) this.loadBookingServices();
+        if (tab === 'bookings' && !this._bookingsLoaded) this.loadBookings();
+      },
+
+      // Show e-commerce/booking tabs based on site type
+      applyTabsBySiteType() {
+        const t = this.site?.siteType;
+        // Ecommerce, ServiceCatalog, Hybrid → show Products + Orders
+        if (t === 2 || t === 4 || t === 5) {
+          document.getElementById('tabProducts').style.display = '';
+          document.getElementById('tabOrders').style.display = '';
+        }
+        // Booking, Hybrid → show booking tabs
+        if (t === 3 || t === 5) {
+          document.getElementById('tabBooking').style.display = '';
+          document.getElementById('tabBookings').style.display = '';
+        }
       },
 
       // ============ PAGES ============
@@ -357,6 +589,7 @@
               </div>
               <button class="btn btn-sm btn-primary" onclick="Page.openBlocks('${p.id}')">✏️ แก้ไขเนื้อหา</button>
               <button class="btn btn-sm btn-secondary" onclick="Page.openEditPage('${p.id}')">⚙️ ตั้งค่า</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.previewPage('${Layout.esc(p.slug)}')" title="ดูตัวอย่างในแท็บใหม่">👁 ดูตัวอย่าง</button>
               ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publishPage('${p.id}')" title="เผยแพร่หน้านี้">🚀</button>` : ''}
               <button class="btn btn-sm btn-danger" onclick="Page.deletePage('${p.id}','${Layout.esc(p.title)}')">🗑</button>
             </div>`;
@@ -421,6 +654,15 @@
           Layout.toast('ลบสำเร็จ', 'success');
           await this.loadPages();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      previewPage(slug) {
+        // Open storefront viewer in a new tab using siteId/companyId override —
+        // works regardless of host (the visitor flow uses host detection, but
+        // for admin preview we pass IDs explicitly so the published URL doesn't
+        // need to be reachable yet).
+        const u = `/storefront.html?siteId=${encodeURIComponent(this.siteId)}&companyId=${encodeURIComponent(this.site?.companyId || '')}&slug=${encodeURIComponent(slug || 'home')}&preview=1`;
+        window.open(u, '_blank');
       },
 
       async publishPage(id) {
@@ -538,6 +780,24 @@
           case 3: // Image
             html = inp('cfg_url','URL ภาพ',cfg.url) + inp('cfg_alt','คำอธิบายภาพ (alt)',cfg.alt) + inp('cfg_caption','คำบรรยายใต้ภาพ',cfg.caption);
             break;
+          case 4: // Gallery
+            html = ta('cfg_imagesJson','รายการภาพ (JSON: [{url, alt}])',JSON.stringify(cfg.images||[],null,2),8);
+            break;
+          case 12: // Testimonials
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'ลูกค้าพูดถึงเรา')
+                 + ta('cfg_testiText','รายการรีวิว (1 บรรทัดต่อ 1 รีวิว: ข้อความ | ชื่อ | ตำแหน่ง)',
+                     (cfg.testimonials||cfg.items||[]).map(t=>`${t.quote||t.text||''} | ${t.author||t.name||''} | ${t.role||''}`).join('\n'),6);
+            break;
+          case 17: // Newsletter
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'รับข่าวสารจากเรา')
+                 + inp('cfg_subheadline','คำอธิบาย',cfg.subheadline,'สมัครรับอีเมลข่าวสารและโปรโมชั่น')
+                 + inp('cfg_buttonText','ข้อความปุ่ม',cfg.buttonText,'สมัครรับข่าวสาร');
+            break;
+          case 6: // ProductGrid (more options)
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'สินค้าทั้งหมด')
+                 + inp('cfg_limit','จำนวนสินค้า (สูงสุด)',cfg.limit||12)
+                 + `<div class="form-group form-checkbox"><input type="checkbox" id="cfg_featured" ${cfg.featured?'checked':''}><label for="cfg_featured">แสดงเฉพาะสินค้าแนะนำ</label></div>`;
+            break;
           case 5: // Video
             html = inp('cfg_url','URL วิดีโอ (YouTube/Vimeo/MP4)',cfg.url) + inp('cfg_poster','URL ภาพปก (poster)',cfg.poster);
             break;
@@ -588,6 +848,14 @@
           case 1: cfg = { headline:get('cfg_headline'), subheadline:get('cfg_subheadline'), ctaText:get('cfg_ctaText'), ctaUrl:get('cfg_ctaUrl'), backgroundUrl:get('cfg_backgroundUrl') }; break;
           case 2: cfg = { content:get('cfg_content') }; break;
           case 3: cfg = { url:get('cfg_url'), alt:get('cfg_alt'), caption:get('cfg_caption') }; break;
+          case 4: { let imgs=[]; try{imgs=JSON.parse(get('cfg_imagesJson')||'[]');}catch(_){} cfg = { images: imgs }; break; }
+          case 6: cfg = { headline:get('cfg_headline'), limit:parseInt(get('cfg_limit'))||12, featured:document.getElementById('cfg_featured')?.checked||false }; break;
+          case 12: {
+            const lines = get('cfg_testiText').split('\n').map(s=>s.trim()).filter(Boolean);
+            cfg = { headline:get('cfg_headline'), testimonials: lines.map(line => { const [quote,author,role] = line.split('|').map(x=>(x||'').trim()); return { quote, author, role }; }) };
+            break;
+          }
+          case 17: cfg = { headline:get('cfg_headline'), subheadline:get('cfg_subheadline'), buttonText:get('cfg_buttonText') }; break;
           case 5: cfg = { url:get('cfg_url'), poster:get('cfg_poster') }; break;
           case 9: cfg = { headline:get('cfg_headline'), submitText:get('cfg_submitText'), emailTo:get('cfg_emailTo') }; break;
           case 11: cfg = { address:get('cfg_address'), lat:parseFloat(get('cfg_lat'))||null, lng:parseFloat(get('cfg_lng'))||null }; break;
@@ -851,7 +1119,7 @@
                   ${d.sslEnabled ? '<span style="margin-left:8px;color:#065F46">🔒 SSL เปิดใช้งาน</span>' : '<span style="margin-left:8px;color:var(--gray-500)">SSL รอเปิด</span>'}
                   ${d.isPrimary ? '<span style="margin-left:8px;color:var(--primary)">⭐ โดเมนหลัก</span>' : ''}
                 </div>
-                ${d.verificationStatus === 0 && d.verificationToken ? `
+                ${d.verificationStatus !== 2 && d.verificationToken ? `
                   <div class="verify-token-box">
                     <strong>เพิ่ม TXT record:</strong><br>
                     Host: <code>_verify.${Layout.esc(d.domain)}</code><br>
@@ -859,7 +1127,7 @@
                   </div>` : ''}
               </div>
               <div class="flex gap-2" style="flex-shrink:0">
-                ${d.verificationStatus !== 1 ? `<button class="btn btn-sm btn-primary" onclick="Page.verifyDomain('${d.id}')">ตรวจสอบ</button>` : ''}
+                ${d.verificationStatus !== 2 ? `<button class="btn btn-sm btn-primary" onclick="Page.verifyDomain('${d.id}')">ตรวจสอบ</button>` : ''}
                 <button class="btn btn-sm btn-danger" onclick="Page.deleteDomain('${d.id}','${Layout.esc(d.domain)}')">🗑</button>
               </div>
             </div>`;
@@ -892,7 +1160,7 @@
         try {
           const res = await api.cmsVerifyDomain(this.siteId, id);
           const status = res.data?.verificationStatus;
-          if (status === 1) Layout.toast('ยืนยันสำเร็จ — SSL กำลังออกอัตโนมัติ', 'success');
+          if (status === 2) Layout.toast('ยืนยันสำเร็จ — SSL กำลังออกอัตโนมัติ', 'success');
           else Layout.toast('ยังไม่พบ DNS record — รอ DNS อัปเดต (อาจใช้เวลาถึง 24 ชม.)', 'error');
           await this.loadDomains();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -905,6 +1173,448 @@
           await api.cmsDeleteDomain(this.siteId, id);
           Layout.toast('ลบสำเร็จ', 'success');
           await this.loadDomains();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ NAVIGATIONS ============
+      async loadNavigations() {
+        this._navLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListNavigations(this.siteId);
+          this.navigations = res.data || [];
+          this.renderNavigations();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderNavigations() {
+        const list = document.getElementById('navList');
+        if (!this.navigations.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีเมนู — กดปุ่ม "+ เพิ่มเมนู" เพื่อสร้าง<br><span style="font-size:12px">หากไม่สร้างเอง เว็บจะใช้เมนูเริ่มต้นจากชื่อหน้าโดยอัตโนมัติ</span></div>';
+          return;
+        }
+        list.innerHTML = this.navigations.map(n => `
+          <div class="page-row">
+            <div style="flex:1">
+              <div style="font-weight:600">${Layout.esc(n.name)} <span class="block-type-badge" style="margin-left:6px">${Layout.esc(n.location)}</span></div>
+              <div style="font-size:12px;color:var(--gray-500);margin-top:4px">
+                ${(n.items||[]).map(it => Layout.esc(it.label||'')).join(' › ') || '<em>ยังไม่มีรายการ</em>'}
+              </div>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="Page.openEditNav('${n.id}')">แก้ไข</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteNav('${n.id}','${Layout.esc(n.name)}')">🗑</button>
+          </div>`).join('');
+      },
+
+      openCreateNav() {
+        document.getElementById('navModalTitle').textContent = 'เพิ่มเมนู';
+        document.getElementById('navId').value = '';
+        document.getElementById('navName').value = 'เมนูหลัก';
+        document.getElementById('navLocation').value = 'header';
+        document.getElementById('navItemsList').innerHTML = '<div style="color:var(--gray-500);font-size:12px">บันทึกเมนูก่อน แล้วจึงเพิ่มรายการได้</div>';
+        document.getElementById('newItemLabel').value = '';
+        document.getElementById('newItemUrl').value = '';
+        // Auto-create on open
+        Layout.openModal('navModal');
+        this.createNavInline();
+      },
+
+      async createNavInline() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsCreateNavigation(this.siteId, { name: document.getElementById('navName').value || 'เมนู', location: document.getElementById('navLocation').value });
+          document.getElementById('navId').value = res.data?.id || '';
+          this._currentNav = res.data;
+          this.renderCurrentNavItems();
+          await this.loadNavigations();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      openEditNav(id) {
+        const n = this.navigations.find(x => x.id === id);
+        if (!n) return;
+        this._currentNav = n;
+        document.getElementById('navModalTitle').textContent = 'แก้ไขเมนู';
+        document.getElementById('navId').value = n.id;
+        document.getElementById('navName').value = n.name;
+        document.getElementById('navLocation').value = n.location;
+        this.renderCurrentNavItems();
+        Layout.openModal('navModal');
+      },
+
+      renderCurrentNavItems() {
+        const items = this._currentNav?.items || [];
+        const wrap = document.getElementById('navItemsList');
+        if (!items.length) {
+          wrap.innerHTML = '<div style="color:var(--gray-500);font-size:12px;margin-bottom:8px">ยังไม่มีรายการในเมนูนี้</div>';
+          return;
+        }
+        wrap.innerHTML = items.map(it => `
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#F9FAFB;border-radius:6px;margin-bottom:6px">
+            <div style="flex:1"><strong>${Layout.esc(it.label||'')}</strong> <span style="color:var(--gray-500);font-size:12px">${Layout.esc(it.url||it.pageSlug||'')}</span></div>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteMenuItem('${it.id}')">🗑</button>
+          </div>`).join('');
+      },
+
+      async addMenuItem() {
+        const navId = document.getElementById('navId').value;
+        if (!navId) { Layout.toast('บันทึกเมนูก่อน', 'error'); return; }
+        const label = document.getElementById('newItemLabel').value.trim();
+        const url = document.getElementById('newItemUrl').value.trim();
+        if (!label) { Layout.toast('กรุณากรอกข้อความ', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsAddMenuItem(this.siteId, navId, {
+            label,
+            url: url.startsWith('http') || url.startsWith('?') || url.startsWith('/') ? url : `?slug=${url}`,
+            sortOrder: (this._currentNav?.items?.length || 0)
+          });
+          document.getElementById('newItemLabel').value = '';
+          document.getElementById('newItemUrl').value = '';
+          // Reload nav
+          await this.loadNavigations();
+          this._currentNav = this.navigations.find(n => n.id === navId);
+          this.renderCurrentNavItems();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteMenuItem(itemId) {
+        const navId = document.getElementById('navId').value;
+        if (!navId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteMenuItem(this.siteId, navId, itemId);
+          await this.loadNavigations();
+          this._currentNav = this.navigations.find(n => n.id === navId);
+          this.renderCurrentNavItems();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteNav(id, name) {
+        if (!confirm(`ลบเมนู "${name}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteNavigation(this.siteId, id);
+          await this.loadNavigations();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ MEDIA ============
+      async loadMedia() {
+        this._mediaLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListMedia(this.siteId, '?pageSize=100');
+          this.media = res.data?.items || res.data || [];
+          this.renderMedia();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderMedia() {
+        const grid = document.getElementById('mediaGrid');
+        if (!this.media.length) {
+          grid.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;grid-column:1/-1;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีไฟล์ — กด "อัพโหลด" เพื่อเพิ่ม</div>';
+          return;
+        }
+        grid.innerHTML = this.media.map(m => `
+          <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;background:#fff">
+            ${m.contentType?.startsWith('image/')
+              ? `<img src="${Layout.esc(m.publicUrl||m.storagePath||'')}" style="width:100%;aspect-ratio:1/1;object-fit:cover;background:#F3F4F6" loading="lazy">`
+              : `<div style="aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;background:#F3F4F6;font-size:32px">📄</div>`}
+            <div style="padding:8px">
+              <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Layout.esc(m.fileName||'')}</div>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:2px">${(m.fileSize/1024).toFixed(0)} KB</div>
+              <div style="display:flex;gap:4px;margin-top:6px">
+                <button class="btn btn-sm btn-ghost" onclick="navigator.clipboard.writeText('${Layout.esc(m.publicUrl||m.storagePath||'')}');Layout.toast('คัดลอก URL แล้ว','success')" style="font-size:11px;flex:1">📋 คัดลอก URL</button>
+                <button class="btn btn-sm btn-danger" onclick="Page.deleteMedia('${m.id}')" style="font-size:11px">🗑</button>
+              </div>
+            </div>
+          </div>`).join('');
+      },
+
+      async uploadMedia(input) {
+        if (!input.files?.length) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          for (const f of input.files) {
+            const fd = new FormData();
+            fd.append('file', f);
+            await api.cmsUploadMedia(this.siteId, fd);
+          }
+          Layout.toast('อัพโหลดสำเร็จ', 'success');
+          input.value = '';
+          await this.loadMedia();
+        } catch (e) { Layout.toast(e.message || 'อัพโหลดไม่สำเร็จ', 'error'); }
+      },
+
+      async deleteMedia(id) {
+        if (!confirm('ลบไฟล์นี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteMedia(this.siteId, id);
+          await this.loadMedia();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ PRODUCTS (CMS) ============
+      async loadProducts() {
+        this._productsLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListProducts(this.siteId, '?pageSize=100');
+          this.cmsProducts = res.data?.items || res.data || [];
+          this.renderProducts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderProducts() {
+        const list = document.getElementById('productsList');
+        if (!this.cmsProducts.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีสินค้าในเว็บ — กด "+ เพิ่มสินค้า" เพื่อเลือกจากระบบบัญชี</div>';
+          return;
+        }
+        list.innerHTML = this.cmsProducts.map(p => `
+          <div class="page-row">
+            ${p.featuredImageUrl ? `<img src="${Layout.esc(p.featuredImageUrl)}" style="width:48px;height:48px;border-radius:6px;object-fit:cover">` : '<div style="width:48px;height:48px;background:#F3F4F6;border-radius:6px"></div>'}
+            <div style="flex:1">
+              <div style="font-weight:600">${Layout.esc(p.displayName||'')} ${p.isFeatured?'<span class="block-type-badge" style="background:#FEF3C7;color:#92400E;margin-left:4px">⭐ แนะนำ</span>':''}${!p.isVisible?'<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B;margin-left:4px">ซ่อน</span>':''}</div>
+              <div style="font-size:12px;color:var(--gray-500)">
+                ฿${Number(p.overrideSellingPrice ?? p.erpSellingPrice ?? 0).toLocaleString('th-TH')} · /${Layout.esc(p.slug||'')}
+              </div>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="Page.openEditProduct('${p.id}')">แก้ไข</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteProduct('${p.id}','${Layout.esc(p.displayName||'')}')">🗑</button>
+          </div>`).join('');
+      },
+
+      async openCreateProduct() {
+        const api = Layout.api(); if (!api) return;
+        document.getElementById('productModalTitle').textContent = 'เพิ่มสินค้าในเว็บ';
+        document.getElementById('prdId').value = '';
+        // Load ERP products to pick from
+        try {
+          const res = await api.getProducts('?pageSize=200');
+          const products = res.data?.items || res.data || [];
+          document.getElementById('prdProductId').innerHTML = '<option value="">-- เลือกสินค้า --</option>' + products.map(p => `<option value="${p.id}" data-name="${Layout.esc(p.name||'')}" data-price="${p.salesPrice||p.unitPrice||0}">${Layout.esc(p.name||'')} (฿${Number(p.salesPrice||p.unitPrice||0).toLocaleString('th-TH')})</option>`).join('');
+        } catch (e) { Layout.toast('โหลดรายการสินค้าไม่สำเร็จ', 'error'); }
+        document.getElementById('prdProductId').onchange = (e) => {
+          const opt = e.target.selectedOptions[0];
+          if (opt) {
+            document.getElementById('prdDisplayName').value = opt.dataset.name || '';
+            document.getElementById('prdSlug').value = (opt.dataset.name || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+            document.getElementById('prdPrice').value = opt.dataset.price || '';
+          }
+        };
+        ['prdDisplayName','prdDisplayNameEn','prdSlug','prdShortDesc','prdFullDesc','prdPrice','prdComparePrice','prdImageUrl'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('prdVisible').checked = true;
+        document.getElementById('prdFeatured').checked = false;
+        Layout.openModal('productModal');
+      },
+
+      openEditProduct(id) {
+        const p = this.cmsProducts.find(x => x.id === id);
+        if (!p) return;
+        document.getElementById('productModalTitle').textContent = 'แก้ไขสินค้า';
+        document.getElementById('prdId').value = p.id;
+        document.getElementById('prdProductId').innerHTML = `<option value="${p.productId||''}">${Layout.esc(p.displayName||'')}</option>`;
+        document.getElementById('prdProductId').disabled = true;
+        document.getElementById('prdDisplayName').value = p.displayName || '';
+        document.getElementById('prdDisplayNameEn').value = p.displayNameEn || '';
+        document.getElementById('prdSlug').value = p.slug || '';
+        document.getElementById('prdShortDesc').value = p.shortDescription || '';
+        document.getElementById('prdFullDesc').value = p.fullDescription || '';
+        document.getElementById('prdPrice').value = p.overrideSellingPrice ?? '';
+        document.getElementById('prdComparePrice').value = p.compareAtPrice ?? '';
+        document.getElementById('prdImageUrl').value = p.featuredImageUrl || '';
+        document.getElementById('prdVisible').checked = p.isVisible !== false;
+        document.getElementById('prdFeatured').checked = !!p.isFeatured;
+        Layout.openModal('productModal');
+      },
+
+      async saveProduct() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('prdId').value;
+        const productId = document.getElementById('prdProductId').value;
+        if (!id && !productId) { Layout.toast('กรุณาเลือกสินค้า', 'error'); return; }
+        const body = {
+          productId: id ? undefined : productId,
+          displayName: document.getElementById('prdDisplayName').value,
+          displayNameEn: document.getElementById('prdDisplayNameEn').value || null,
+          slug: document.getElementById('prdSlug').value,
+          shortDescription: document.getElementById('prdShortDesc').value || null,
+          fullDescription: document.getElementById('prdFullDesc').value || null,
+          overrideSellingPrice: parseFloat(document.getElementById('prdPrice').value) || null,
+          compareAtPrice: parseFloat(document.getElementById('prdComparePrice').value) || null,
+          featuredImageUrl: document.getElementById('prdImageUrl').value || null,
+          isVisible: document.getElementById('prdVisible').checked,
+          isFeatured: document.getElementById('prdFeatured').checked
+        };
+        try {
+          if (id) await api.cmsUpdateProduct(this.siteId, id, body);
+          else await api.cmsCreateProduct(this.siteId, body);
+          Layout.toast('บันทึกสำเร็จ', 'success');
+          Layout.closeModal('productModal');
+          document.getElementById('prdProductId').disabled = false;
+          await this.loadProducts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteProduct(id, name) {
+        if (!confirm(`ลบ "${name}" ออกจากเว็บไซต์?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteProduct(this.siteId, id);
+          await this.loadProducts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ ORDERS ============
+      async loadOrders() {
+        this._ordersLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListOrders(this.siteId, '?pageSize=50');
+          const orders = res.data?.items || res.data || [];
+          const list = document.getElementById('ordersList');
+          if (!orders.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีคำสั่งซื้อ</div>'; return; }
+          const STATUS = { 0:'รอยืนยัน', 1:'ยืนยันแล้ว', 2:'กำลังเตรียม', 3:'จัดส่งแล้ว', 4:'ส่งถึงปลายทาง', 5:'ยกเลิก', 6:'คืนเงิน' };
+          list.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>` +
+            orders.map(o => `<tr>
+              <td>${Layout.esc(o.orderNumber||'')}</td>
+              <td>${new Date(o.createdAt).toLocaleDateString('th-TH')}</td>
+              <td>${Layout.esc(o.customerName||o.customerEmail||'-')}</td>
+              <td class="text-right">฿${Number(o.totalAmount||0).toLocaleString('th-TH')}</td>
+              <td><span class="block-type-badge">${STATUS[o.status]||o.status}</span></td>
+              <td><button class="btn btn-sm btn-secondary" onclick="Page.viewOrder('${o.id}')">ดู</button>
+              ${!o.erpDocumentId ? `<button class="btn btn-sm btn-success" onclick="Page.syncOrderToErp('${o.id}')" title="สร้างเอกสารใน ERP">📊 ส่ง ERP</button>` : '<span style="color:#10B981;font-size:12px">✓ อยู่ใน ERP</span>'}</td>
+            </tr>`).join('') + '</tbody></table></div>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async viewOrder(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetOrder(this.siteId, id);
+          const o = res.data;
+          const lines = (o.lines||[]).map(l => `${l.productName||'-'} × ${l.quantity} = ฿${Number(l.lineTotal||0).toLocaleString('th-TH')}`).join('\n');
+          alert(`คำสั่งซื้อ ${o.orderNumber}\nลูกค้า: ${o.customerName||o.customerEmail}\nสถานะ: ${o.status}\n\nรายการ:\n${lines}\n\nรวม: ฿${Number(o.totalAmount||0).toLocaleString('th-TH')}`);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async syncOrderToErp(id) {
+        if (!confirm('สร้างเอกสารใน ERP จากคำสั่งซื้อนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsSyncOrderToErp(this.siteId, id);
+          Layout.toast('ส่งไปยัง ERP สำเร็จ — ตรวจสอบในหน้าเอกสาร', 'success');
+          await this.loadOrders();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ BOOKING ============
+      async loadBookingServices() {
+        this._bookingLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListBookingServices(this.siteId);
+          this.bookingServices = res.data || [];
+          const list = document.getElementById('bookingServicesList');
+          if (!this.bookingServices.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีบริการ — กด "+ เพิ่มบริการ"</div>'; return; }
+          list.innerHTML = this.bookingServices.map(s => `
+            <div class="page-row">
+              <div style="flex:1">
+                <div style="font-weight:600">${Layout.esc(s.name||'')}</div>
+                <div style="font-size:12px;color:var(--gray-500)">${s.durationMinutes||0} นาที · ฿${Number(s.price||0).toLocaleString('th-TH')} · รับ ${s.maxCapacity||1} คน/รอบ</div>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="Page.openEditBookingService('${s.id}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteBookingService('${s.id}','${Layout.esc(s.name||'')}')">🗑</button>
+            </div>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      openCreateBookingService() {
+        document.getElementById('bookingServiceModalTitle').textContent = 'เพิ่มบริการ';
+        ['bsId','bsName','bsDesc'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('bsDuration').value = 30;
+        document.getElementById('bsPrice').value = 0;
+        document.getElementById('bsCapacity').value = 1;
+        Layout.openModal('bookingServiceModal');
+      },
+
+      openEditBookingService(id) {
+        const s = this.bookingServices.find(x => x.id === id);
+        if (!s) return;
+        document.getElementById('bookingServiceModalTitle').textContent = 'แก้ไขบริการ';
+        document.getElementById('bsId').value = s.id;
+        document.getElementById('bsName').value = s.name || '';
+        document.getElementById('bsDesc').value = s.description || '';
+        document.getElementById('bsDuration').value = s.durationMinutes || 30;
+        document.getElementById('bsPrice').value = s.price || 0;
+        document.getElementById('bsCapacity').value = s.maxCapacity || 1;
+        Layout.openModal('bookingServiceModal');
+      },
+
+      async saveBookingService() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('bsId').value;
+        const body = {
+          name: document.getElementById('bsName').value.trim(),
+          description: document.getElementById('bsDesc').value || null,
+          durationMinutes: parseInt(document.getElementById('bsDuration').value) || 30,
+          price: parseFloat(document.getElementById('bsPrice').value) || 0,
+          maxCapacity: parseInt(document.getElementById('bsCapacity').value) || 1,
+          isActive: true
+        };
+        if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
+        try {
+          if (id) await api.cmsUpdateBookingService(this.siteId, id, body);
+          else await api.cmsCreateBookingService(this.siteId, body);
+          Layout.toast('บันทึกสำเร็จ', 'success');
+          Layout.closeModal('bookingServiceModal');
+          await this.loadBookingServices();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteBookingService(id, name) {
+        if (!confirm(`ลบบริการ "${name}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteBookingService(this.siteId, id);
+          await this.loadBookingServices();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadBookings() {
+        this._bookingsLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListBookings(this.siteId, '?pageSize=50');
+          const bookings = res.data?.items || res.data || [];
+          const list = document.getElementById('bookingsList');
+          if (!bookings.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีรายการจอง</div>'; return; }
+          const STATUS = { 0:'รอยืนยัน', 1:'ยืนยันแล้ว', 2:'เสร็จสิ้น', 3:'ยกเลิก', 4:'ไม่มา' };
+          list.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่/เวลา</th><th>ลูกค้า</th><th>บริการ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>` +
+            bookings.map(b => `<tr>
+              <td>${Layout.esc(b.bookingNumber||'')}</td>
+              <td>${b.startTime ? new Date(b.startTime).toLocaleString('th-TH') : '-'}</td>
+              <td>${Layout.esc(b.customerName||b.customerEmail||'-')}</td>
+              <td>${Layout.esc(b.serviceName||'-')}</td>
+              <td><span class="block-type-badge">${STATUS[b.status]||b.status}</span></td>
+              <td>
+                ${b.status === 0 ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}',1)">ยืนยัน</button>` : ''}
+                ${b.status === 1 ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}',2)">เสร็จสิ้น</button>` : ''}
+                ${b.status < 2 ? `<button class="btn btn-sm btn-danger" onclick="Page.updateBookingStatus('${b.id}',3)">ยกเลิก</button>` : ''}
+              </td>
+            </tr>`).join('') + '</tbody></table></div>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async updateBookingStatus(id, status) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsUpdateBookingStatus(this.siteId, id, { status });
+          Layout.toast('อัพเดทสำเร็จ', 'success');
+          await this.loadBookings();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

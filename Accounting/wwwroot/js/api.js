@@ -332,6 +332,32 @@ const API = {
       cmsAddDomain: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/domains`, d),
       cmsVerifyDomain: (siteId, domainId) => API.post(`${base}/cms/sites/${siteId}/domains/${domainId}/verify`, {}),
       cmsDeleteDomain: (siteId, domainId) => API.del(`${base}/cms/sites/${siteId}/domains/${domainId}`),
+      // Media (per site)
+      cmsListMedia: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/content/media${q}`),
+      cmsUploadMedia: (siteId, formData) => API.upload(`${base}/cms/sites/${siteId}/content/media`, formData),
+      cmsDeleteMedia: (siteId, mediaId) => API.del(`${base}/cms/sites/${siteId}/content/media/${mediaId}`),
+      // Navigations (per site)
+      cmsListNavigations: (siteId) => API.get(`${base}/cms/sites/${siteId}/content/navigations`),
+      cmsCreateNavigation: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/content/navigations`, d),
+      cmsDeleteNavigation: (siteId, navId) => API.del(`${base}/cms/sites/${siteId}/content/navigations/${navId}`),
+      cmsAddMenuItem: (siteId, navId, d) => API.post(`${base}/cms/sites/${siteId}/content/navigations/${navId}/items`, d),
+      cmsDeleteMenuItem: (siteId, navId, itemId) => API.del(`${base}/cms/sites/${siteId}/content/navigations/${navId}/items/${itemId}`),
+      // E-commerce (per site)
+      cmsListProducts: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/commerce/products${q}`),
+      cmsCreateProduct: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/products`, d),
+      cmsUpdateProduct: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/products/${id}`, d),
+      cmsDeleteProduct: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/products/${id}`),
+      cmsListOrders: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/commerce/orders${q}`),
+      cmsGetOrder: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/commerce/orders/${id}`),
+      cmsUpdateOrderStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/orders/${id}/status`, d),
+      cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
+      // Booking (per site)
+      cmsListBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services`),
+      cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),
+      cmsUpdateBookingService: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/services/${id}`, d),
+      cmsDeleteBookingService: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/services/${id}`),
+      cmsListBookings: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/booking/bookings${q}`),
+      cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
       // Server-side PDF generation. Endpoints return raw PDF bytes (not JSON), so we
       // expose URLs for the page to fetch as Blobs and trigger a download.
       generateDocPdfUrl: () => `${base}/document-templates/generate-pdf`,

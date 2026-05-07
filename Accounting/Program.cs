@@ -325,6 +325,11 @@ if (app.Environment.IsProduction())
 }
 app.UseCors();
 
+// CMS Site Routing — must run BEFORE UseStaticFiles so we can rewrite the
+// request path to /storefront.html and have static-files serve it for
+// visitor-facing site hosts (subdomain or custom domain).
+app.UseCmsSiteRouting();
+
 // Static files (frontend) — no-cache for HTML/JS/CSS to prevent stale content
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions
@@ -357,9 +362,6 @@ app.UseStaticFiles(new StaticFileOptions
 
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
-
-// 5.5 CMS Site Routing (subdomain/domain resolution)
-app.UseCmsSiteRouting();
 
 // 6. Authentication & Authorization
 app.UseAuthentication();
