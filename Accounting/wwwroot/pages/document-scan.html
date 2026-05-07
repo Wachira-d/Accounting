@@ -174,6 +174,8 @@
     /* Scan Card Actions */
     .scan-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .scan-card-actions .btn { font-size: 12px; padding: 6px 12px; }
+    .btn-danger-outline { background: transparent; color: var(--danger, #EF4444); border: 1px solid var(--danger, #EF4444); border-radius: var(--radius, 6px); cursor: pointer; }
+    .btn-danger-outline:hover { background: var(--danger, #EF4444); color: #fff; }
 
     /* Config section */
     .config-section {
@@ -747,6 +749,10 @@
           TaxInvoice: { label: 'ใบกำกับภาษี', cls: 'tax-invoice' },
           Invoice: { label: 'ใบแจ้งหนี้', cls: 'invoice' },
           Receipt: { label: 'ใบเสร็จ', cls: 'receipt' },
+          CreditNote: { label: 'ใบลดหนี้', cls: 'invoice' },
+          DebitNote: { label: 'ใบเพิ่มหนี้', cls: 'invoice' },
+          PurchaseOrder: { label: 'ใบสั่งซื้อ', cls: 'invoice' },
+          WHT: { label: 'หนังสือรับรอง 50 ทวิ', cls: 'receipt' },
         };
         const typeInfo = typeMap[scan.documentType] || { label: scan.documentType || 'ไม่ระบุ', cls: 'unknown' };
 
@@ -808,6 +814,9 @@
         }
         if (scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
+        }
+        if (!scan.createdDocumentId) {
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${scan.id}')" title="ลบ">&#x1F5D1;</button>`;
         }
 
         return `
@@ -899,6 +908,19 @@
           this.loadScans();
         } catch (err) {
           Layout.toast('สแกนใหม่ไม่สำเร็จ: ' + err.message, 'error');
+        }
+      },
+
+      async deleteScan(scanId) {
+        if (!confirm('ลบเอกสารสแกนนี้?')) return;
+        const api = Layout.api();
+        if (!api) return;
+        try {
+          await api.ocrDelete(scanId);
+          Layout.toast('ลบสำเร็จ');
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('ลบไม่สำเร็จ: ' + err.message, 'error');
         }
       },
 

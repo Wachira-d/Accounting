@@ -125,6 +125,21 @@ public class OcrService : IOcrService
                     extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode }));
             }
 
+            scanResult.ExpenseCategory = extractedData.ExpenseCategory;
+            scanResult.HasWht = extractedData.HasWht;
+            scanResult.WhtRate = extractedData.WhtRate;
+            scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
+
+            if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
+            {
+                scanResult.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    extractedData.DebitAccountCode, extractedData.DebitAccountName,
+                    extractedData.CreditAccountCode, extractedData.CreditAccountName,
+                    extractedData.VatAccountCode, extractedData.VatAccountName,
+                });
+            }
+
             // Match GL accounts from suggestions against company's chart of accounts
             if (!string.IsNullOrEmpty(extractedData.DebitAccountCode))
             {
@@ -474,81 +489,226 @@ public class OcrService : IOcrService
             return data;
         }
 
-        // Document type detection
-        if (text.Contains("ใบกำกับภาษี") || text.Contains("TAX INVOICE"))
+        var upperText = text.ToUpperInvariant();
+
+        // Document type detection — TaxInvoice wins even if Receipt text also present
+        bool hasTaxInvoice = text.Contains("ใบกำกับภาษี") || text.Contains("ใบกํากับภาษี") || upperText.Contains("TAX INVOICE");
+        bool hasReceipt = text.Contains("ใบเสร็จรับเงิน") || upperText.Contains("RECEIPT");
+        bool hasInvoice = text.Contains("ใบแจ้งหนี้") || (upperText.Contains("INVOICE") && !upperText.Contains("TAX INVOICE"));
+        bool hasPurchaseOrder = text.Contains("ใบสั่งซื้อ") || upperText.Contains("PURCHASE ORDER");
+        bool hasWhtDoc = text.Contains("หนังสือรับรอง") || text.Contains("50 ทวิ") || text.Contains("ภาษีหัก ณ ที่จ่าย");
+        bool hasCreditNote = text.Contains("ใบลดหนี้") || upperText.Contains("CREDIT NOTE");
+        bool hasDebitNote = text.Contains("ใบเพิ่มหนี้") || upperText.Contains("DEBIT NOTE");
+
+        if (hasTaxInvoice) { data.DocumentType = "TaxInvoice"; data.Confidence = 0.95m; }
+        else if (hasCreditNote) { data.DocumentType = "CreditNote"; data.Confidence = 0.90m; }
+        else if (hasDebitNote) { data.DocumentType = "DebitNote"; data.Confidence = 0.90m; }
+        else if (hasWhtDoc) { data.DocumentType = "WHT"; data.Confidence = 0.90m; }
+        else if (hasPurchaseOrder) { data.DocumentType = "PurchaseOrder"; data.Confidence = 0.85m; }
+        else if (hasInvoice) { data.DocumentType = "Invoice"; data.Confidence = 0.90m; }
+        else if (hasReceipt) { data.DocumentType = "Receipt"; data.Confidence = 0.88m; }
+        else { data.DocumentType = "Receipt"; data.Confidence = 0.5m; }
+
+        // Extract ALL 13-digit tax IDs
+        var taxIdPattern = @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})";
+        var allTaxIds = Regex.Matches(text, taxIdPattern)
+            .Cast<Match>()
+            .Select(m => Regex.Replace(m.Groups[1].Value, @"[-\s]", ""))
+            .Where(id => id.Length == 13)
+            .Distinct()
+            .ToList();
+
+        // Extract ALL company names with position
+        var companyPattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[-\s]?\d{4})|$)";
+        var companyMatches = Regex.Matches(text, companyPattern, RegexOptions.Multiline);
+        var companyNames = new List<(string FullName, int Position)>();
+        foreach (Match cm in companyMatches)
         {
-            data.DocumentType = "TaxInvoice";
-            data.Confidence = 0.95m;
-        }
-        else if (text.Contains("ใบแจ้ง��นี้") || text.Contains("INVOICE"))
-        {
-            data.DocumentType = "Invoice";
-            data.Confidence = 0.90m;
-        }
-        else if (text.Contains("ใบเสร็จรับเงิน") || text.Contains("RECEIPT"))
-        {
-            data.DocumentType = "Receipt";
-            data.Confidence = 0.88m;
-        }
-        else
-        {
-            data.DocumentType = "Receipt";
-            data.Confidence = 0.6m;
+            var prefix = cm.Groups[1].Value;
+            var name = cm.Groups[2].Value.Trim();
+            if (string.IsNullOrWhiteSpace(name) || name.Length < 2) continue;
+            var afterMatch = text.Substring(cm.Index, Math.Min(cm.Length + 30, text.Length - cm.Index));
+            var suffix = "";
+            if (afterMatch.Contains("จำกัด"))
+                suffix = afterMatch.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
+            companyNames.Add(($"{prefix} {name}{suffix}".Trim(), cm.Index));
         }
 
-        // Tax ID extraction (13-digit)
-        var taxIdMatch = Regex.Match(text, @"\b(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})\b");
-        if (taxIdMatch.Success)
-            data.VendorTaxId = Regex.Replace(taxIdMatch.Groups[1].Value, @"[-\s]", "");
+        // Distinguish vendor from our company by seller/buyer section context
+        var sellerKeywords = new[] { "ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "SELLER", "FROM", "ผู้ออก" };
+        var buyerKeywords = new[] { "ผู้ซื้อ", "ลูกค้า", "นามผู้ซื้อ", "BUYER", "CUSTOMER", "BILL TO", "SOLD TO", "ส่งถึง" };
+
+        string? vendorName = null;
+        string? vendorTaxId = null;
+
+        if (companyNames.Count >= 2)
+        {
+            int sellerIdx = -1, buyerIdx = -1;
+            foreach (var kw in sellerKeywords)
+            {
+                var kwPos = text.IndexOf(kw, StringComparison.OrdinalIgnoreCase);
+                if (kwPos >= 0) { sellerIdx = kwPos; break; }
+            }
+            foreach (var kw in buyerKeywords)
+            {
+                var kwPos = text.IndexOf(kw, StringComparison.OrdinalIgnoreCase);
+                if (kwPos >= 0) { buyerIdx = kwPos; break; }
+            }
+
+            if (sellerIdx >= 0 && buyerIdx >= 0)
+            {
+                var sellerCompany = companyNames.OrderBy(c => Math.Abs(c.Position - sellerIdx)).First();
+                vendorName = sellerCompany.FullName;
+                if (allTaxIds.Count >= 2)
+                {
+                    var taxIdPositions = Regex.Matches(text, taxIdPattern)
+                        .Cast<Match>()
+                        .Select(m => (Id: Regex.Replace(m.Groups[1].Value, @"[-\s]", ""), Pos: m.Index))
+                        .Where(x => x.Id.Length == 13)
+                        .ToList();
+                    vendorTaxId = taxIdPositions.OrderBy(x => Math.Abs(x.Pos - sellerIdx)).First().Id;
+                }
+                else if (allTaxIds.Count == 1)
+                    vendorTaxId = allTaxIds[0];
+            }
+            else
+            {
+                vendorName = companyNames[0].FullName;
+                vendorTaxId = allTaxIds.Count > 0 ? allTaxIds[0] : null;
+            }
+        }
+        else if (companyNames.Count == 1)
+        {
+            vendorName = companyNames[0].FullName;
+            vendorTaxId = allTaxIds.Count > 0 ? allTaxIds[0] : null;
+        }
+        else if (allTaxIds.Count > 0)
+            vendorTaxId = allTaxIds[0];
+
+        data.VendorName = vendorName;
+        data.VendorTaxId = vendorTaxId;
 
         // Document number
-        var docNumMatch = Regex.Match(text, @"(?:เลขที่|No\.?|INV|IV|RE|TX)[\s:]*([A-Z0-9][-A-Z0-9/]+)", RegexOptions.IgnoreCase);
-        if (docNumMatch.Success)
-            data.DocumentNumber = docNumMatch.Groups[1].Value.Trim();
-
-        // Date (Thai format: dd/mm/yyyy or dd-mm-yyyy)
-        var dateMatch = Regex.Match(text, @"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})");
-        if (dateMatch.Success)
+        string?[] docNumPatterns = {
+            @"เลขที่\s*[:：]?\s*([A-Za-z0-9\-/]+\d+)",
+            @"(?:No|เลข(?:ที่)?)\s*\.?\s*[:：]?\s*([A-Za-z0-9\-/]+)",
+            @"(?:INV|REC|TAX|TX|IV|PO|CN|DN)[\-/]?\s*(\d[\d\-/]*)",
+        };
+        foreach (var pattern in docNumPatterns)
         {
-            int day = int.Parse(dateMatch.Groups[1].Value);
-            int month = int.Parse(dateMatch.Groups[2].Value);
-            int year = int.Parse(dateMatch.Groups[3].Value);
-            if (year > 2500) year -= 543; // Convert Buddhist Era
-            if (year < 100) year += 2000;
-            if (day >= 1 && day <= 31 && month >= 1 && month <= 12)
-                data.DocumentDate = new DateTime(year, month, day);
+            var docNumMatch = Regex.Match(text, pattern!, RegexOptions.IgnoreCase);
+            if (docNumMatch.Success) { data.DocumentNumber = docNumMatch.Groups[1].Value.Trim(); break; }
         }
 
-        // Amount patterns (Thai: ยอดรวม, รวมทั้งสิ้น, TOTAL)
-        var totalMatch = Regex.Match(text, @"(?:ยอดรวม|รวมทั้งสิ้น|รวมเงิน|TOTAL|Grand\s*Total)[\s:]*([0-9,]+\.?\d*)", RegexOptions.IgnoreCase);
-        if (totalMatch.Success)
-            data.TotalAmount = ParseDecimal(totalMatch.Groups[1].Value);
+        // Date — multiple patterns including Thai month names
+        string[] datePatterns = {
+            @"(?:วันที่|Date)\s*[:：]?\s*(\d{1,2})\s*[/\-\.]\s*(\d{1,2})\s*[/\-\.]\s*(\d{2,4})",
+            @"(\d{1,2})\s*[/\-\.]\s*(\d{1,2})\s*[/\-\.]\s*(\d{4})",
+            @"(\d{1,2})\s+(ม\.?ค\.?|ก\.?พ\.?|มี\.?ค\.?|เม\.?ย\.?|พ\.?ค\.?|มิ\.?ย\.?|ก\.?ค\.?|ส\.?ค\.?|ก\.?ย\.?|ต\.?ค\.?|พ\.?ย\.?|ธ\.?ค\.?)\s+(\d{4})",
+            @"(\d{1,2})\s*[/\-\.]\s*(\d{1,2})\s*[/\-\.]\s*(\d{2})\b",
+        };
+        foreach (var pattern in datePatterns)
+        {
+            var dateMatch = Regex.Match(text, pattern);
+            if (!dateMatch.Success) continue;
+            int day = int.Parse(dateMatch.Groups[1].Value);
+            string monthStr = dateMatch.Groups[2].Value;
+            int year = int.Parse(dateMatch.Groups[3].Value);
+            if (year > 2500) year -= 543;
+            if (year < 100) year += 2000;
+            int month;
+            if (int.TryParse(monthStr, out month)) { /* numeric */ }
+            else
+            {
+                var thaiMonths = new Dictionary<string, int>
+                {
+                    {"ม.ค", 1}, {"มค", 1}, {"ก.พ", 2}, {"กพ", 2},
+                    {"มี.ค", 3}, {"มีค", 3}, {"เม.ย", 4}, {"เมย", 4},
+                    {"พ.ค", 5}, {"พค", 5}, {"มิ.ย", 6}, {"มิย", 6},
+                    {"ก.ค", 7}, {"กค", 7}, {"ส.ค", 8}, {"สค", 8},
+                    {"ก.ย", 9}, {"กย", 9}, {"ต.ค", 10}, {"ตค", 10},
+                    {"พ.ย", 11}, {"พย", 11}, {"ธ.ค", 12}, {"ธค", 12},
+                };
+                month = 1;
+                foreach (var (key, val) in thaiMonths)
+                    if (monthStr.Contains(key)) { month = val; break; }
+            }
+            if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900)
+            {
+                try { data.DocumentDate = new DateTime(year, month, day); } catch { }
+                break;
+            }
+        }
 
-        // VAT amount
-        var vatMatch = Regex.Match(text, @"(?:ภาษีมูลค่าเพิ่ม|VAT|ภาษี\s*7%)[\s:]*([0-9,]+\.?\d*)", RegexOptions.IgnoreCase);
-        if (vatMatch.Success)
-            data.VatAmount = ParseDecimal(vatMatch.Groups[1].Value);
+        // Amount — total
+        string[] totalPatterns = {
+            @"(?:รวม(?:เงิน)?(?:ทั้งสิ้น|ทั้งหมด|สุทธิ)|ยอดรวม(?:สุทธิ)?|GRAND\s*TOTAL|NET\s*TOTAL)\s*[:：]?\s*([\d,]+\.?\d*)",
+            @"(?:TOTAL)\s*[:：]?\s*([\d,]+\.?\d*)",
+            @"(?:รวมเงิน|จำนวนเงินรวม)\s*[:：]?\s*([\d,]+\.?\d*)",
+        };
+        foreach (var pattern in totalPatterns)
+        {
+            var totalMatch = Regex.Match(text, pattern, RegexOptions.IgnoreCase);
+            if (totalMatch.Success) { data.TotalAmount = ParseDecimal(totalMatch.Groups[1].Value); if (data.TotalAmount > 0) break; }
+        }
+
+        // VAT
+        var vatMatch2 = Regex.Match(text, @"(?:ภาษีมูลค่าเพิ่ม|VAT|Vat)\s*(?:7\s*%?)?\s*[:：]?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+        if (vatMatch2.Success) data.VatAmount = ParseDecimal(vatMatch2.Groups[1].Value);
 
         // SubTotal
-        var subMatch = Regex.Match(text, @"(?:ราคาสินค้า|ก่อนภาษี|Subtotal|Sub\s*Total)[\s:]*([0-9,]+\.?\d*)", RegexOptions.IgnoreCase);
-        if (subMatch.Success)
-            data.SubTotal = ParseDecimal(subMatch.Groups[1].Value);
+        var subMatch2 = Regex.Match(text, @"(?:ราคาสินค้า|ก่อนภาษี|รวมเงิน(?!ทั้ง)|SUB\s*TOTAL|Subtotal|ราคารวม)\s*[:：]?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+        if (subMatch2.Success) data.SubTotal = ParseDecimal(subMatch2.Groups[1].Value);
 
         // Calculate missing values
         if (data.TotalAmount > 0 && data.VatAmount > 0 && data.SubTotal == null)
             data.SubTotal = data.TotalAmount - data.VatAmount;
         else if (data.SubTotal > 0 && data.VatAmount > 0 && data.TotalAmount == null)
             data.TotalAmount = data.SubTotal + data.VatAmount;
-        else if (data.TotalAmount > 0 && data.SubTotal == null && data.VatAmount == null)
+        else if (data.TotalAmount > 0 && data.SubTotal == null && data.VatAmount == null && hasTaxInvoice)
         {
             data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2);
             data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
         }
 
-        // Vendor name: look for company-like names
-        var vendorMatch = Regex.Match(text, @"(?:บริษัท|ห้างหุ้นส่วน|ร้าน)\s+(.+?)(?:\s*จำกัด|\s*\(|$)", RegexOptions.Multiline);
-        if (vendorMatch.Success)
-            data.VendorName = vendorMatch.Groups[1].Value.Trim() + (text.Contains("จำกัด") ? " จำกัด" : "");
+        // GL account suggestions
+        var accountMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn, string Cat)>
+        {
+            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
+            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
+            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด", "ค่าบริการ"),
+            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
+            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด", "อื่นๆ"),
+            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย", "ค่าสินค้า"),
+            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
+        };
+        if (accountMap.TryGetValue(data.DocumentType, out var acct))
+        {
+            data.DebitAccountCode = acct.Dc; data.DebitAccountName = acct.Dn;
+            data.CreditAccountCode = acct.Cc; data.CreditAccountName = acct.Cn;
+            data.ExpenseCategory = acct.Cat;
+            if (data.VatAmount > 0) { data.VatAccountCode = "1400"; data.VatAccountName = "ภาษีซื้อ"; }
+        }
+
+        // WHT detection
+        var whtMatch = Regex.Match(text, @"หัก\s*ณ\s*ที่จ่าย|ภาษี\s*หัก|WHT|W/?T", RegexOptions.IgnoreCase);
+        if (whtMatch.Success)
+        {
+            data.HasWht = true;
+            var whtArea = text.Substring(Math.Max(0, whtMatch.Index - 20),
+                Math.Min(whtMatch.Length + 50, text.Length - Math.Max(0, whtMatch.Index - 20)));
+            var rateMatch = Regex.Match(whtArea, @"(\d+)\s*%");
+            if (rateMatch.Success)
+            {
+                var rate = int.Parse(rateMatch.Groups[1].Value);
+                if (rate is 1 or 2 or 3 or 5 or 10 or 15) data.WhtRate = rate;
+            }
+        }
+
+        // Payment terms
+        var termsMatch = Regex.Match(text, @"(?:ชำระ|จ่าย).*?(?:ภายใน|within)\s*(\d+)\s*(?:วัน|days)", RegexOptions.IgnoreCase);
+        if (termsMatch.Success)
+            data.PaymentTermsDays = int.Parse(termsMatch.Groups[1].Value);
 
         return data;
     }
@@ -772,6 +932,29 @@ public class OcrService : IOcrService
         await _db.SaveChangesAsync();
     }
 
+    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId)
+    {
+        var result = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+
+        if (result.CreatedDocumentId.HasValue)
+            throw new InvalidOperationException("Cannot delete: a document has already been created from this scan.");
+
+        if (result.FileAttachmentId.HasValue)
+        {
+            var file = await _db.FileAttachments.FirstOrDefaultAsync(f => f.Id == result.FileAttachmentId);
+            if (file != null)
+            {
+                try { if (File.Exists(file.StoragePath)) File.Delete(file.StoragePath); } catch { }
+                _db.FileAttachments.Remove(file);
+            }
+        }
+
+        _db.Set<OcrScanResult>().Remove(result);
+        await _db.SaveChangesAsync();
+    }
+
     private OcrResultResponse MapToResponse(OcrScanResult r, OcrExtractedData? data = null)
     {
         OcrSuggestedAccountsDto? suggestedAccounts = null;
@@ -793,15 +976,54 @@ public class OcrService : IOcrService
             }
         }
 
+        // Fall back to stored entity data when data parameter is null
+        if (suggestedAccounts == null && !string.IsNullOrEmpty(r.SuggestedAccountsJson))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(r.SuggestedAccountsJson);
+                var sa = doc.RootElement;
+                suggestedAccounts = new OcrSuggestedAccountsDto(
+                    sa.TryGetProperty("DebitAccountCode", out var dac) ? dac.GetString() : null,
+                    sa.TryGetProperty("DebitAccountName", out var dan) ? dan.GetString() : null,
+                    sa.TryGetProperty("CreditAccountCode", out var cac) ? cac.GetString() : null,
+                    sa.TryGetProperty("CreditAccountName", out var can) ? can.GetString() : null,
+                    sa.TryGetProperty("VatAccountCode", out var vac) ? vac.GetString() : null,
+                    sa.TryGetProperty("VatAccountName", out var van) ? van.GetString() : null);
+            }
+            catch { }
+        }
+
+        if (items == null && !string.IsNullOrEmpty(r.ExtractedItemsJson))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(r.ExtractedItemsJson);
+                items = doc.RootElement.EnumerateArray().Select(el => new OcrLineItemDto(
+                    el.TryGetProperty("Description", out var d) ? d.GetString() : null,
+                    el.TryGetProperty("Quantity", out var q) && q.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)q.GetDouble() : null,
+                    el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)u.GetDouble() : null,
+                    el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)a.GetDouble() : null,
+                    el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null
+                )).ToList();
+            }
+            catch { }
+        }
+
+        var expenseCategory = data?.ExpenseCategory ?? r.ExpenseCategory;
+        var hasWht = data?.HasWht ?? r.HasWht;
+        var whtRate = data?.WhtRate ?? r.WhtRate;
+        var paymentTermsDays = data?.PaymentTermsDays ?? r.PaymentTermsDays;
+
         return new OcrResultResponse(
             r.Id, r.OriginalFileName, r.ScanStatus, r.DocumentType, r.Confidence,
             r.ExtractedVendorName, r.ExtractedVendorTaxId, r.ExtractedDocumentNumber,
             r.ExtractedDate, r.ExtractedSubTotal, r.ExtractedVatAmount, r.ExtractedTotalAmount,
             r.MatchedContactId, r.CreatedDocumentId, r.ProcessedAt,
             r.IsDuplicate, r.DuplicateOfScanId, r.FileHash, r.ProcessingNotes,
-            data?.ExpenseCategory, suggestedAccounts,
-            data?.HasWht ?? false, data?.WhtRate,
-            data?.PaymentTermsDays, items);
+            expenseCategory, suggestedAccounts,
+            hasWht, whtRate,
+            paymentTermsDays, items);
     }
 }
 

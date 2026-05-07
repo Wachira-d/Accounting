@@ -80,6 +80,13 @@ public class OcrController : ControllerBase
         return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
     }
 
+    [HttpDelete("{scanId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId)
+    {
+        await _service.DeleteScanAsync(companyId, scanId);
+        return Ok(new ApiResponse<object>(true, null, "ลบสำเร็จ"));
+    }
+
     [HttpGet("{scanId:guid}/image")]
     public async Task<IActionResult> GetImage(Guid companyId, Guid scanId)
     {

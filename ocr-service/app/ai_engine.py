@@ -171,11 +171,48 @@ def rule_based_extraction(text: str) -> dict:
         result["document_type"] = "DebitNote"
         result["confidence"] = 0.7
 
-    tax_id_match = re.search(r"\d{1}\s*-?\s*\d{4}\s*-?\s*\d{5}\s*-?\s*\d{2}\s*-?\s*\d{1}", text)
-    if not tax_id_match:
-        tax_id_match = re.search(r"(\d{13})", text)
-    if tax_id_match:
-        result["vendor_tax_id"] = re.sub(r"[\s-]", "", tax_id_match.group())
+    # Extract ALL tax IDs and company names to distinguish vendor from our company
+    tax_id_pattern = r"(\d{1}\s*-?\s*\d{4}\s*-?\s*\d{5}\s*-?\s*\d{2}\s*-?\s*\d{1})"
+    all_tax_ids = [(re.sub(r"[\s-]", "", m.group()), m.start()) for m in re.finditer(tax_id_pattern, text)]
+    if not all_tax_ids:
+        all_tax_ids = [(m.group(), m.start()) for m in re.finditer(r"(\d{13})", text)]
+    all_tax_ids = [(tid, pos) for tid, pos in all_tax_ids if len(tid) == 13]
+
+    # Extract company names
+    company_pattern = r"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่)|$)"
+    company_matches = [(m.group().strip(), m.start()) for m in re.finditer(company_pattern, text, re.MULTILINE)]
+
+    # Identify seller vs buyer sections
+    seller_keywords = ["ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "SELLER", "FROM", "ผู้ออก"]
+    buyer_keywords = ["ผู้ซื้อ", "ลูกค้า", "นามผู้ซื้อ", "BUYER", "CUSTOMER", "BILL TO", "SOLD TO", "ส่งถึง"]
+
+    seller_pos = -1
+    buyer_pos = -1
+    for kw in seller_keywords:
+        pos = text.find(kw)
+        if pos >= 0:
+            seller_pos = pos
+            break
+    for kw in buyer_keywords:
+        pos = text.find(kw)
+        if pos >= 0:
+            buyer_pos = pos
+            break
+
+    if len(company_matches) >= 2 and seller_pos >= 0 and buyer_pos >= 0:
+        seller_company = min(company_matches, key=lambda c: abs(c[1] - seller_pos))
+        result["vendor_name"] = seller_company[0]
+        if len(all_tax_ids) >= 2:
+            vendor_tax = min(all_tax_ids, key=lambda t: abs(t[1] - seller_pos))
+            result["vendor_tax_id"] = vendor_tax[0]
+        elif all_tax_ids:
+            result["vendor_tax_id"] = all_tax_ids[0][0]
+    elif company_matches:
+        result["vendor_name"] = company_matches[0][0]
+        if all_tax_ids:
+            result["vendor_tax_id"] = all_tax_ids[0][0]
+    elif all_tax_ids:
+        result["vendor_tax_id"] = all_tax_ids[0][0]
 
     doc_num_patterns = [
         r"เลขที่\s*[:：]?\s*([A-Za-z0-9\-/]+)",
