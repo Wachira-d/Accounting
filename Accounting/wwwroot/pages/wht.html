@@ -576,16 +576,20 @@
                 </table>
               </td></tr>
 
-              <!-- TOTAL TEXT -->
+              <!-- TOTAL TEXT — value sits in a solid gray cell (no dotted
+                   underline) like the official form -->
               <tr><td class="totxt-cell">
-                <b>รวมเงินภาษีที่หักนำส่ง</b> <i>(ตัวอักษร)</i> <u class="ul" style="display:inline-block;min-width:480px">&nbsp;<b>${thaiBahtText(d.totalTaxAmount)}</b>&nbsp;</u>
+                <table class="inner" cellspacing="0"><tr>
+                  <td style="white-space:nowrap;width:1%;padding-right:6px"><b>รวมเงินภาษีที่หักนำส่ง</b> <i>(ตัวอักษร)</i></td>
+                  <td style="background:#d9d9d9;padding:1px 8px"><b>${thaiBahtText(d.totalTaxAmount)}</b></td>
+                </tr></table>
               </td></tr>
 
               <!-- FUND ROW -->
               <tr><td class="fund-cell">
-                เงินที่จ่ายเข้า กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน <u class="ul">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> บาท
-                กองทุนประกันสังคม <u class="ul">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> บาท
-                กองทุนสำรองเลี้ยงชีพ <u class="ul">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> บาท
+                เงินที่จ่ายเข้า กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน <span class="fund-blank"></span> บาท
+                กองทุนประกันสังคม <span class="fund-blank"></span> บาท
+                กองทุนสำรองเลี้ยงชีพ <span class="fund-blank"></span> บาท
               </td></tr>
 
               <!-- CONDITIONS -->
@@ -603,8 +607,7 @@
               <tr><td style="padding:0">
                 <table class="inner bottom-split" cellspacing="0"><tr>
                   <td class="bottom-left">
-                    <div style="text-align:center;margin-bottom:2px"><b>คำเตือน</b></div>
-                    ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร
+                    <b>คำเตือน</b> ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร
                   </td>
                   <td class="bottom-right">
                     <div style="margin-bottom:6px">ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>
@@ -621,9 +624,9 @@
                         ? `<div style="text-align:center;font-size:11px;color:#444;margin-top:1px">${signature.title}</div>`
                         : ''}
                       <div class="sig-date">
-                        <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getDate() : '&nbsp;&nbsp;'}</span> /
-                        <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getMonth()+1 : '&nbsp;&nbsp;'}</span> /
-                        <span class="sig-dots-sm">${d.issuedDate ? (new Date(d.issuedDate).getFullYear()+543) : '&nbsp;&nbsp;&nbsp;&nbsp;'}</span>
+                        <span class="sig-date-line">${d.issuedDate
+                          ? `${new Date(d.issuedDate).getDate()} ${thaiMonths[new Date(d.issuedDate).getMonth()]} ${new Date(d.issuedDate).getFullYear()+543}`
+                          : '&nbsp;'}</span>
                       </div>
                       <div style="text-align:center;font-size:11px;color:#444">(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div>
                     </div>
@@ -672,11 +675,12 @@
   .copy-labels div { color:#666; }
   .copy-labels .copy-active { color:#000; font-weight:700; }
 
-  /* MAIN FRAME TABLE — outer thick frame, each section gets its own
-     visible frame inside (กรอบ 2 ชั้น = outer + each-section frame). */
+  /* MAIN FRAME TABLE — outer thick frame, each section is its own bordered
+     box (กรอบในแต่ละหมวด). With border-collapse: collapse, the cell borders
+     between adjacent sections combine into a single 1.5px line, while the
+     outer table border (3px) wins on the four outer edges. */
   .F { width:100%; border:3px solid #000; border-collapse:collapse; }
-  .F > tbody > tr > td { border-bottom:1.5px solid #000; }
-  .F > tbody > tr:last-child > td { border-bottom:none; }
+  .F > tbody > tr > td { border:1.5px solid #000; }
 
   /* inner utility table */
   .inner { width:100%; border:none; border-collapse:collapse; }
@@ -732,8 +736,9 @@
   /* TOTAL TEXT (with shaded background like official) */
   .totxt-cell { padding:3px 8px; font-size:13.5px; background:#f0f0f0; }
 
-  /* FUND ROW */
-  .fund-cell { padding:3px 8px; font-size:12px; line-height:1.4; }
+  /* FUND ROW — must fit on a single line like the official form */
+  .fund-cell { padding:3px 8px; font-size:10.5px; line-height:1.4; white-space:nowrap; }
+  .fund-blank { display:inline-block; min-width:46px; border-bottom:1px dotted #000; vertical-align:bottom; }
 
   /* CONDITIONS */
   .cond-cell { padding:2px 8px; font-size:13px; }
@@ -749,6 +754,7 @@
   .sig-dots { display:inline-block; min-width:200px; border-bottom:1px dotted #000; vertical-align:bottom; position:relative; height:34px; }
   .sig-img { position:absolute; left:50%; bottom:1px; transform:translateX(-50%); max-height:32px; max-width:190px; object-fit:contain; }
   .sig-date { text-align:center; margin:3px 0 0; font-size:13px; }
+  .sig-date-line { display:inline-block; min-width:200px; border-bottom:1px dotted #000; text-align:center; padding:0 8px; }
   .sig-dots-sm { display:inline-block; min-width:36px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
   .stamp-area {
     position:absolute; right:6px; top:50%; transform:translateY(-50%);
@@ -772,8 +778,7 @@
     .wht-page { width:100%; }
     .noprint { display:none !important; }
     .F { border:3px solid #000 !important; }
-    .F > tbody > tr > td { border-bottom:1.5px solid #000 !important; }
-    .F > tbody > tr:last-child > td { border-bottom:none !important; }
+    .F > tbody > tr > td { border:1.5px solid #000 !important; }
   }
   @media screen {
     body { background:#c8c8c8; padding:20px 0; }
