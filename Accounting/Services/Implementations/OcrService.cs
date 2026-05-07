@@ -5,6 +5,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Ocr;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations.Ocr;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,16 +18,19 @@ public class OcrService : IOcrService
     private readonly IConfiguration _configuration;
     private readonly ILogger<OcrService> _logger;
     private readonly IDbdLookupService _dbdLookup;
+    private readonly AzureDocumentIntelligenceService _azureDi;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
-        IDbdLookupService dbdLookup)
+        IDbdLookupService dbdLookup,
+        AzureDocumentIntelligenceService azureDi)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
         _dbdLookup = dbdLookup;
+        _azureDi = azureDi;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -97,7 +101,24 @@ public class OcrService : IOcrService
         {
             string extractedText;
 
-            if (ocrProvider == "local")
+            if (ocrProvider == "azure-di" || ocrProvider == "azuredi")
+            {
+                var azureResult = await ExtractWithAzureDiAsync(companyId, file);
+                if (azureResult.Success)
+                {
+                    extractedText = azureResult.Text;
+                    extractedData = azureResult.Data;
+                }
+                else
+                {
+                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to local pipeline", azureResult.Error ?? "unknown");
+                    var localResult = await ExtractWithLocalServiceAsync(file);
+                    extractedText = localResult.RawText;
+                    extractedData = localResult.Data;
+                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {azureResult.Error ?? "unknown"}");
+                }
+            }
+            else if (ocrProvider == "local")
             {
                 var localResult = await ExtractWithLocalServiceAsync(file);
                 extractedText = localResult.RawText;
@@ -108,6 +129,21 @@ public class OcrService : IOcrService
                 extractedText = await ExtractTextAsync(file);
                 extractedData = await AnalyzeWithZones(companyId, extractedText);
             }
+
+            // Math/confidence gateway — adjusts confidence based on business-rule violations
+            var gatewayResult = OcrConfidenceGateway.Validate(
+                extractedData.Confidence,
+                extractedData.DocumentDate,
+                extractedData.SubTotal,
+                extractedData.VatAmount,
+                extractedData.TotalAmount,
+                extractedData.VendorTaxId,
+                extractedData.BuyerTaxId,
+                extractedData.FieldConfidence.ToDictionary(kv => kv.Key, kv => (decimal)kv.Value));
+
+            extractedData.Confidence = gatewayResult.AdjustedConfidence;
+            foreach (var w in gatewayResult.Warnings)
+                extractedData.ReasoningTrace.Add("[Gateway] " + w);
 
             scanResult.DocumentType = extractedData.DocumentType;
             scanResult.Confidence = extractedData.Confidence;
@@ -322,6 +358,113 @@ public class OcrService : IOcrService
             ApiKey: _configuration["Ocr:ApiKey"],
             AzureEndpoint: siteSettings?.AzureDiEndpoint ?? _configuration["Ocr:AzureEndpoint"],
             AutoCreateThreshold: siteSettings?.OcrAutoCreateThreshold ?? (decimal.TryParse(_configuration["Ocr:AutoCreateThreshold"], out var t2) ? t2 : 0.85m));
+    }
+
+    private record AzureExtractionResult(bool Success, string Text, OcrExtractedData Data, string? Error);
+
+    private async Task<AzureExtractionResult> ExtractWithAzureDiAsync(Guid companyId, FileAttachment file)
+    {
+        if (!System.IO.File.Exists(file.StoragePath))
+            return new AzureExtractionResult(false, "", new OcrExtractedData(), "Source file missing");
+
+        var fileBytes = await System.IO.File.ReadAllBytesAsync(file.StoragePath);
+        var contentType = OcrPreprocessor.EffectiveContentType(file.ContentType ?? "", file.OriginalFileName);
+
+        var preflight = OcrPreprocessor.Check(fileBytes, contentType, file.OriginalFileName);
+        if (!preflight.Ok)
+            return new AzureExtractionResult(false, "", new OcrExtractedData(), preflight.ErrorMessage);
+
+        var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType);
+        if (azureResult == null)
+            return new AzureExtractionResult(false, "", new OcrExtractedData(), "Azure DI not enabled or not configured");
+        if (!azureResult.Success)
+            return new AzureExtractionResult(false, "", new OcrExtractedData(), azureResult.ErrorMessage);
+
+        var data = await MapAzureDiToExtractedDataAsync(companyId, azureResult);
+        return new AzureExtractionResult(true, azureResult.RawText, data, null);
+    }
+
+    private async Task<OcrExtractedData> MapAzureDiToExtractedDataAsync(Guid companyId, AzureDiResult azure)
+    {
+        var data = new OcrExtractedData
+        {
+            DocumentType = MapAzureDocType(azure.DocumentType, azure.ModelId),
+            Confidence = azure.OverallConfidence,
+            DocumentNumber = azure.InvoiceId,
+            DocumentDate = azure.InvoiceDate,
+            VendorName = azure.VendorName,
+            VendorTaxId = ExtractDigits(azure.VendorTaxId, 13),
+            BuyerName = azure.CustomerName,
+            BuyerTaxId = ExtractDigits(azure.CustomerTaxId, 13),
+            SubTotal = azure.SubTotal,
+            VatAmount = azure.TotalTax,
+            TotalAmount = azure.InvoiceTotal ?? azure.AmountDue,
+            ZoneSummary = $"Azure DI {azure.ModelId}: confidence={azure.OverallConfidence:P0}",
+        };
+
+        // Per-field confidence (cast decimal → double for OcrExtractedData dictionary)
+        foreach (var (k, v) in azure.FieldConfidence)
+            data.FieldConfidence[k] = (double)v;
+
+        // Reasoning trace
+        data.ReasoningTrace.Add($"[Azure DI] Model: {azure.ModelId}");
+        if (!string.IsNullOrEmpty(azure.VendorName))
+            data.ReasoningTrace.Add($"[Azure DI] Vendor: {azure.VendorName}");
+        if (!string.IsNullOrEmpty(azure.CustomerName))
+            data.ReasoningTrace.Add($"[Azure DI] Customer: {azure.CustomerName}");
+        if (azure.InvoiceTotal.HasValue)
+            data.ReasoningTrace.Add($"[Azure DI] Total: {azure.InvoiceTotal.Value:N2}");
+
+        // Map line items
+        foreach (var item in azure.Items)
+        {
+            data.Items.Add(new OcrExtractedLineItem
+            {
+                Description = item.Description,
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice,
+                Amount = item.Amount,
+            });
+        }
+
+        // Seller/buyer swap if Azure DI got it backwards (our company is the vendor)
+        var ourCompanyTaxId = await _db.Companies
+            .Where(c => c.Id == companyId)
+            .Select(c => c.TaxId)
+            .FirstOrDefaultAsync();
+
+        if (!string.IsNullOrEmpty(ourCompanyTaxId)
+            && !string.IsNullOrEmpty(data.VendorTaxId)
+            && data.VendorTaxId == ExtractDigits(ourCompanyTaxId, 13))
+        {
+            // Azure detected us as vendor — actually we're the seller, swap to buyer
+            data.ReasoningTrace.Add("[Swap] Vendor was our own company — using buyer as vendor");
+            (data.VendorName, data.BuyerName) = (data.BuyerName, data.VendorName);
+            (data.VendorTaxId, data.BuyerTaxId) = (data.BuyerTaxId, data.VendorTaxId);
+        }
+
+        return data;
+    }
+
+    private static string MapAzureDocType(string? azureDocType, string? modelId)
+    {
+        if (modelId?.Contains("receipt", StringComparison.OrdinalIgnoreCase) == true)
+            return "Receipt";
+        return azureDocType?.ToLowerInvariant() switch
+        {
+            "invoice" => "Invoice",
+            "creditnote" => "CreditNote",
+            "debitnote" => "DebitNote",
+            "receipt" => "Receipt",
+            _ => "Invoice",
+        };
+    }
+
+    private static string? ExtractDigits(string? value, int expectedLength)
+    {
+        if (string.IsNullOrEmpty(value)) return null;
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+        return digits.Length == expectedLength ? digits : (digits.Length > 0 ? digits : null);
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)

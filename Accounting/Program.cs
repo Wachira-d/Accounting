@@ -146,6 +146,7 @@ builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<IAiService, AiService>();
 builder.Services.AddScoped<IOcrService, OcrService>();
 builder.Services.AddScoped<IOcrQuotaService, OcrQuotaService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDocumentIntelligenceService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
 

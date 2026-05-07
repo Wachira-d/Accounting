@@ -1149,7 +1149,12 @@ public class AdminController : ControllerBase
         {
             using var client = new HttpClient();
             client.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", s.AzureDiApiKey);
-            var response = await client.GetAsync($"{s.AzureDiEndpoint.TrimEnd('/')}/formrecognizer/info?api-version={s.AzureDiApiVersion ?? "2024-11-30"}");
+            var apiVersion = s.AzureDiApiVersion ?? "2024-11-30";
+            var endpoint = s.AzureDiEndpoint.TrimEnd('/');
+            // v4.0 path; fall back to v3.x path for older endpoints
+            var response = await client.GetAsync($"{endpoint}/documentintelligence/info?api-version={apiVersion}");
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                response = await client.GetAsync($"{endpoint}/formrecognizer/info?api-version=2023-07-31");
 
             s.AzureDiLastTestedAt = DateTime.UtcNow;
             s.AzureDiLastTestStatus = response.IsSuccessStatusCode ? "OK" : $"Error: {response.StatusCode}";
