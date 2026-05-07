@@ -144,7 +144,9 @@ public class CmsRenderingService : ICmsRenderingService
                 LogoUrl = site.LogoUrl,
                 FaviconUrl = site.FaviconUrl,
                 DefaultLanguage = site.DefaultLanguage,
-                DefaultCurrency = site.DefaultCurrency
+                DefaultCurrency = site.DefaultCurrency,
+                CaptchaProvider = site.CaptchaProvider,
+                CaptchaSiteKey = site.CaptchaSiteKey
             },
             Theme = new StorefrontThemeInfo
             {

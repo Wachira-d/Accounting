@@ -110,6 +110,8 @@ public class CmsSiteService : ICmsSiteService
         if (request.CustomBodyScripts != null) site.CustomBodyScripts = SanitizeScript(request.CustomBodyScripts);
         if (request.DefaultLanguage != null) site.DefaultLanguage = request.DefaultLanguage;
         if (request.DefaultCurrency != null) site.DefaultCurrency = request.DefaultCurrency;
+        if (request.CaptchaProvider != null) site.CaptchaProvider = request.CaptchaProvider;
+        if (request.CaptchaSiteKey != null) site.CaptchaSiteKey = request.CaptchaSiteKey;
         if (request.CookieConsentEnabled.HasValue) site.CookieConsentEnabled = request.CookieConsentEnabled.Value;
         if (request.PrivacyPolicyUrl != null) site.PrivacyPolicyUrl = request.PrivacyPolicyUrl;
         if (request.TermsOfServiceUrl != null) site.TermsOfServiceUrl = request.TermsOfServiceUrl;
@@ -157,6 +159,8 @@ public class CmsSiteService : ICmsSiteService
                 MetaPixelId = s.MetaPixelId,
                 DefaultLanguage = s.DefaultLanguage,
                 DefaultCurrency = s.DefaultCurrency,
+                CaptchaProvider = s.CaptchaProvider,
+                CaptchaSiteKey = s.CaptchaSiteKey,
                 CookieConsentEnabled = s.CookieConsentEnabled,
                 PrivacyPolicyUrl = s.PrivacyPolicyUrl,
                 CurrentStorageUsed = s.CurrentStorageUsed,

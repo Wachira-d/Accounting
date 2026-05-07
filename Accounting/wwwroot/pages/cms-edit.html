@@ -6,6 +6,8 @@
   <title>แก้ไขเว็บไซต์ - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
   <style>
     .editor-tabs { display:flex; border-bottom:2px solid var(--gray-200); margin-bottom:20px; gap:0 }
     .editor-tab { padding:12px 20px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; font-weight:500; color:var(--gray-600) }
@@ -20,6 +22,11 @@
     .color-input { display:flex; align-items:center; gap:8px }
     .color-input input[type="color"] { width:40px; height:40px; padding:2px; border:1px solid var(--gray-200); border-radius:6px; cursor:pointer }
     .theme-preview { padding:20px; border-radius:10px; border:1px solid var(--gray-200); margin-top:12px }
+    #quillEditor .ql-editor { min-height:180px; font-family:inherit }
+    .tpl-picker { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-top:10px }
+    .tpl-pick-card { border:1px solid var(--gray-200); border-radius:8px; padding:12px; cursor:pointer; transition:all .15s }
+    .tpl-pick-card:hover { border-color:var(--primary); box-shadow:0 2px 8px rgba(0,0,0,.06) }
+    .variant-row, .option-row, .review-row { border:1px solid var(--gray-200); border-radius:8px; padding:10px 14px; margin-bottom:8px; background:#fff }
     .domain-row { display:flex; align-items:center; gap:12px; padding:12px; background:#fff; border:1px solid var(--gray-200); border-radius:8px; margin-bottom:8px }
     .domain-status { display:inline-block; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:600 }
     .domain-status.pending { background:#FEF3C7; color:#92400E }
@@ -116,8 +123,25 @@
           <label class="form-label">Meta (Facebook) Pixel ID</label>
           <input type="text" class="form-input" id="sMetaPixel" placeholder="123456789012345">
         </div>
+        <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200)">
+        <h4 style="margin-bottom:12px">CAPTCHA (ป้องกันสแปมฟอร์ม)</h4>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">CAPTCHA Provider</label>
+            <select class="form-input" id="sCaptchaProvider">
+              <option value="">ไม่ใช้ CAPTCHA</option>
+              <option value="hcaptcha">hCaptcha</option>
+              <option value="recaptcha">reCAPTCHA v2</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Site Key</label>
+            <input type="text" class="form-input" id="sCaptchaSiteKey" placeholder="Site Key จาก hCaptcha หรือ reCAPTCHA">
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--gray-500);margin-top:-8px;margin-bottom:12px">ลงทะเบียนที่ <a href="https://www.hcaptcha.com" target="_blank">hcaptcha.com</a> หรือ <a href="https://www.google.com/recaptcha/admin" target="_blank">reCAPTCHA admin</a> แล้วนำ Site Key มาใส่ · Secret Key ตั้งค่าที่ฝั่ง Server (appsettings.json)</p>
         <div style="margin-top:16px">
-          <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO &amp; Analytics</button>
+          <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
         </div>
       </div>
     </div>
@@ -321,11 +345,22 @@
         </div>
         <div class="modal-body">
           <input type="hidden" id="blkId">
-          <div class="form-group">
-            <label class="form-label">ประเภทบล็อก</label>
-            <select class="form-input" id="blkType" onchange="Page.renderBlockConfigForm()"></select>
+          <div id="blkTemplatePicker" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <label class="form-label" style="margin:0">เลือกจาก Template สำเร็จรูป</label>
+              <button class="btn btn-sm btn-ghost" onclick="Page.closeTemplatePicker()">กลับ</button>
+            </div>
+            <div id="blkTemplateList" class="tpl-picker"></div>
           </div>
-          <div id="blkConfigForm"></div>
+          <div id="blkManualForm">
+            <div style="display:flex;gap:8px;align-items:end;margin-bottom:12px">
+              <div class="form-group" style="flex:1;margin-bottom:0">
+                <label class="form-label">ประเภทบล็อก</label>
+                <select class="form-input" id="blkType" onchange="Page.renderBlockConfigForm()"></select>
+              </div>
+              <button class="btn btn-sm btn-secondary" id="btnOpenTplPicker" onclick="Page.openTemplatePicker()" style="white-space:nowrap;margin-bottom:0" title="เลือกจาก Template">📋 Template</button>
+            </div>
+            <div id="blkConfigForm"></div>
           <div class="form-row">
             <div class="form-group form-checkbox">
               <input type="checkbox" id="blkVisible" checked><label for="blkVisible">แสดงบล็อกนี้</label>
@@ -334,10 +369,11 @@
               <input type="checkbox" id="blkHideMobile"><label for="blkHideMobile">ซ่อนบนมือถือ</label>
             </div>
           </div>
+          </div><!-- /blkManualForm -->
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('blockFormModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveBlock()">บันทึก</button>
+          <button class="btn btn-primary" id="btnSaveBlock" onclick="Page.saveBlock()">บันทึก</button>
         </div>
       </div>
     </div>
@@ -418,8 +454,8 @@
             <textarea class="form-input" id="prdShortDesc" rows="2"></textarea>
           </div>
           <div class="form-group">
-            <label class="form-label">คำอธิบายเต็ม (HTML)</label>
-            <textarea class="form-input" id="prdFullDesc" rows="4"></textarea>
+            <label class="form-label">คำอธิบายเต็ม</label>
+            <div id="prdFullDescEditor" style="min-height:120px"></div>
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -438,6 +474,64 @@
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="prdVisible" checked><label for="prdVisible">แสดงในเว็บ</label></div>
             <div class="form-group form-checkbox"><input type="checkbox" id="prdFeatured"><label for="prdFeatured">สินค้าแนะนำ</label></div>
+          </div>
+          <!-- Product sub-tabs: Options, Variants, Reviews — shown only when editing -->
+          <div id="prdSubTabs" style="display:none;margin-top:16px;border-top:1px solid var(--gray-200);padding-top:14px">
+            <div style="display:flex;gap:6px;margin-bottom:12px">
+              <button class="btn btn-sm btn-secondary prd-sub-tab active" onclick="Page.switchPrdTab(this,'prdOptionsPane')">ตัวเลือก</button>
+              <button class="btn btn-sm btn-secondary prd-sub-tab" onclick="Page.switchPrdTab(this,'prdVariantsPane')">ตัวเลือกย่อย (Variants)</button>
+              <button class="btn btn-sm btn-secondary prd-sub-tab" onclick="Page.switchPrdTab(this,'prdReviewsPane')">รีวิว</button>
+            </div>
+            <!-- Options pane -->
+            <div id="prdOptionsPane" class="prd-sub-pane">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <strong style="font-size:13px">ตัวเลือกสินค้า (เช่น สี, ขนาด)</strong>
+                <button class="btn btn-sm btn-primary" onclick="Page.addOptionRow()">+ เพิ่ม</button>
+              </div>
+              <div id="prdOptionsList"></div>
+              <div id="prdOptionForm" style="display:none;background:#F9FAFB;border-radius:8px;padding:12px;margin-top:8px">
+                <div class="form-row">
+                  <div class="form-group" style="flex:1"><label class="form-label">ชื่อตัวเลือก</label><input type="text" class="form-input" id="optName" placeholder="เช่น สี"></div>
+                  <div class="form-group" style="flex:1"><label class="form-label">Name (EN)</label><input type="text" class="form-input" id="optNameEn" placeholder="e.g. Color"></div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">ค่าตัวเลือก (คั่นด้วยเครื่องหมาย ,)</label>
+                  <input type="text" class="form-input" id="optValues" placeholder="แดง, น้ำเงิน, ดำ">
+                </div>
+                <div class="flex gap-2">
+                  <button class="btn btn-sm btn-primary" onclick="Page.saveOption()">บันทึกตัวเลือก</button>
+                  <button class="btn btn-sm btn-ghost" onclick="document.getElementById('prdOptionForm').style.display='none'">ยกเลิก</button>
+                </div>
+              </div>
+            </div>
+            <!-- Variants pane -->
+            <div id="prdVariantsPane" class="prd-sub-pane" style="display:none">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <strong style="font-size:13px">ตัวเลือกย่อย (SKU แต่ละรูปแบบ)</strong>
+                <button class="btn btn-sm btn-primary" onclick="Page.addVariantRow()">+ เพิ่ม</button>
+              </div>
+              <div id="prdVariantsList"></div>
+              <div id="prdVariantForm" style="display:none;background:#F9FAFB;border-radius:8px;padding:12px;margin-top:8px">
+                <div class="form-row">
+                  <div class="form-group" style="flex:1"><label class="form-label">SKU</label><input type="text" class="form-input" id="varSku"></div>
+                  <div class="form-group" style="flex:1"><label class="form-label">ชื่อ</label><input type="text" class="form-input" id="varName"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group" style="flex:1"><label class="form-label">ราคา</label><input type="number" class="form-input" id="varPrice" step="0.01"></div>
+                  <div class="form-group" style="flex:1"><label class="form-label">สต๊อก</label><input type="number" class="form-input" id="varStock"></div>
+                </div>
+                <div class="form-group"><label class="form-label">Options (JSON: {"สี":"แดง"})</label><input type="text" class="form-input" id="varOptions" placeholder='{"สี":"แดง","ขนาด":"M"}'></div>
+                <div class="flex gap-2">
+                  <button class="btn btn-sm btn-primary" onclick="Page.saveVariant()">บันทึก Variant</button>
+                  <button class="btn btn-sm btn-ghost" onclick="document.getElementById('prdVariantForm').style.display='none'">ยกเลิก</button>
+                </div>
+              </div>
+            </div>
+            <!-- Reviews pane -->
+            <div id="prdReviewsPane" class="prd-sub-pane" style="display:none">
+              <div id="prdReviewSummary" style="margin-bottom:10px"></div>
+              <div id="prdReviewsList"></div>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -759,6 +853,8 @@
           document.getElementById('sGaId').value = this.site.googleAnalyticsId || '';
           document.getElementById('sGtmId').value = this.site.googleTagManagerId || '';
           document.getElementById('sMetaPixel').value = this.site.metaPixelId || '';
+          document.getElementById('sCaptchaProvider').value = this.site.captchaProvider || '';
+          document.getElementById('sCaptchaSiteKey').value = this.site.captchaSiteKey || '';
           this.applyTabsBySiteType();
           this.loadQuotas();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -989,9 +1085,13 @@
       openAddBlock() {
         document.getElementById('blockFormTitle').textContent = 'เพิ่มบล็อก';
         document.getElementById('blkId').value = '';
+        document.getElementById('blkTemplatePicker').style.display = 'none';
+        document.getElementById('blkManualForm').style.display = '';
+        document.getElementById('btnSaveBlock').style.display = '';
+        document.getElementById('btnOpenTplPicker').style.display = '';
         const sel = document.getElementById('blkType');
         sel.innerHTML = Object.entries(BLOCK_TYPES).map(([k,v]) => `<option value="${k}">${v.i} ${v.n}</option>`).join('');
-        sel.value = '1'; // Hero default
+        sel.value = '1';
         document.getElementById('blkVisible').checked = true;
         document.getElementById('blkHideMobile').checked = false;
         this._editingConfig = {};
@@ -1004,6 +1104,10 @@
         if (!b) return;
         document.getElementById('blockFormTitle').textContent = 'แก้ไขบล็อก';
         document.getElementById('blkId').value = b.id;
+        document.getElementById('blkTemplatePicker').style.display = 'none';
+        document.getElementById('blkManualForm').style.display = '';
+        document.getElementById('btnSaveBlock').style.display = '';
+        document.getElementById('btnOpenTplPicker').style.display = 'none';
         const sel = document.getElementById('blkType');
         sel.innerHTML = Object.entries(BLOCK_TYPES).map(([k,v]) => `<option value="${k}">${v.i} ${v.n}</option>`).join('');
         sel.value = String(b.blockType);
@@ -1012,6 +1116,43 @@
         try { this._editingConfig = JSON.parse(b.configJson || '{}'); } catch(_) { this._editingConfig = {}; }
         this.renderBlockConfigForm();
         Layout.openModal('blockFormModal');
+      },
+
+      async openTemplatePicker() {
+        const api = Layout.api(); if (!api) return;
+        document.getElementById('blkTemplatePicker').style.display = '';
+        document.getElementById('blkManualForm').style.display = 'none';
+        document.getElementById('btnSaveBlock').style.display = 'none';
+        const list = document.getElementById('blkTemplateList');
+        list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div>';
+        try {
+          const res = await api.cmsListBlockTemplates();
+          const templates = (res.data || []).filter(t => t.isActive !== false);
+          if (!templates.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ไม่มี Template สำเร็จรูป</div>'; return; }
+          list.innerHTML = templates.map(t => {
+            const meta = BLOCK_TYPES[t.blockType] || { n:`Type ${t.blockType}`, i:'📦' };
+            return `<div class="tpl-pick-card" onclick="Page.applyBlockTemplate(${JSON.stringify(t).replace(/"/g,'&quot;')})">
+              <div style="font-size:24px;margin-bottom:6px">${meta.i}</div>
+              <div style="font-weight:600;font-size:13px">${Layout.esc(t.name)}</div>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:2px">${Layout.esc(t.description||'')} · ${meta.n}</div>
+              ${t.category ? `<span class="block-type-badge" style="margin-top:6px">${Layout.esc(t.category)}</span>` : ''}
+            </div>`;
+          }).join('');
+        } catch (e) { list.innerHTML = `<div class="text-center" style="color:#DC2626;padding:20px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      closeTemplatePicker() {
+        document.getElementById('blkTemplatePicker').style.display = 'none';
+        document.getElementById('blkManualForm').style.display = '';
+        document.getElementById('btnSaveBlock').style.display = '';
+      },
+
+      applyBlockTemplate(tpl) {
+        this.closeTemplatePicker();
+        const sel = document.getElementById('blkType');
+        sel.value = String(tpl.blockType);
+        try { this._editingConfig = JSON.parse(tpl.defaultConfigJson || '{}'); } catch(_) { this._editingConfig = {}; }
+        this.renderBlockConfigForm();
       },
 
       // Render a config form per block type — keep it simple, form-based.
@@ -1033,8 +1174,24 @@
                  + inp('cfg_ctaUrl','ลิงก์ปุ่ม',cfg.ctaUrl,'/about')
                  + inpImg('cfg_backgroundUrl','ภาพพื้นหลัง',cfg.backgroundUrl,'เลือกจากคลังภาพ');
             break;
-          case 2: // RichText
-            html = ta('cfg_content','เนื้อหา (HTML รองรับ)',cfg.content,8);
+          case 2: // RichText — WYSIWYG
+            html = `<div class="form-group"><label class="form-label">เนื้อหา</label><div id="quillEditor">${cfg.content||''}</div><input type="hidden" id="cfg_content"></div>`;
+            setTimeout(() => {
+              if (this._quill) { try { this._quill = null; } catch(_) {} }
+              this._quill = new Quill('#quillEditor', {
+                theme: 'snow',
+                modules: { toolbar: [
+                  [{ header: [1,2,3,false] }],
+                  ['bold','italic','underline','strike'],
+                  [{ color: [] }, { background: [] }],
+                  [{ list:'ordered' }, { list:'bullet' }],
+                  [{ align: [] }],
+                  ['link','image','video'],
+                  ['blockquote','code-block'],
+                  ['clean']
+                ]}
+              });
+            }, 50);
             break;
           case 3: // Image
             html = inpImg('cfg_url','ภาพ',cfg.url,'เลือกจากคลังภาพ') + inp('cfg_alt','คำอธิบายภาพ (alt)',cfg.alt) + inp('cfg_caption','คำบรรยายใต้ภาพ',cfg.caption);
@@ -1105,7 +1262,7 @@
         let cfg = {};
         switch (type) {
           case 1: cfg = { headline:get('cfg_headline'), subheadline:get('cfg_subheadline'), ctaText:get('cfg_ctaText'), ctaUrl:get('cfg_ctaUrl'), backgroundUrl:get('cfg_backgroundUrl') }; break;
-          case 2: cfg = { content:get('cfg_content') }; break;
+          case 2: cfg = { content: this._quill ? this._quill.root.innerHTML : get('cfg_content') }; break;
           case 3: cfg = { url:get('cfg_url'), alt:get('cfg_alt'), caption:get('cfg_caption') }; break;
           case 4: { let imgs=[]; try{imgs=JSON.parse(get('cfg_imagesJson')||'[]');}catch(_){} cfg = { images: imgs }; break; }
           case 6: cfg = { headline:get('cfg_headline'), limit:parseInt(get('cfg_limit'))||12, featured:document.getElementById('cfg_featured')?.checked||false }; break;
@@ -1344,9 +1501,11 @@
             ogImageUrl: document.getElementById('sOgImageUrl').value || null,
             googleAnalyticsId: document.getElementById('sGaId').value || null,
             googleTagManagerId: document.getElementById('sGtmId').value || null,
-            metaPixelId: document.getElementById('sMetaPixel').value || null
+            metaPixelId: document.getElementById('sMetaPixel').value || null,
+            captchaProvider: document.getElementById('sCaptchaProvider').value || null,
+            captchaSiteKey: document.getElementById('sCaptchaSiteKey').value || null
           });
-          Layout.toast('บันทึก SEO &amp; Analytics สำเร็จ', 'success');
+          Layout.toast('บันทึกสำเร็จ', 'success');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -1664,10 +1823,14 @@
             document.getElementById('prdPrice').value = opt.dataset.price || '';
           }
         };
-        ['prdDisplayName','prdDisplayNameEn','prdSlug','prdShortDesc','prdFullDesc','prdPrice','prdComparePrice','prdImageUrl'].forEach(id => document.getElementById(id).value = '');
+        ['prdDisplayName','prdDisplayNameEn','prdSlug','prdShortDesc','prdPrice','prdComparePrice','prdImageUrl'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('prdVisible').checked = true;
         document.getElementById('prdFeatured').checked = false;
+        document.getElementById('prdSubTabs').style.display = 'none';
+        this._editingProductId = null;
         Layout.openModal('productModal');
+        setTimeout(() => this._initPrdDescEditor(), 50);
+        if (this._prdDescQuill) this._prdDescQuill.root.innerHTML = '';
       },
 
       openEditProduct(id) {
@@ -1681,13 +1844,17 @@
         document.getElementById('prdDisplayNameEn').value = p.displayNameEn || '';
         document.getElementById('prdSlug').value = p.slug || '';
         document.getElementById('prdShortDesc').value = p.shortDescription || '';
-        document.getElementById('prdFullDesc').value = p.fullDescription || '';
         document.getElementById('prdPrice').value = p.overrideSellingPrice ?? '';
         document.getElementById('prdComparePrice').value = p.compareAtPrice ?? '';
         document.getElementById('prdImageUrl').value = p.featuredImageUrl || '';
         document.getElementById('prdVisible').checked = p.isVisible !== false;
         document.getElementById('prdFeatured').checked = !!p.isFeatured;
         Layout.openModal('productModal');
+        setTimeout(() => {
+          this._initPrdDescEditor();
+          if (this._prdDescQuill) this._prdDescQuill.root.innerHTML = p.fullDescription || '';
+        }, 50);
+        this.loadProductSubData(id);
       },
 
       async saveProduct() {
@@ -1701,7 +1868,7 @@
           displayNameEn: document.getElementById('prdDisplayNameEn').value || null,
           slug: document.getElementById('prdSlug').value,
           shortDescription: document.getElementById('prdShortDesc').value || null,
-          fullDescription: document.getElementById('prdFullDesc').value || null,
+          fullDescription: this._prdDescQuill ? this._prdDescQuill.root.innerHTML : null,
           overrideSellingPrice: parseFloat(document.getElementById('prdPrice').value) || null,
           compareAtPrice: parseFloat(document.getElementById('prdComparePrice').value) || null,
           featuredImageUrl: document.getElementById('prdImageUrl').value || null,
@@ -1725,6 +1892,187 @@
           await api.cmsDeleteProduct(this.siteId, id);
           await this.loadProducts();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ PRODUCT SUB-TABS ============
+      switchPrdTab(btn, paneId) {
+        document.querySelectorAll('.prd-sub-tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.prd-sub-pane').forEach(p => p.style.display = 'none');
+        btn.classList.add('active');
+        document.getElementById(paneId).style.display = '';
+      },
+
+      _initPrdDescEditor() {
+        if (this._prdDescQuill) { try { this._prdDescQuill = null; } catch(_) {} }
+        this._prdDescQuill = new Quill('#prdFullDescEditor', {
+          theme: 'snow',
+          modules: { toolbar: [
+            [{ header: [2,3,false] }], ['bold','italic','underline'], [{ list:'ordered' },{ list:'bullet' }], ['link','image'], ['clean']
+          ]}
+        });
+      },
+
+      async loadProductSubData(productId) {
+        document.getElementById('prdSubTabs').style.display = '';
+        this._editingProductId = productId;
+        this.loadOptions(productId);
+        this.loadVariants(productId);
+        this.loadReviews(productId);
+      },
+
+      // ---- Options ----
+      async loadOptions(productId) {
+        const api = Layout.api(); if (!api) return;
+        const list = document.getElementById('prdOptionsList');
+        try {
+          const res = await api.cmsListOptions(this.siteId, productId);
+          const options = res.data || [];
+          if (!options.length) { list.innerHTML = '<div style="color:var(--gray-500);font-size:12px;padding:10px">ยังไม่มีตัวเลือก</div>'; return; }
+          list.innerHTML = options.map(o => `
+            <div class="option-row" style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1">
+                <strong>${Layout.esc(o.name)}</strong> ${o.nameEn ? `<span style="color:var(--gray-500)">(${Layout.esc(o.nameEn)})</span>` : ''}
+                <div style="font-size:12px;color:var(--gray-600);margin-top:2px">${(o.values||[]).map(v => Layout.esc(v.value)).join(', ')}</div>
+              </div>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteOption('${productId}','${o.id}')">🗑</button>
+            </div>`).join('');
+        } catch(e) { list.innerHTML = `<div style="color:#DC2626;font-size:12px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      addOptionRow() {
+        document.getElementById('prdOptionForm').style.display = '';
+        ['optName','optNameEn','optValues'].forEach(id => document.getElementById(id).value = '');
+      },
+
+      async saveOption() {
+        const api = Layout.api(); if (!api) return;
+        const productId = this._editingProductId;
+        const name = document.getElementById('optName').value.trim();
+        const values = document.getElementById('optValues').value.split(',').map(v => v.trim()).filter(Boolean);
+        if (!name || !values.length) { Layout.toast('กรุณากรอกชื่อและค่าตัวเลือก', 'error'); return; }
+        try {
+          await api.cmsCreateOption(this.siteId, productId, {
+            name, nameEn: document.getElementById('optNameEn').value.trim() || null,
+            displayType: 1, sortOrder: 0,
+            values: values.map((v, i) => ({ value: v, sortOrder: i }))
+          });
+          document.getElementById('prdOptionForm').style.display = 'none';
+          Layout.toast('บันทึกตัวเลือกสำเร็จ', 'success');
+          this.loadOptions(productId);
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteOption(productId, optionId) {
+        if (!confirm('ลบตัวเลือกนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteOption(this.siteId, productId, optionId);
+          this.loadOptions(productId);
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ---- Variants ----
+      async loadVariants(productId) {
+        const api = Layout.api(); if (!api) return;
+        const list = document.getElementById('prdVariantsList');
+        try {
+          const res = await api.cmsListVariants(this.siteId, productId);
+          const variants = res.data || [];
+          if (!variants.length) { list.innerHTML = '<div style="color:var(--gray-500);font-size:12px;padding:10px">ยังไม่มี Variant</div>'; return; }
+          list.innerHTML = variants.map(v => {
+            const opts = v.options ? Object.entries(v.options).map(([k,val]) => `${Layout.esc(k)}: ${Layout.esc(val)}`).join(', ') : '';
+            return `<div class="variant-row" style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1">
+                <strong>${Layout.esc(v.name || v.sku || '')}</strong>
+                <div style="font-size:12px;color:var(--gray-600)">${Layout.esc(v.sku||'')} · ฿${Number(v.price||0).toLocaleString('th-TH')} · สต๊อก: ${v.stock ?? '-'} ${opts ? `· ${opts}` : ''}</div>
+              </div>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteVariant('${productId}','${v.id}')">🗑</button>
+            </div>`;
+          }).join('');
+        } catch(e) { list.innerHTML = `<div style="color:#DC2626;font-size:12px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      addVariantRow() {
+        document.getElementById('prdVariantForm').style.display = '';
+        ['varSku','varName','varPrice','varStock','varOptions'].forEach(id => document.getElementById(id).value = '');
+      },
+
+      async saveVariant() {
+        const api = Layout.api(); if (!api) return;
+        const productId = this._editingProductId;
+        const sku = document.getElementById('varSku').value.trim();
+        const name = document.getElementById('varName').value.trim();
+        if (!sku) { Layout.toast('กรุณากรอก SKU', 'error'); return; }
+        let options = {};
+        try { options = JSON.parse(document.getElementById('varOptions').value || '{}'); } catch(_) {}
+        try {
+          await api.cmsCreateVariant(this.siteId, productId, {
+            sku, name: name || sku, options,
+            price: parseFloat(document.getElementById('varPrice').value) || null,
+            stock: parseInt(document.getElementById('varStock').value) || null
+          });
+          document.getElementById('prdVariantForm').style.display = 'none';
+          Layout.toast('บันทึก Variant สำเร็จ', 'success');
+          this.loadVariants(productId);
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteVariant(productId, variantId) {
+        if (!confirm('ลบ Variant นี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteVariant(this.siteId, productId, variantId);
+          this.loadVariants(productId);
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ---- Reviews ----
+      async loadReviews(productId) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [sumRes, listRes] = await Promise.all([
+            api.cmsGetReviewSummary(this.siteId, productId),
+            api.cmsListReviews(this.siteId, productId, '?pageSize=50')
+          ]);
+          const summary = sumRes.data;
+          const reviews = listRes.data?.items || listRes.data || [];
+          const sumEl = document.getElementById('prdReviewSummary');
+          if (summary) {
+            const stars = '★'.repeat(Math.round(summary.averageRating || 0)) + '☆'.repeat(5 - Math.round(summary.averageRating || 0));
+            sumEl.innerHTML = `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:#F9FAFB;border-radius:8px">
+              <div style="font-size:28px;font-weight:800;color:var(--primary)">${(summary.averageRating||0).toFixed(1)}</div>
+              <div><div style="color:#F59E0B;font-size:18px">${stars}</div><div style="font-size:12px;color:var(--gray-500)">${summary.totalReviews || 0} รีวิว</div></div>
+            </div>`;
+          }
+          const listEl = document.getElementById('prdReviewsList');
+          if (!reviews.length) { listEl.innerHTML = '<div style="color:var(--gray-500);font-size:12px;padding:10px">ยังไม่มีรีวิว</div>'; return; }
+          listEl.innerHTML = reviews.map(r => {
+            const stars = '★'.repeat(r.rating||0) + '☆'.repeat(5-(r.rating||0));
+            return `<div class="review-row">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <div><strong>${Layout.esc(r.reviewerName||'ลูกค้า')}</strong> <span style="color:#F59E0B">${stars}</span></div>
+                <div style="font-size:11px;color:var(--gray-500)">${new Date(r.createdAt).toLocaleDateString('th-TH')}</div>
+              </div>
+              ${r.title ? `<div style="font-weight:600;font-size:13px;margin-bottom:2px">${Layout.esc(r.title)}</div>` : ''}
+              <div style="font-size:13px;color:var(--gray-700)">${Layout.esc(r.content||'')}</div>
+              <div style="margin-top:6px;display:flex;gap:6px">
+                ${r.isApproved ? '<span class="block-type-badge" style="background:#D1FAE5;color:#065F46">อนุมัติ</span>' : `<button class="btn btn-sm btn-success" onclick="Page.moderateReview('${r.id}',true)">อนุมัติ</button>`}
+                ${r.isHidden ? '<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B">ซ่อน</span>' : `<button class="btn btn-sm btn-ghost" onclick="Page.moderateReview('${r.id}',false)" style="font-size:11px">ซ่อน</button>`}
+              </div>
+            </div>`;
+          }).join('');
+        } catch(e) {
+          document.getElementById('prdReviewsList').innerHTML = `<div style="color:#DC2626;font-size:12px">${Layout.esc(e.message)}</div>`;
+        }
+      },
+
+      async moderateReview(reviewId, approve) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsModerateReview(this.siteId, reviewId, { isApproved: approve, isHidden: !approve });
+          Layout.toast(approve ? 'อนุมัติแล้ว' : 'ซ่อนแล้ว', 'success');
+          if (this._editingProductId) this.loadReviews(this._editingProductId);
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
 
       // ============ ORDERS ============

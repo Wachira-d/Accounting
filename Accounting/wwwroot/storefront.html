@@ -215,6 +215,7 @@
           this.renderHeader();
           this.renderFooter();
           this.injectAnalytics(this.data.seo);
+          this.loadCaptchaScript(this.data.site);
 
           // 3. Load + render page
           await this.loadPage(companyId, siteId, this.slug);
@@ -442,12 +443,21 @@
             </div>`;
           }
           case 9: { // Contact form
+            const captchaProvider = this.data?.site?.captchaProvider;
+            const captchaSiteKey = this.data?.site?.captchaSiteKey;
+            let captchaHtml = '';
+            if (captchaProvider === 'hcaptcha' && captchaSiteKey) {
+              captchaHtml = `<div class="h-captcha" data-sitekey="${esc(captchaSiteKey)}" style="margin-bottom:14px"></div>`;
+            } else if (captchaProvider === 'recaptcha' && captchaSiteKey) {
+              captchaHtml = `<div class="g-recaptcha" data-sitekey="${esc(captchaSiteKey)}" style="margin-bottom:14px"></div>`;
+            }
             return `<form class="blk-form" onsubmit="Store.submitContact(event,this)" data-emailto="${esc(cfg.emailTo||'')}">
               ${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}
               <label>ชื่อ</label><input type="text" name="name" required>
               <label>อีเมล</label><input type="email" name="email" required>
               <label>เบอร์โทร</label><input type="tel" name="phone">
               <label>ข้อความ</label><textarea name="message" required></textarea>
+              ${captchaHtml}
               <button type="submit" class="btn btn-primary">${esc(cfg.submitText||'ส่งข้อความ')}</button>
               <div class="form-status" style="margin-top:10px"></div>
             </form>`;
@@ -554,14 +564,44 @@
         }
       },
 
+      loadCaptchaScript(siteInfo) {
+        if (!siteInfo?.captchaProvider || !siteInfo?.captchaSiteKey) return;
+        const s = document.createElement('script');
+        s.async = true;
+        if (siteInfo.captchaProvider === 'hcaptcha') {
+          s.src = 'https://js.hcaptcha.com/1/api.js';
+        } else if (siteInfo.captchaProvider === 'recaptcha') {
+          s.src = 'https://www.google.com/recaptcha/api.js';
+        }
+        document.head.appendChild(s);
+      },
+
+      getCaptchaToken(form) {
+        const provider = this.data?.site?.captchaProvider;
+        if (provider === 'hcaptcha') {
+          const el = form.querySelector('[name="h-captcha-response"]');
+          return el ? el.value : '';
+        } else if (provider === 'recaptcha') {
+          const el = form.querySelector('[name="g-recaptcha-response"]');
+          return el ? el.value : '';
+        }
+        return '';
+      },
+
       async submitContact(e, form) {
         e.preventDefault();
         const status = form.querySelector('.form-status');
         status.textContent = 'กำลังส่ง...';
         status.style.color = 'var(--text-secondary)';
-        // Best-effort: use the forms endpoint if a default form exists; otherwise
-        // open mailto:. Since we don't know the form ID without admin setup,
-        // fall back to mailto for now.
+
+        const captchaToken = this.getCaptchaToken(form);
+        const provider = this.data?.site?.captchaProvider;
+        if (provider && this.data?.site?.captchaSiteKey && !captchaToken) {
+          status.textContent = 'กรุณายืนยัน CAPTCHA ก่อนส่ง';
+          status.style.color = '#DC2626';
+          return;
+        }
+
         const data = Object.fromEntries(new FormData(form));
         const emailTo = form.dataset.emailto;
         if (emailTo) {

@@ -71,6 +71,8 @@ public class StorefrontSiteInfo
     public string? FaviconUrl { get; set; }
     public string DefaultLanguage { get; set; } = "th";
     public string DefaultCurrency { get; set; } = "THB";
+    public string? CaptchaProvider { get; set; }
+    public string? CaptchaSiteKey { get; set; }
 }
 
 public class StorefrontThemeInfo

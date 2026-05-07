@@ -49,6 +49,8 @@ public class UpdateSiteRequest
     public string? CustomBodyScripts { get; set; }
     public string? DefaultLanguage { get; set; }
     public string? DefaultCurrency { get; set; }
+    public string? CaptchaProvider { get; set; }
+    public string? CaptchaSiteKey { get; set; }
     public bool? CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
     public string? TermsOfServiceUrl { get; set; }
@@ -83,6 +85,8 @@ public class SiteResponse
     public string? MetaPixelId { get; set; }
     public string DefaultLanguage { get; set; } = "th";
     public string DefaultCurrency { get; set; } = "THB";
+    public string? CaptchaProvider { get; set; }
+    public string? CaptchaSiteKey { get; set; }
     public bool CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
     public long CurrentStorageUsed { get; set; }

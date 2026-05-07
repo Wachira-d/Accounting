@@ -384,6 +384,21 @@ const API = {
       cmsListRedirects: (siteId) => API.get(`${base}/cms/sites/${siteId}/content/seo-redirects`),
       cmsAddRedirect: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/content/seo-redirects`, d),
       cmsDeleteRedirect: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/content/seo-redirects/${id}`),
+      // Product variants
+      cmsListVariants: (siteId, productId) => API.get(`${base}/cms/sites/${siteId}/commerce/products/${productId}/variants`),
+      cmsCreateVariant: (siteId, productId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/products/${productId}/variants`, d),
+      cmsUpdateVariant: (siteId, productId, variantId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/products/${productId}/variants/${variantId}`, d),
+      cmsDeleteVariant: (siteId, productId, variantId) => API.del(`${base}/cms/sites/${siteId}/commerce/products/${productId}/variants/${variantId}`),
+      // Product options
+      cmsListOptions: (siteId, productId) => API.get(`${base}/cms/sites/${siteId}/commerce/products/${productId}/options`),
+      cmsCreateOption: (siteId, productId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/products/${productId}/options`, d),
+      cmsDeleteOption: (siteId, productId, optionId) => API.del(`${base}/cms/sites/${siteId}/commerce/products/${productId}/options/${optionId}`),
+      // Product reviews
+      cmsListReviews: (siteId, productId, q='') => API.get(`${base}/cms/sites/${siteId}/commerce/products/${productId}/reviews${q}`),
+      cmsGetReviewSummary: (siteId, productId) => API.get(`${base}/cms/sites/${siteId}/commerce/products/${productId}/reviews/summary`),
+      cmsModerateReview: (siteId, reviewId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/reviews/${reviewId}/moderate`, d),
+      // Block templates
+      cmsListBlockTemplates: () => API.get(`/api/cms/block-templates`),
       // Quotas
       cmsGetQuotas: (siteId) => API.get(`${base}/cms/sites/${siteId}/quotas`),
       // Page translations
