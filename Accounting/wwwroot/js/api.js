@@ -358,6 +358,37 @@ const API = {
       cmsDeleteBookingService: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/services/${id}`),
       cmsListBookings: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/booking/bookings${q}`),
       cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
+      // Customers (per site)
+      cmsListCustomers: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/customers${q}`),
+      cmsGetCustomer: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/customers/${id}`),
+      cmsCreateCustomer: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/customers`, d),
+      cmsUpdateCustomer: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/customers/${id}`, d),
+      cmsDeleteCustomer: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/customers/${id}`),
+      cmsLinkCustomerToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/customers/${id}/link-erp`, {}),
+      // Forms (per site)
+      cmsListForms: (siteId) => API.get(`${base}/cms/sites/${siteId}/forms`),
+      cmsGetForm: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/forms/${id}`),
+      cmsCreateForm: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/forms`, d),
+      cmsDeleteForm: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/forms/${id}`),
+      cmsListFormSubmissions: (siteId, formId, q='') => API.get(`${base}/cms/sites/${siteId}/forms/${formId}/submissions${q}`),
+      cmsUpdateSubmissionStatus: (siteId, formId, subId, d) => API.put(`${base}/cms/sites/${siteId}/forms/${formId}/submissions/${subId}/status`, d),
+      // Locales (per site)
+      cmsListLocales: (siteId) => API.get(`${base}/cms/sites/${siteId}/locales`),
+      cmsAddLocale: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/locales`, d),
+      cmsDeleteLocale: (siteId, localeId) => API.del(`${base}/cms/sites/${siteId}/locales/${localeId}`),
+      // Staff access (per site)
+      cmsListStaffAccess: (siteId) => API.get(`${base}/cms/sites/${siteId}/staff-access`),
+      cmsAddStaffAccess: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/staff-access`, d),
+      cmsDeleteStaffAccess: (siteId, accessId) => API.del(`${base}/cms/sites/${siteId}/staff-access/${accessId}`),
+      // SEO redirects (per site)
+      cmsListRedirects: (siteId) => API.get(`${base}/cms/sites/${siteId}/content/seo-redirects`),
+      cmsAddRedirect: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/content/seo-redirects`, d),
+      cmsDeleteRedirect: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/content/seo-redirects/${id}`),
+      // Quotas
+      cmsGetQuotas: (siteId) => API.get(`${base}/cms/sites/${siteId}/quotas`),
+      // Page translations
+      cmsUpsertPageTranslation: (siteId, pageId, d) => API.put(`${base}/cms/sites/${siteId}/content/pages/${pageId}/translations`, d),
+      cmsDeletePageTranslation: (siteId, pageId, lang) => API.del(`${base}/cms/sites/${siteId}/content/pages/${pageId}/translations/${lang}`),
       // Server-side PDF generation. Endpoints return raw PDF bytes (not JSON), so we
       // expose URLs for the page to fetch as Blobs and trigger a download.
       generateDocPdfUrl: () => `${base}/document-templates/generate-pdf`,

@@ -53,9 +53,17 @@
       <div class="editor-tab" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
       <div class="editor-tab" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
       <div class="editor-tab" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
+      <div class="editor-tab" data-tab="customers" onclick="Page.switchTab('customers')">👥 ลูกค้า</div>
+      <div class="editor-tab" data-tab="forms" onclick="Page.switchTab('forms')">📨 ฟอร์ม</div>
+      <div class="editor-tab" data-tab="languages" onclick="Page.switchTab('languages')">🌏 ภาษา</div>
+      <div class="editor-tab" data-tab="team" onclick="Page.switchTab('team')">👤 ทีม</div>
+      <div class="editor-tab" data-tab="redirects" onclick="Page.switchTab('redirects')">↪️ Redirects</div>
       <div class="editor-tab" data-tab="seo" onclick="Page.switchTab('seo')">🔍 SEO</div>
       <div class="editor-tab" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
     </div>
+
+    <!-- Quotas badge -->
+    <div id="quotaBadge" style="display:none;background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px"></div>
 
     <!-- ====================== PAGES TAB ====================== -->
     <div class="tab-pane active" id="tab-pages">
@@ -189,6 +197,57 @@
         </div>
         <div id="domainList"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
       </div>
+    </div>
+
+    <!-- ====================== CUSTOMERS TAB ====================== -->
+    <div class="tab-pane" id="tab-customers">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">ลูกค้าที่สมัครผ่านเว็บ</h3>
+        <div class="flex gap-2">
+          <input type="text" class="form-input" id="custSearch" placeholder="ค้นหาชื่อ/อีเมล..." style="width:240px" oninput="Page.loadCustomers()">
+          <button class="btn btn-primary btn-sm" onclick="Page.openCreateCustomer()">+ เพิ่มลูกค้า</button>
+        </div>
+      </div>
+      <div id="customersList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== FORMS TAB ====================== -->
+    <div class="tab-pane" id="tab-forms">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">ฟอร์มและคำขอ</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openCreateForm()">+ สร้างฟอร์ม</button>
+      </div>
+      <div id="formsList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== LANGUAGES TAB ====================== -->
+    <div class="tab-pane" id="tab-languages">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">ภาษาที่รองรับ</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openAddLocale()">+ เพิ่มภาษา</button>
+      </div>
+      <div class="text-sm text-gray-500" style="margin-bottom:12px">เว็บใช้ภาษาหลักที่ตั้งไว้เป็น default — เพิ่มภาษาเพิ่มเติมเพื่อรองรับผู้เยี่ยมชมต่างประเทศ</div>
+      <div id="localesList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== TEAM TAB ====================== -->
+    <div class="tab-pane" id="tab-team">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">ทีมงาน &amp; สิทธิ์เข้าถึง</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openAddStaff()">+ เพิ่มสมาชิกทีม</button>
+      </div>
+      <div class="text-sm text-gray-500" style="margin-bottom:12px">ผู้ใช้ในบริษัทนี้สามารถเป็น Admin/Editor/ContentWriter ของเว็บไซต์นี้ได้</div>
+      <div id="staffList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== REDIRECTS TAB ====================== -->
+    <div class="tab-pane" id="tab-redirects">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">URL Redirects</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openAddRedirect()">+ เพิ่ม Redirect</button>
+      </div>
+      <div class="text-sm text-gray-500" style="margin-bottom:12px">301/302 redirect — สำหรับเปลี่ยน URL หน้าเก่าให้ไปหน้าใหม่ (รักษา SEO)</div>
+      <div id="redirectsList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
     </div>
 
     <!-- ====================== Modals ====================== -->
@@ -427,6 +486,176 @@
       </div>
     </div>
 
+    <!-- Customer modal -->
+    <div class="modal-overlay" id="customerModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="customerModalTitle">เพิ่มลูกค้า</h3>
+          <button class="modal-close" onclick="Layout.closeModal('customerModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="cstId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อีเมล *</label><input type="email" class="form-input" id="cstEmail"></div>
+            <div class="form-group"><label class="form-label">ชื่อ-นามสกุล</label><input type="text" class="form-input" id="cstName"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เบอร์โทร</label><input type="text" class="form-input" id="cstPhone"></div>
+            <div class="form-group"><label class="form-label">เลขผู้เสียภาษี</label><input type="text" class="form-input" id="cstTaxId"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อบริษัท (ถ้ามี)</label><input type="text" class="form-input" id="cstCompany"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">กลุ่มลูกค้า</label><input type="text" class="form-input" id="cstGroup" placeholder="VIP / Wholesale / ..."></div>
+            <div class="form-group"><label class="form-label">Tags (คั่น , )</label><input type="text" class="form-input" id="cstTags"></div>
+          </div>
+          <div class="form-group form-checkbox"><input type="checkbox" id="cstMarketing"><label for="cstMarketing">ยินยอมรับข่าวสาร/โปรโมชัน</label></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('customerModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveCustomer()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form builder modal -->
+    <div class="modal-overlay" id="formBuilderModal">
+      <div class="modal" style="max-width:760px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
+        <div class="modal-header">
+          <h3 class="modal-title" id="formBuilderTitle">สร้างฟอร์ม</h3>
+          <button class="modal-close" onclick="Layout.closeModal('formBuilderModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <input type="hidden" id="frmId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อฟอร์ม *</label><input type="text" class="form-input" id="frmName" placeholder="เช่น ฟอร์มติดต่อ"></div>
+            <div class="form-group"><label class="form-label">ประเภท</label><select class="form-input" id="frmType"><option value="1">ติดต่อสอบถาม</option><option value="2">ขอใบเสนอราคา (RFQ)</option><option value="3">นัดหมาย</option><option value="4">ลงทะเบียน Newsletter</option><option value="5">รับสมัครงาน</option><option value="99">กำหนดเอง</option></select></div>
+          </div>
+          <div class="form-group"><label class="form-label">อีเมลแจ้งเตือน (คั่น ,)</label><input type="text" class="form-input" id="frmNotify" placeholder="admin@example.com,sales@example.com"></div>
+          <div class="form-row">
+            <div class="form-group form-checkbox"><input type="checkbox" id="frmAutoReply"><label for="frmAutoReply">ส่งอีเมลตอบกลับอัตโนมัติ</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="frmCaptcha" checked><label for="frmCaptcha">ใช้ CAPTCHA</label></div>
+          </div>
+          <div class="form-group form-checkbox"><input type="checkbox" id="frmCreateErp"><label for="frmCreateErp">สร้างเอกสารใน ERP เมื่อรับฟอร์ม</label></div>
+          <hr style="margin:14px 0">
+          <h4 style="font-size:14px;margin-bottom:10px">ฟิลด์ในฟอร์ม</h4>
+          <div id="formFieldsList" style="margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;background:#F9FAFB;padding:10px;border-radius:8px">
+            <div class="form-group" style="flex:1;margin-bottom:0;min-width:120px"><label class="form-label">ป้ายชื่อ</label><input type="text" class="form-input" id="newFieldLabel" placeholder="ชื่อ"></div>
+            <div class="form-group" style="flex:1;margin-bottom:0;min-width:100px"><label class="form-label">ชื่อฟิลด์</label><input type="text" class="form-input" id="newFieldName" placeholder="name"></div>
+            <div class="form-group" style="margin-bottom:0;min-width:120px"><label class="form-label">ประเภท</label><select class="form-input" id="newFieldType"><option value="1">Text</option><option value="2">Email</option><option value="3">Phone</option><option value="4">Number</option><option value="5">Textarea</option><option value="6">Select</option><option value="7">Checkbox</option><option value="8">Date</option></select></div>
+            <div class="form-group form-checkbox" style="margin-bottom:0"><input type="checkbox" id="newFieldRequired"><label for="newFieldRequired">บังคับ</label></div>
+            <button class="btn btn-secondary" onclick="Page.addFormField()" style="white-space:nowrap">+ เพิ่ม</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formBuilderModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveForm()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form submissions modal -->
+    <div class="modal-overlay" id="submissionsModal">
+      <div class="modal" style="max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
+        <div class="modal-header">
+          <h3 class="modal-title" id="submissionsTitle">รายการที่ส่งมา</h3>
+          <button class="modal-close" onclick="Layout.closeModal('submissionsModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <div id="submissionsList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Locale modal -->
+    <div class="modal-overlay" id="localeModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">เพิ่มภาษา</h3>
+          <button class="modal-close" onclick="Layout.closeModal('localeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสภาษา *</label><select class="form-input" id="locCode"><option value="th">th — ไทย</option><option value="en">en — English</option><option value="zh">zh — 中文</option><option value="ja">ja — 日本語</option><option value="ko">ko — 한국어</option><option value="my">my — မြန်မာ</option><option value="lo">lo — ລາວ</option><option value="km">km — ភាសាខ្មែរ</option></select></div>
+            <div class="form-group"><label class="form-label">สกุลเงิน</label><select class="form-input" id="locCurrency"><option value="THB">THB</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="JPY">JPY</option><option value="CNY">CNY</option></select></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('localeModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.addLocale()">เพิ่ม</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Staff modal -->
+    <div class="modal-overlay" id="staffModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <h3 class="modal-title">เพิ่มสมาชิกทีม</h3>
+          <button class="modal-close" onclick="Layout.closeModal('staffModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">เลือกผู้ใช้ *</label><select class="form-input" id="staffUserId"></select></div>
+          <div class="form-group">
+            <label class="form-label">บทบาท</label>
+            <select class="form-input" id="staffRole">
+              <option value="1">Admin — จัดการเว็บได้ทุกอย่าง</option>
+              <option value="2" selected>Editor — แก้เนื้อหา + theme</option>
+              <option value="3">Content Writer — แก้เฉพาะหน้าและบล็อก</option>
+              <option value="4">Order Manager — จัดการออเดอร์/จองเท่านั้น</option>
+              <option value="5">Viewer — ดูอย่างเดียว</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('staffModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.addStaff()">เพิ่ม</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Redirect modal -->
+    <div class="modal-overlay" id="redirectModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <h3 class="modal-title">เพิ่ม Redirect</h3>
+          <button class="modal-close" onclick="Layout.closeModal('redirectModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">จาก (Path เก่า) *</label><input type="text" class="form-input" id="rdFrom" placeholder="/old-page"></div>
+          <div class="form-group"><label class="form-label">ไป (Path ใหม่) *</label><input type="text" class="form-input" id="rdTo" placeholder="/new-page"></div>
+          <div class="form-group">
+            <label class="form-label">สถานะ HTTP</label>
+            <select class="form-input" id="rdStatus">
+              <option value="301">301 — ย้ายถาวร (Permanent)</option>
+              <option value="302">302 — ย้ายชั่วคราว (Temporary)</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('redirectModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.addRedirect()">เพิ่ม</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Media picker modal (used by block forms) -->
+    <div class="modal-overlay" id="mediaPickerModal">
+      <div class="modal" style="max-width:760px;height:80vh;display:flex;flex-direction:column;overflow:hidden">
+        <div class="modal-header">
+          <h3 class="modal-title">เลือกภาพจากคลัง</h3>
+          <button class="modal-close" onclick="Layout.closeModal('mediaPickerModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <div style="margin-bottom:12px">
+            <input type="file" id="mediaPickerUpload" accept="image/*" style="display:none" onchange="Page.uploadMediaFromPicker(this)">
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('mediaPickerUpload').click()">📤 อัพโหลดใหม่</button>
+          </div>
+          <div id="mediaPickerGrid" class="grid grid-4 gap-3"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Add domain modal -->
     <div class="modal-overlay" id="domainModal">
       <div class="modal" style="max-width:500px">
@@ -531,7 +760,28 @@
           document.getElementById('sGtmId').value = this.site.googleTagManagerId || '';
           document.getElementById('sMetaPixel').value = this.site.metaPixelId || '';
           this.applyTabsBySiteType();
+          this.loadQuotas();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadQuotas() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetQuotas(this.siteId);
+          const q = res.data;
+          if (!q) return;
+          const fmtBytes = b => b > 1024*1024*1024 ? `${(b/(1024*1024*1024)).toFixed(2)} GB` : b > 1024*1024 ? `${(b/(1024*1024)).toFixed(1)} MB` : `${(b/1024).toFixed(0)} KB`;
+          const pct = (used, max) => max ? Math.round(used/max*100) : 0;
+          const bar = (p) => `<div style="display:inline-block;width:80px;height:6px;background:#E5E7EB;border-radius:3px;vertical-align:middle;margin:0 6px"><div style="width:${Math.min(p,100)}%;height:100%;background:${p>80?'#DC2626':p>60?'#F59E0B':'#10B981'};border-radius:3px"></div></div>`;
+          const items = [];
+          if (q.maxStorageBytes) items.push(`💾 พื้นที่: ${fmtBytes(q.currentStorageUsed||0)} / ${fmtBytes(q.maxStorageBytes)} ${bar(pct(q.currentStorageUsed||0, q.maxStorageBytes))} ${pct(q.currentStorageUsed||0, q.maxStorageBytes)}%`);
+          if (q.maxPages) items.push(`📄 หน้า: ${q.currentPageCount||0}/${q.maxPages} ${bar(pct(q.currentPageCount||0, q.maxPages))}`);
+          if (q.maxProducts) items.push(`🛒 สินค้า: ${q.currentProductCount||0}/${q.maxProducts} ${bar(pct(q.currentProductCount||0, q.maxProducts))}`);
+          if (!items.length) return;
+          const el = document.getElementById('quotaBadge');
+          el.innerHTML = items.join(' · ');
+          el.style.display = '';
+        } catch (e) { /* quota endpoint may not exist on all plans */ }
       },
 
       switchTab(tab) {
@@ -545,6 +795,11 @@
         if (tab === 'orders' && !this._ordersLoaded) this.loadOrders();
         if (tab === 'booking' && !this._bookingLoaded) this.loadBookingServices();
         if (tab === 'bookings' && !this._bookingsLoaded) this.loadBookings();
+        if (tab === 'customers' && !this._customersLoaded) this.loadCustomers();
+        if (tab === 'forms' && !this._formsLoaded) this.loadForms();
+        if (tab === 'languages' && !this._localesLoaded) this.loadLocales();
+        if (tab === 'team' && !this._staffLoaded) this.loadStaff();
+        if (tab === 'redirects' && !this._redirectsLoaded) this.loadRedirects();
       },
 
       // Show e-commerce/booking tabs based on site type
@@ -711,16 +966,19 @@
             preview = cfg.headline || cfg.content?.replace(/<[^>]+>/g,'').slice(0,80) || '';
           } catch (_) {}
           return `
-            <div class="block-row">
+            <div class="block-row" draggable="true"
+                 ondragstart="Page.onDragStart(${idx},event)" ondragend="Page.onDragEnd(event)"
+                 ondragover="Page.onDragOver(event)" ondragleave="Page.onDragLeave(event)" ondrop="Page.onDrop(${idx},event)">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-                <div style="flex:1">
-                  <span class="block-type-badge">${meta.i} ${meta.n}</span>
-                  ${!b.isVisible ? '<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B;margin-left:6px">ซ่อน</span>' : ''}
-                  <div style="margin-top:6px;color:var(--gray-700);font-size:13px">${Layout.esc(preview).slice(0,120) || '<em style="color:var(--gray-400)">ไม่มีตัวอย่าง</em>'}</div>
+                <div style="flex:1;display:flex;align-items:flex-start;gap:8px">
+                  <span style="cursor:grab;color:var(--gray-400);font-size:18px;user-select:none" title="ลากเพื่อจัดลำดับ">⋮⋮</span>
+                  <div style="flex:1">
+                    <span class="block-type-badge">${meta.i} ${meta.n}</span>
+                    ${!b.isVisible ? '<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B;margin-left:6px">ซ่อน</span>' : ''}
+                    <div style="margin-top:6px;color:var(--gray-700);font-size:13px">${Layout.esc(preview).slice(0,120) || '<em style="color:var(--gray-400)">ไม่มีตัวอย่าง</em>'}</div>
+                  </div>
                 </div>
                 <div class="flex gap-1" style="flex-shrink:0">
-                  ${idx > 0 ? `<button class="btn btn-sm btn-ghost" onclick="Page.moveBlock(${idx},-1)" title="ย้ายขึ้น">↑</button>` : ''}
-                  ${idx < this.currentBlocks.length - 1 ? `<button class="btn btn-sm btn-ghost" onclick="Page.moveBlock(${idx},1)" title="ย้ายลง">↓</button>` : ''}
                   <button class="btn btn-sm btn-secondary" onclick="Page.openEditBlock('${b.id}')">แก้ไข</button>
                   <button class="btn btn-sm btn-danger" onclick="Page.deleteBlock('${b.id}')">🗑</button>
                 </div>
@@ -765,6 +1023,8 @@
         const esc = Layout.esc;
         const ta = (id, label, val, rows=2) => `<div class="form-group"><label class="form-label">${label}</label><textarea class="form-input" id="${id}" rows="${rows}">${esc(val||'')}</textarea></div>`;
         const inp = (id, label, val, ph='') => `<div class="form-group"><label class="form-label">${label}</label><input type="text" class="form-input" id="${id}" value="${esc(val||'')}" placeholder="${esc(ph)}"></div>`;
+        // Image input with "เลือกจากคลัง" button
+        const inpImg = (id, label, val, ph='') => `<div class="form-group"><label class="form-label">${label}</label><div style="display:flex;gap:6px"><input type="text" class="form-input" id="${id}" value="${esc(val||'')}" placeholder="${esc(ph)}" style="flex:1"><button type="button" class="btn btn-sm btn-secondary" onclick="Page.openMediaPicker('${id}')" style="white-space:nowrap">📷 เลือก</button></div></div>`;
         let html = '';
         switch (type) {
           case 1: // Hero
@@ -772,13 +1032,13 @@
                  + inp('cfg_subheadline','หัวข้อย่อย',cfg.subheadline,'อธิบายธุรกิจของคุณสั้นๆ')
                  + inp('cfg_ctaText','ข้อความปุ่ม',cfg.ctaText,'เริ่มต้น')
                  + inp('cfg_ctaUrl','ลิงก์ปุ่ม',cfg.ctaUrl,'/about')
-                 + inp('cfg_backgroundUrl','URL ภาพพื้นหลัง',cfg.backgroundUrl,'https://...');
+                 + inpImg('cfg_backgroundUrl','ภาพพื้นหลัง',cfg.backgroundUrl,'เลือกจากคลังภาพ');
             break;
           case 2: // RichText
             html = ta('cfg_content','เนื้อหา (HTML รองรับ)',cfg.content,8);
             break;
           case 3: // Image
-            html = inp('cfg_url','URL ภาพ',cfg.url) + inp('cfg_alt','คำอธิบายภาพ (alt)',cfg.alt) + inp('cfg_caption','คำบรรยายใต้ภาพ',cfg.caption);
+            html = inpImg('cfg_url','ภาพ',cfg.url,'เลือกจากคลังภาพ') + inp('cfg_alt','คำอธิบายภาพ (alt)',cfg.alt) + inp('cfg_caption','คำบรรยายใต้ภาพ',cfg.caption);
             break;
           case 4: // Gallery
             html = ta('cfg_imagesJson','รายการภาพ (JSON: [{url, alt}])',JSON.stringify(cfg.images||[],null,2),8);
@@ -799,7 +1059,7 @@
                  + `<div class="form-group form-checkbox"><input type="checkbox" id="cfg_featured" ${cfg.featured?'checked':''}><label for="cfg_featured">แสดงเฉพาะสินค้าแนะนำ</label></div>`;
             break;
           case 5: // Video
-            html = inp('cfg_url','URL วิดีโอ (YouTube/Vimeo/MP4)',cfg.url) + inp('cfg_poster','URL ภาพปก (poster)',cfg.poster);
+            html = inp('cfg_url','URL วิดีโอ (YouTube/Vimeo/MP4)',cfg.url) + inpImg('cfg_poster','ภาพปก (poster)',cfg.poster);
             break;
           case 9: // ContactForm
             html = inp('cfg_headline','หัวข้อ',cfg.headline,'ติดต่อเรา')
@@ -1616,6 +1876,492 @@
           Layout.toast('อัพเดทสำเร็จ', 'success');
           await this.loadBookings();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ CUSTOMERS ============
+      async loadCustomers() {
+        this._customersLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const search = document.getElementById('custSearch')?.value || '';
+          const q = search ? `?pageSize=100&search=${encodeURIComponent(search)}` : '?pageSize=100';
+          const res = await api.cmsListCustomers(this.siteId, q);
+          this.customers = res.data?.items || res.data || [];
+          this.renderCustomers();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderCustomers() {
+        const list = document.getElementById('customersList');
+        if (!this.customers.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีลูกค้า</div>';
+          return;
+        }
+        list.innerHTML = `<div class="table-container"><table class="table">
+          <thead><tr><th>อีเมล / ชื่อ</th><th>เบอร์</th><th>กลุ่ม</th><th class="text-right">ออเดอร์</th><th class="text-right">ยอดรวม</th><th>เข้าใช้ล่าสุด</th><th>จัดการ</th></tr></thead>
+          <tbody>${this.customers.map(c => `<tr>
+            <td><div style="font-weight:600">${Layout.esc(c.email||'')}</div><div style="font-size:12px;color:var(--gray-500)">${Layout.esc(c.fullName||'')}</div></td>
+            <td>${Layout.esc(c.phone||'-')}</td>
+            <td>${c.customerGroup ? `<span class="block-type-badge">${Layout.esc(c.customerGroup)}</span>` : '-'}</td>
+            <td class="text-right">${c.orderCount||0}</td>
+            <td class="text-right">฿${Number(c.totalSpent||0).toLocaleString('th-TH')}</td>
+            <td>${c.lastLoginAt ? new Date(c.lastLoginAt).toLocaleDateString('th-TH') : '-'}</td>
+            <td>
+              <button class="btn btn-sm btn-secondary" onclick="Page.openEditCustomer('${c.id}')">แก้ไข</button>
+              <button class="btn btn-sm btn-success" onclick="Page.linkCustomerToErp('${c.id}')" title="เชื่อมกับ Contact ใน ERP โดยอัตโนมัติ (จับคู่จากอีเมล/เบอร์)">🔗 ERP</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteCustomer('${c.id}','${Layout.esc(c.email||'')}')">🗑</button>
+            </td>
+          </tr>`).join('')}</tbody></table></div>`;
+      },
+
+      openCreateCustomer() {
+        document.getElementById('customerModalTitle').textContent = 'เพิ่มลูกค้า';
+        ['cstId','cstEmail','cstName','cstPhone','cstTaxId','cstCompany','cstGroup','cstTags'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('cstMarketing').checked = false;
+        Layout.openModal('customerModal');
+      },
+
+      async openEditCustomer(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetCustomer(this.siteId, id);
+          const c = res.data;
+          document.getElementById('customerModalTitle').textContent = 'แก้ไขลูกค้า';
+          document.getElementById('cstId').value = c.id;
+          document.getElementById('cstEmail').value = c.email || '';
+          document.getElementById('cstName').value = c.fullName || '';
+          document.getElementById('cstPhone').value = c.phone || '';
+          document.getElementById('cstTaxId').value = c.taxId || '';
+          document.getElementById('cstCompany').value = c.companyName || '';
+          document.getElementById('cstGroup').value = c.customerGroup || '';
+          document.getElementById('cstTags').value = c.tags || '';
+          document.getElementById('cstMarketing').checked = !!c.acceptMarketing;
+          Layout.openModal('customerModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async saveCustomer() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('cstId').value;
+        const body = {
+          email: document.getElementById('cstEmail').value.trim(),
+          fullName: document.getElementById('cstName').value || null,
+          phone: document.getElementById('cstPhone').value || null,
+          taxId: document.getElementById('cstTaxId').value || null,
+          companyName: document.getElementById('cstCompany').value || null,
+          customerGroup: document.getElementById('cstGroup').value || null,
+          tags: document.getElementById('cstTags').value || null,
+          acceptMarketing: document.getElementById('cstMarketing').checked
+        };
+        if (!body.email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
+        try {
+          if (id) await api.cmsUpdateCustomer(this.siteId, id, body);
+          else await api.cmsCreateCustomer(this.siteId, body);
+          Layout.toast('บันทึกสำเร็จ', 'success');
+          Layout.closeModal('customerModal');
+          await this.loadCustomers();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async linkCustomerToErp(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsLinkCustomerToErp(this.siteId, id);
+          Layout.toast('เชื่อมกับ Contact ใน ERP สำเร็จ', 'success');
+          await this.loadCustomers();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteCustomer(id, email) {
+        if (!confirm(`ลบลูกค้า "${email}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteCustomer(this.siteId, id);
+          await this.loadCustomers();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ FORMS ============
+      async loadForms() {
+        this._formsLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListForms(this.siteId);
+          this.forms = res.data || [];
+          this.renderForms();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderForms() {
+        const list = document.getElementById('formsList');
+        if (!this.forms.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีฟอร์ม</div>';
+          return;
+        }
+        list.innerHTML = this.forms.map(f => `
+          <div class="page-row">
+            <div style="flex:1">
+              <div style="font-weight:600">${Layout.esc(f.name||'')} ${f.createErpDocument?'<span class="block-type-badge" style="background:#D1FAE5;color:#065F46">→ ERP</span>':''}</div>
+              <div style="font-size:12px;color:var(--gray-500)">${(f.fields||[]).length} ฟิลด์ · ${f.submissionCount||0} ครั้งที่รับ</div>
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="Page.viewSubmissions('${f.id}','${Layout.esc(f.name||'')}')">ดูคำขอ (${f.submissionCount||0})</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteForm('${f.id}','${Layout.esc(f.name||'')}')">🗑</button>
+          </div>`).join('');
+      },
+
+      openCreateForm() {
+        document.getElementById('formBuilderTitle').textContent = 'สร้างฟอร์ม';
+        ['frmId','frmName','frmNotify'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('frmType').value = '1';
+        document.getElementById('frmAutoReply').checked = false;
+        document.getElementById('frmCaptcha').checked = true;
+        document.getElementById('frmCreateErp').checked = false;
+        this._draftFields = [];
+        this.renderFormFields();
+        Layout.openModal('formBuilderModal');
+      },
+
+      renderFormFields() {
+        const wrap = document.getElementById('formFieldsList');
+        const FT = { 1:'Text', 2:'Email', 3:'Phone', 4:'Number', 5:'Textarea', 6:'Select', 7:'Checkbox', 8:'Date' };
+        if (!this._draftFields?.length) {
+          wrap.innerHTML = '<div style="color:var(--gray-500);font-size:12px;text-align:center;padding:14px;border:1px dashed var(--gray-300);border-radius:6px">ยังไม่มีฟิลด์ — เพิ่มจากด้านล่าง</div>';
+          return;
+        }
+        wrap.innerHTML = this._draftFields.map((f, idx) => `
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#F9FAFB;border-radius:6px;margin-bottom:6px">
+            <strong>${Layout.esc(f.label||f.fieldName)}</strong>
+            <span class="block-type-badge">${FT[f.fieldType]||'Text'}</span>
+            ${f.isRequired ? '<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B">บังคับ</span>' : ''}
+            <span style="color:var(--gray-500);font-size:12px;flex:1">${Layout.esc(f.fieldName)}</span>
+            <button class="btn btn-sm btn-danger" onclick="Page.removeFormField(${idx})">🗑</button>
+          </div>`).join('');
+      },
+
+      addFormField() {
+        const label = document.getElementById('newFieldLabel').value.trim();
+        const fieldName = document.getElementById('newFieldName').value.trim() || label.toLowerCase().replace(/\s+/g, '_');
+        const fieldType = parseInt(document.getElementById('newFieldType').value);
+        const isRequired = document.getElementById('newFieldRequired').checked;
+        if (!label || !fieldName) { Layout.toast('กรุณากรอกป้ายชื่อและชื่อฟิลด์', 'error'); return; }
+        this._draftFields.push({ label, fieldName, fieldType, isRequired, sortOrder: this._draftFields.length, width: 'full' });
+        document.getElementById('newFieldLabel').value = '';
+        document.getElementById('newFieldName').value = '';
+        document.getElementById('newFieldRequired').checked = false;
+        this.renderFormFields();
+      },
+
+      removeFormField(idx) {
+        this._draftFields.splice(idx, 1);
+        this.renderFormFields();
+      },
+
+      async saveForm() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('frmId').value;
+        const body = {
+          name: document.getElementById('frmName').value.trim(),
+          formType: parseInt(document.getElementById('frmType').value),
+          notifyEmails: document.getElementById('frmNotify').value || null,
+          sendAutoReply: document.getElementById('frmAutoReply').checked,
+          requireCaptcha: document.getElementById('frmCaptcha').checked,
+          createErpDocument: document.getElementById('frmCreateErp').checked,
+          fields: this._draftFields || []
+        };
+        if (!body.name) { Layout.toast('กรุณากรอกชื่อฟอร์ม', 'error'); return; }
+        if (!body.fields.length) { Layout.toast('กรุณาเพิ่มฟิลด์อย่างน้อย 1 ตัว', 'error'); return; }
+        try {
+          await api.cmsCreateForm(this.siteId, body);
+          Layout.toast('บันทึกฟอร์มสำเร็จ', 'success');
+          Layout.closeModal('formBuilderModal');
+          await this.loadForms();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteForm(id, name) {
+        if (!confirm(`ลบฟอร์ม "${name}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteForm(this.siteId, id);
+          await this.loadForms();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async viewSubmissions(formId, formName) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListFormSubmissions(this.siteId, formId, '?pageSize=100');
+          const subs = res.data?.items || res.data || [];
+          document.getElementById('submissionsTitle').textContent = `รายการที่ส่งมา: ${formName}`;
+          const wrap = document.getElementById('submissionsList');
+          if (!subs.length) { wrap.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีคำขอที่ส่งมา</div>'; }
+          else {
+            const STATUS = { 0:'ใหม่', 1:'อ่านแล้ว', 2:'กำลังดำเนินการ', 3:'เสร็จสิ้น', 4:'สแปม' };
+            wrap.innerHTML = subs.map(s => {
+              let data = {};
+              try { data = JSON.parse(s.dataJson || '{}'); } catch(_) {}
+              const fields = Object.entries(data).map(([k,v]) => `<div><strong>${Layout.esc(k)}:</strong> ${Layout.esc(String(v||''))}</div>`).join('');
+              return `<div class="page-row" style="flex-direction:column;align-items:stretch;gap:8px">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <strong>${new Date(s.createdAt).toLocaleString('th-TH')}</strong>
+                  <span class="block-type-badge">${STATUS[s.status]||s.status}</span>
+                  ${s.customerName ? `<span style="color:var(--gray-500)">${Layout.esc(s.customerName)}</span>` : ''}
+                </div>
+                <div style="background:#F9FAFB;padding:10px;border-radius:6px;font-size:13px;line-height:1.6">${fields}</div>
+              </div>`;
+            }).join('');
+          }
+          Layout.openModal('submissionsModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ LOCALES ============
+      async loadLocales() {
+        this._localesLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListLocales(this.siteId);
+          this.locales = res.data || [];
+          this.renderLocales();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderLocales() {
+        const list = document.getElementById('localesList');
+        if (!this.locales.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีภาษาเพิ่มเติม — เว็บใช้ภาษาหลักจากการตั้งค่าเริ่มต้น</div>';
+          return;
+        }
+        list.innerHTML = this.locales.map(l => `
+          <div class="page-row">
+            <div style="flex:1">
+              <div style="font-weight:600">${Layout.esc(l.languageName)} <span class="block-type-badge">${Layout.esc(l.languageCode)}</span> ${l.isDefault ? '<span class="block-type-badge" style="background:#FEF3C7;color:#92400E">⭐ หลัก</span>' : ''}</div>
+              <div style="font-size:12px;color:var(--gray-500)">สกุลเงิน: ${Layout.esc(l.currencySymbol)}${Layout.esc(l.currencyCode)}</div>
+            </div>
+            ${!l.isDefault ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteLocale('${l.id}','${Layout.esc(l.languageName)}')">🗑</button>` : ''}
+          </div>`).join('');
+      },
+
+      openAddLocale() { Layout.openModal('localeModal'); },
+
+      async addLocale() {
+        const api = Layout.api(); if (!api) return;
+        const code = document.getElementById('locCode').value;
+        const name = document.getElementById('locCode').selectedOptions[0]?.text.split('—')[1]?.trim() || code;
+        const currency = document.getElementById('locCurrency').value;
+        const symbols = { THB:'฿', USD:'$', EUR:'€', JPY:'¥', CNY:'¥' };
+        try {
+          await api.cmsAddLocale(this.siteId, { languageCode: code, languageName: name, currencyCode: currency, currencySymbol: symbols[currency] || currency });
+          Layout.toast('เพิ่มภาษาสำเร็จ', 'success');
+          Layout.closeModal('localeModal');
+          await this.loadLocales();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteLocale(id, name) {
+        if (!confirm(`ลบภาษา "${name}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteLocale(this.siteId, id);
+          await this.loadLocales();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ STAFF ============
+      async loadStaff() {
+        this._staffLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListStaffAccess(this.siteId);
+          this.staff = res.data || [];
+          this.renderStaff();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderStaff() {
+        const list = document.getElementById('staffList');
+        const ROLES = { 1:'Admin', 2:'Editor', 3:'Content Writer', 4:'Order Manager', 5:'Viewer' };
+        if (!this.staff.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีสมาชิกทีม — เจ้าของบริษัทเข้าถึงได้โดยอัตโนมัติ</div>';
+          return;
+        }
+        list.innerHTML = this.staff.map(s => `
+          <div class="page-row">
+            <div style="flex:1">
+              <div style="font-weight:600">${Layout.esc(s.userFullName||s.userEmail||'-')}</div>
+              <div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.userEmail||'')}</div>
+            </div>
+            <span class="block-type-badge">${ROLES[s.role]||s.role}</span>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteStaff('${s.id}','${Layout.esc(s.userFullName||s.userEmail||'')}')">🗑</button>
+          </div>`).join('');
+      },
+
+      async openAddStaff() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getCompanyUsers ? await api.getCompanyUsers() : await API.get(`/api/company/${Layout.getCompanyId()}/users`);
+          const users = res.data?.items || res.data || [];
+          document.getElementById('staffUserId').innerHTML = '<option value="">-- เลือกผู้ใช้ --</option>' +
+            users.filter(u => !this.staff?.some(s => s.userId === u.userId || s.userId === u.id))
+              .map(u => `<option value="${u.userId||u.id}">${Layout.esc(u.fullName||u.email)}</option>`).join('');
+          Layout.openModal('staffModal');
+        } catch (e) {
+          Layout.toast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ — ลองอีกครั้ง', 'error');
+        }
+      },
+
+      async addStaff() {
+        const api = Layout.api(); if (!api) return;
+        const userId = document.getElementById('staffUserId').value;
+        const role = parseInt(document.getElementById('staffRole').value);
+        if (!userId) { Layout.toast('กรุณาเลือกผู้ใช้', 'error'); return; }
+        try {
+          await api.cmsAddStaffAccess(this.siteId, { userId, role });
+          Layout.toast('เพิ่มสมาชิกสำเร็จ', 'success');
+          Layout.closeModal('staffModal');
+          await this.loadStaff();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteStaff(id, name) {
+        if (!confirm(`ลบสิทธิ์ของ "${name}" จากเว็บนี้?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteStaffAccess(this.siteId, id);
+          await this.loadStaff();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ REDIRECTS ============
+      async loadRedirects() {
+        this._redirectsLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListRedirects(this.siteId);
+          this.redirects = res.data || [];
+          this.renderRedirects();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderRedirects() {
+        const list = document.getElementById('redirectsList');
+        if (!this.redirects.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มี redirect</div>';
+          return;
+        }
+        list.innerHTML = this.redirects.map(r => `
+          <div class="page-row">
+            <div style="flex:1">
+              <div style="font-family:monospace;font-size:13px"><strong>${Layout.esc(r.fromPath)}</strong> <span style="color:var(--primary)">→</span> ${Layout.esc(r.toPath)}</div>
+              <div style="font-size:12px;color:var(--gray-500);margin-top:4px">
+                <span class="block-type-badge">${r.statusCode}</span>
+                · เข้าใช้ ${r.hitCount||0} ครั้ง
+                ${r.lastHitAt ? ` · ล่าสุด ${new Date(r.lastHitAt).toLocaleDateString('th-TH')}` : ''}
+              </div>
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteRedirect('${r.id}')">🗑</button>
+          </div>`).join('');
+      },
+
+      openAddRedirect() {
+        ['rdFrom','rdTo'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('rdStatus').value = '301';
+        Layout.openModal('redirectModal');
+      },
+
+      async addRedirect() {
+        const api = Layout.api(); if (!api) return;
+        const body = {
+          fromPath: document.getElementById('rdFrom').value.trim(),
+          toPath: document.getElementById('rdTo').value.trim(),
+          statusCode: parseInt(document.getElementById('rdStatus').value)
+        };
+        if (!body.fromPath || !body.toPath) { Layout.toast('กรุณากรอกทั้ง 2 path', 'error'); return; }
+        try {
+          await api.cmsAddRedirect(this.siteId, body);
+          Layout.toast('เพิ่มสำเร็จ', 'success');
+          Layout.closeModal('redirectModal');
+          await this.loadRedirects();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteRedirect(id) {
+        if (!confirm('ลบ redirect นี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteRedirect(this.siteId, id);
+          await this.loadRedirects();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ MEDIA PICKER (for block forms) ============
+      _mediaPickerTargetId: null,
+      async openMediaPicker(targetInputId) {
+        this._mediaPickerTargetId = targetInputId;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListMedia(this.siteId, '?pageSize=100');
+          const media = res.data?.items || res.data || [];
+          const grid = document.getElementById('mediaPickerGrid');
+          if (!media.length) {
+            grid.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;grid-column:1/-1">ยังไม่มีภาพ — กดปุ่ม "อัพโหลดใหม่" ด้านบน</div>';
+          } else {
+            grid.innerHTML = media.filter(m => m.contentType?.startsWith('image/')).map(m => `
+              <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;cursor:pointer" onclick="Page.selectMedia('${Layout.esc(m.publicUrl||m.storagePath||'')}')">
+                <img src="${Layout.esc(m.publicUrl||m.storagePath||'')}" style="width:100%;aspect-ratio:1/1;object-fit:cover;background:#F3F4F6" loading="lazy">
+                <div style="padding:6px;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Layout.esc(m.fileName||'')}</div>
+              </div>`).join('');
+          }
+          Layout.openModal('mediaPickerModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      selectMedia(url) {
+        if (this._mediaPickerTargetId) {
+          const el = document.getElementById(this._mediaPickerTargetId);
+          if (el) el.value = url;
+        }
+        Layout.closeModal('mediaPickerModal');
+      },
+
+      async uploadMediaFromPicker(input) {
+        if (!input.files?.length) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const fd = new FormData();
+          fd.append('file', input.files[0]);
+          const res = await api.cmsUploadMedia(this.siteId, fd);
+          input.value = '';
+          // Auto-select the just-uploaded image
+          const url = res.data?.publicUrl || res.data?.storagePath;
+          if (url) {
+            this.selectMedia(url);
+          } else {
+            this.openMediaPicker(this._mediaPickerTargetId); // re-render
+          }
+        } catch (e) { Layout.toast(e.message || 'อัพโหลดไม่สำเร็จ', 'error'); }
+      },
+
+      // ============ DRAG-DROP REORDER (replaces ↑↓) ============
+      _dragIdx: null,
+      onDragStart(idx, e) { this._dragIdx = idx; e.dataTransfer.effectAllowed = 'move'; e.target.style.opacity = '0.5'; },
+      onDragEnd(e) { e.target.style.opacity = '1'; this._dragIdx = null; document.querySelectorAll('.block-row').forEach(r => r.style.borderColor = ''); },
+      onDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.style.borderColor = 'var(--primary)'; },
+      onDragLeave(e) { e.currentTarget.style.borderColor = ''; },
+      async onDrop(targetIdx, e) {
+        e.preventDefault();
+        const src = this._dragIdx;
+        if (src == null || src === targetIdx) return;
+        const arr = this.currentBlocks.slice();
+        const [moved] = arr.splice(src, 1);
+        arr.splice(targetIdx, 0, moved);
+        this.currentBlocks = arr;
+        this.renderBlocks();
+        const api = Layout.api(); if (!api) return;
+        try {
+          const items = arr.map((b, i) => ({ blockId: b.id, sortOrder: i }));
+          await api.cmsReorderBlocks(this.siteId, this.currentPage.id, items);
+        } catch (err) { Layout.toast(err.message, 'error'); }
       }
     };
 
