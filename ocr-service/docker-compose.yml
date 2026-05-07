@@ -1,0 +1,27 @@
+services:
+  ocr-service:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - AI_MODEL=typhoon2:8b
+      - TRAINING_DATA_DIR=/app/training_data
+    volumes:
+      - ./training_data:/app/training_data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    # After first run, pull the model:
+    # docker exec -it ocr-service-ollama-1 ollama pull typhoon2:8b
+
+volumes:
+  ollama_data:

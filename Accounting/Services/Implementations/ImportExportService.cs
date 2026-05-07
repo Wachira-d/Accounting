@@ -43,10 +43,15 @@ public class ImportExportService : IImportExportService
                         await ImportProductAsync(companyId, row);
                         break;
                     case "chartofaccounts":
+                    case "chart-of-accounts":
                         await ImportAccountAsync(companyId, row);
                         break;
                     case "banktransactions":
                         await ImportBankTransactionAsync(companyId, row);
+                        break;
+                    case "journalentries":
+                    case "journal-entries":
+                        await ImportJournalEntryAsync(companyId, row, performedBy);
                         break;
                     default:
                         errors.Add(new ImportError(i + 1, "EntityType", request.EntityType, $"ไม่รองรับการนำเข้า {request.EntityType}"));
@@ -101,7 +106,7 @@ public class ImportExportService : IImportExportService
                 new() { ["Code"] = "P001", ["Name"] = "สินค้าตัวอย่าง", ["Unit"] = "ชิ้น", ["SellingPrice"] = "100.00", ["CostPrice"] = "60.00" }
             }),
 
-            "chartofaccounts" => new ImportTemplateResponse("chartofaccounts", new List<ImportField>
+            "chartofaccounts" or "chart-of-accounts" => new ImportTemplateResponse("chart-of-accounts", new List<ImportField>
             {
                 new("AccountCode", "รหัสบัญชี", "string", true, null, null),
                 new("AccountName", "ชื่อบัญชี", "string", true, null, null),
@@ -111,6 +116,21 @@ public class ImportExportService : IImportExportService
             }, new List<Dictionary<string, string>>
             {
                 new() { ["AccountCode"] = "1110", ["AccountName"] = "เงินสด", ["AccountNameEn"] = "Cash", ["AccountType"] = "Asset" }
+            }),
+
+            "journalentries" or "journal-entries" => new ImportTemplateResponse("journal-entries", new List<ImportField>
+            {
+                new("Date", "วันที่", "date", true, "yyyy-MM-dd", null),
+                new("Description", "คำอธิบาย", "string", true, null, null),
+                new("AccountCode", "รหัสบัญชี", "string", true, null, null),
+                new("DebitAmount", "เดบิต", "decimal", false, null, null),
+                new("CreditAmount", "เครดิต", "decimal", false, null, null),
+                new("Reference", "อ้างอิง", "string", false, null, null),
+                new("ContactName", "ผู้ติดต่อ", "string", false, null, null),
+            }, new List<Dictionary<string, string>>
+            {
+                new() { ["Date"] = "2026-01-15", ["Description"] = "ค่าเช่าสำนักงาน", ["AccountCode"] = "5210", ["DebitAmount"] = "15000.00", ["CreditAmount"] = "" },
+                new() { ["Date"] = "2026-01-15", ["Description"] = "ค่าเช่าสำนักงาน", ["AccountCode"] = "1120", ["DebitAmount"] = "", ["CreditAmount"] = "15000.00" }
             }),
 
             "banktransactions" => new ImportTemplateResponse("banktransactions", new List<ImportField>
@@ -157,7 +177,7 @@ public class ImportExportService : IImportExportService
         {
             "contacts" => await ExportContactsAsync(companyId, request),
             "products" => await ExportProductsAsync(companyId, request),
-            "chartofaccounts" => await ExportAccountsAsync(companyId, request),
+            "chartofaccounts" or "chart-of-accounts" => await ExportAccountsAsync(companyId, request),
             "journalentries" => await ExportJournalEntriesAsync(companyId, request),
             "documents" => await ExportDocumentsAsync(companyId, request),
             _ => throw new InvalidOperationException($"ไม่รองรับการส่งออก {request.EntityType}")
@@ -269,6 +289,77 @@ public class ImportExportService : IImportExportService
         });
     }
 
+    private async Task ImportJournalEntryAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var date = DateTime.TryParse(row.GetValueOrDefault("Date"), out var dt) ? dt : DateTime.UtcNow;
+        var accountCode = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
+        var debitAmount = decimal.TryParse(row.GetValueOrDefault("DebitAmount"), out var da) ? da : 0;
+        var creditAmount = decimal.TryParse(row.GetValueOrDefault("CreditAmount"), out var ca) ? ca : 0;
+        var description = row.GetValueOrDefault("Description") ?? "";
+        var reference = row.GetValueOrDefault("Reference");
+
+        var account = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == accountCode)
+            ?? throw new KeyNotFoundException($"ไม่พบบัญชีรหัส {accountCode}");
+
+        Guid? contactId = null;
+        var contactName = row.GetValueOrDefault("ContactName");
+        if (!string.IsNullOrWhiteSpace(contactName))
+        {
+            var contact = await _db.Contacts
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.Contains(contactName));
+            contactId = contact?.Id;
+        }
+
+        var existing = await _db.JournalEntries
+            .Include(j => j.Lines)
+            .FirstOrDefaultAsync(j => j.CompanyId == companyId
+                && j.EntryDate == date
+                && j.Description == description
+                && j.Reference == reference);
+
+        if (existing != null)
+        {
+            existing.Lines.Add(new JournalEntryLine
+            {
+                AccountId = account.Id,
+                DebitAmount = debitAmount,
+                CreditAmount = creditAmount,
+                Description = description
+            });
+        }
+        else
+        {
+            var series = await _db.NumberSeries
+                .FirstOrDefaultAsync(n => n.CompanyId == companyId && n.EntityType == "JournalEntry");
+            var nextNum = (series?.LastNumber ?? 0) + 1;
+            if (series != null) series.LastNumber = nextNum;
+
+            var entry = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = $"JV-{nextNum:D6}",
+                EntryDate = date,
+                Description = description,
+                Reference = reference,
+                ContactId = contactId,
+                Status = JournalEntryStatus.Draft,
+                CreatedBy = performedBy,
+                Lines = new List<JournalEntryLine>
+                {
+                    new()
+                    {
+                        AccountId = account.Id,
+                        DebitAmount = debitAmount,
+                        CreditAmount = creditAmount,
+                        Description = description
+                    }
+                }
+            };
+            _db.JournalEntries.Add(entry);
+        }
+    }
+
     // ===== Export Helpers =====
 
     private async Task<List<Dictionary<string, string>>> ExportContactsAsync(Guid companyId, ExportRequest request)
@@ -369,10 +460,22 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อสินค้า"));
                 break;
             case "chartofaccounts":
+            case "chart-of-accounts":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
                     errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
                 if (!Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out _))
                     errors.Add(new ImportError(rowNumber, "AccountType", row.GetValueOrDefault("AccountType") ?? "", "ประเภทบัญชีไม่ถูกต้อง"));
+                break;
+            case "journalentries":
+            case "journal-entries":
+                if (!DateTime.TryParse(row.GetValueOrDefault("Date"), out _))
+                    errors.Add(new ImportError(rowNumber, "Date", row.GetValueOrDefault("Date") ?? "", "วันที่ไม่ถูกต้อง"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
+                    errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
+                var debit = decimal.TryParse(row.GetValueOrDefault("DebitAmount"), out var dv) ? dv : 0;
+                var credit = decimal.TryParse(row.GetValueOrDefault("CreditAmount"), out var cv) ? cv : 0;
+                if (debit == 0 && credit == 0)
+                    errors.Add(new ImportError(rowNumber, "Amount", "", "จำเป็นต้องระบุยอดเดบิตหรือเครดิต"));
                 break;
         }
 
@@ -614,6 +717,7 @@ public class ImportExportService : IImportExportService
                         await ImportProductAsync(companyId, mappedRow);
                         break;
                     case "chartofaccounts":
+                    case "chart-of-accounts":
                         await ImportAccountAsync(companyId, mappedRow);
                         break;
                     case "banktransactions":
@@ -692,7 +796,9 @@ public class ImportExportService : IImportExportService
             new("chartofaccounts", "ผังบัญชี", "นำเข้าผังบัญชี (Chart of Accounts)",
                 GetTemplateFields("chartofaccounts")!),
             new("banktransactions", "รายการธนาคาร", "นำเข้ารายการเคลื่อนไหวบัญชีธนาคาร",
-                GetTemplateFields("banktransactions")!)
+                GetTemplateFields("banktransactions")!),
+            new("journal-entries", "บันทึกบัญชี", "นำเข้ารายการบันทึกบัญชี (Journal Entries)",
+                GetTemplateFields("journal-entries")!)
         };
 
         return Task.FromResult(entities);
@@ -946,7 +1052,7 @@ public class ImportExportService : IImportExportService
                 new("VatRate", "อัตราภาษี", "decimal", false, null, null),
                 new("Category", "หมวดหมู่", "string", false, null, null),
             },
-            "chartofaccounts" => new List<ImportField>
+            "chartofaccounts" or "chart-of-accounts" => new List<ImportField>
             {
                 new("AccountCode", "รหัสบัญชี", "string", true, null, null),
                 new("AccountName", "ชื่อบัญชี", "string", true, null, null),

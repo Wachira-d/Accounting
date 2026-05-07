@@ -9,6 +9,7 @@ const Layout = {
   subscription: null,
   features: [],          // array of enabled feature names
   subscriptionStatus: null,
+  myPermissions: null,   // { roleName, isOwnerOrAdmin, allowedMenuIds }
   _initialized: false,
 
   esc(str) {
@@ -34,6 +35,10 @@ const Layout = {
         this.features = cached.enabledFeatureNames || [];
         this.subscriptionStatus = cached.status;
       }
+    } catch {}
+    try {
+      const cachedPerms = JSON.parse(localStorage.getItem('myPermissions') || 'null');
+      if (cachedPerms) this.myPermissions = cachedPerms;
     } catch {}
     if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return false; }
     if (typeof I18n !== 'undefined') I18n.init();
@@ -123,19 +128,50 @@ const Layout = {
         this._enforcePageAccess();
       }
     } catch (e) { /* trial/no subscription — keep features empty */ }
+    await this.loadMyPermissions();
+  },
+
+  async loadMyPermissions() {
+    if (!this.currentCompany?.id) return;
+    try {
+      const res = await API.get(`/api/company/${this.currentCompany.id}/roles/my-permissions`);
+      if (res?.success && res.data) {
+        this.myPermissions = res.data;
+        try { localStorage.setItem('myPermissions', JSON.stringify(res.data)); } catch {}
+        this._refreshNavMenu();
+        this._enforceRoleAccess();
+      }
+    } catch (e) { /* no permissions data — allow all */ }
+  },
+
+  hasMenuAccess(menuId) {
+    if (!this.myPermissions) return true;
+    if (this.myPermissions.isOwnerOrAdmin) return true;
+    if (!this.myPermissions.allowedMenuIds || this.myPermissions.allowedMenuIds.length === 0) return true;
+    return this.myPermissions.allowedMenuIds.includes(menuId);
+  },
+
+  _enforceRoleAccess() {
+    if (!this.myPermissions || !this.currentPage) return;
+    if (this.myPermissions.isOwnerOrAdmin) return;
+    if (!this.myPermissions.allowedMenuIds || this.myPermissions.allowedMenuIds.length === 0) return;
+    if (!this.hasMenuAccess(this.currentPage)) {
+      this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าแดชบอร์ด', 'error');
+      setTimeout(() => { window.location.href = '/app.html'; }, 1500);
+    }
   },
 
   _refreshNavMenu() {
     const nav = document.querySelector('.sidebar-nav');
     if (!nav) return;
     const hidden = this.getHiddenMenuItems();
-    // Filter out hidden items, then drop sections that have no remaining items underneath
-    const items = this.navItems.filter(item => !item.id || !hidden.includes(item.id));
+    const items = this.navItems.filter(item =>
+      (!item.id || !hidden.includes(item.id)) && (!item.id || this.hasMenuAccess(item.id))
+    );
     const visible = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (it.section) {
-        // include the section header only if the next non-section item exists in this run
         let hasFollowing = false;
         for (let j = i + 1; j < items.length; j++) {
           if (items[j].section) break;
@@ -357,9 +393,11 @@ const Layout = {
     { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools' },
+    { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan' },
 
     { section: 'ตั้งค่า' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team' },
+    { id: 'roles', label: 'จัดการ Role/สิทธิ์', icon: '🔐', href: '/pages/roles.html', feature: 'MultiUser', _i18nKey: 'nav.roles' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings' },
     { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.approval' },
     { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.signatures' },
@@ -388,7 +426,7 @@ const Layout = {
         </select>
       </div>
       <nav class="sidebar-nav">
-        ${this.navItems.map(item => this._renderNavItem(item)).join('')}
+        ${this.navItems.filter(item => !item.id || this.hasMenuAccess(item.id)).map(item => this._renderNavItem(item)).join('')}
       </nav>
       <div class="sidebar-footer">
         <a href="#" class="nav-item" onclick="Layout.logout();return false"><span class="icon">🚪</span>${this.esc(tLogout)}</a>

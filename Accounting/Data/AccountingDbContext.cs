@@ -12,6 +12,8 @@ public class AccountingDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
+    public DbSet<CompanyRole> CompanyRoles => Set<CompanyRole>();
+    public DbSet<CompanyRolePermission> CompanyRolePermissions => Set<CompanyRolePermission>();
 
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
@@ -346,6 +348,25 @@ public class AccountingDbContext : DbContext
             e.HasKey(cu => new { cu.UserId, cu.CompanyId });
             e.HasOne(cu => cu.User).WithMany(u => u.CompanyUsers).HasForeignKey(cu => cu.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(cu => cu.Company).WithMany(c => c.CompanyUsers).HasForeignKey(cu => cu.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(cu => cu.CompanyRole).WithMany(r => r.CompanyUsers).HasForeignKey(cu => cu.CompanyRoleId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== CompanyRole (custom roles per company) =====
+        modelBuilder.Entity<CompanyRole>(e =>
+        {
+            e.HasIndex(r => new { r.CompanyId, r.Name }).IsUnique();
+            e.Property(r => r.Name).HasMaxLength(100);
+            e.Property(r => r.Color).HasMaxLength(20);
+            e.Property(r => r.Icon).HasMaxLength(10);
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+
+        // ===== CompanyRolePermission =====
+        modelBuilder.Entity<CompanyRolePermission>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyRoleId, p.MenuItemId }).IsUnique();
+            e.Property(p => p.MenuItemId).HasMaxLength(100);
+            e.HasOne(p => p.CompanyRole).WithMany(r => r.Permissions).HasForeignKey(p => p.CompanyRoleId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // ===== Subscription =====
@@ -1347,6 +1368,9 @@ public class AccountingDbContext : DbContext
             e.Property(o => o.ExtractedSubTotal).HasPrecision(18, 2);
             e.Property(o => o.ExtractedVatAmount).HasPrecision(18, 2);
             e.Property(o => o.ExtractedTotalAmount).HasPrecision(18, 2);
+            e.Property(o => o.FileHash).HasMaxLength(64);
+            e.HasIndex(o => new { o.CompanyId, o.FileHash });
+            e.HasIndex(o => new { o.CompanyId, o.ExtractedDocumentNumber, o.ExtractedTotalAmount });
         });
 
         // ===== CustomReport =====

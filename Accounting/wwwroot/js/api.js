@@ -506,6 +506,8 @@ const API = {
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
       ocrCreateDocument: (id) => API.post(`${base}/ocr/${id}/create-document`),
+      ocrCorrect: (id, data) => API.post(`${base}/ocr/${id}/correct`, data),
+      ocrMatchContact: (scanId, contactId) => API.post(`${base}/ocr/${scanId}/match-contact/${contactId}`),
       // Webhooks
       getWebhooks: () => API.get(`${base}/webhooks`),
       createWebhook: (d) => API.post(`${base}/webhooks`, d),

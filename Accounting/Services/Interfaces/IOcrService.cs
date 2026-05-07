@@ -10,4 +10,5 @@ public interface IOcrService
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
+    Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
 }

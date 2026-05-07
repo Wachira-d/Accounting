@@ -157,6 +157,7 @@ public class CompanyService : ICompanyService
         return await _db.CompanyUsers
             .Where(cu => cu.CompanyId == companyId)
             .Include(cu => cu.User)
+            .Include(cu => cu.CompanyRole)
             .OrderBy(cu => cu.Role).ThenBy(cu => cu.User.FullName)
             .Select(cu => new CompanyMemberResponse(
                 cu.UserId,
@@ -164,6 +165,8 @@ public class CompanyService : ICompanyService
                 cu.User.Email,
                 cu.User.Phone,
                 cu.Role,
+                cu.CompanyRoleId,
+                cu.CompanyRole != null ? cu.CompanyRole.Name : null,
                 cu.JoinedAt,
                 cu.User.LastLoginAt,
                 cu.User.Status))

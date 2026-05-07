@@ -59,6 +59,8 @@ public class CompanyUser
     public Guid CompanyId { get; set; }
     public Company Company { get; set; } = null!;
     public UserRole Role { get; set; }
+    public Guid? CompanyRoleId { get; set; }
+    public CompanyRole? CompanyRole { get; set; }
     public bool IsDefault { get; set; } = false;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 }

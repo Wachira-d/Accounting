@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ประมวลผลเอกสาร - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Upload Zone */
+    .upload-zone {
+      border: 2px dashed var(--gray-300);
+      border-radius: var(--radius-xl);
+      padding: 48px 24px;
+      text-align: center;
+      background: var(--gray-50);
+      transition: all .25s;
+      cursor: pointer;
+      position: relative;
+    }
+    .upload-zone:hover,
+    .upload-zone.dragover {
+      border-color: var(--primary);
+      background: #EEF2FF;
+    }
+    .upload-zone.dragover {
+      transform: scale(1.01);
+      box-shadow: 0 0 0 4px rgba(79,70,229,.12);
+    }
+    .upload-zone-icon {
+      width: 64px; height: 64px;
+      margin: 0 auto 16px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: var(--radius-lg);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px; color: #fff;
+    }
+    .upload-zone h3 { font-size: 18px; font-weight: 600; color: var(--gray-800); margin-bottom: 6px; }
+    .upload-zone p { font-size: 14px; color: var(--gray-500); }
+    .upload-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    .upload-zone .file-types {
+      display: inline-flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; justify-content: center;
+    }
+    .upload-zone .file-type-badge {
+      padding: 3px 10px; font-size: 11px; font-weight: 600;
+      border-radius: 9999px; background: #fff; color: var(--gray-600);
+      border: 1px solid var(--gray-200);
+    }
+
+    /* Upload Queue */
+    .upload-queue { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+    .upload-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; background: #fff;
+      border: 1px solid var(--gray-200); border-radius: var(--radius);
+    }
+    .upload-item-icon { font-size: 20px; flex-shrink: 0; }
+    .upload-item-info { flex: 1; min-width: 0; }
+    .upload-item-name { font-size: 13px; font-weight: 500; color: var(--gray-800); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .upload-item-status { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
+    .upload-progress-bar {
+      width: 100%; height: 4px; background: var(--gray-200);
+      border-radius: 2px; margin-top: 6px; overflow: hidden;
+    }
+    .upload-progress-fill {
+      height: 100%; background: var(--primary); border-radius: 2px;
+      transition: width .3s; width: 0;
+    }
+    .upload-progress-fill.done { background: var(--success); }
+    .upload-progress-fill.error { background: var(--danger); }
+
+    /* Stats Bar */
+    .stats-bar {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #fff; border: 1px solid var(--gray-200);
+      border-radius: var(--radius-lg); padding: 16px 20px;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .stat-icon {
+      width: 44px; height: 44px; border-radius: var(--radius);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; flex-shrink: 0;
+    }
+    .stat-icon.blue { background: #EFF6FF; }
+    .stat-icon.yellow { background: #FFFBEB; }
+    .stat-icon.green { background: #ECFDF5; }
+    .stat-icon.red { background: #FEF2F2; }
+    .stat-value { font-size: 24px; font-weight: 700; color: var(--gray-800); }
+    .stat-label { font-size: 13px; color: var(--gray-500); }
+
+    /* Scan Cards Grid */
+    .scan-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 16px;
+    }
+    .scan-card {
+      background: #fff; border: 1px solid var(--gray-200);
+      border-radius: var(--radius-lg); padding: 20px;
+      transition: box-shadow .2s, border-color .2s;
+    }
+    .scan-card:hover {
+      box-shadow: var(--shadow-md);
+      border-color: var(--gray-300);
+    }
+    .scan-card-header {
+      display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px;
+    }
+    .scan-card-thumb {
+      width: 44px; height: 44px; border-radius: var(--radius);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; flex-shrink: 0; background: var(--gray-100);
+    }
+    .scan-card-meta { flex: 1; min-width: 0; }
+    .scan-card-filename {
+      font-size: 14px; font-weight: 600; color: var(--gray-800);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .scan-card-badges { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+
+    /* Document Type Badges */
+    .doc-type-badge {
+      display: inline-flex; align-items: center; padding: 2px 10px;
+      font-size: 11px; font-weight: 600; border-radius: 9999px;
+    }
+    .doc-type-badge.tax-invoice { background: #DBEAFE; color: #1D4ED8; }
+    .doc-type-badge.invoice { background: #E0E7FF; color: #4338CA; }
+    .doc-type-badge.receipt { background: #D1FAE5; color: #065F46; }
+    .doc-type-badge.unknown { background: var(--gray-100); color: var(--gray-600); }
+
+    /* Confidence Bar */
+    .confidence-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .confidence-bar {
+      flex: 1; height: 6px; background: var(--gray-200);
+      border-radius: 3px; overflow: hidden;
+    }
+    .confidence-fill {
+      height: 100%; border-radius: 3px; transition: width .4s;
+    }
+    .confidence-fill.high { background: var(--success); }
+    .confidence-fill.medium { background: var(--warning); }
+    .confidence-fill.low { background: var(--danger); }
+    .confidence-label { font-size: 12px; font-weight: 600; min-width: 40px; text-align: right; }
+    .confidence-label.high { color: #059669; }
+    .confidence-label.medium { color: #D97706; }
+    .confidence-label.low { color: #DC2626; }
+
+    /* Extracted Info */
+    .scan-info-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 6px 16px; margin-bottom: 14px;
+      font-size: 13px;
+    }
+    .scan-info-item { display: flex; flex-direction: column; }
+    .scan-info-label { color: var(--gray-400); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
+    .scan-info-value { color: var(--gray-800); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Contact Match */
+    .contact-match {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; background: var(--gray-50);
+      border-radius: var(--radius); margin-bottom: 14px;
+      font-size: 13px;
+    }
+    .contact-match .icon { font-size: 16px; }
+    .contact-match-name { flex: 1; font-weight: 500; color: var(--gray-700); }
+    .contact-match .btn { padding: 4px 10px; font-size: 11px; }
+
+    /* Scan Card Actions */
+    .scan-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .scan-card-actions .btn { font-size: 12px; padding: 6px 12px; }
+
+    /* Config section */
+    .config-section {
+      display: flex; align-items: center; gap: 16px;
+      padding: 14px 20px; background: var(--gray-50);
+      border: 1px solid var(--gray-200); border-radius: var(--radius-lg);
+      margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .config-section label { font-size: 13px; font-weight: 500; color: var(--gray-700); white-space: nowrap; }
+    .threshold-input {
+      width: 64px; padding: 6px 10px; border: 1.5px solid var(--gray-300);
+      border-radius: var(--radius); font-size: 14px; font-weight: 600;
+      text-align: center; color: var(--gray-800);
+    }
+    .threshold-input:focus { outline: none; border-color: var(--primary); }
+    .threshold-slider {
+      -webkit-appearance: none; appearance: none;
+      width: 160px; height: 6px; border-radius: 3px;
+      background: var(--gray-200); outline: none;
+    }
+    .threshold-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--primary); cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+    .threshold-slider::-moz-range-thumb {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--primary); cursor: pointer; border: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+
+    /* Duplicate Warning */
+    .duplicate-warning {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; background: #FFFBEB;
+      border: 1px solid #FCD34D; border-radius: var(--radius);
+      margin-top: 8px; font-size: 13px; color: #92400E;
+    }
+    .duplicate-warning .icon { font-size: 18px; flex-shrink: 0; }
+    .duplicate-warning-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
+    .duplicate-warning-actions .btn { font-size: 12px; padding: 4px 12px; }
+
+    /* Review Modal */
+    .review-section { margin-bottom: 20px; }
+    .review-section-title {
+      font-size: 14px; font-weight: 600; color: var(--gray-700);
+      margin-bottom: 10px; padding-bottom: 6px;
+      border-bottom: 1px solid var(--gray-100);
+    }
+    .review-field {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 10px;
+    }
+    .review-field label {
+      min-width: 120px; font-size: 13px; font-weight: 500;
+      color: var(--gray-500);
+    }
+    .review-field .form-input { flex: 1; padding: 8px 12px; font-size: 13px; }
+    .review-field .conf-badge {
+      font-size: 11px; font-weight: 600; padding: 2px 8px;
+      border-radius: 9999px; white-space: nowrap;
+    }
+    .review-field .conf-badge.high { background: #ECFDF5; color: #059669; }
+    .review-field .conf-badge.medium { background: #FFFBEB; color: #D97706; }
+    .review-field .conf-badge.low { background: #FEF2F2; color: #DC2626; }
+
+    .contact-search-box { position: relative; }
+    .contact-search-results {
+      position: absolute; top: 100%; left: 0; right: 0;
+      background: #fff; border: 1px solid var(--gray-200);
+      border-radius: var(--radius); box-shadow: var(--shadow-lg);
+      max-height: 200px; overflow-y: auto; z-index: 10;
+      display: none;
+    }
+    .contact-search-results.show { display: block; }
+    .contact-search-item {
+      padding: 10px 14px; font-size: 13px; cursor: pointer;
+      border-bottom: 1px solid var(--gray-100);
+    }
+    .contact-search-item:hover { background: var(--gray-50); }
+    .contact-search-item:last-child { border-bottom: none; }
+    .contact-search-item .name { font-weight: 500; color: var(--gray-800); }
+    .contact-search-item .tax-id { font-size: 12px; color: var(--gray-500); }
+
+    .image-preview-container {
+      background: var(--gray-100); border-radius: var(--radius);
+      padding: 12px; text-align: center; margin-bottom: 16px;
+      max-height: 300px; overflow: auto;
+    }
+    .image-preview-container img {
+      max-width: 100%; max-height: 280px;
+      border-radius: var(--radius); margin: 0 auto;
+    }
+    .image-preview-placeholder {
+      padding: 40px 20px; color: var(--gray-400); font-size: 14px;
+    }
+
+    /* Scanning animation */
+    .scanning-pulse {
+      display: inline-block; width: 8px; height: 8px;
+      border-radius: 50%; background: var(--info);
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .4; transform: scale(.8); }
+    }
+
+    /* Empty state for scan list */
+    .scan-empty {
+      text-align: center; padding: 60px 20px;
+      color: var(--gray-400);
+    }
+    .scan-empty .icon { font-size: 48px; margin-bottom: 12px; }
+    .scan-empty p { font-size: 14px; }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .stats-bar { grid-template-columns: repeat(2, 1fr); }
+      .scan-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+      .stats-bar { grid-template-columns: 1fr; }
+      .upload-zone { padding: 32px 16px; }
+      .config-section { flex-direction: column; align-items: flex-start; }
+      .modal { max-width: 95vw !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <!-- Page Header -->
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ประมวลผลเอกสาร</h2>
+        <p class="page-subtitle">สแกนและสร้างเอกสารอัตโนมัติจากรูปภาพ/ไฟล์</p>
+      </div>
+      <button class="btn btn-secondary" onclick="Page.refreshAll()">&#x21bb; รีเฟรช</button>
+    </div>
+
+    <!-- Upload Zone -->
+    <div class="upload-zone" id="uploadZone">
+      <div class="upload-zone-icon">&#x1F4C4;</div>
+      <h3>ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</h3>
+      <p>รองรับหลายไฟล์พร้อมกัน</p>
+      <div class="file-types">
+        <span class="file-type-badge">JPG</span>
+        <span class="file-type-badge">PNG</span>
+        <span class="file-type-badge">WebP</span>
+        <span class="file-type-badge">PDF</span>
+      </div>
+      <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf">
+    </div>
+    <div class="upload-queue" id="uploadQueue"></div>
+
+    <!-- Auto-create threshold config -->
+    <div class="config-section" style="margin-top:20px">
+      <label>&#x2699;&#xFE0F; สร้างเอกสารอัตโนมัติเมื่อ confidence &ge;</label>
+      <input type="range" class="threshold-slider" id="thresholdSlider" min="0" max="100" value="85" oninput="Page.onThresholdChange(this.value)">
+      <input type="number" class="threshold-input" id="thresholdInput" min="0" max="100" value="85" onchange="Page.onThresholdInputChange(this.value)">
+      <span class="text-sm text-gray-500">%</span>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar" id="statsBar">
+      <div class="stat-card">
+        <div class="stat-icon blue">&#x1F4CB;</div>
+        <div><div class="stat-value" id="statTotal">-</div><div class="stat-label">สแกนทั้งหมด</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon yellow">&#x23F3;</div>
+        <div><div class="stat-value" id="statPending">-</div><div class="stat-label">รอตรวจสอบ</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon green">&#x2705;</div>
+        <div><div class="stat-value" id="statCreated">-</div><div class="stat-label">สร้างแล้ว</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon red">&#x274C;</div>
+        <div><div class="stat-value" id="statFailed">-</div><div class="stat-label">ไม่สำเร็จ</div></div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setFilter('all', this)">ทั้งหมด</div>
+      <div class="tab" onclick="Page.setFilter('pending', this)">รอตรวจสอบ</div>
+      <div class="tab" onclick="Page.setFilter('created', this)">สร้างแล้ว</div>
+      <div class="tab" onclick="Page.setFilter('failed', this)">ไม่สำเร็จ</div>
+    </div>
+
+    <!-- Scan Results Grid -->
+    <div id="scanResults">
+      <div class="scan-empty">
+        <div class="icon">&#x1F50D;</div>
+        <p>กำลังโหลด...</p>
+      </div>
+    </div>
+
+    <div id="pagination"></div>
+
+    <!-- Review/Detail Modal -->
+    <div class="modal-overlay" id="reviewModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="reviewTitle">ตรวจสอบเอกสาร</h3>
+          <button class="modal-close" onclick="Layout.closeModal('reviewModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="reviewBody">
+          <!-- Populated dynamically -->
+        </div>
+        <div class="modal-footer" id="reviewFooter">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
+          <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()">💾 บันทึกการแก้ไข</button>
+          <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()">สร้างเอกสาร</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Duplicate Warning Modal -->
+    <div class="modal-overlay" id="duplicateModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header" style="border-bottom:2px solid var(--warning)">
+          <h3 class="modal-title" style="color:#D97706">&#x26A0;&#xFE0F; อาจเป็นเอกสารซ้ำ</h3>
+          <button class="modal-close" onclick="Page.skipDuplicate()">&times;</button>
+        </div>
+        <div class="modal-body" id="duplicateBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Page.skipDuplicate()">ข้าม</button>
+          <button class="btn btn-primary" onclick="Page.proceedDuplicate()">อัปโหลดต่อ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      scans: [],
+      filter: 'all',
+      page: 1,
+      pageSize: 20,
+      totalPages: 1,
+      threshold: 85,
+      _uploadQueue: [],
+      _duplicateResolve: null,
+      _duplicateFile: null,
+      _reviewScan: null,
+
+      // ==================== Init ====================
+      init() {
+        if (!Layout.init('document-scan')) return;
+        Layout.setTitle('ประมวลผลเอกสาร');
+        this.threshold = parseInt(localStorage.getItem('ocrAutoThreshold') || '85');
+        document.getElementById('thresholdSlider').value = this.threshold;
+        document.getElementById('thresholdInput').value = this.threshold;
+        this.bindUpload();
+        this.loadScans();
+      },
+
+      // ==================== Upload ====================
+      bindUpload() {
+        const zone = document.getElementById('uploadZone');
+        const input = document.getElementById('fileInput');
+
+        zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', e => {
+          e.preventDefault();
+          zone.classList.remove('dragover');
+          if (e.dataTransfer.files.length) this.handleFiles(e.dataTransfer.files);
+        });
+        input.addEventListener('change', () => {
+          if (input.files.length) this.handleFiles(input.files);
+          input.value = '';
+        });
+      },
+
+      async handleFiles(fileList) {
+        const files = Array.from(fileList);
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+        const validFiles = files.filter(f => validTypes.includes(f.type));
+        if (validFiles.length < files.length) {
+          Layout.toast('บางไฟล์ไม่รองรับ — รับเฉพาะ JPG, PNG, WebP, PDF', 'error');
+        }
+        if (!validFiles.length) return;
+
+        for (const file of validFiles) {
+          await this.processFile(file);
+        }
+      },
+
+      async processFile(file) {
+        // Check for duplicates first
+        const isDuplicate = await this.checkDuplicate(file);
+        if (isDuplicate === 'skip') return;
+
+        // Create upload item UI
+        const itemId = 'upload-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+        const queue = document.getElementById('uploadQueue');
+        const icon = file.type === 'application/pdf' ? '&#x1F4C4;' : '&#x1F5BC;';
+        const itemEl = document.createElement('div');
+        itemEl.className = 'upload-item';
+        itemEl.id = itemId;
+        itemEl.innerHTML = `
+          <div class="upload-item-icon">${icon}</div>
+          <div class="upload-item-info">
+            <div class="upload-item-name">${Layout.esc(file.name)}</div>
+            <div class="upload-item-status">กำลังอัปโหลด...</div>
+            <div class="upload-progress-bar"><div class="upload-progress-fill" id="${itemId}-progress"></div></div>
+          </div>`;
+        queue.prepend(itemEl);
+
+        try {
+          // Upload
+          const progressEl = document.getElementById(itemId + '-progress');
+          progressEl.style.width = '30%';
+
+          const formData = new FormData();
+          formData.append('file', file);
+
+          const api = Layout.api();
+          if (!api) return;
+
+          progressEl.style.width = '60%';
+          const res = await api.ocrUploadAndScan(formData);
+          progressEl.style.width = '100%';
+
+          if (res.success === false) {
+            throw new Error(res.message || 'อัปโหลดไม่สำเร็จ');
+          }
+
+          const scan = res.data || res;
+          progressEl.classList.add('done');
+          const statusEl = itemEl.querySelector('.upload-item-status');
+          statusEl.textContent = 'สแกนสำเร็จ';
+
+          // If confidence >= threshold and scan completed, auto-create
+          if (scan.scanStatus === 'Completed' && scan.confidence != null) {
+            const confPercent = Math.round(scan.confidence * 100);
+            if (confPercent >= this.threshold && !scan.createdDocumentId) {
+              statusEl.textContent = 'กำลังสร้างเอกสารอัตโนมัติ...';
+              try {
+                await api.ocrCreateDocument(scan.id);
+                statusEl.textContent = 'สร้างเอกสารอัตโนมัติสำเร็จ!';
+                statusEl.style.color = '#059669';
+              } catch (autoErr) {
+                statusEl.textContent = 'สแกนสำเร็จ (สร้างอัตโนมัติไม่ได้: ' + autoErr.message + ')';
+                statusEl.style.color = '#D97706';
+              }
+            }
+          } else if (scan.scanStatus === 'Processing') {
+            statusEl.innerHTML = '<span class="scanning-pulse"></span> กำลังประมวลผล...';
+            this.pollScanStatus(scan.id, itemEl);
+          } else if (scan.scanStatus === 'Failed') {
+            statusEl.textContent = 'สแกนไม่สำเร็จ';
+            statusEl.style.color = '#DC2626';
+            progressEl.classList.remove('done');
+            progressEl.classList.add('error');
+          }
+
+          // Remove upload item after a delay
+          setTimeout(() => { itemEl.style.opacity = '0'; setTimeout(() => itemEl.remove(), 300); }, 4000);
+          this.loadScans();
+        } catch (err) {
+          const progressEl = document.getElementById(itemId + '-progress');
+          if (progressEl) { progressEl.style.width = '100%'; progressEl.classList.add('error'); }
+          const statusEl = itemEl.querySelector('.upload-item-status');
+          if (statusEl) { statusEl.textContent = 'ผิดพลาด: ' + err.message; statusEl.style.color = '#DC2626'; }
+          Layout.toast('อัปโหลดไม่สำเร็จ: ' + err.message, 'error');
+          setTimeout(() => { itemEl.style.opacity = '0'; setTimeout(() => itemEl.remove(), 300); }, 5000);
+        }
+      },
+
+      async pollScanStatus(scanId, itemEl) {
+        const api = Layout.api();
+        if (!api) return;
+        let attempts = 0;
+        const maxAttempts = 30;
+        const poll = async () => {
+          attempts++;
+          if (attempts > maxAttempts) {
+            const statusEl = itemEl?.querySelector('.upload-item-status');
+            if (statusEl) statusEl.textContent = 'หมดเวลาประมวลผล';
+            this.loadScans();
+            return;
+          }
+          try {
+            const res = await api.getOcrResult(scanId);
+            const scan = res.data || res;
+            if (scan.scanStatus === 'Completed') {
+              const statusEl = itemEl?.querySelector('.upload-item-status');
+              if (statusEl) {
+                statusEl.textContent = 'ประมวลผลเสร็จแล้ว';
+                statusEl.style.color = '#059669';
+              }
+              // Auto-create if threshold met
+              if (scan.confidence != null) {
+                const confPercent = Math.round(scan.confidence * 100);
+                if (confPercent >= this.threshold && !scan.createdDocumentId) {
+                  try {
+                    await api.ocrCreateDocument(scan.id);
+                    if (statusEl) statusEl.textContent = 'สร้างเอกสารอัตโนมัติสำเร็จ!';
+                  } catch {}
+                }
+              }
+              this.loadScans();
+              return;
+            } else if (scan.scanStatus === 'Failed') {
+              const statusEl = itemEl?.querySelector('.upload-item-status');
+              if (statusEl) { statusEl.textContent = 'ประมวลผลไม่สำเร็จ'; statusEl.style.color = '#DC2626'; }
+              this.loadScans();
+              return;
+            }
+            setTimeout(poll, 2000);
+          } catch {
+            setTimeout(poll, 3000);
+          }
+        };
+        setTimeout(poll, 2000);
+      },
+
+      // ==================== Duplicate Detection ====================
+      async checkDuplicate(file) {
+        // Check by filename against existing scans
+        const match = this.scans.find(s =>
+          s.originalFileName && s.originalFileName.toLowerCase() === file.name.toLowerCase()
+        );
+        if (!match) return 'proceed';
+
+        return new Promise(resolve => {
+          this._duplicateResolve = resolve;
+          this._duplicateFile = file;
+          document.getElementById('duplicateBody').innerHTML = `
+            <p style="margin-bottom:12px;line-height:1.6">เอกสารนี้อาจซ้ำกับไฟล์ที่เคยอัปโหลด:</p>
+            <div style="padding:12px 16px;background:var(--gray-50);border-radius:var(--radius);margin-bottom:12px">
+              <div style="font-weight:600;color:var(--gray-800)">${Layout.esc(match.originalFileName)}</div>
+              <div style="font-size:13px;color:var(--gray-500);margin-top:4px">
+                ${match.extractedDocumentNumber ? 'เลขที่: ' + Layout.esc(match.extractedDocumentNumber) + ' | ' : ''}
+                สแกนเมื่อ: ${Layout.date(match.processedAt)}
+              </div>
+            </div>
+            <p style="font-size:13px;color:var(--gray-600)">ต้องการอัปโหลดไฟล์ <strong>${Layout.esc(file.name)}</strong> ต่อหรือไม่?</p>`;
+          Layout.openModal('duplicateModal');
+        });
+      },
+
+      skipDuplicate() {
+        Layout.closeModal('duplicateModal');
+        if (this._duplicateResolve) { this._duplicateResolve('skip'); this._duplicateResolve = null; }
+      },
+
+      proceedDuplicate() {
+        Layout.closeModal('duplicateModal');
+        if (this._duplicateResolve) { this._duplicateResolve('proceed'); this._duplicateResolve = null; }
+      },
+
+      // ==================== Threshold Config ====================
+      onThresholdChange(val) {
+        this.threshold = parseInt(val);
+        document.getElementById('thresholdInput').value = val;
+        localStorage.setItem('ocrAutoThreshold', val);
+      },
+
+      onThresholdInputChange(val) {
+        val = Math.max(0, Math.min(100, parseInt(val) || 0));
+        this.threshold = val;
+        document.getElementById('thresholdSlider').value = val;
+        document.getElementById('thresholdInput').value = val;
+        localStorage.setItem('ocrAutoThreshold', val);
+      },
+
+      // ==================== Load Scans ====================
+      setFilter(filter, tabEl) {
+        this.filter = filter;
+        this.page = 1;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        if (tabEl) tabEl.classList.add('active');
+        this.loadScans();
+      },
+
+      async loadScans() {
+        const api = Layout.api();
+        if (!api) return;
+
+        let statusParam = '';
+        if (this.filter === 'pending') statusParam = 'Completed';
+        else if (this.filter === 'created') statusParam = 'Created';
+        else if (this.filter === 'failed') statusParam = 'Failed';
+
+        const cid = Layout.getCompanyId();
+        let url = `/api/companies/${cid}/ocr?page=${this.page}&pageSize=${this.pageSize}`;
+        if (statusParam) url += `&status=${statusParam}`;
+
+        try {
+          const res = await API.get(url);
+          const data = res.data || res;
+          const items = data.items || data || [];
+          this.scans = items;
+
+          this.updateStats(items, data);
+          this.renderScanGrid(items);
+          this.renderPagination(data);
+        } catch (err) {
+          document.getElementById('scanResults').innerHTML = `
+            <div class="scan-empty">
+              <div class="icon">&#x26A0;&#xFE0F;</div>
+              <p>โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(err.message)}</p>
+            </div>`;
+        }
+      },
+
+      updateStats(items, data) {
+        // Try to compute stats from available data
+        const totalCount = data.totalCount || items.length || 0;
+        let pending = 0, created = 0, failed = 0;
+        const allItems = items;
+        allItems.forEach(s => {
+          if (s.scanStatus === 'Failed') failed++;
+          else if (s.createdDocumentId) created++;
+          else if (s.scanStatus === 'Completed') pending++;
+        });
+
+        document.getElementById('statTotal').textContent = data.totalCount != null ? data.totalCount : totalCount;
+        document.getElementById('statPending').textContent = pending;
+        document.getElementById('statCreated').textContent = created;
+        document.getElementById('statFailed').textContent = failed;
+      },
+
+      renderScanGrid(items) {
+        const container = document.getElementById('scanResults');
+
+        // Apply client-side filtering for pending/created when API doesn't support filter
+        let filtered = items;
+        if (this.filter === 'pending') {
+          filtered = items.filter(s => s.scanStatus === 'Completed' && !s.createdDocumentId);
+        } else if (this.filter === 'created') {
+          filtered = items.filter(s => s.createdDocumentId);
+        } else if (this.filter === 'failed') {
+          filtered = items.filter(s => s.scanStatus === 'Failed');
+        }
+
+        if (!filtered.length) {
+          const msgs = {
+            all: 'ยังไม่มีเอกสารที่สแกน — อัปโหลดไฟล์เพื่อเริ่มต้น',
+            pending: 'ไม่มีเอกสารที่รอตรวจสอบ',
+            created: 'ยังไม่มีเอกสารที่สร้างแล้ว',
+            failed: 'ไม่มีเอกสารที่ไม่สำเร็จ',
+          };
+          container.innerHTML = `
+            <div class="scan-empty">
+              <div class="icon">&#x1F4C2;</div>
+              <p>${msgs[this.filter] || msgs.all}</p>
+            </div>`;
+          return;
+        }
+
+        container.innerHTML = '<div class="scan-grid">' + filtered.map(s => this.renderScanCard(s)).join('') + '</div>';
+      },
+
+      renderScanCard(scan) {
+        const isImage = /\.(jpg|jpeg|png|webp)$/i.test(scan.originalFileName || '');
+        const thumbIcon = isImage ? '&#x1F5BC;' : '&#x1F4C4;';
+
+        // Document type badge
+        const typeMap = {
+          TaxInvoice: { label: 'ใบกำกับภาษี', cls: 'tax-invoice' },
+          Invoice: { label: 'ใบแจ้งหนี้', cls: 'invoice' },
+          Receipt: { label: 'ใบเสร็จ', cls: 'receipt' },
+        };
+        const typeInfo = typeMap[scan.documentType] || { label: scan.documentType || 'ไม่ระบุ', cls: 'unknown' };
+
+        // Confidence
+        const confPercent = scan.confidence != null ? Math.round(scan.confidence * 100) : null;
+        let confLevel = 'low';
+        if (confPercent !== null) {
+          if (confPercent >= 85) confLevel = 'high';
+          else if (confPercent >= 60) confLevel = 'medium';
+        }
+
+        // Status badge
+        let statusBadge = '';
+        if (scan.scanStatus === 'Processing') {
+          statusBadge = '<span class="badge badge-info"><span class="scanning-pulse" style="margin-right:4px"></span> กำลังประมวลผล</span>';
+        } else if (scan.scanStatus === 'Failed') {
+          statusBadge = '<span class="badge badge-danger">ไม่สำเร็จ</span>';
+        } else if (scan.createdDocumentId) {
+          statusBadge = '<span class="badge badge-success">สร้างแล้ว</span>';
+        } else if (scan.scanStatus === 'Completed') {
+          statusBadge = '<span class="badge badge-warning">รอตรวจสอบ</span>';
+        }
+
+        // Contact match
+        let contactHtml = '';
+        if (scan.matchedContactId) {
+          contactHtml = `
+            <div class="contact-match">
+              <span class="icon">&#x1F464;</span>
+              <span class="contact-match-name">${Layout.esc(scan.extractedVendorName || 'ผู้ติดต่อที่จับคู่แล้ว')}</span>
+              <span class="badge badge-success" style="font-size:10px">จับคู่แล้ว</span>
+            </div>`;
+        } else if (scan.extractedVendorName) {
+          contactHtml = `
+            <div class="contact-match">
+              <span class="icon">&#x1F464;</span>
+              <span class="contact-match-name">${Layout.esc(scan.extractedVendorName)}</span>
+              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}')">ค้นหาผู้ติดต่อ</button>
+            </div>`;
+        } else if (scan.scanStatus === 'Completed') {
+          contactHtml = `
+            <div class="contact-match">
+              <span class="icon">&#x1F464;</span>
+              <span class="contact-match-name" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</span>
+              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}')">ค้นหา</button>
+            </div>`;
+        }
+
+        // Actions
+        let actionsHtml = '';
+        if (scan.scanStatus === 'Completed' && !scan.createdDocumentId) {
+          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.createDocument('${scan.id}')">สร้างเอกสาร</button>`;
+        }
+        if (scan.createdDocumentId) {
+          actionsHtml += `<a href="/pages/documents.html?id=${scan.createdDocumentId}" class="btn btn-sm btn-success">สร้างแล้ว &rarr;</a>`;
+        }
+        if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
+          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ</button>`;
+        }
+        if (scan.scanStatus === 'Failed') {
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
+        }
+
+        return `
+          <div class="scan-card">
+            <div class="scan-card-header">
+              <div class="scan-card-thumb">${thumbIcon}</div>
+              <div class="scan-card-meta">
+                <div class="scan-card-filename" title="${Layout.esc(scan.originalFileName || '')}">${Layout.esc(scan.originalFileName || 'ไม่มีชื่อไฟล์')}</div>
+                <div class="scan-card-badges">
+                  <span class="doc-type-badge ${typeInfo.cls}">${typeInfo.label}</span>
+                  ${statusBadge}
+                </div>
+              </div>
+            </div>
+            ${confPercent !== null ? `
+            <div class="confidence-row">
+              <div class="confidence-bar"><div class="confidence-fill ${confLevel}" style="width:${confPercent}%"></div></div>
+              <span class="confidence-label ${confLevel}">${confPercent}%</span>
+            </div>` : ''}
+            <div class="scan-info-grid">
+              <div class="scan-info-item">
+                <span class="scan-info-label">ผู้ขาย</span>
+                <span class="scan-info-value">${Layout.esc(scan.extractedVendorName || '-')}</span>
+              </div>
+              <div class="scan-info-item">
+                <span class="scan-info-label">เลขที่เอกสาร</span>
+                <span class="scan-info-value">${Layout.esc(scan.extractedDocumentNumber || '-')}</span>
+              </div>
+              <div class="scan-info-item">
+                <span class="scan-info-label">วันที่</span>
+                <span class="scan-info-value">${scan.extractedDate ? Layout.date(scan.extractedDate) : '-'}</span>
+              </div>
+              <div class="scan-info-item">
+                <span class="scan-info-label">ยอดรวม</span>
+                <span class="scan-info-value" style="font-weight:600">${scan.extractedTotalAmount != null ? Layout.money(scan.extractedTotalAmount) : '-'}</span>
+              </div>
+            </div>
+            ${contactHtml}
+            <div class="scan-card-actions">${actionsHtml}</div>
+          </div>`;
+      },
+
+      renderPagination(data) {
+        const container = document.getElementById('pagination');
+        if (!data || !data.totalPages || data.totalPages <= 1) {
+          container.innerHTML = '';
+          return;
+        }
+        this.totalPages = data.totalPages;
+        let html = '<div class="pagination">';
+        html += `<button ${this.page <= 1 ? 'disabled' : ''} onclick="Page.goPage(${this.page - 1})">&laquo;</button>`;
+        for (let i = 1; i <= data.totalPages; i++) {
+          if (data.totalPages > 7 && Math.abs(i - this.page) > 2 && i !== 1 && i !== data.totalPages) {
+            if (i === 2 || i === data.totalPages - 1) html += '<button disabled>...</button>';
+            continue;
+          }
+          html += `<button class="${i === this.page ? 'active' : ''}" onclick="Page.goPage(${i})">${i}</button>`;
+        }
+        html += `<button ${this.page >= data.totalPages ? 'disabled' : ''} onclick="Page.goPage(${this.page + 1})">&raquo;</button>`;
+        html += '</div>';
+        container.innerHTML = html;
+      },
+
+      goPage(p) {
+        if (p < 1 || p > this.totalPages) return;
+        this.page = p;
+        this.loadScans();
+      },
+
+      // ==================== Actions ====================
+      async createDocument(scanId) {
+        const api = Layout.api();
+        if (!api) return;
+        try {
+          await api.ocrCreateDocument(scanId);
+          Layout.toast('สร้างเอกสารสำเร็จ');
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
+        }
+      },
+
+      async rescan(scanId) {
+        const api = Layout.api();
+        if (!api) return;
+        try {
+          await api.ocrScan(scanId);
+          Layout.toast('เริ่มสแกนใหม่แล้ว');
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('สแกนใหม่ไม่สำเร็จ: ' + err.message, 'error');
+        }
+      },
+
+      // ==================== Review Modal ====================
+      async openReview(scanId) {
+        const api = Layout.api();
+        if (!api) return;
+
+        try {
+          const res = await api.getOcrResult(scanId);
+          const scan = res.data || res;
+          this._reviewScan = scan;
+
+          const confPercent = scan.confidence != null ? Math.round(scan.confidence * 100) : null;
+          const confLevel = confPercent === null ? 'low' : confPercent >= 85 ? 'high' : confPercent >= 60 ? 'medium' : 'low';
+
+          const isImage = /\.(jpg|jpeg|png|webp)$/i.test(scan.originalFileName || '');
+
+          let imagePreview = '';
+          if (isImage) {
+            const cid = Layout.getCompanyId();
+            imagePreview = `
+              <div class="image-preview-container">
+                <img src="/api/companies/${cid}/ocr/${scan.id}/image" alt="Document preview"
+                     onerror="this.parentElement.innerHTML='<div class=\\'image-preview-placeholder\\'>ไม่สามารถแสดงตัวอย่างได้</div>'">
+              </div>`;
+          } else {
+            imagePreview = `
+              <div class="image-preview-container">
+                <div class="image-preview-placeholder">&#x1F4C4; ${Layout.esc(scan.originalFileName || 'ไฟล์ PDF')}</div>
+              </div>`;
+          }
+
+          const confBadge = (val) => {
+            if (val == null) return '';
+            const p = Math.round(val * 100);
+            const l = p >= 85 ? 'high' : p >= 60 ? 'medium' : 'low';
+            return `<span class="conf-badge ${l}">${p}%</span>`;
+          };
+
+          document.getElementById('reviewTitle').textContent = 'ตรวจสอบ: ' + (scan.originalFileName || 'เอกสาร');
+
+          document.getElementById('reviewBody').innerHTML = `
+            ${imagePreview}
+            <div class="review-section">
+              <div class="review-section-title">ข้อมูลที่สกัดได้ ${confPercent !== null ? `<span style="float:right;font-size:12px;font-weight:400;color:var(--gray-500)">ความเชื่อมั่นรวม: <strong class="confidence-label ${confLevel}">${confPercent}%</strong></span>` : ''}</div>
+              <div class="review-field">
+                <label>ประเภทเอกสาร</label>
+                <select class="form-input" id="revDocType" style="flex:1">
+                  <option value="TaxInvoice" ${scan.documentType === 'TaxInvoice' ? 'selected' : ''}>ใบกำกับภาษี</option>
+                  <option value="Invoice" ${scan.documentType === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้</option>
+                  <option value="Receipt" ${scan.documentType === 'Receipt' ? 'selected' : ''}>ใบเสร็จ</option>
+                  <option value="CreditNote" ${scan.documentType === 'CreditNote' ? 'selected' : ''}>ใบลดหนี้</option>
+                  <option value="DebitNote" ${scan.documentType === 'DebitNote' ? 'selected' : ''}>ใบเพิ่มหนี้</option>
+                  <option value="PurchaseOrder" ${scan.documentType === 'PurchaseOrder' ? 'selected' : ''}>ใบสั่งซื้อ</option>
+                  <option value="WHT" ${scan.documentType === 'WHT' ? 'selected' : ''}>หนังสือรับรอง 50 ทวิ</option>
+                  <option value="Other" ${scan.documentType === 'Other' ? 'selected' : ''}>อื่นๆ</option>
+                </select>
+              </div>
+              <div class="review-field">
+                <label>ชื่อผู้ขาย</label>
+                <input type="text" class="form-input" id="revVendorName" value="${Layout.esc(scan.extractedVendorName || '')}">
+                ${confBadge(scan.confidence)}
+              </div>
+              <div class="review-field">
+                <label>เลขผู้เสียภาษี</label>
+                <input type="text" class="form-input" id="revVendorTaxId" value="${Layout.esc(scan.extractedVendorTaxId || '')}">
+              </div>
+              <div class="review-field">
+                <label>เลขที่เอกสาร</label>
+                <input type="text" class="form-input" id="revDocNumber" value="${Layout.esc(scan.extractedDocumentNumber || '')}">
+                ${confBadge(scan.confidence)}
+              </div>
+              <div class="review-field">
+                <label>วันที่</label>
+                <input type="date" class="form-input" id="revDate" value="${scan.extractedDate ? Layout.dateInput(scan.extractedDate) : ''}">
+              </div>
+              <div class="review-field">
+                <label>ยอดก่อน VAT</label>
+                <input type="number" class="form-input" id="revSubTotal" step="0.01" value="${scan.extractedSubTotal != null ? scan.extractedSubTotal : ''}">
+              </div>
+              <div class="review-field">
+                <label>VAT</label>
+                <input type="number" class="form-input" id="revVatAmount" step="0.01" value="${scan.extractedVatAmount != null ? scan.extractedVatAmount : ''}">
+              </div>
+              <div class="review-field">
+                <label>ยอดรวมทั้งสิ้น</label>
+                <input type="number" class="form-input" id="revTotalAmount" step="0.01" value="${scan.extractedTotalAmount != null ? scan.extractedTotalAmount : ''}">
+                ${confBadge(scan.confidence)}
+              </div>
+            </div>
+
+            <div class="review-section">
+              <div class="review-section-title">📊 ผังบัญชีที่แนะนำ ${scan.suggestedAccounts ? '<span style="float:right;font-size:11px;color:#059669;font-weight:400">🤖 AI แนะนำ</span>' : ''}</div>
+              <div class="review-field">
+                <label>หมวดค่าใช้จ่าย</label>
+                <select class="form-input" id="revExpenseCategory" style="flex:1">
+                  <option value="">-- เลือก --</option>
+                  <option value="ค่าสินค้า" ${scan.expenseCategory === 'ค่าสินค้า' ? 'selected' : ''}>ค่าสินค้า</option>
+                  <option value="ค่าบริการ" ${scan.expenseCategory === 'ค่าบริการ' ? 'selected' : ''}>ค่าบริการ</option>
+                  <option value="ค่าเช่า" ${scan.expenseCategory === 'ค่าเช่า' ? 'selected' : ''}>ค่าเช่า</option>
+                  <option value="ค่าสาธารณูปโภค" ${scan.expenseCategory === 'ค่าสาธารณูปโภค' ? 'selected' : ''}>ค่าสาธารณูปโภค</option>
+                  <option value="ค่าขนส่ง" ${scan.expenseCategory === 'ค่าขนส่ง' ? 'selected' : ''}>ค่าขนส่ง</option>
+                  <option value="ค่าโฆษณา" ${scan.expenseCategory === 'ค่าโฆษณา' ? 'selected' : ''}>ค่าโฆษณา</option>
+                  <option value="ค่าซ่อมแซม" ${scan.expenseCategory === 'ค่าซ่อมแซม' ? 'selected' : ''}>ค่าซ่อมแซม</option>
+                  <option value="ค่าวัสดุสำนักงาน" ${scan.expenseCategory === 'ค่าวัสดุสำนักงาน' ? 'selected' : ''}>ค่าวัสดุสำนักงาน</option>
+                  <option value="ค่าเดินทาง" ${scan.expenseCategory === 'ค่าเดินทาง' ? 'selected' : ''}>ค่าเดินทาง</option>
+                  <option value="ค่าที่ปรึกษา" ${scan.expenseCategory === 'ค่าที่ปรึกษา' ? 'selected' : ''}>ค่าที่ปรึกษา</option>
+                  <option value="ค่าประกัน" ${scan.expenseCategory === 'ค่าประกัน' ? 'selected' : ''}>ค่าประกัน</option>
+                  <option value="อื่นๆ" ${scan.expenseCategory === 'อื่นๆ' ? 'selected' : ''}>อื่นๆ</option>
+                </select>
+              </div>
+              <div class="review-field">
+                <label>บัญชีเดบิต</label>
+                <select class="form-input" id="revDebitAccount" style="flex:1">
+                  <option value="">กำลังโหลด...</option>
+                </select>
+                ${scan.suggestedAccounts?.debitAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.debitAccountCode)} ${Layout.esc(scan.suggestedAccounts.debitAccountName || '')}</span>` : ''}
+              </div>
+              <div class="review-field">
+                <label>บัญชีเครดิต</label>
+                <select class="form-input" id="revCreditAccount" style="flex:1">
+                  <option value="">กำลังโหลด...</option>
+                </select>
+                ${scan.suggestedAccounts?.creditAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.creditAccountCode)} ${Layout.esc(scan.suggestedAccounts.creditAccountName || '')}</span>` : ''}
+              </div>
+              <div class="review-field">
+                <label>ภาษีหัก ณ ที่จ่าย</label>
+                <div style="display:flex;gap:8px;align-items:center;flex:1">
+                  <input type="checkbox" id="revHasWht" ${scan.hasWht ? 'checked' : ''} style="width:auto">
+                  <select class="form-input" id="revWhtRate" style="width:80px" ${!scan.hasWht ? 'disabled' : ''}>
+                    <option value="">-</option>
+                    <option value="1" ${scan.whtRate == 1 ? 'selected' : ''}>1%</option>
+                    <option value="2" ${scan.whtRate == 2 ? 'selected' : ''}>2%</option>
+                    <option value="3" ${scan.whtRate == 3 ? 'selected' : ''}>3%</option>
+                    <option value="5" ${scan.whtRate == 5 ? 'selected' : ''}>5%</option>
+                    <option value="10" ${scan.whtRate == 10 ? 'selected' : ''}>10%</option>
+                    <option value="15" ${scan.whtRate == 15 ? 'selected' : ''}>15%</option>
+                  </select>
+                </div>
+              </div>
+              ${scan.paymentTermsDays ? `<div class="review-field"><label>เงื่อนไขชำระ</label><span class="form-input" style="background:var(--gray-50)">${scan.paymentTermsDays} วัน</span></div>` : ''}
+              ${scan.extractedItems && scan.extractedItems.length > 0 ? `
+              <div style="margin-top:8px">
+                <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">รายการที่สกัดได้ (${scan.extractedItems.length} รายการ)</div>
+                <table style="width:100%;font-size:12px;border-collapse:collapse">
+                  <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th></tr>
+                  ${scan.extractedItems.map(it => `<tr style="border-bottom:1px solid var(--gray-100)"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td></tr>`).join('')}
+                </table>
+              </div>` : ''}
+            </div>
+
+            <div class="review-section">
+              <div class="review-section-title">จับคู่ผู้ติดต่อ</div>
+              <div class="contact-search-box" id="contactSearchBox">
+                <input type="text" class="form-input" id="contactSearchInput"
+                       placeholder="ค้นหาชื่อหรือเลขผู้เสียภาษี..."
+                       value="${Layout.esc(scan.extractedVendorName || '')}"
+                       oninput="Page.searchContacts(this.value)"
+                       onfocus="Page.searchContacts(this.value)">
+                <input type="hidden" id="revMatchedContactId" value="${scan.matchedContactId || ''}">
+                <div class="contact-search-results" id="contactSearchResults"></div>
+                ${scan.matchedContactId ? `<div style="margin-top:6px;font-size:13px;color:#059669;font-weight:500">&#x2705; จับคู่แล้ว (ID: ${Layout.esc(scan.matchedContactId)})</div>` : ''}
+              </div>
+            </div>`;
+
+          // Show/hide create button
+          const createBtn = document.getElementById('reviewCreateBtn');
+          if (scan.createdDocumentId) {
+            createBtn.textContent = 'สร้างแล้ว';
+            createBtn.disabled = true;
+            createBtn.className = 'btn btn-success';
+          } else if (scan.scanStatus === 'Completed') {
+            createBtn.textContent = 'สร้างเอกสาร';
+            createBtn.disabled = false;
+            createBtn.className = 'btn btn-primary';
+          } else {
+            createBtn.textContent = 'สร้างเอกสาร';
+            createBtn.disabled = true;
+            createBtn.className = 'btn btn-primary';
+          }
+
+          Layout.openModal('reviewModal');
+
+          // Load chart of accounts for dropdowns
+          this._loadAccountDropdowns(scan);
+
+          // WHT checkbox toggle
+          const whtCb = document.getElementById('revHasWht');
+          const whtRate = document.getElementById('revWhtRate');
+          if (whtCb) whtCb.onchange = () => { whtRate.disabled = !whtCb.checked; if (!whtCb.checked) whtRate.value = ''; };
+
+        } catch (err) {
+          Layout.toast('โหลดข้อมูลไม่สำเร็จ: ' + err.message, 'error');
+        }
+      },
+
+      async _loadAccountDropdowns(scan) {
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.get(`/api/companies/${cid}/accounting/chart-of-accounts?pageSize=500`);
+          const accounts = (res.data?.items || res.data || []);
+
+          const debitSel = document.getElementById('revDebitAccount');
+          const creditSel = document.getElementById('revCreditAccount');
+
+          const suggestedDebit = scan.suggestedAccounts?.debitAccountCode || '';
+          const suggestedCredit = scan.suggestedAccounts?.creditAccountCode || '';
+
+          const buildOptions = (selected) => {
+            let html = '<option value="">-- เลือกบัญชี --</option>';
+            for (const a of accounts) {
+              const sel = a.accountCode === selected ? 'selected' : '';
+              html += `<option value="${a.accountCode}" ${sel}>${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`;
+            }
+            return html;
+          };
+
+          if (debitSel) debitSel.innerHTML = buildOptions(suggestedDebit);
+          if (creditSel) creditSel.innerHTML = buildOptions(suggestedCredit);
+        } catch (err) {
+          const fallback = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
+          const d = document.getElementById('revDebitAccount'); if (d) d.innerHTML = fallback;
+          const c = document.getElementById('revCreditAccount'); if (c) c.innerHTML = fallback;
+        }
+      },
+
+      _contactSearchTimer: null,
+      async searchContacts(term) {
+        clearTimeout(this._contactSearchTimer);
+        const resultsEl = document.getElementById('contactSearchResults');
+        if (!term || term.length < 2) {
+          resultsEl.classList.remove('show');
+          return;
+        }
+        this._contactSearchTimer = setTimeout(async () => {
+          const cid = Layout.getCompanyId();
+          try {
+            const res = await API.get(`/api/companies/${cid}/contacts?search=${encodeURIComponent(term)}`);
+            const items = (res.data?.items || res.data || []);
+            if (!items.length) {
+              resultsEl.innerHTML = '<div class="contact-search-item" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</div>';
+            } else {
+              resultsEl.innerHTML = items.slice(0, 10).map(c => `
+                <div class="contact-search-item" onclick="Page.selectContact('${c.id}', '${Layout.esc(c.name || '')}')">
+                  <div class="name">${Layout.esc(c.name || '-')}</div>
+                  <div class="tax-id">${c.taxId ? 'เลขภาษี: ' + Layout.esc(c.taxId) : ''}</div>
+                </div>`).join('');
+            }
+            resultsEl.classList.add('show');
+          } catch {
+            resultsEl.innerHTML = '<div class="contact-search-item" style="color:var(--danger)">ค้นหาไม่สำเร็จ</div>';
+            resultsEl.classList.add('show');
+          }
+        }, 300);
+      },
+
+      async selectContact(contactId, contactName) {
+        document.getElementById('revMatchedContactId').value = contactId;
+        document.getElementById('contactSearchInput').value = contactName;
+        document.getElementById('contactSearchResults').classList.remove('show');
+
+        // Call match-contact API
+        if (this._reviewScan) {
+          const cid = Layout.getCompanyId();
+          try {
+            await API.post(`/api/companies/${cid}/ocr/${this._reviewScan.id}/match-contact/${contactId}`);
+            Layout.toast('จับคู่ผู้ติดต่อสำเร็จ');
+          } catch (err) {
+            Layout.toast('จับคู่ไม่สำเร็จ: ' + err.message, 'error');
+          }
+        }
+      },
+
+      async saveCorrection() {
+        if (!this._reviewScan) return;
+        const api = Layout.api();
+        if (!api) return;
+
+        const btn = document.getElementById('reviewSaveBtn');
+        btn.disabled = true;
+        btn.textContent = 'กำลังบันทึก...';
+
+        const correction = {
+          documentType: document.getElementById('revDocType').value || null,
+          vendorName: document.getElementById('revVendorName').value || null,
+          vendorTaxId: document.getElementById('revVendorTaxId').value || null,
+          documentNumber: document.getElementById('revDocNumber').value || null,
+          documentDate: document.getElementById('revDate').value || null,
+          subTotal: parseFloat(document.getElementById('revSubTotal').value) || null,
+          vatAmount: parseFloat(document.getElementById('revVatAmount').value) || null,
+          totalAmount: parseFloat(document.getElementById('revTotalAmount').value) || null,
+          expenseCategory: document.getElementById('revExpenseCategory').value || null,
+          debitAccountCode: document.getElementById('revDebitAccount').value || null,
+          creditAccountCode: document.getElementById('revCreditAccount').value || null,
+          hasWht: document.getElementById('revHasWht')?.checked || false,
+          whtRate: parseFloat(document.getElementById('revWhtRate').value) || null,
+        };
+
+        try {
+          await api.ocrCorrect(this._reviewScan.id, correction);
+          Layout.toast('บันทึกการแก้ไขสำเร็จ — ระบบเรียนรู้จากการแก้ไขของคุณ');
+          btn.textContent = '✅ บันทึกแล้ว';
+          btn.className = 'btn btn-success';
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('บันทึกไม่สำเร็จ: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = '💾 บันทึกการแก้ไข';
+        }
+      },
+
+      async createDocFromReview() {
+        if (!this._reviewScan) return;
+        const api = Layout.api();
+        if (!api) return;
+
+        const btn = document.getElementById('reviewCreateBtn');
+        btn.disabled = true;
+        btn.textContent = 'กำลังสร้าง...';
+
+        try {
+          await api.ocrCreateDocument(this._reviewScan.id);
+          Layout.toast('สร้างเอกสารสำเร็จ');
+          btn.textContent = 'สร้างแล้ว';
+          btn.className = 'btn btn-success';
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = 'สร้างเอกสาร';
+        }
+      },
+
+      // ==================== Refresh ====================
+      refreshAll() {
+        this.loadScans();
+        Layout.toast('รีเฟรชแล้ว', 'info');
+      },
+    };
+
+    // Close contact search dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      const box = document.getElementById('contactSearchBox');
+      const results = document.getElementById('contactSearchResults');
+      if (box && results && !box.contains(e.target)) {
+        results.classList.remove('show');
+      }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => { Page.init(); });
+  </script>
+</body>
+</html>

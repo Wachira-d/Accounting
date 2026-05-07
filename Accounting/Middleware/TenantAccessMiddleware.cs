@@ -76,6 +76,7 @@ public class TenantAccessMiddleware
         }
 
         context.Items["UserRole"] = companyUser.Role;
+        context.Items["CompanyRoleId"] = companyUser.CompanyRoleId;
 
         context.Items["CompanyId"] = companyId.Value;
         context.Items["UserId"] = userId.Value;

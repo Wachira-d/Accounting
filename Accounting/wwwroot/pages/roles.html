@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการ Role และสิทธิ์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .role-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; margin-top:16px; }
+    .role-card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:20px; transition:box-shadow .2s; cursor:pointer; position:relative; }
+    .role-card:hover { box-shadow:0 4px 12px rgba(0,0,0,.08); }
+    .role-card.active { border-color:var(--primary); box-shadow:0 0 0 2px rgba(99,102,241,.2); }
+    .role-header { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+    .role-icon { width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px; }
+    .role-name { font-weight:700; font-size:16px; color:#1e293b; }
+    .role-desc { font-size:13px; color:#64748b; margin-bottom:8px; }
+    .role-meta { display:flex; align-items:center; gap:12px; font-size:12px; color:#94a3b8; }
+    .role-badge-sys { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#EDE9FE; color:#6D28D9; }
+    .role-actions { position:absolute; top:12px; right:12px; display:flex; gap:4px; }
+    .role-actions button { background:none; border:none; cursor:pointer; font-size:16px; padding:4px; border-radius:4px; }
+    .role-actions button:hover { background:#f1f5f9; }
+
+    .perm-editor { margin-top:24px; }
+    .perm-section { margin-bottom:16px; }
+    .perm-section-title { font-weight:600; font-size:14px; color:#475569; padding:8px 0; border-bottom:1px solid #e2e8f0; margin-bottom:8px; }
+    .perm-items { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:6px; }
+    .perm-item { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; font-size:13px; color:#334155; cursor:pointer; user-select:none; }
+    .perm-item:hover { background:#f8fafc; }
+    .perm-item input[type="checkbox"] { accent-color:var(--primary); width:16px; height:16px; }
+    .perm-item .perm-icon { font-size:15px; }
+
+    .modal-lg { max-width:720px !important; }
+    .btn-group-sm { display:flex; gap:6px; flex-wrap:wrap; }
+    .btn-group-sm button { font-size:12px; padding:4px 10px; }
+
+    .empty-state { text-align:center; padding:60px 20px; color:#94a3b8; }
+    .empty-state .empty-icon { font-size:48px; margin-bottom:12px; }
+    .empty-state p { font-size:15px; }
+
+    @media (max-width:768px) {
+      .role-grid { grid-template-columns:1fr; }
+      .perm-items { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2>จัดการ Role และสิทธิ์</h2>
+        <p class="text-gray-500" style="font-size:14px;margin-top:4px">สร้างและจัดการ Role สำหรับบริษัท กำหนดเมนูที่แต่ละ Role เข้าถึงได้</p>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="Page.seedDefaults()" id="btnSeed" style="display:none">สร้าง Role เริ่มต้น</button>
+        <button class="btn btn-primary" onclick="Page.showCreateModal()">+ สร้าง Role ใหม่</button>
+      </div>
+    </div>
+
+    <div id="roleList"></div>
+  </div>
+
+  <!-- Create/Edit Role Modal -->
+  <div class="modal-overlay" id="roleModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTitle">สร้าง Role ใหม่</h3>
+        <button class="modal-close" onclick="Page.closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div class="form-group">
+            <label class="form-label">ชื่อ Role *</label>
+            <input type="text" class="form-control" id="roleName" placeholder="เช่น ผู้จัดการ, หัวหน้าทีม">
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบาย</label>
+            <input type="text" class="form-control" id="roleDesc" placeholder="อธิบายสิทธิ์ของ Role นี้">
+          </div>
+          <div class="form-group">
+            <label class="form-label">สี</label>
+            <input type="color" class="form-control" id="roleColor" value="#6B7280" style="height:38px;padding:4px">
+          </div>
+          <div class="form-group">
+            <label class="form-label">ไอคอน</label>
+            <select class="form-select" id="roleIcon">
+              <option value="👤">👤 ทั่วไป</option>
+              <option value="👑">👑 ผู้บริหาร</option>
+              <option value="📊">📊 นักบัญชี</option>
+              <option value="🔍">🔍 ผู้ตรวจสอบ</option>
+              <option value="👁️">👁️ ดูอย่างเดียว</option>
+              <option value="🤝">🤝 ภายนอก</option>
+              <option value="💼">💼 ผู้จัดการ</option>
+              <option value="🛒">🛒 ฝ่ายขาย</option>
+              <option value="📦">📦 คลังสินค้า</option>
+              <option value="💰">💰 การเงิน</option>
+              <option value="🔧">🔧 เทคนิค</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="perm-editor">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <h4 style="margin:0;font-size:15px;font-weight:600;color:#1e293b">สิทธิ์การเข้าถึงเมนู</h4>
+            <div class="btn-group-sm">
+              <button class="btn btn-outline" onclick="Page.selectAll()">เลือกทั้งหมด</button>
+              <button class="btn btn-outline" onclick="Page.deselectAll()">ยกเลิกทั้งหมด</button>
+            </div>
+          </div>
+          <div id="permEditor"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="Page.closeModal()">ยกเลิก</button>
+        <button class="btn btn-primary" id="btnSave" onclick="Page.saveRole()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+
+  const MENU_SECTIONS = [
+    { section: 'หลัก', items: [
+      { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊' },
+    ]},
+    { section: 'รายรับ', items: [
+      { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄' },
+      { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈' },
+    ]},
+    { section: 'รายจ่าย', items: [
+      { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒' },
+      { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾' },
+      { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋' },
+      { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳' },
+    ]},
+    { section: 'รายการอัตโนมัติ', items: [
+      { id: 'recurring', label: 'รายการประจำ', icon: '🔄' },
+    ]},
+    { section: 'ผู้ติดต่อ', items: [
+      { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥' },
+    ]},
+    { section: 'สินค้า/บริการ', items: [
+      { id: 'products', label: 'สินค้าและบริการ', icon: '📦' },
+      { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭' },
+      { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊' },
+      { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹' },
+    ]},
+    { section: 'POS ขายหน้าร้าน', items: [
+      { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️' },
+      { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆' },
+      { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧' },
+      { id: 'pos-reports', label: 'รายงาน POS', icon: '📊' },
+    ]},
+    { section: 'การเงิน', items: [
+      { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦' },
+      { id: 'loans', label: 'สินเชื่อ/เงินกู้', icon: '💰' },
+      { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱' },
+    ]},
+    { section: 'บัญชี', items: [
+      { id: 'accounts', label: 'ผังบัญชี', icon: '📋' },
+      { id: 'journals', label: 'สมุดรายวัน', icon: '📝' },
+      { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒' },
+      { id: 'fiscal', label: 'งวดบัญชี', icon: '📅' },
+      { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢' },
+      { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰' },
+    ]},
+    { section: 'ภาษี', items: [
+      { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️' },
+      { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜' },
+      { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆' },
+      { id: 'etax', label: 'e-Tax Invoice', icon: '🧾' },
+      { id: 'tax-export', label: 'Export ยื่นภาษี', icon: '📤' },
+    ]},
+    { section: 'เงินเดือน', items: [
+      { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵' },
+      { id: 'commission', label: 'คอมมิชชัน', icon: '💸' },
+    ]},
+    { section: 'รายงาน', items: [
+      { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔' },
+      { id: 'reports', label: 'รายงานการเงิน', icon: '📈' },
+      { id: 'budget', label: 'งบประมาณ', icon: '🎯' },
+      { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳' },
+      { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍' },
+      { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉' },
+    ]},
+    { section: 'โครงการ/องค์กร', items: [
+      { id: 'projects', label: 'โครงการ', icon: '📐' },
+      { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️' },
+      { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬' },
+      { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗' },
+      { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑' },
+    ]},
+    { section: 'คลังเอกสาร', items: [
+      { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥' },
+      { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐' },
+      { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖' },
+      { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸' },
+    ]},
+    { section: 'ตั้งค่า', items: [
+      { id: 'team', label: 'จัดการทีม', icon: '👥' },
+      { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️' },
+      { id: 'approval', label: 'การอนุมัติ', icon: '✅' },
+      { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️' },
+      { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗' },
+      { id: 'api-developer', label: 'API Developer', icon: '📘' },
+      { id: 'webhooks', label: 'Webhooks & API', icon: '🔌' },
+      { id: 'subscription', label: 'แพ็กเกจ', icon: '💎' },
+      { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊' },
+      { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍' },
+    ]},
+  ];
+
+  const Page = {
+    roles: [],
+    editingRoleId: null,
+
+    async init() {
+      if (!Layout.init('roles')) return;
+      this.api = Layout.api();
+      if (!this.api) return;
+
+      const role = await Layout.ensureMyRole();
+      if (role !== 'Owner' && role !== 'SystemAdmin' && !Layout.user?.isSystemAdmin) {
+        Layout.toast('ต้องเป็นเจ้าของบริษัทเท่านั้นจึงจะจัดการ Role ได้', 'error');
+        setTimeout(() => { window.location.href = '/app.html'; }, 1200);
+        return;
+      }
+
+      await this.loadRoles();
+    },
+
+    async loadRoles() {
+      const el = document.getElementById('roleList');
+      el.innerHTML = '<div style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></div>';
+
+      try {
+        const cid = Layout.getCompanyId();
+        const res = await API.get(`/api/company/${cid}/roles`);
+        if (!res?.success) throw new Error(res?.message || 'โหลด Role ล้มเหลว');
+        this.roles = res.data || [];
+      } catch (e) {
+        this.roles = [];
+      }
+
+      if (this.roles.length === 0) {
+        document.getElementById('btnSeed').style.display = '';
+        el.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">🔐</div>
+            <p>ยังไม่มี Role สำหรับบริษัทนี้</p>
+            <p style="font-size:13px;margin-top:8px">กดปุ่ม "สร้าง Role เริ่มต้น" เพื่อสร้าง Role มาตรฐาน หรือ "สร้าง Role ใหม่" เพื่อกำหนดเอง</p>
+          </div>`;
+        return;
+      }
+
+      document.getElementById('btnSeed').style.display = 'none';
+      el.innerHTML = '<div class="role-grid" id="roleGrid"></div>';
+      const grid = document.getElementById('roleGrid');
+
+      this.roles.forEach(r => {
+        const card = document.createElement('div');
+        card.className = 'role-card';
+        card.dataset.id = r.id;
+        card.onclick = (e) => {
+          if (e.target.closest('.role-actions')) return;
+          this.showEditModal(r.id);
+        };
+        card.innerHTML = `
+          <div class="role-actions">
+            ${r.isSystemRole ? '' : `<button onclick="Page.deleteRole('${r.id}')" title="ลบ">🗑️</button>`}
+          </div>
+          <div class="role-header">
+            <div class="role-icon" style="background:${r.color}20;color:${r.color}">${r.icon}</div>
+            <div>
+              <div class="role-name">${Layout.esc(r.name)}</div>
+              ${r.isSystemRole ? '<span class="role-badge-sys">Role ระบบ</span>' : ''}
+            </div>
+          </div>
+          <div class="role-desc">${Layout.esc(r.description || '-')}</div>
+          <div class="role-meta">
+            <span>👥 ${r.memberCount} สมาชิก</span>
+            <span>📋 ${r.allowedMenuIds?.length || 0} เมนู</span>
+          </div>`;
+        grid.appendChild(card);
+      });
+    },
+
+    renderPermEditor(selected = []) {
+      const editor = document.getElementById('permEditor');
+      const set = new Set(selected);
+      let html = '';
+      MENU_SECTIONS.forEach(sec => {
+        html += `<div class="perm-section">
+          <div class="perm-section-title">${sec.section}</div>
+          <div class="perm-items">`;
+        sec.items.forEach(item => {
+          const checked = set.has(item.id) ? 'checked' : '';
+          html += `<label class="perm-item">
+            <input type="checkbox" value="${item.id}" ${checked} class="perm-cb">
+            <span class="perm-icon">${item.icon}</span>
+            ${item.label}
+          </label>`;
+        });
+        html += '</div></div>';
+      });
+      editor.innerHTML = html;
+    },
+
+    getSelectedMenuIds() {
+      return Array.from(document.querySelectorAll('.perm-cb:checked')).map(cb => cb.value);
+    },
+
+    selectAll() {
+      document.querySelectorAll('.perm-cb').forEach(cb => cb.checked = true);
+    },
+
+    deselectAll() {
+      document.querySelectorAll('.perm-cb').forEach(cb => cb.checked = false);
+    },
+
+    showCreateModal() {
+      this.editingRoleId = null;
+      document.getElementById('modalTitle').textContent = 'สร้าง Role ใหม่';
+      document.getElementById('roleName').value = '';
+      document.getElementById('roleDesc').value = '';
+      document.getElementById('roleColor').value = '#6B7280';
+      document.getElementById('roleIcon').value = '👤';
+      document.getElementById('roleName').disabled = false;
+      this.renderPermEditor([]);
+      document.getElementById('roleModal').classList.add('active');
+    },
+
+    showEditModal(roleId) {
+      const role = this.roles.find(r => r.id === roleId);
+      if (!role) return;
+      this.editingRoleId = roleId;
+      document.getElementById('modalTitle').textContent = `แก้ไข Role: ${role.name}`;
+      document.getElementById('roleName').value = role.name;
+      document.getElementById('roleDesc').value = role.description || '';
+      document.getElementById('roleColor').value = role.color;
+      document.getElementById('roleIcon').value = role.icon;
+      document.getElementById('roleName').disabled = role.isSystemRole;
+      this.renderPermEditor(role.allowedMenuIds || []);
+      document.getElementById('roleModal').classList.add('active');
+    },
+
+    closeModal() {
+      document.getElementById('roleModal').classList.remove('active');
+      this.editingRoleId = null;
+    },
+
+    async saveRole() {
+      const name = document.getElementById('roleName').value.trim();
+      if (!name) { Layout.toast('กรุณาระบุชื่อ Role', 'error'); return; }
+      const data = {
+        name,
+        description: document.getElementById('roleDesc').value.trim() || null,
+        color: document.getElementById('roleColor').value,
+        icon: document.getElementById('roleIcon').value,
+        allowedMenuIds: this.getSelectedMenuIds()
+      };
+
+      const btn = document.getElementById('btnSave');
+      btn.disabled = true;
+      btn.textContent = 'กำลังบันทึก...';
+
+      try {
+        const cid = Layout.getCompanyId();
+        if (this.editingRoleId) {
+          await API.put(`/api/company/${cid}/roles/${this.editingRoleId}`, data);
+          Layout.toast('อัปเดต Role สำเร็จ', 'success');
+        } else {
+          await API.post(`/api/company/${cid}/roles`, data);
+          Layout.toast('สร้าง Role สำเร็จ', 'success');
+        }
+        this.closeModal();
+        await this.loadRoles();
+      } catch (e) {
+        Layout.toast(e.message || 'เกิดข้อผิดพลาด', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'บันทึก';
+      }
+    },
+
+    async deleteRole(roleId) {
+      const role = this.roles.find(r => r.id === roleId);
+      if (!role) return;
+      if (!confirm(`ต้องการลบ Role "${role.name}" หรือไม่?\nสมาชิกที่ใช้ Role นี้จะถูกยกเลิกการกำหนดสิทธิ์`)) return;
+
+      try {
+        const cid = Layout.getCompanyId();
+        await API.delete(`/api/company/${cid}/roles/${roleId}`);
+        Layout.toast('ลบ Role สำเร็จ', 'success');
+        await this.loadRoles();
+      } catch (e) {
+        Layout.toast(e.message || 'เกิดข้อผิดพลาด', 'error');
+      }
+    },
+
+    async seedDefaults() {
+      if (!confirm('สร้าง Role เริ่มต้น (นักบัญชี, พนักงาน, ผู้ตรวจสอบ, ดูอย่างเดียว, นักบัญชีภายนอก)?')) return;
+      try {
+        const cid = Layout.getCompanyId();
+        await API.post(`/api/company/${cid}/roles/seed-defaults`);
+        Layout.toast('สร้าง Role เริ่มต้นสำเร็จ', 'success');
+        await this.loadRoles();
+      } catch (e) {
+        Layout.toast(e.message || 'เกิดข้อผิดพลาด', 'error');
+      }
+    },
+  };
+
+  Page.init();
+  </script>
+</body>
+</html>

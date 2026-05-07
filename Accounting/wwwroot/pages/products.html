@@ -15,6 +15,13 @@
         <button class="btn btn-secondary" onclick="Page.showValuation()">มูลค่าสินค้าคงเหลือ</button>
         <button class="btn btn-secondary" onclick="Page.showStockCount()">ตรวจนับสต็อก</button>
         <button class="btn btn-secondary" onclick="Page.showCategories()">หมวดหมู่</button>
+        <div class="dropdown-wrap" style="position:relative">
+          <button class="btn btn-secondary" onclick="Import.toggleMenu(this)">นำเข้า ▾</button>
+          <div class="dropdown-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">นำเข้า CSV/Excel</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">ดาวน์โหลด Template</a>
+          </div>
+        </div>
         <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินค้า</button>
       </div>
     </div>
@@ -167,6 +174,42 @@
         <div class="modal-header"><h3 class="modal-title">มูลค่าสินค้าคงเหลือ (Weighted Average)</h3><button class="modal-close" onclick="Layout.closeModal('valModal')">&times;</button></div>
         <div class="modal-body" id="valBody"></div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('valModal')" data-i18n="common.close">ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 id="importTitle">นำเข้าข้อมูล</h3>
+          <button class="btn-close" onclick="Import.close()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="importStep1">
+            <div id="importDropZone" style="border:2px dashed var(--gray-300);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s" onclick="document.getElementById('importFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='var(--blue-50)'" ondragleave="this.style.borderColor='var(--gray-300)';this.style.background=''" ondrop="Import.handleDrop(event)">
+              <div style="font-size:36px;margin-bottom:8px">📄</div>
+              <p style="font-size:15px;font-weight:600;color:var(--gray-700)">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+              <p style="font-size:13px;color:var(--gray-500);margin-top:4px">รองรับ CSV, Excel (.xlsx, .xls)</p>
+              <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="Import.handleFile(this.files[0])">
+            </div>
+            <div id="importFileInfo" style="display:none;margin-top:12px;padding:12px 16px;background:var(--blue-50);border-radius:8px;align-items:center;justify-content:space-between">
+              <span id="importFileName" style="font-weight:600;font-size:14px"></span>
+              <button class="btn btn-sm btn-ghost text-red" onclick="Import.clearFile()">ลบ</button>
+            </div>
+          </div>
+          <div id="importStep2" style="display:none">
+            <div id="importValidation" style="margin-bottom:12px"></div>
+            <div id="importPreview" style="max-height:300px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px"></div>
+          </div>
+          <div id="importStep3" style="display:none;text-align:center;padding:24px">
+            <div style="font-size:48px;margin-bottom:12px">✅</div>
+            <h3 id="importResultText" style="color:var(--green-600)"></h3>
+          </div>
+        </div>
+        <div class="modal-footer" id="importFooter">
+          <button class="btn btn-secondary" onclick="Import.close()">ยกเลิก</button>
+          <button class="btn btn-primary" id="importActionBtn" onclick="Import.validate()" disabled>ตรวจสอบข้อมูล</button>
+        </div>
       </div>
     </div>
   </div>
@@ -412,6 +455,124 @@
             <tfoot><tr style="background:var(--gray-100)"><td colspan="6" class="font-bold">รวมทั้งสิ้น</td><td class="text-right font-bold">${Layout.money(d.totalValue)}</td></tr></tfoot></table></div></div>` : '<div class="text-center text-gray-400">ไม่มีสินค้าคงเหลือ</div>'}`;
           Layout.openModal('valModal');
         } catch(e) { Layout.toast(e.message,'error'); }
+      }
+    };
+    const Import = {
+      entityType: 'products',
+      file: null,
+      validated: false,
+      toggleMenu(btn) {
+        const menu = btn.nextElementSibling;
+        const show = menu.style.display === 'none';
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+        menu.style.display = show ? 'block' : 'none';
+        if (show) setTimeout(() => document.addEventListener('click', Import._closeMenus, { once: true }), 0);
+      },
+      _closeMenus() { document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none'); },
+      open() {
+        Import._closeMenus();
+        Import.file = null; Import.validated = false;
+        document.getElementById('importStep1').style.display = '';
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = 'none';
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').onclick = Import.validate;
+        document.getElementById('importFooter').style.display = '';
+        document.getElementById('importModal').style.display = 'flex';
+      },
+      close() { document.getElementById('importModal').style.display = 'none'; },
+      async downloadTemplate() {
+        Import._closeMenus();
+        try {
+          const token = localStorage.getItem('token');
+          const resp = await fetch(`/api/companies/${Layout.getCompanyId()}/import-export/templates/${Import.entityType}/download?format=csv`, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) throw new Error('Download failed');
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `${Import.entityType}-template.csv`; a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) { Layout.toast('ดาวน์โหลด Template ไม่สำเร็จ', 'error'); }
+      },
+      handleDrop(e) {
+        e.preventDefault();
+        e.currentTarget.style.borderColor = 'var(--gray-300)'; e.currentTarget.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file) Import.handleFile(file);
+      },
+      handleFile(file) {
+        if (!file) return;
+        Import.file = file; Import.validated = false;
+        document.getElementById('importFileName').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        document.getElementById('importFileInfo').style.display = 'flex';
+        document.getElementById('importActionBtn').disabled = false;
+      },
+      clearFile() {
+        Import.file = null;
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').disabled = true;
+      },
+      async validate() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังตรวจสอบ...';
+        try {
+          const fd = new FormData(); fd.append('file', Import.file); fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/validate`, fd);
+          if (!json.success) throw new Error(json.message || 'Validation failed');
+          const d = json.data;
+          let html = `<div style="padding:8px 0"><span style="color:var(--green-600);font-weight:600">✓ ${d.validCount || d.totalRows || 0} รายการถูกต้อง</span>`;
+          if (d.errorCount > 0) html += ` &nbsp; <span style="color:var(--red-600);font-weight:600">✗ ${d.errorCount} รายการมีข้อผิดพลาด</span>`;
+          html += '</div>';
+          if (d.errors && d.errors.length > 0) {
+            html += '<div style="max-height:120px;overflow:auto;background:var(--red-50);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:13px;color:var(--red-700)">';
+            d.errors.slice(0, 10).forEach(e => html += `<div>แถว ${e.row}: ${e.message}</div>`);
+            if (d.errors.length > 10) html += `<div>... และอีก ${d.errors.length - 10} รายการ</div>`;
+            html += '</div>';
+          }
+          document.getElementById('importValidation').innerHTML = html;
+          if (d.preview && d.preview.length > 0) {
+            let tbl = '<table class="table" style="font-size:12px"><thead><tr>';
+            Object.keys(d.preview[0]).forEach(k => tbl += `<th>${k}</th>`);
+            tbl += '</tr></thead><tbody>';
+            d.preview.slice(0, 5).forEach(row => { tbl += '<tr>'; Object.values(row).forEach(v => tbl += `<td>${v ?? ''}</td>`); tbl += '</tr>'; });
+            tbl += '</tbody></table>';
+            document.getElementById('importPreview').innerHTML = tbl;
+          }
+          document.getElementById('importStep1').style.display = 'none';
+          document.getElementById('importStep2').style.display = '';
+          Import.validated = true;
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = (d.validCount || d.totalRows || 0) === 0;
+          document.getElementById('importActionBtn').onclick = Import.execute;
+        } catch (e) {
+          Layout.toast(e.message || 'ตรวจสอบไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      },
+      async execute() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังนำเข้า...';
+        try {
+          const fd = new FormData(); fd.append('file', Import.file); fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/import`, fd);
+          if (!json.success) throw new Error(json.message || 'Import failed');
+          const d = json.data;
+          document.getElementById('importStep2').style.display = 'none';
+          document.getElementById('importStep3').style.display = '';
+          document.getElementById('importResultText').textContent = `นำเข้าสำเร็จ ${d.importedCount || d.count || 0} รายการ`;
+          document.getElementById('importFooter').style.display = 'none';
+          if (typeof Page.load === 'function') Page.load();
+        } catch (e) {
+          Layout.toast(e.message || 'นำเข้าไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
       }
     };
     Page.init();

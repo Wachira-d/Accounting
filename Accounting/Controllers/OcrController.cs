@@ -5,6 +5,7 @@ using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -70,4 +71,27 @@ public class OcrController : ControllerBase
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchContact(Guid companyId, Guid scanId, Guid contactId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));
+
+    [HttpPost("{scanId:guid}/correct")]
+    public async Task<ActionResult<ApiResponse<object>>> SubmitCorrection(Guid companyId, Guid scanId, [FromBody] OcrCorrectionRequest correction)
+    {
+        await _service.SubmitCorrectionAsync(companyId, scanId, correction);
+        return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
+    }
+
+    [HttpGet("{scanId:guid}/image")]
+    public async Task<IActionResult> GetImage(Guid companyId, Guid scanId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanId);
+        if (scan?.FileAttachmentId == null)
+            return NotFound();
+
+        var file = await _db.FileAttachments
+            .FirstOrDefaultAsync(f => f.Id == scan.FileAttachmentId && f.CompanyId == companyId);
+        if (file == null || !System.IO.File.Exists(file.StoragePath))
+            return NotFound();
+
+        return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream", file.OriginalFileName);
+    }
 }

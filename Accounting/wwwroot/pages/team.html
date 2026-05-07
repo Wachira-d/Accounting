@@ -119,13 +119,23 @@
       maxUsers: 0,
       currentUserId: null,
       currentUserRole: null,
+      customRoles: [],
 
       async init() {
         if (!Layout.init('team')) return;
         Layout.setTitle('จัดการทีม');
         this.currentUserId = Layout.user?.id;
         this.isPlatformAdmin = Layout.user?.isSystemAdmin === true;
+        await this.loadCustomRoles();
         await this.load();
+      },
+
+      async loadCustomRoles() {
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.get(`/api/company/${cid}/roles`);
+          this.customRoles = res?.data || [];
+        } catch { this.customRoles = []; }
       },
 
       async load() {
@@ -201,10 +211,17 @@
 
           let actions = '';
           if (isOwner && !isMe && m.role !== 'Owner') {
+            const customRoleOpts = Page.customRoles.map(cr =>
+              `<option value="${cr.id}" ${m.companyRoleId === cr.id ? 'selected' : ''}>${cr.icon} ${cr.name}</option>`
+            ).join('');
             actions = `
               <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
                 ${editableRoles.map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
               </select>
+              ${Page.customRoles.length ? `<select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.assignCustomRole('${m.userId}',this.value)" title="กำหนดสิทธิ์เข้าถึงเมนู">
+                <option value="">-- สิทธิ์เมนู --</option>
+                ${customRoleOpts}
+              </select>` : ''}
               <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName}')" data-i18n="common.delete">ลบ</button>
             `;
           }
@@ -244,6 +261,16 @@
         try {
           await api.updateMemberRole(userId, newRole);
           Layout.toast('เปลี่ยนบทบาทสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async assignCustomRole(userId, roleId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const rid = roleId || '00000000-0000-0000-0000-000000000000';
+          await API.post(`/api/company/${cid}/roles/${rid}/assign/${userId}`);
+          Layout.toast(roleId ? 'กำหนดสิทธิ์เมนูสำเร็จ' : 'ยกเลิกสิทธิ์เมนูสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
