@@ -5,6 +5,7 @@ using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -76,5 +77,21 @@ public class OcrController : ControllerBase
     {
         await _service.SubmitCorrectionAsync(companyId, scanId, correction);
         return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
+    }
+
+    [HttpGet("{scanId:guid}/image")]
+    public async Task<IActionResult> GetImage(Guid companyId, Guid scanId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanId);
+        if (scan?.FileAttachmentId == null)
+            return NotFound();
+
+        var file = await _db.FileAttachments
+            .FirstOrDefaultAsync(f => f.Id == scan.FileAttachmentId && f.CompanyId == companyId);
+        if (file == null || !System.IO.File.Exists(file.StoragePath))
+            return NotFound();
+
+        return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream", file.OriginalFileName);
     }
 }

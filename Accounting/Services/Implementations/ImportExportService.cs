@@ -43,6 +43,7 @@ public class ImportExportService : IImportExportService
                         await ImportProductAsync(companyId, row);
                         break;
                     case "chartofaccounts":
+                    case "chart-of-accounts":
                         await ImportAccountAsync(companyId, row);
                         break;
                     case "banktransactions":
@@ -105,7 +106,7 @@ public class ImportExportService : IImportExportService
                 new() { ["Code"] = "P001", ["Name"] = "สินค้าตัวอย่าง", ["Unit"] = "ชิ้น", ["SellingPrice"] = "100.00", ["CostPrice"] = "60.00" }
             }),
 
-            "chartofaccounts" => new ImportTemplateResponse("chartofaccounts", new List<ImportField>
+            "chartofaccounts" or "chart-of-accounts" => new ImportTemplateResponse("chart-of-accounts", new List<ImportField>
             {
                 new("AccountCode", "รหัสบัญชี", "string", true, null, null),
                 new("AccountName", "ชื่อบัญชี", "string", true, null, null),
@@ -176,7 +177,7 @@ public class ImportExportService : IImportExportService
         {
             "contacts" => await ExportContactsAsync(companyId, request),
             "products" => await ExportProductsAsync(companyId, request),
-            "chartofaccounts" => await ExportAccountsAsync(companyId, request),
+            "chartofaccounts" or "chart-of-accounts" => await ExportAccountsAsync(companyId, request),
             "journalentries" => await ExportJournalEntriesAsync(companyId, request),
             "documents" => await ExportDocumentsAsync(companyId, request),
             _ => throw new InvalidOperationException($"ไม่รองรับการส่งออก {request.EntityType}")
@@ -459,6 +460,7 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อสินค้า"));
                 break;
             case "chartofaccounts":
+            case "chart-of-accounts":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
                     errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
                 if (!Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out _))
@@ -715,6 +717,7 @@ public class ImportExportService : IImportExportService
                         await ImportProductAsync(companyId, mappedRow);
                         break;
                     case "chartofaccounts":
+                    case "chart-of-accounts":
                         await ImportAccountAsync(companyId, mappedRow);
                         break;
                     case "banktransactions":
@@ -1049,7 +1052,7 @@ public class ImportExportService : IImportExportService
                 new("VatRate", "อัตราภาษี", "decimal", false, null, null),
                 new("Category", "หมวดหมู่", "string", false, null, null),
             },
-            "chartofaccounts" => new List<ImportField>
+            "chartofaccounts" or "chart-of-accounts" => new List<ImportField>
             {
                 new("AccountCode", "รหัสบัญชี", "string", true, null, null),
                 new("AccountName", "ชื่อบัญชี", "string", true, null, null),
