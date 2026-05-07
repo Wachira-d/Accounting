@@ -328,7 +328,7 @@
         <span class="file-type-badge">WebP</span>
         <span class="file-type-badge">PDF</span>
       </div>
-      <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf">
+      <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none">
     </div>
     <div class="upload-queue" id="uploadQueue"></div>
 
@@ -445,13 +445,20 @@
         const zone = document.getElementById('uploadZone');
         const input = document.getElementById('fileInput');
 
-        zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); zone.classList.add('dragover'); });
         zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
         zone.addEventListener('drop', e => {
           e.preventDefault();
+          e.stopPropagation();
           zone.classList.remove('dragover');
+          input.value = '';
           if (e.dataTransfer.files.length) this.handleFiles(e.dataTransfer.files);
         });
+        zone.addEventListener('click', (e) => {
+          if (e.target === input) return;
+          input.click();
+        });
+        input.addEventListener('click', e => e.stopPropagation());
         input.addEventListener('change', () => {
           if (input.files.length) this.handleFiles(input.files);
           input.value = '';
