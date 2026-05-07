@@ -125,6 +125,13 @@ public class OcrScanResult : TenantEntity
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }
 
+    // GL & expense suggestions
+    public string? ExpenseCategory { get; set; }
+    public string? SuggestedAccountsJson { get; set; }
+    public bool HasWht { get; set; }
+    public decimal? WhtRate { get; set; }
+    public int? PaymentTermsDays { get; set; }
+
     // Duplicate detection
     public string? FileHash { get; set; }
     public bool IsDuplicate { get; set; }
