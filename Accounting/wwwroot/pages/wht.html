@@ -610,19 +610,13 @@
                     <b>คำเตือน</b> ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร
                   </td>
                   <td class="bottom-right">
-                    <div style="margin-bottom:6px">ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>
+                    <div style="margin-bottom:6px;white-space:nowrap;font-size:11.5px">ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>
                     <div class="sig-block">
                       <div class="sig-line" style="text-align:right;position:relative">
                         ลงชื่อ <span class="sig-dots">${signature.image
                           ? `<img class="sig-img" src="${signature.image.startsWith('data:') ? signature.image : `data:image/png;base64,${signature.image}`}" alt="signature">`
                           : ''}</span> ผู้จ่ายเงิน
                       </div>
-                      ${signature.name
-                        ? `<div style="text-align:center;font-size:11px;margin-top:2px">(${signature.name})</div>`
-                        : ''}
-                      ${signature.title
-                        ? `<div style="text-align:center;font-size:11px;color:#444;margin-top:1px">${signature.title}</div>`
-                        : ''}
                       <div class="sig-date">
                         <span class="sig-date-line">${d.issuedDate
                           ? `${new Date(d.issuedDate).getDate()} ${thaiMonths[new Date(d.issuedDate).getMonth()]} ${new Date(d.issuedDate).getFullYear()+543}`
@@ -656,7 +650,7 @@
 <title>หนังสือรับรองการหักภาษี ณ ที่จ่าย - ${d.certificateNumber || ''}</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
-  @page { size: A4; margin: 5mm 8mm; }
+  @page { size: A4; margin: 4mm 6mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Thai', sans-serif;
@@ -667,11 +661,11 @@
   }
 
   /* PAGE */
-  .wht-page { width: 194mm; max-width:100%; margin:0 auto; page-break-after:always; }
+  .wht-page { width: 198mm; max-width:100%; margin:0 auto; page-break-after:always; }
   .wht-page:last-child { page-break-after:auto; }
 
   /* COPY LABELS - top-left, OUTSIDE frame */
-  .copy-labels { font-size:12px; line-height:1.3; margin-bottom:2px; padding-left:2px; }
+  .copy-labels { font-size:11px; line-height:1.2; margin-bottom:1px; padding-left:2px; }
   .copy-labels div { color:#666; }
   .copy-labels .copy-active { color:#000; font-weight:700; }
 
@@ -746,7 +740,7 @@
 
   /* BOTTOM SPLIT: warning left, signature+stamp right */
   .bottom-split { }
-  .bottom-split td { vertical-align:top; padding:4px 8px; }
+  .bottom-split td { vertical-align:top; padding:3px 8px; }
   .bottom-left { width:35%; font-size:11px; line-height:1.4; border-right:1.5px solid #000 !important; }
   .bottom-right { width:65%; font-size:12px; line-height:1.4; position:relative; padding-right:84px !important; }
   .sig-block { padding:3px 12px 0; }
@@ -766,7 +760,7 @@
   }
 
   /* FOOTNOTE outside frame */
-  .footnote { font-size:10.5px; line-height:1.3; margin-top:2px; padding:0 2px; }
+  .footnote { font-size:9.5px; line-height:1.25; margin-top:1px; padding:0 2px; }
 
   /* PRINT / SCREEN */
   @media print {
