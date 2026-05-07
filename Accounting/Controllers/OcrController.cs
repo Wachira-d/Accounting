@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Ocr;
 using Accounting.Models.Entities;
+using Accounting.Helpers;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -43,7 +44,7 @@ public class OcrController : ControllerBase
             StoragePath = filePath,
             EntityType = "OcrScan",
             EntityId = Guid.NewGuid(),
-            UploadedByUserId = Guid.Empty
+            UploadedByUserId = JwtHelper.GetUserIdFromClaims(User)
         };
         _db.FileAttachments.Add(attachment);
         await _db.SaveChangesAsync();
