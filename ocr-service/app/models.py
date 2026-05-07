@@ -31,6 +31,8 @@ class OcrResult(BaseModel):
     confidence: float = 0.0
     vendor_name: str | None = None
     vendor_tax_id: str | None = None
+    buyer_name: str | None = None
+    buyer_tax_id: str | None = None
     document_number: str | None = None
     document_date: str | None = None
     subtotal: float | None = None
@@ -43,8 +45,20 @@ class OcrResult(BaseModel):
     wht_rate: float | None = None
     payment_terms_days: int | None = None
     reasoning: str | None = None
+    reasoning_trace: list[str] = []
     ocr_engine: str = "paddleocr"
     ai_engine: str | None = None
+    # ── Plug-compatibility with Azure DI ──
+    # Per-field confidence map keyed by canonical field name
+    # (VendorName, VendorTaxId, InvoiceId, InvoiceDate, SubTotal, TotalTax, InvoiceTotal, ...)
+    field_confidence: dict[str, float] = {}
+    # Multi-document detection (e.g., bundled invoices in one PDF)
+    multi_document_count: int = 1
+    page_count: int = 1
+    # Engine warnings surfaced to user
+    warnings: list[str] = []
+    # Raw text per page for debug (only populated when explicitly requested)
+    pages: list[str] = []
 
 
 class CorrectionRequest(BaseModel):

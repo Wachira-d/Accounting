@@ -694,6 +694,8 @@ public class OcrService : IOcrService
                 Confidence = root.TryGetProperty("confidence", out var cf) ? (decimal)cf.GetDouble() : 0.5m,
                 VendorName = root.TryGetProperty("vendor_name", out var vn) ? vn.GetString() : null,
                 VendorTaxId = root.TryGetProperty("vendor_tax_id", out var vt) ? vt.GetString() : null,
+                BuyerName = root.TryGetProperty("buyer_name", out var bn) ? bn.GetString() : null,
+                BuyerTaxId = root.TryGetProperty("buyer_tax_id", out var bt) ? bt.GetString() : null,
                 DocumentNumber = root.TryGetProperty("document_number", out var dn) ? dn.GetString() : null,
                 SubTotal = root.TryGetProperty("subtotal", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)st.GetDouble() : null,
                 VatAmount = root.TryGetProperty("vat_amount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null,
@@ -702,10 +704,45 @@ public class OcrService : IOcrService
                 HasWht = root.TryGetProperty("has_wht", out var hw) && hw.ValueKind == System.Text.Json.JsonValueKind.True,
                 WhtRate = root.TryGetProperty("wht_rate", out var wr) && wr.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)wr.GetDouble() : null,
                 PaymentTermsDays = root.TryGetProperty("payment_terms_days", out var pt) && pt.ValueKind == System.Text.Json.JsonValueKind.Number ? pt.GetInt32() : null,
+                ZoneSummary = root.TryGetProperty("ocr_engine", out var oe) ? $"Local OCR: {oe.GetString()}" : "Local OCR: paddleocr",
             };
 
             if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr && DateTime.TryParse(dateStr, out var parsedDate))
                 data.DocumentDate = parsedDate;
+
+            // ── Per-field confidence (parity with Azure DI) ──
+            if (root.TryGetProperty("field_confidence", out var fc) && fc.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                foreach (var prop in fc.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        data.FieldConfidence[prop.Name] = prop.Value.GetDouble();
+                }
+            }
+
+            // ── Reasoning trace ──
+            if (root.TryGetProperty("reasoning_trace", out var rtTrace) && rtTrace.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var entry in rtTrace.EnumerateArray())
+                {
+                    var s = entry.GetString();
+                    if (!string.IsNullOrEmpty(s)) data.ReasoningTrace.Add(s);
+                }
+            }
+            else if (root.TryGetProperty("reasoning", out var reason) && reason.GetString() is string reasonStr)
+            {
+                data.ReasoningTrace.Add($"[Local AI] {reasonStr}");
+            }
+
+            // ── Multi-page warnings ──
+            if (root.TryGetProperty("warnings", out var wn) && wn.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var w in wn.EnumerateArray())
+                {
+                    var s = w.GetString();
+                    if (!string.IsNullOrEmpty(s)) data.ReasoningTrace.Add($"[Warning] {s}");
+                }
+            }
 
             // Parse suggested accounts
             if (root.TryGetProperty("suggested_accounts", out var sa) && sa.ValueKind == System.Text.Json.JsonValueKind.Object)
@@ -1457,6 +1494,9 @@ public class OcrService : IOcrService
 
         await _db.SaveChangesAsync();
 
+        // Re-link scanned file to the created document (orphan prevention)
+        await RelinkScanFileToDocumentAsync(companyId, result.FileAttachmentId, document.Id);
+
         return MapToResponse(result);
     }
 
@@ -1559,6 +1599,28 @@ public class OcrService : IOcrService
         scan.CreatedDocumentId = document.Id;
         scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + " Auto-created document with lines.";
         await _db.SaveChangesAsync();
+
+        // Re-link the original scanned file to the new Document so users see it as
+        // an attachment when they open the document. Without this, the file lives
+        // forever orphaned under EntityType="OcrScan" + a placeholder Guid.
+        await RelinkScanFileToDocumentAsync(companyId, scan.FileAttachmentId, document.Id);
+    }
+
+    /// <summary>
+    /// Move the OCR-uploaded file from its placeholder OcrScan entity to the
+    /// real Document that just got created. Updates EntityType + EntityId in place
+    /// (no physical file move — same StoragePath).
+    /// </summary>
+    private async Task RelinkScanFileToDocumentAsync(Guid companyId, Guid? fileAttachmentId, Guid documentId)
+    {
+        if (!fileAttachmentId.HasValue) return;
+        var attachment = await _db.FileAttachments
+            .FirstOrDefaultAsync(f => f.Id == fileAttachmentId.Value && f.CompanyId == companyId);
+        if (attachment == null) return;
+        attachment.EntityType = "Document";
+        attachment.EntityId = documentId;
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Re-linked scan file {FileId} to Document {DocId}", attachment.Id, documentId);
     }
 
     public async Task DeleteScanAsync(Guid companyId, Guid scanResultId)

@@ -93,9 +93,60 @@ public class OcrSelfCorrectionService
             .Where(p => !p.IsNegativeExample && p.LastConfirmedAt < abandonedCutoff && p.TimesConfirmed <= 1)
             .ExecuteDeleteAsync(ct);
 
+        // 4. Cleanup orphaned scan files
+        //    Two cohorts targeted:
+        //      a) Failed scans older than 7 days — likely won't be retried
+        //      b) Completed scans without CreatedDocumentId older than 30 days
+        //         — user reviewed but never converted to document; cold storage is wasteful
+        var orphanFilesPurged = 0;
+        var orphanRowsDeleted = 0;
+        try
+        {
+            var failedCutoff = DateTime.UtcNow.AddDays(-7);
+            var abandonedCutoff2 = DateTime.UtcNow.AddDays(-30);
+
+            // Identify scan ids and their file ids in one query
+            var orphans = await _db.Set<Models.Entities.OcrScanResult>()
+                .Where(s =>
+                    (s.ScanStatus == "Failed" && s.CreatedAt < failedCutoff) ||
+                    (s.ScanStatus == "Completed" && s.CreatedDocumentId == null && s.CreatedAt < abandonedCutoff2))
+                .Where(s => s.FileAttachmentId != null)
+                .Select(s => new { s.Id, FileId = s.FileAttachmentId!.Value })
+                .Take(500)  // throttled per cycle
+                .ToListAsync(ct);
+
+            foreach (var orphan in orphans)
+            {
+                var attachment = await _db.FileAttachments
+                    .FirstOrDefaultAsync(f => f.Id == orphan.FileId
+                        && f.EntityType == "OcrScan", ct);   // only purge ones still tagged as scan
+                if (attachment == null) continue;
+                try
+                {
+                    if (System.IO.File.Exists(attachment.StoragePath))
+                    {
+                        System.IO.File.Delete(attachment.StoragePath);
+                        orphanFilesPurged++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not delete orphan file {Path}", attachment.StoragePath);
+                }
+                _db.FileAttachments.Remove(attachment);
+                orphanRowsDeleted++;
+            }
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Orphan-file cleanup pass failed (non-fatal)");
+        }
+
         _logger.LogInformation(
-            "OCR self-correction maintenance: capped {Capped}, pruned {Stale} stale negatives, removed {Abandoned} abandoned positives in {Elapsed}ms",
-            capped, stale, abandoned, (int)(DateTime.UtcNow - maintenanceStart).TotalMilliseconds);
+            "OCR self-correction maintenance: capped {Capped}, pruned {Stale} stale negatives, removed {Abandoned} abandoned positives, purged {Files} orphan files ({Rows} rows) in {Elapsed}ms",
+            capped, stale, abandoned, orphanFilesPurged, orphanRowsDeleted,
+            (int)(DateTime.UtcNow - maintenanceStart).TotalMilliseconds);
     }
 
     /// <summary>Run maintenance scoped to a single company (admin debug tool).</summary>
