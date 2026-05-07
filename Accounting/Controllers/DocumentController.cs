@@ -161,6 +161,25 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารสำเร็จ"));
     }
 
+    [HttpPost("batch-convert/{targetType}")]
+    public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> BatchConvert(
+        Guid companyId, DocumentType targetType, [FromBody] BatchConvertRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _documentService.BatchConvertDocumentsAsync(companyId, request.DocumentIds, targetType, userId);
+        return Ok(new ApiResponse<List<DocumentResponse>>(true, result,
+            $"แปลงสำเร็จ {result.Count}/{request.DocumentIds.Count} ฉบับ"));
+    }
+
+    [HttpPost("from-obligation/{performanceObligationId:guid}")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> CreateInvoiceFromObligation(
+        Guid companyId, Guid performanceObligationId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _documentService.CreateInvoiceFromObligationAsync(companyId, performanceObligationId, userId);
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "สร้างใบแจ้งหนี้จากภาระงานสำเร็จ"));
+    }
+
     /// <summary>
     /// ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้ และเคลียร์เอกสาร
     /// ใช้สำหรับ Invoice/TaxInvoice/DebitNote ที่ลูกค้าผิดนัดและมั่นใจว่าจะไม่ได้รับเงิน

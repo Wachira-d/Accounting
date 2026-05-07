@@ -14,7 +14,12 @@ public record CreateDocumentRequest(
     Guid? ProjectId = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
-    Guid? ExpenseCategoryId = null);
+    Guid? ExpenseCategoryId = null,
+    string? CustomAppendix = null,
+    string? CustomFooterNotes = null,
+    string? CustomTermsAndConditions = null,
+    Guid? RevenueContractId = null,
+    Guid? PerformanceObligationId = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -38,7 +43,12 @@ public record UpdateDocumentRequest(
     Guid? ProjectId = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
-    Guid? ExpenseCategoryId = null);
+    Guid? ExpenseCategoryId = null,
+    string? CustomAppendix = null,
+    string? CustomFooterNotes = null,
+    string? CustomTermsAndConditions = null,
+    Guid? RevenueContractId = null,
+    Guid? PerformanceObligationId = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -72,7 +82,13 @@ public record DocumentResponse(
     Guid? PaymentAccountId = null,
     string? PaymentAccountName = null,
     Guid? ExpenseCategoryId = null,
-    string? ExpenseCategoryName = null);
+    string? ExpenseCategoryName = null,
+    string? CustomAppendix = null,
+    string? CustomFooterNotes = null,
+    string? CustomTermsAndConditions = null,
+    Guid? RevenueContractId = null,
+    Guid? PerformanceObligationId = null,
+    Guid? RelatedDocumentId = null);
 
 public record DocumentLineResponse(
     Guid Id,
@@ -223,3 +239,4 @@ public record PaymentResponse(
 
 
 public record WriteOffBadDebtRequest(string? Reason);
+public record BatchConvertRequest(List<Guid> DocumentIds);

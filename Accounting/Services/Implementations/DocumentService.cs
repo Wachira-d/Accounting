@@ -167,8 +167,29 @@ public class DocumentService : IDocumentService
                 BankAccountId = request.BankAccountId,
                 PaymentAccountId = request.PaymentAccountId,
                 ExpenseCategoryId = request.ExpenseCategoryId,
+                CustomAppendix = request.CustomAppendix,
+                CustomFooterNotes = request.CustomFooterNotes,
+                CustomTermsAndConditions = request.CustomTermsAndConditions,
+                RevenueContractId = request.RevenueContractId,
+                PerformanceObligationId = request.PerformanceObligationId,
                 CreatedBy = createdBy
             };
+
+            // Auto-link Revenue Contract via Project when not explicitly provided.
+            // If document is tagged to a project that has exactly one active
+            // RevenueContract, link this doc to that contract automatically.
+            if (request.ProjectId.HasValue && !request.RevenueContractId.HasValue)
+            {
+                var contracts = await _db.Set<RevenueContract>()
+                    .Where(rc => rc.CompanyId == companyId
+                        && rc.ProjectId == request.ProjectId.Value
+                        && !rc.IsDeleted)
+                    .Select(rc => rc.Id)
+                    .Take(2)
+                    .ToListAsync();
+                if (contracts.Count == 1)
+                    doc.RevenueContractId = contracts[0];
+            }
 
             _db.Documents.Add(doc);
 
@@ -341,6 +362,11 @@ public class DocumentService : IDocumentService
         if (request.ContactId.HasValue) doc.ContactId = request.ContactId.Value;
         if (request.Reference != null) doc.Reference = request.Reference;
         if (request.Notes != null) doc.Notes = request.Notes;
+        if (request.CustomAppendix != null) doc.CustomAppendix = request.CustomAppendix;
+        if (request.CustomFooterNotes != null) doc.CustomFooterNotes = request.CustomFooterNotes;
+        if (request.CustomTermsAndConditions != null) doc.CustomTermsAndConditions = request.CustomTermsAndConditions;
+        if (request.RevenueContractId.HasValue) doc.RevenueContractId = request.RevenueContractId.Value;
+        if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -1291,15 +1317,117 @@ public class DocumentService : IDocumentService
             PaymentAccountId: source.PaymentAccountId,
             ExpenseCategoryId: source.ExpenseCategoryId), createdBy);
 
-        // Link
+        // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);
         if (created != null)
         {
             created.RelatedDocumentId = documentId;
+            created.CustomAppendix = source.CustomAppendix;
+            created.CustomFooterNotes = source.CustomFooterNotes;
+            created.CustomTermsAndConditions = source.CustomTermsAndConditions;
+            created.RevenueContractId = source.RevenueContractId;
+            created.PerformanceObligationId = source.PerformanceObligationId;
             await _db.SaveChangesAsync();
         }
 
+        // Cascade file attachments — copy reference rows so child doc shares
+        // the same physical files. We share storage paths to avoid duplication.
+        await CascadeAttachmentsAsync(companyId, source.Id, newDoc.Id, createdBy);
+
         return newDoc;
+    }
+
+    private async Task CascadeAttachmentsAsync(Guid companyId, Guid sourceDocId, Guid targetDocId, string createdBy)
+    {
+        var sourceAttachments = await _db.FileAttachments
+            .Where(f => f.CompanyId == companyId && f.EntityType == "Document" && f.EntityId == sourceDocId)
+            .ToListAsync();
+
+        if (sourceAttachments.Count == 0) return;
+
+        foreach (var src in sourceAttachments)
+        {
+            _db.FileAttachments.Add(new FileAttachment
+            {
+                CompanyId = companyId,
+                EntityType = "Document",
+                EntityId = targetDocId,
+                FileName = src.FileName,
+                OriginalFileName = src.OriginalFileName,
+                ContentType = src.ContentType,
+                FileSize = src.FileSize,
+                StoragePath = src.StoragePath,         // shared underlying file
+                UploadedByUserId = src.UploadedByUserId,
+                CreatedBy = createdBy,
+            });
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<List<DocumentResponse>> BatchConvertDocumentsAsync(
+        Guid companyId, List<Guid> documentIds, DocumentType targetType, string createdBy)
+    {
+        var results = new List<DocumentResponse>();
+        var errors = new List<string>();
+
+        foreach (var id in documentIds.Distinct())
+        {
+            try
+            {
+                var converted = await ConvertDocumentAsync(companyId, id, targetType, createdBy);
+                results.Add(converted);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{id}: {ex.Message}");
+            }
+        }
+
+        if (results.Count == 0 && errors.Count > 0)
+            throw new InvalidOperationException("ไม่สามารถแปลงเอกสารได้: " + string.Join("; ", errors));
+
+        return results;
+    }
+
+    public async Task<DocumentResponse> CreateInvoiceFromObligationAsync(
+        Guid companyId, Guid performanceObligationId, string createdBy)
+    {
+        var obligation = await _db.Set<PerformanceObligation>()
+            .Include(o => o.Contract)
+            .FirstOrDefaultAsync(o => o.Id == performanceObligationId && o.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ Performance Obligation");
+
+        if (obligation.IsSatisfied)
+            throw new InvalidOperationException("ภาระงานนี้รับรู้รายได้ครบแล้ว — ไม่สามารถออกใบแจ้งหนี้ซ้ำ");
+
+        var unbilled = obligation.AllocatedPrice - obligation.RecognizedRevenue;
+        if (unbilled <= 0.01m)
+            throw new InvalidOperationException("ไม่มียอดคงเหลือสำหรับออกใบแจ้งหนี้");
+
+        var contract = obligation.Contract
+            ?? throw new InvalidOperationException("ไม่พบสัญญารายได้ของภาระงานนี้");
+
+        var lineDescription = string.IsNullOrEmpty(obligation.Description)
+            ? obligation.Name
+            : $"{obligation.Name} — {obligation.Description}";
+
+        var invoice = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
+            DocumentType.Invoice,
+            DateTime.UtcNow,
+            DueDate: DateTime.UtcNow.AddDays(30),
+            ContactId: contract.ContactId,
+            Reference: contract.ContractNumber,
+            Notes: $"จากสัญญา {contract.ContractNumber}: {contract.Name}",
+            Lines: new List<DocumentLineRequest>
+            {
+                new(lineDescription, 1m, "งวด", unbilled, 0m, 7m, 0m, AccountId: null),
+            },
+            ProjectId: contract.ProjectId,
+            RevenueContractId: contract.Id,
+            PerformanceObligationId: obligation.Id), createdBy);
+
+        return invoice;
     }
 
     // ==================== Contacts ====================
@@ -2245,7 +2373,13 @@ public class DocumentService : IDocumentService
         PaymentAccountId: d.PaymentAccountId,
         PaymentAccountName: d.PaymentAccount != null ? $"{d.PaymentAccount.AccountCode} - {d.PaymentAccount.AccountName}" : null,
         ExpenseCategoryId: d.ExpenseCategoryId,
-        ExpenseCategoryName: d.ExpenseCategory?.AccountName);
+        ExpenseCategoryName: d.ExpenseCategory?.AccountName,
+        CustomAppendix: d.CustomAppendix,
+        CustomFooterNotes: d.CustomFooterNotes,
+        CustomTermsAndConditions: d.CustomTermsAndConditions,
+        RevenueContractId: d.RevenueContractId,
+        PerformanceObligationId: d.PerformanceObligationId,
+        RelatedDocumentId: d.RelatedDocumentId);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,

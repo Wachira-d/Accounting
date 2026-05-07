@@ -113,6 +113,28 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "ProductCode" varchar(50) NULL;
             """,
 
+            // ===== Documents: per-document appendix/notes overrides =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomAppendix" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomFooterNotes" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomTermsAndConditions" text NULL;
+            """,
+
+            // ===== Documents: Revenue Contract auto-link =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RevenueContractId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PerformanceObligationId" uuid NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_RevenueContractId" ON "Documents" ("RevenueContractId");
+            """,
+
             // ===== Documents: Project linking (header-level) =====
             // Tags an entire document to a project — propagates to JE.ProjectId
             // on auto-post so per-project P&L picks up revenue/cost automatically.

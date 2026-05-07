@@ -56,6 +56,17 @@ public class Document : TenantEntity
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
 
+    // Per-document overrides for the company's global appendix/footer templates.
+    // When null, falls back to CompanySettings.{Type}Notes / {Type}Footer.
+    public string? CustomAppendix { get; set; }
+    public string? CustomFooterNotes { get; set; }
+    public string? CustomTermsAndConditions { get; set; }
+
+    // Optional link to a Revenue Contract — set when this document is invoicing
+    // against a recognized contract milestone. Used for ASC 606 / TFRS 15 tracking.
+    public Guid? RevenueContractId { get; set; }
+    public Guid? PerformanceObligationId { get; set; }
+
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
