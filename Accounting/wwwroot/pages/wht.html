@@ -381,11 +381,16 @@
         const payeeIsHQ = !d.payeeBranchCode || d.payeeBranchCode === '00000' || d.payeeBranchCode === '';
 
         const oldTaxIdBoxes = (taxId) => {
-          const dg = (taxId || '').replace(/\D/g, '').slice(0, 10).padEnd(10, ' ');
-          const groups = [dg.slice(0,3), dg.slice(3,7), dg.slice(7,10)];
+          // Per Revenue Department form: 10-digit row is the OLD legacy tax ID format
+          // (used before 13-digit was introduced). Modern companies have only the
+          // 13-digit number, so render this row with empty boxes — DO NOT slice the
+          // first 10 digits off the 13-digit ID. Separators are dashes, matching the
+          // 13-digit row.
+          const empty = '          ';
+          const groups = [empty.slice(0,3), empty.slice(3,7), empty.slice(7,10)];
           return groups.map(g =>
-            g.split('').map(c => `<span class="tb">${c}</span>`).join('')
-          ).join('<span class="ts">&nbsp;</span>');
+            g.split('').map(() => `<span class="tb">&nbsp;</span>`).join('')
+          ).join('<span class="ts">-</span>');
         };
 
         const buildCopy = (copyNum) => {
@@ -403,14 +408,14 @@
               <!-- TITLE with เล่มที่/เลขที่ top-right -->
               <tr><td class="title-cell">
                 <table class="inner" cellspacing="0"><tr>
-                  <td style="width:130px"></td>
+                  <td style="width:160px"></td>
                   <td style="text-align:center">
                     <div class="title-main">หนังสือรับรองการหักภาษี ณ ที่จ่าย</div>
                     <div class="title-sub">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</div>
                   </td>
-                  <td style="width:130px;vertical-align:top;text-align:left;font-size:13px;line-height:1.5;padding-top:2px">
-                    เล่มที่ <u class="ul">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u><br>
-                    เลขที่ <u class="ul">&nbsp;${d.certificateNumber||'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;</u>
+                  <td class="num-cell">
+                    เล่มที่ <span class="num-val">&nbsp;</span><br>
+                    เลขที่ <span class="num-val${(d.certificateNumber||'').length > 14 ? ' long' : ''}" title="${(d.certificateNumber||'').replace(/"/g,'&quot;')}">${d.certificateNumber||'&nbsp;'}</span>
                   </td>
                 </tr></table>
               </td></tr>
@@ -418,7 +423,7 @@
               <!-- ===== PAYER ===== -->
               <tr><td class="sec-cell">
                 <table class="inner" cellspacing="0"><tr>
-                  <td class="sec-hdr" style="width:210px;vertical-align:top">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย :-</td>
+                  <td class="sec-hdr" style="vertical-align:top;padding-right:8px">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย :-</td>
                   <td style="white-space:nowrap;text-align:right">เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style="color:#900">*</span> ${taxIdBoxes(d.payerTaxId)}</td>
                 </tr></table>
                 <table class="inner" cellspacing="0"><tr>
@@ -439,7 +444,7 @@
               <!-- ===== PAYEE ===== -->
               <tr><td class="sec-cell">
                 <table class="inner" cellspacing="0"><tr>
-                  <td class="sec-hdr" style="width:210px;vertical-align:top">ผู้ถูกหักภาษี ณ ที่จ่าย :-</td>
+                  <td class="sec-hdr" style="vertical-align:top;padding-right:8px">ผู้ถูกหักภาษี ณ ที่จ่าย :-</td>
                   <td style="white-space:nowrap;text-align:right">เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style="color:#900">*</span> ${taxIdBoxes(d.payeeTaxId)}</td>
                 </tr></table>
                 <table class="inner" cellspacing="0"><tr>
@@ -621,22 +626,22 @@
 <title>หนังสือรับรองการหักภาษี ณ ที่จ่าย - ${d.certificateNumber || ''}</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
-  @page { size: A4; margin: 6mm 10mm; }
+  @page { size: A4; margin: 5mm 8mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Thai', sans-serif;
-    font-size: 15px;
-    line-height: 1.3;
+    font-size: 13.5px;
+    line-height: 1.2;
     color: #000;
     background: #fff;
   }
 
   /* PAGE */
-  .wht-page { width: 190mm; max-width:100%; margin:0 auto; page-break-after:always; }
+  .wht-page { width: 194mm; max-width:100%; margin:0 auto; page-break-after:always; }
   .wht-page:last-child { page-break-after:auto; }
 
   /* COPY LABELS - top-left, OUTSIDE frame */
-  .copy-labels { font-size:13px; line-height:1.4; margin-bottom:3px; padding-left:2px; }
+  .copy-labels { font-size:12px; line-height:1.3; margin-bottom:2px; padding-left:2px; }
   .copy-labels div { color:#666; }
   .copy-labels .copy-active { color:#000; font-weight:700; }
 
@@ -650,76 +655,83 @@
   .inner td { border:none; padding:1px 0; vertical-align:baseline; }
 
   /* TITLE */
-  .title-cell { padding:4px 8px 4px; border-bottom:1px solid #000 !important; }
-  .title-main { font-size:20px; font-weight:700; letter-spacing:2px; text-align:center; }
-  .title-sub { font-size:14px; text-align:center; margin-top:-1px; }
+  .title-cell { padding:3px 8px; border-bottom:1px solid #000 !important; }
+  .title-main { font-size:18px; font-weight:700; letter-spacing:1.5px; text-align:center; }
+  .title-sub { font-size:13px; text-align:center; margin-top:-1px; }
+  /* Top-right เล่มที่/เลขที่ — wider so long numbers don't break the line.
+     Long values shrink with auto font-size scaling via the wrapper class. */
+  .num-cell { width:160px; vertical-align:top; text-align:left; font-size:12px; line-height:1.4; padding-top:2px; }
+  .num-cell .num-val { display:inline-block; max-width:120px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; vertical-align:bottom; border-bottom:1px dotted #000; padding:0 2px; }
+  .num-cell .num-val.long { font-size:10px; letter-spacing:-0.3px; }
 
   /* HINT TEXT (italic helper under fields) */
-  .hint-text { font-size:11px; font-style:italic; color:#444; padding-left:48px; margin-top:-1px; line-height:1.3; }
+  .hint-text { font-size:10px; font-style:italic; color:#444; padding-left:42px; margin-top:-1px; line-height:1.25; }
 
   /* SECTIONS (payer/payee) */
-  .sec-cell { padding:3px 8px 4px; }
-  .sec-hdr { font-weight:700; font-size:15px; }
-  .f-lbl { font-weight:600; white-space:nowrap; padding-right:4px !important; width:45px; }
+  .sec-cell { padding:2px 8px 3px; }
+  /* Header label MUST stay on one line — never let it wrap or get squeezed
+     by the tax-ID column on the right. */
+  .sec-hdr { font-weight:700; font-size:13.5px; white-space:nowrap; }
+  .f-lbl { font-weight:600; white-space:nowrap; padding-right:4px !important; width:40px; }
   .f-val { }
   .f-branch { white-space:nowrap; padding-left:6px !important; }
   .ul { text-decoration:none; border-bottom:1px dotted #000; padding:0 2px; }
 
-  /* Tax ID boxes */
-  .tb { display:inline-block; width:18px; height:22px; border:1.5px solid #000; text-align:center; line-height:22px; font-size:15px; font-weight:700; margin:0 0.5px; background:#fff; vertical-align:middle; }
-  .ts { display:inline-block; width:6px; text-align:center; font-weight:700; font-size:12px; vertical-align:middle; }
+  /* Tax ID boxes — slightly smaller to fit alongside the header on one row */
+  .tb { display:inline-block; width:15px; height:19px; border:1.2px solid #000; text-align:center; line-height:19px; font-size:13px; font-weight:700; margin:0 0.5px; background:#fff; vertical-align:middle; }
+  .ts { display:inline-block; width:5px; text-align:center; font-weight:700; font-size:11px; vertical-align:middle; }
 
-  .ck { font-size:16px; vertical-align:-2px; }
+  .ck { font-size:15px; vertical-align:-2px; }
 
   /* FORM TYPE ROW */
-  .ftype-cell { padding:4px 8px; font-size:14px; }
-  .ftype-cell td { font-size:14px; padding:1px 4px !important; }
-  .ftype-grid td { padding:1px 8px !important; white-space:nowrap; }
-  .sq { display:inline-block; border:1.5px solid #000; min-width:60px; height:20px; text-align:center; line-height:20px; font-size:13px; vertical-align:middle; padding:0 4px; }
+  .ftype-cell { padding:3px 8px; font-size:13px; }
+  .ftype-cell td { font-size:13px; padding:1px 4px !important; }
+  .ftype-grid td { padding:1px 6px !important; white-space:nowrap; }
+  .sq { display:inline-block; border:1.5px solid #000; min-width:56px; height:18px; text-align:center; line-height:18px; font-size:12px; vertical-align:middle; padding:0 4px; }
 
   /* INCOME TABLE */
-  .IT { width:100%; border-collapse:collapse; font-size:14px; }
-  .IT th, .IT td { border:1px solid #000; padding:2px 5px; vertical-align:top; }
-  .IT th { text-align:center; font-weight:700; font-size:13px; }
+  .IT { width:100%; border-collapse:collapse; font-size:13px; }
+  .IT th, .IT td { border:1px solid #000; padding:1px 4px; vertical-align:top; }
+  .IT th { text-align:center; font-weight:700; font-size:12px; }
   .IT .amt { text-align:right; }
-  .IT .dtc { text-align:center; font-size:13px; }
-  .it-type { padding-left:6px !important; font-size:13px; line-height:1.35; }
-  .it-s5 { font-size:12px; line-height:1.3; }
+  .IT .dtc { text-align:center; font-size:12px; }
+  .it-type { padding-left:5px !important; font-size:12px; line-height:1.25; }
+  .it-s5 { font-size:11px; line-height:1.2; }
   .total-row { font-weight:700; }
   .total-row td { border-top:2px solid #000 !important; }
-  .div-indent { padding-left:18px; font-size:12px; line-height:1.45; }
+  .div-indent { padding-left:14px; font-size:11px; line-height:1.3; }
 
   /* TOTAL TEXT (with shaded background like official) */
-  .totxt-cell { padding:4px 8px; font-size:15px; background:#f0f0f0; }
+  .totxt-cell { padding:3px 8px; font-size:13.5px; background:#f0f0f0; }
 
   /* FUND ROW */
-  .fund-cell { padding:4px 8px; font-size:13px; line-height:1.5; }
+  .fund-cell { padding:3px 8px; font-size:12px; line-height:1.4; }
 
   /* CONDITIONS */
-  .cond-cell { padding:3px 8px; font-size:14px; }
-  .cond-cell td { font-size:14px; }
+  .cond-cell { padding:2px 8px; font-size:13px; }
+  .cond-cell td { font-size:13px; }
 
   /* BOTTOM SPLIT: warning left, signature+stamp right */
   .bottom-split { }
-  .bottom-split td { vertical-align:top; padding:6px 10px; }
-  .bottom-left { width:35%; font-size:12px; line-height:1.5; border-right:1px solid #000 !important; }
-  .bottom-right { width:65%; font-size:13px; line-height:1.5; position:relative; padding-right:90px !important; }
-  .sig-block { padding:4px 14px 0; }
-  .sig-line { margin-bottom:6px; }
-  .sig-dots { display:inline-block; min-width:200px; border-bottom:1px dotted #000; }
-  .sig-date { text-align:center; margin:4px 0 0; font-size:14px; }
-  .sig-dots-sm { display:inline-block; min-width:40px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
+  .bottom-split td { vertical-align:top; padding:4px 8px; }
+  .bottom-left { width:35%; font-size:11px; line-height:1.4; border-right:1px solid #000 !important; }
+  .bottom-right { width:65%; font-size:12px; line-height:1.4; position:relative; padding-right:84px !important; }
+  .sig-block { padding:3px 12px 0; }
+  .sig-line { margin-bottom:4px; }
+  .sig-dots { display:inline-block; min-width:180px; border-bottom:1px dotted #000; }
+  .sig-date { text-align:center; margin:3px 0 0; font-size:13px; }
+  .sig-dots-sm { display:inline-block; min-width:36px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
   .stamp-area {
-    position:absolute; right:8px; top:50%; transform:translateY(-50%);
-    width:78px; height:78px;
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    width:70px; height:70px;
     border:1.2px solid #000; border-radius:50%;
-    text-align:center; font-size:11px; line-height:1.4;
+    text-align:center; font-size:10px; line-height:1.3;
     display:flex; align-items:center; justify-content:center;
     font-style:italic; color:#222;
   }
 
   /* FOOTNOTE outside frame */
-  .footnote { font-size:12px; line-height:1.4; margin-top:3px; padding:0 2px; }
+  .footnote { font-size:10.5px; line-height:1.3; margin-top:2px; padding:0 2px; }
 
   /* PRINT / SCREEN */
   @media print {
