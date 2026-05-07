@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.DTOs.Dashboard;
+using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -367,15 +368,19 @@ public class DashboardService : IDashboardService
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .SumAsync(d => d.VatAmount);
 
-        var totalWht = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .SumAsync(d => d.WithholdingTaxAmount);
-
-        var whtCount = await _db.WithholdingTaxCerts
-            .CountAsync(c => c.CompanyId == companyId
+        // WHT is tracked in WithholdingTaxCerts (the official ภ.ง.ด. cert), not on
+        // Documents.WithholdingTaxAmount — many users issue certs without the source
+        // document carrying the WHT amount. Sum + count from the same source so the
+        // dashboard total and "X รายการ" stay consistent.
+        var whtCertQuery = _db.WithholdingTaxCerts
+            .Where(c => c.CompanyId == companyId
+                && c.Status != WithholdingTaxCertStatus.Voided
+                && c.Status != WithholdingTaxCertStatus.Draft
+                && c.IssuedDate != null
                 && c.IssuedDate >= fromDate && c.IssuedDate <= toDate);
+
+        var totalWht = await whtCertQuery.SumAsync(c => c.TotalTaxAmount);
+        var whtCount = await whtCertQuery.CountAsync();
 
         var period = $"{fromDate:MMM yyyy} – {toDate:MMM yyyy}";
 
