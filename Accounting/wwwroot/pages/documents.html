@@ -1383,8 +1383,10 @@
       printPdf() {
         const content = document.getElementById('pdfPrintArea');
         if (!content) return;
+        const d = this._currentPdfDoc || {};
+        const fileTitle = `${Layout.docTypeLabel(d.documentType) || 'เอกสาร'} ${d.documentNumber || ''}`.trim();
         const win = window.open('', '_blank');
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet"><style>@media print{body{margin:0}@page{size:A4;margin:15mm}}</style></head><body>${content.outerHTML}</body></html>`);
+        win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${fileTitle}</title><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet"><style>@media print{body{margin:0}@page{size:A4;margin:15mm}}</style></head><body>${content.outerHTML}</body></html>`);
         win.document.close();
         setTimeout(() => { win.print(); }, 500);
       }
