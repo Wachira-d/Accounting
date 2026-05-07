@@ -198,6 +198,7 @@ builder.Services.AddScoped<IBotExchangeRateService, BotExchangeRateService>();
 builder.Services.AddSingleton<IThaiAddressService, ThaiAddressService>();
 builder.Services.AddScoped<IThaiGovIntegrationService, ThaiGovIntegrationService>();
 builder.Services.AddScoped<IShippingTrackingService, ShippingTrackingService>();
+builder.Services.AddScoped<IRolePermissionService, RolePermissionService>();
 builder.Services.AddSingleton<IPromptPayService, PromptPayService>();
 
 // SignalR for real-time notifications

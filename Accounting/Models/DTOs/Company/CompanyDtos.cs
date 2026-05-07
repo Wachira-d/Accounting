@@ -118,6 +118,8 @@ public record CompanyMemberResponse(
     string Email,
     string? Phone,
     UserRole Role,
+    Guid? CompanyRoleId,
+    string? CompanyRoleName,
     DateTime JoinedAt,
     DateTime? LastLoginAt,
     UserStatus Status);
