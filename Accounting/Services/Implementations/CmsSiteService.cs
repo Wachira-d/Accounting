@@ -132,6 +132,7 @@ public class CmsSiteService : ICmsSiteService
             .Select(s => new SiteResponse
             {
                 Id = s.Id,
+                CompanyId = s.CompanyId,
                 Name = s.Name,
                 NameEn = s.NameEn,
                 Slug = s.Slug,

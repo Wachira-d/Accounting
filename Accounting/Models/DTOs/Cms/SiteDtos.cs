@@ -58,6 +58,7 @@ public class UpdateSiteRequest
 public class SiteResponse
 {
     public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string Name { get; set; } = "";
     public string? NameEn { get; set; }
     public string Slug { get; set; } = "";

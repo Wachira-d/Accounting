@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>กำลังโหลด...</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&family=Kanit:wght@300;400;500;600;700&family=Mitr:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{min-height:100%}
+    body{font-family:var(--body-font,'Noto Sans Thai',sans-serif);color:var(--text,#111827);background:var(--bg,#fff);line-height:1.5;font-size:var(--base-font-size,16px)}
+    h1,h2,h3,h4,h5,h6{font-family:var(--heading-font,'Inter','Noto Sans Thai',sans-serif);line-height:1.2;color:var(--text,#111827)}
+    a{color:var(--primary,#4F46E5);text-decoration:none}
+    a:hover{text-decoration:underline}
+    img{max-width:100%;height:auto;display:block}
+    .sf-container{max-width:var(--max-width,1280px);margin:0 auto;padding:0 20px}
+    /* Header */
+    .sf-header{background:var(--surface,#F9FAFB);border-bottom:1px solid #E5E7EB;padding:14px 0;position:sticky;top:0;z-index:50;backdrop-filter:saturate(180%) blur(8px);background:rgba(255,255,255,.85)}
+    .sf-header-inner{display:flex;align-items:center;justify-content:space-between;gap:24px}
+    .sf-logo{font-weight:800;font-size:18px;color:var(--text,#111827)}
+    .sf-logo img{max-height:40px;display:inline-block}
+    .sf-nav{display:flex;gap:18px;flex-wrap:wrap}
+    .sf-nav a{color:var(--text,#111827);font-weight:500;font-size:14px}
+    .sf-nav a.active{color:var(--primary,#4F46E5)}
+    .sf-mobile-toggle{display:none;background:none;border:none;font-size:24px;cursor:pointer;color:var(--text)}
+    @media (max-width:768px){
+      .sf-nav{display:none;position:absolute;top:100%;right:0;left:0;background:#fff;flex-direction:column;border-top:1px solid #E5E7EB;padding:14px 20px}
+      .sf-nav.open{display:flex}
+      .sf-mobile-toggle{display:block}
+    }
+    /* Footer */
+    .sf-footer{background:var(--surface,#F9FAFB);border-top:1px solid #E5E7EB;padding:32px 0;margin-top:64px;text-align:center;color:var(--text-secondary,#6B7280);font-size:14px}
+    /* Block: Hero */
+    .blk-hero{padding:96px 20px;text-align:center;background:linear-gradient(135deg,var(--primary,#4F46E5) 0%,var(--secondary,#0EA5E9) 100%);color:#fff;position:relative;overflow:hidden}
+    .blk-hero.with-bg{background-size:cover;background-position:center}
+    .blk-hero.with-bg::before{content:"";position:absolute;inset:0;background:rgba(0,0,0,.4)}
+    .blk-hero > *{position:relative}
+    .blk-hero h1{color:#fff;font-size:clamp(28px,5vw,52px);margin-bottom:14px;font-weight:800}
+    .blk-hero p{font-size:clamp(15px,2vw,20px);opacity:.95;max-width:720px;margin:0 auto 28px}
+    .btn{display:inline-block;padding:14px 28px;background:#fff;color:var(--primary,#4F46E5);font-weight:600;border-radius:var(--radius,8px);text-decoration:none;border:none;font-family:inherit;cursor:pointer;font-size:16px}
+    .blk-hero .btn{background:#fff;color:var(--primary)}
+    .btn-primary{background:var(--primary,#4F46E5);color:#fff}
+    /* Block: RichText */
+    .blk-richtext{padding:48px 20px;max-width:880px;margin:0 auto}
+    .blk-richtext h2{font-size:32px;margin:24px 0 14px}
+    .blk-richtext h3{font-size:22px;margin:18px 0 10px}
+    .blk-richtext p{margin-bottom:14px}
+    .blk-richtext ul,.blk-richtext ol{margin:14px 0 14px 24px}
+    .blk-richtext li{margin-bottom:6px}
+    /* Block: Image */
+    .blk-image{padding:32px 20px;text-align:center}
+    .blk-image figcaption{margin-top:10px;font-size:14px;color:var(--text-secondary,#6B7280)}
+    /* Block: Pricing */
+    .blk-pricing{padding:64px 20px;text-align:center;background:var(--surface,#F9FAFB)}
+    .blk-pricing h2{font-size:32px;margin-bottom:32px}
+    .pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;max-width:1100px;margin:0 auto}
+    .pricing-card{background:#fff;padding:32px 24px;border-radius:var(--radius,8px);border:1px solid #E5E7EB;text-align:left}
+    .pricing-card h3{font-size:20px;margin-bottom:8px}
+    .pricing-card .price{font-size:36px;font-weight:800;color:var(--primary,#4F46E5);margin:14px 0}
+    .pricing-card ul{list-style:none;margin:14px 0}
+    .pricing-card li{padding:6px 0;border-bottom:1px solid #F3F4F6;color:var(--text-secondary,#6B7280)}
+    .pricing-card li::before{content:"✓ ";color:var(--primary,#4F46E5);font-weight:700}
+    /* Block: CTA */
+    .blk-cta{padding:64px 20px;text-align:center;background:var(--primary,#4F46E5);color:#fff}
+    .blk-cta h2{color:#fff;font-size:32px;margin-bottom:18px}
+    .blk-cta .btn{background:#fff;color:var(--primary,#4F46E5)}
+    /* Block: Contact form */
+    .blk-form{padding:48px 20px;max-width:560px;margin:0 auto}
+    .blk-form h2{font-size:28px;margin-bottom:24px;text-align:center}
+    .blk-form label{display:block;font-weight:500;font-size:14px;margin-bottom:6px}
+    .blk-form input,.blk-form textarea{width:100%;padding:12px 14px;border:1px solid #D1D5DB;border-radius:var(--radius,8px);font-family:inherit;font-size:14px;margin-bottom:14px}
+    .blk-form textarea{min-height:120px;resize:vertical}
+    .blk-form button{width:100%}
+    /* Block: Map */
+    .blk-map{padding:32px 0}
+    .blk-map iframe{width:100%;height:360px;border:none;border-radius:var(--radius,8px)}
+    /* Block: FAQ */
+    .blk-faq{padding:48px 20px;max-width:880px;margin:0 auto}
+    .blk-faq h2{font-size:28px;margin-bottom:24px;text-align:center}
+    .faq-item{border:1px solid #E5E7EB;border-radius:var(--radius,8px);margin-bottom:10px;overflow:hidden}
+    .faq-item summary{padding:16px 18px;cursor:pointer;font-weight:600;list-style:none;background:#fff}
+    .faq-item summary::-webkit-details-marker{display:none}
+    .faq-item summary::before{content:"+ ";color:var(--primary,#4F46E5);font-weight:700}
+    .faq-item[open] summary::before{content:"− "}
+    .faq-item .a{padding:0 18px 16px;color:var(--text-secondary,#6B7280)}
+    /* Block: Testimonials */
+    .blk-testi{padding:48px 20px;background:var(--surface,#F9FAFB)}
+    .blk-testi h2{font-size:28px;margin-bottom:32px;text-align:center}
+    .testi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;max-width:1100px;margin:0 auto}
+    .testi-card{background:#fff;padding:24px;border-radius:var(--radius,8px);border:1px solid #E5E7EB}
+    .testi-card .quote{font-style:italic;color:var(--text-secondary,#6B7280);margin-bottom:14px}
+    .testi-card .author{font-weight:700}
+    /* Block: Product grid */
+    .blk-products{padding:48px 20px}
+    .blk-products h2{font-size:28px;margin-bottom:24px;text-align:center}
+    .product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;max-width:1280px;margin:0 auto}
+    .product-card{background:#fff;border:1px solid #E5E7EB;border-radius:var(--radius,8px);overflow:hidden;transition:all .15s}
+    .product-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.08)}
+    .product-card img{aspect-ratio:1/1;object-fit:cover;width:100%;background:#F3F4F6}
+    .product-card .info{padding:14px}
+    .product-card .name{font-weight:600;margin-bottom:6px;font-size:15px}
+    .product-card .price{color:var(--primary,#4F46E5);font-weight:700;font-size:17px}
+    .product-card .compare{color:var(--text-secondary);font-size:13px;text-decoration:line-through;margin-left:6px}
+    /* Block: Booking calendar (placeholder) */
+    .blk-booking{padding:48px 20px;text-align:center}
+    .blk-booking .placeholder{padding:32px;background:var(--surface,#F9FAFB);border:2px dashed #D1D5DB;border-radius:var(--radius,8px);color:var(--text-secondary,#6B7280)}
+    /* Block: Cart summary */
+    .blk-cart{padding:48px 20px;max-width:880px;margin:0 auto}
+    .blk-cart h2{font-size:28px;margin-bottom:24px}
+    .cart-empty{text-align:center;padding:48px;color:var(--text-secondary,#6B7280)}
+    /* Block: Divider */
+    .blk-divider{padding:24px 20px}
+    .blk-divider hr{border:none;border-top:1px solid #E5E7EB}
+    /* Loading state */
+    .sf-loader{display:flex;align-items:center;justify-content:center;min-height:60vh;color:var(--text-secondary,#6B7280);font-size:15px}
+    /* Preview banner */
+    .preview-banner{background:#FEF3C7;color:#92400E;padding:8px 16px;text-align:center;font-size:13px;font-weight:600;border-bottom:1px solid #F59E0B}
+  </style>
+</head>
+<body>
+  <div id="previewBanner" class="preview-banner" style="display:none">
+    🟡 โหมดดูตัวอย่าง — แสดงเนื้อหาแบบร่าง (Draft) ที่ยังไม่เผยแพร่ <a href="#" onclick="window.close();return false">ปิดหน้านี้</a>
+  </div>
+
+  <header class="sf-header" id="sfHeader" style="display:none">
+    <div class="sf-container sf-header-inner">
+      <a class="sf-logo" id="sfLogo" href="#">เว็บไซต์</a>
+      <button class="sf-mobile-toggle" onclick="document.getElementById('sfNav').classList.toggle('open')">☰</button>
+      <nav class="sf-nav" id="sfNav"></nav>
+    </div>
+  </header>
+
+  <main id="sfMain">
+    <div class="sf-loader">กำลังโหลดเว็บไซต์...</div>
+  </main>
+
+  <footer class="sf-footer" id="sfFooter" style="display:none">
+    <div class="sf-container">
+      <div id="sfFooterContent">© <span id="sfYear"></span> <span id="sfFooterName">เว็บไซต์</span></div>
+    </div>
+  </footer>
+
+  <script>
+    /**
+     * Public Storefront — single-page viewer for all CMS sites.
+     *
+     * Resolution flow:
+     * 1. Detect host (e.g. mysite.your-domain.com or mydomain.com)
+     * 2. Call /api/cms/resolve/subdomain/{sub} or /api/cms/resolve/domain/{host}
+     *    to get { id (siteId), companyId } anonymously.
+     * 3. Call storefront /init for theme + nav data.
+     * 4. Read slug from URL (?slug=about or path /about) and call
+     *    storefront /pages/{slug} which returns RenderedPageResponse with
+     *    server-rendered HTML per block. Inject HTML directly.
+     *
+     * Override paths (for testing or admin preview):
+     *   ?siteId=xxx&companyId=yyy
+     *   ?subdomain=xxx
+     */
+
+    const Store = {
+      site: null,
+      data: null,
+      slug: 'home',
+      lang: 'th',
+
+      async init() {
+        const params = new URLSearchParams(location.search);
+        this.lang = params.get('lang') || 'th';
+        const isPreview = params.get('preview') === '1';
+
+        // Detect path-based routing: /site/{subdomain} or /site/{subdomain}/{slug}
+        const pathMatch = location.pathname.match(/^\/site\/([a-z0-9][a-z0-9-]*[a-z0-9]?)\/?(.*)$/i);
+        this.pathBased = !!pathMatch;
+        this.basePath = ''; // prefix for internal links
+        let pathSubdomain = null;
+
+        if (pathMatch) {
+          pathSubdomain = pathMatch[1].toLowerCase();
+          this.basePath = `/site/${pathSubdomain}`;
+          this.slug = (pathMatch[2] || '').replace(/\/$/, '') || params.get('slug') || 'home';
+        } else {
+          this.slug = (params.get('slug') || location.pathname.replace(/^\//, '') || 'home').replace(/\/$/, '') || 'home';
+        }
+
+        try {
+          // 1. Resolve site
+          let siteId = params.get('siteId');
+          let companyId = params.get('companyId');
+          if (!siteId || !companyId) {
+            const host = location.hostname.toLowerCase();
+            const sub = pathSubdomain || params.get('subdomain') || (host.includes('.') ? host.split('.')[0] : host);
+            const resolved = await this.resolveSite(sub, host);
+            if (!resolved) {
+              this.renderNotFound();
+              return;
+            }
+            siteId = resolved.id;
+            companyId = resolved.companyId;
+            this.site = resolved;
+          } else {
+            const resolved = await this.resolveSite(params.get('subdomain') || pathSubdomain || '', location.hostname);
+            this.site = resolved;
+          }
+
+          if (isPreview) document.getElementById('previewBanner').style.display = '';
+
+          // 2. Load init data (theme + navigation)
+          const initRes = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/init?lang=${this.lang}`);
+          if (!initRes.ok) throw new Error('โหลดข้อมูลเว็บไซต์ไม่สำเร็จ');
+          const initJson = await initRes.json();
+          this.data = initJson.data || initJson;
+
+          this.applyTheme(this.data.theme);
+          this.renderHeader();
+          this.renderFooter();
+          this.injectAnalytics(this.data.seo);
+
+          // 3. Load + render page
+          await this.loadPage(companyId, siteId, this.slug);
+
+          // 4. Set browser title + favicon
+          if (this.data.site?.faviconUrl) {
+            const link = document.createElement('link');
+            link.rel = 'icon'; link.href = this.data.site.faviconUrl;
+            document.head.appendChild(link);
+          }
+        } catch (e) {
+          console.error(e);
+          document.getElementById('sfMain').innerHTML = `<div class="sf-loader" style="color:#DC2626">เกิดข้อผิดพลาด: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      async resolveSite(subdomain, host) {
+        // Try by full host first (custom domain), fall back to subdomain
+        try {
+          const r1 = await fetch(`/api/cms/resolve/domain/${encodeURIComponent(host)}`);
+          if (r1.ok) { const j = await r1.json(); if (j?.data) return j.data; }
+        } catch(_) {}
+        if (subdomain && subdomain !== 'localhost' && subdomain !== '127' && !subdomain.includes(':')) {
+          try {
+            const r2 = await fetch(`/api/cms/resolve/subdomain/${encodeURIComponent(subdomain)}`);
+            if (r2.ok) { const j = await r2.json(); if (j?.data) return j.data; }
+          } catch(_) {}
+        }
+        return null;
+      },
+
+      applyTheme(theme) {
+        if (!theme) return;
+        const root = document.documentElement;
+        root.style.setProperty('--primary', theme.primaryColor);
+        root.style.setProperty('--secondary', theme.secondaryColor);
+        root.style.setProperty('--accent', theme.accentColor);
+        root.style.setProperty('--bg', theme.backgroundColor);
+        root.style.setProperty('--surface', theme.surfaceColor);
+        root.style.setProperty('--text', theme.textColor);
+        root.style.setProperty('--text-secondary', theme.textSecondaryColor);
+        root.style.setProperty('--radius', `${theme.borderRadius || 8}px`);
+        root.style.setProperty('--max-width', theme.maxContentWidth || '1280px');
+        root.style.setProperty('--heading-font', `'${theme.headingFont}',sans-serif`);
+        root.style.setProperty('--body-font', `'${theme.bodyFont}',sans-serif`);
+        root.style.setProperty('--base-font-size', theme.baseFontSize || '16px');
+        if (theme.customCss) {
+          const s = document.createElement('style');
+          s.textContent = theme.customCss;
+          document.head.appendChild(s);
+        }
+      },
+
+      renderHeader() {
+        const site = this.data?.site || this.site || {};
+        const navs = this.data?.navigations || [];
+        const headerNav = navs.find(n => (n.location||'').toLowerCase() === 'header') || navs[0];
+        const headerEl = document.getElementById('sfHeader');
+        const logoEl = document.getElementById('sfLogo');
+        const navEl = document.getElementById('sfNav');
+
+        // Logo
+        logoEl.href = this.pathBased ? `${this.basePath}/home` : '/';
+        if (site.logoUrl) {
+          logoEl.innerHTML = `<img src="${this.esc(site.logoUrl)}" alt="${this.esc(site.name||'')}">`;
+        } else {
+          logoEl.textContent = site.name || 'เว็บไซต์';
+        }
+
+        // Nav items — fallback to common pages if no nav defined
+        const items = headerNav?.items?.length ? headerNav.items : this.defaultNavItems();
+        navEl.innerHTML = items.map(it => {
+          let url = it.url || '#';
+          if (!it.url && it.pageSlug) {
+            url = this.pathBased ? `${this.basePath}/${it.pageSlug}` : `?slug=${this.esc(it.pageSlug)}`;
+          }
+          const isActive = (it.pageSlug || '').replace(/^\//,'') === this.slug;
+          return `<a href="${url}" class="${isActive ? 'active' : ''}">${this.esc(it.label)}</a>`;
+        }).join('');
+        headerEl.style.display = '';
+      },
+
+      defaultNavItems() {
+        // Best-effort fallback: common pages by slug
+        return [
+          { label: 'หน้าแรก', pageSlug: 'home' },
+          { label: 'เกี่ยวกับเรา', pageSlug: 'about' },
+          { label: 'บริการ', pageSlug: 'services' },
+          { label: 'สินค้า', pageSlug: 'shop' },
+          { label: 'ติดต่อเรา', pageSlug: 'contact' }
+        ];
+      },
+
+      renderFooter() {
+        const site = this.data?.site || this.site || {};
+        document.getElementById('sfYear').textContent = new Date().getFullYear();
+        document.getElementById('sfFooterName').textContent = site.name || '';
+        document.getElementById('sfFooter').style.display = '';
+      },
+
+      injectAnalytics(seo) {
+        if (!seo) return;
+        if (seo.googleAnalyticsId) {
+          const s = document.createElement('script');
+          s.async = true;
+          s.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(seo.googleAnalyticsId)}`;
+          document.head.appendChild(s);
+          const inline = document.createElement('script');
+          inline.textContent = `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${seo.googleAnalyticsId}');`;
+          document.head.appendChild(inline);
+        }
+        if (seo.googleTagManagerId) {
+          const s = document.createElement('script');
+          s.textContent = `(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${seo.googleTagManagerId}');`;
+          document.head.appendChild(s);
+        }
+        if (seo.metaPixelId) {
+          const s = document.createElement('script');
+          s.textContent = `!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','${seo.metaPixelId}');fbq('track','PageView');`;
+          document.head.appendChild(s);
+        }
+      },
+
+      async loadPage(companyId, siteId, slug) {
+        const main = document.getElementById('sfMain');
+        try {
+          const res = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/pages/${encodeURIComponent(slug)}?lang=${this.lang}`);
+          if (!res.ok) {
+            this.renderNotFound();
+            return;
+          }
+          const json = await res.json();
+          const page = json.data || json;
+          if (!page) { this.renderNotFound(); return; }
+
+          // Set page title + meta
+          document.title = page.metaTitle || page.title || (this.data?.site?.name || 'เว็บไซต์');
+          this.setMeta('description', page.metaDescription);
+          this.setMeta('keywords', page.metaKeywords);
+          if (page.ogImageUrl) this.setMeta('og:image', page.ogImageUrl, true);
+          if (page.canonicalUrl) {
+            const link = document.createElement('link');
+            link.rel = 'canonical'; link.href = page.canonicalUrl;
+            document.head.appendChild(link);
+          }
+          if (page.jsonLd) {
+            const s = document.createElement('script');
+            s.type = 'application/ld+json'; s.textContent = page.jsonLd;
+            document.head.appendChild(s);
+          }
+          if (page.noIndex || page.noFollow) {
+            this.setMeta('robots', `${page.noIndex?'noindex':''}${page.noIndex&&page.noFollow?',':''}${page.noFollow?'nofollow':''}`);
+          }
+
+          if (page.showHeader === false) document.getElementById('sfHeader').style.display = 'none';
+          if (page.showFooter === false) document.getElementById('sfFooter').style.display = 'none';
+
+          // Render blocks — prefer server-rendered HTML, fall back to client render
+          const blocks = (page.blocks || []).filter(b => b.isVisible !== false).sort((a,b)=>a.sortOrder-b.sortOrder);
+          if (!blocks.length) {
+            main.innerHTML = `<div class="sf-loader">หน้านี้ยังไม่มีเนื้อหา</div>`;
+            return;
+          }
+
+          main.innerHTML = blocks.map(b => {
+            const cssClasses = b.cssClasses || '';
+            const hideMobile = b.hideOnMobile ? 'sf-hide-mobile' : '';
+            const hideDesktop = b.hideOnDesktop ? 'sf-hide-desktop' : '';
+            const wrap = `<section class="${cssClasses} ${hideMobile} ${hideDesktop}">`;
+            // Server may provide rendered HTML, but we always re-render client-side
+            // for known types because server template may not handle every block.
+            const html = this.renderBlock(b) || b.renderedHtml || '';
+            return `${wrap}${html}</section>`;
+          }).join('');
+
+          // Pre-fill product grid + booking after rendering
+          this.hydrateBlocks(companyId, siteId, blocks);
+        } catch (e) {
+          console.error(e);
+          main.innerHTML = `<div class="sf-loader" style="color:#DC2626">โหลดหน้าไม่สำเร็จ</div>`;
+        }
+      },
+
+      renderBlock(b) {
+        let cfg = {};
+        try { cfg = JSON.parse(b.configJson || '{}'); } catch(_) {}
+        const esc = this.esc;
+        switch (b.blockType) {
+          case 1: { // Hero
+            const bg = cfg.backgroundUrl ? `style="background-image:url('${esc(cfg.backgroundUrl)}')"` : '';
+            const cls = cfg.backgroundUrl ? 'blk-hero with-bg' : 'blk-hero';
+            return `<div class="${cls}" ${bg}>
+              ${cfg.headline ? `<h1>${esc(cfg.headline)}</h1>` : ''}
+              ${cfg.subheadline ? `<p>${esc(cfg.subheadline)}</p>` : ''}
+              ${cfg.ctaText ? `<a href="${esc(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>` : ''}
+            </div>`;
+          }
+          case 2: { // RichText (HTML allowed — content authored by site owner)
+            return `<div class="blk-richtext">${cfg.content || ''}</div>`;
+          }
+          case 3: { // Image
+            return `<figure class="blk-image"><img src="${esc(cfg.url||'')}" alt="${esc(cfg.alt||'')}">${cfg.caption?`<figcaption>${esc(cfg.caption)}</figcaption>`:''}</figure>`;
+          }
+          case 4: { // Gallery
+            const imgs = (cfg.images || []).map(i => `<img src="${esc(i.url||'')}" alt="${esc(i.alt||'')}">`).join('');
+            return `<div class="blk-image" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">${imgs}</div>`;
+          }
+          case 5: { // Video
+            const url = cfg.url || '';
+            if (/youtube\.com|youtu\.be/.test(url)) {
+              const id = url.match(/(?:v=|\.be\/|embed\/)([a-zA-Z0-9_-]{11})/)?.[1];
+              return id ? `<div class="blk-image"><iframe width="100%" height="420" src="https://www.youtube.com/embed/${esc(id)}" frameborder="0" allowfullscreen></iframe></div>` : '';
+            }
+            return `<div class="blk-image"><video controls ${cfg.poster?`poster="${esc(cfg.poster)}"`:''} style="width:100%;border-radius:var(--radius)"><source src="${esc(url)}"></video></div>`;
+          }
+          case 6: { // Product grid (hydrated later)
+            return `<div class="blk-products" data-block="products" data-featured="${cfg.featured?'1':''}" data-limit="${esc(cfg.limit||12)}">
+              ${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}
+              <div class="product-grid"><div class="sf-loader" style="grid-column:1/-1">กำลังโหลดสินค้า...</div></div>
+            </div>`;
+          }
+          case 8: { // Booking calendar
+            return `<div class="blk-booking" data-block="booking">
+              <div class="placeholder">📅 ปฏิทินจอง — กำลังโหลด...</div>
+            </div>`;
+          }
+          case 9: { // Contact form
+            return `<form class="blk-form" onsubmit="Store.submitContact(event,this)" data-emailto="${esc(cfg.emailTo||'')}">
+              ${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}
+              <label>ชื่อ</label><input type="text" name="name" required>
+              <label>อีเมล</label><input type="email" name="email" required>
+              <label>เบอร์โทร</label><input type="tel" name="phone">
+              <label>ข้อความ</label><textarea name="message" required></textarea>
+              <button type="submit" class="btn btn-primary">${esc(cfg.submitText||'ส่งข้อความ')}</button>
+              <div class="form-status" style="margin-top:10px"></div>
+            </form>`;
+          }
+          case 11: { // Map
+            const q = encodeURIComponent(cfg.address || `${cfg.lat||'13.7563'},${cfg.lng||'100.5018'}`);
+            return `<div class="blk-map sf-container"><iframe src="https://www.google.com/maps?q=${q}&output=embed" loading="lazy"></iframe></div>`;
+          }
+          case 12: { // Testimonials
+            const items = (cfg.testimonials || cfg.items || []).map(t => `
+              <div class="testi-card">
+                <div class="quote">"${esc(t.quote||t.text||'')}"</div>
+                <div class="author">${esc(t.author||t.name||'')}${t.role?` <span style="color:var(--text-secondary)">— ${esc(t.role)}</span>`:''}</div>
+              </div>`).join('');
+            return `<div class="blk-testi">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}<div class="testi-grid">${items||'<div style="color:var(--text-secondary)">ยังไม่มีรีวิว</div>'}</div></div>`;
+          }
+          case 13: { // FAQ
+            const items = (cfg.items || []).map(it => `
+              <details class="faq-item"><summary>${esc(it.q||'')}</summary><div class="a">${esc(it.a||'')}</div></details>`).join('');
+            return `<div class="blk-faq">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}${items}</div>`;
+          }
+          case 14: { // Pricing
+            const cards = (cfg.plans || []).map(p => `
+              <div class="pricing-card">
+                <h3>${esc(p.name||'')}</h3>
+                <div class="price">${esc(p.price||'')}</div>
+                <ul>${(p.features||[]).map(f=>`<li>${esc(f)}</li>`).join('')}</ul>
+              </div>`).join('');
+            return `<div class="blk-pricing">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}<div class="pricing-grid">${cards}</div></div>`;
+          }
+          case 17: { // Newsletter
+            return `<div class="blk-cta" style="background:var(--surface,#F9FAFB);color:var(--text,#111827)">
+              ${cfg.headline?`<h2 style="color:var(--text)">${esc(cfg.headline)}</h2>`:''}
+              ${cfg.subheadline?`<p style="margin-bottom:16px">${esc(cfg.subheadline)}</p>`:''}
+              <form onsubmit="alert('สมัครเรียบร้อย!');return false" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;max-width:520px;margin:0 auto">
+                <input type="email" placeholder="email@example.com" required style="flex:1;min-width:200px;padding:12px 14px;border-radius:var(--radius);border:1px solid #D1D5DB">
+                <button type="submit" class="btn btn-primary">${esc(cfg.buttonText||'สมัคร')}</button>
+              </form>
+            </div>`;
+          }
+          case 15: { // CTA
+            return `<div class="blk-cta">
+              ${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}
+              ${cfg.ctaText?`<a href="${esc(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>`:''}
+            </div>`;
+          }
+          case 19: { return `<div class="blk-divider"><hr></div>`; }
+          case 20: { return cfg.html || ''; }
+          case 23: { // Cart
+            return `<div class="blk-cart" data-block="cart"><h2>ตะกร้าสินค้า</h2><div class="cart-empty">ตะกร้าว่าง — เริ่มเลือกซื้อสินค้าได้เลย</div></div>`;
+          }
+          default:
+            return b.renderedHtml || `<div class="sf-loader">บล็อกประเภท ${b.blockType}</div>`;
+        }
+      },
+
+      async hydrateBlocks(companyId, siteId, blocks) {
+        // Product grid blocks → fetch products
+        const productEls = document.querySelectorAll('[data-block="products"]');
+        for (const el of productEls) {
+          const featured = el.dataset.featured === '1';
+          const limit = parseInt(el.dataset.limit) || 12;
+          try {
+            const r = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/products?pageSize=${limit}${featured?'&featured=true':''}`);
+            const j = await r.json();
+            const items = j.data?.items || [];
+            const grid = el.querySelector('.product-grid');
+            if (!items.length) { grid.innerHTML = '<div style="color:var(--text-secondary);grid-column:1/-1;text-align:center">ยังไม่มีสินค้าในขณะนี้</div>'; continue; }
+            grid.innerHTML = items.map(p => {
+              const price = p.overrideSellingPrice ?? p.erpSellingPrice ?? 0;
+              const compare = p.compareAtPrice;
+              const prodUrl = this.pathBased ? `${this.basePath}/product/${this.esc(p.slug||'')}` : `?slug=product/${this.esc(p.slug||'')}`;
+              return `<a href="${prodUrl}" class="product-card">
+                ${p.featuredImageUrl?`<img src="${this.esc(p.featuredImageUrl)}" alt="${this.esc(p.displayName||'')}">`:`<div style="aspect-ratio:1/1;background:#F3F4F6"></div>`}
+                <div class="info">
+                  <div class="name">${this.esc(p.displayName||'')}</div>
+                  <div><span class="price">฿${Number(price).toLocaleString('th-TH')}</span>${compare?`<span class="compare">฿${Number(compare).toLocaleString('th-TH')}</span>`:''}</div>
+                </div>
+              </a>`;
+            }).join('');
+          } catch (e) { console.error(e); }
+        }
+
+        // Booking block → fetch services
+        const bookingEls = document.querySelectorAll('[data-block="booking"]');
+        for (const el of bookingEls) {
+          try {
+            const r = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/booking-services`);
+            const j = await r.json();
+            const services = j.data || [];
+            if (!services.length) { el.querySelector('.placeholder').textContent = 'ยังไม่มีบริการให้จองในขณะนี้'; continue; }
+            el.innerHTML = `<div class="sf-container">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+                ${services.map(s => `
+                  <div class="testi-card">
+                    <h3 style="margin-bottom:8px">${this.esc(s.name||'')}</h3>
+                    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">${this.esc(s.description||'')}</div>
+                    <div style="margin-bottom:14px"><strong>฿${Number(s.price||0).toLocaleString('th-TH')}</strong> · ${s.durationMinutes||0} นาที</div>
+                    <button class="btn btn-primary" onclick="alert('การจองสำหรับ ${this.esc(s.name||'')} - ตัวอย่างเท่านั้น')">เลือกเวลา</button>
+                  </div>`).join('')}
+              </div>
+            </div>`;
+          } catch (e) { console.error(e); }
+        }
+      },
+
+      async submitContact(e, form) {
+        e.preventDefault();
+        const status = form.querySelector('.form-status');
+        status.textContent = 'กำลังส่ง...';
+        status.style.color = 'var(--text-secondary)';
+        // Best-effort: use the forms endpoint if a default form exists; otherwise
+        // open mailto:. Since we don't know the form ID without admin setup,
+        // fall back to mailto for now.
+        const data = Object.fromEntries(new FormData(form));
+        const emailTo = form.dataset.emailto;
+        if (emailTo) {
+          window.location.href = `mailto:${emailTo}?subject=ข้อความจากเว็บไซต์&body=${encodeURIComponent(`ชื่อ: ${data.name}\nอีเมล: ${data.email}\nโทร: ${data.phone||'-'}\n\n${data.message}`)}`;
+          status.textContent = 'กำลังเปิดโปรแกรมอีเมล...';
+          status.style.color = 'var(--success-color,#10B981)';
+        } else {
+          status.textContent = '⚠️ ฟอร์มยังไม่ได้กำหนดอีเมลปลายทาง';
+          status.style.color = '#DC2626';
+        }
+      },
+
+      renderNotFound() {
+        const homeUrl = this.pathBased ? `${this.basePath}/home` : '/';
+        document.getElementById('sfMain').innerHTML = `
+          <div class="sf-loader" style="flex-direction:column;gap:14px">
+            <div style="font-size:64px">🔍</div>
+            <h1 style="font-size:32px">404 — ไม่พบหน้านี้</h1>
+            <p>หน้าที่คุณค้นหาไม่มีอยู่หรือยังไม่ได้เผยแพร่</p>
+            <a href="${homeUrl}" class="btn btn-primary">กลับสู่หน้าแรก</a>
+          </div>`;
+        document.title = '404 — ไม่พบหน้านี้';
+      },
+
+      setMeta(name, content, isProperty = false) {
+        if (!content) return;
+        const attr = isProperty ? 'property' : 'name';
+        let el = document.querySelector(`meta[${attr}="${name}"]`);
+        if (!el) { el = document.createElement('meta'); el.setAttribute(attr, name); document.head.appendChild(el); }
+        el.content = content;
+      },
+
+      esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    };
+
+    Store.init();
+  </script>
+</body>
+</html>
