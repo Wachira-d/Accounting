@@ -61,7 +61,6 @@ public static class FieldPatternLibrary
         FieldType.Email => Regex.IsMatch(value, @"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
         FieldType.Date => ValidateDate(value),
         FieldType.Amount => decimal.TryParse(value.Replace(",", ""), out var v) && v >= 0,
-        FieldType.PostalCode or FieldType.BranchCode => Regex.IsMatch(value, @"^\d{5}$"),
         _ => !string.IsNullOrWhiteSpace(value)
     };
 
