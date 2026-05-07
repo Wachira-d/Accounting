@@ -395,8 +395,13 @@
         if (!confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)')) return;
         const api = Layout.api(); if (!api) return;
         try {
-          await api.deleteContact(id);
-          Layout.toast('ลบผู้ติดต่อสำเร็จ');
+          const res = await api.deleteContact(id);
+          const data = res?.data;
+          if (data && data.deactivated) {
+            Layout.toast(data.message || 'ปิดการใช้งานผู้ติดต่อแล้ว (มีเอกสารอ้างอิง)', 'warning');
+          } else {
+            Layout.toast('ลบผู้ติดต่อสำเร็จ');
+          }
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
