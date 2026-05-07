@@ -167,15 +167,35 @@ public class OcrService : IOcrService
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
                 var matchedContact = await _db.Contacts
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId);
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId && !c.IsDeleted);
                 scanResult.MatchedContactId = matchedContact?.Id;
             }
-            else if (!string.IsNullOrEmpty(extractedData.VendorName))
+
+            if (!scanResult.MatchedContactId.HasValue && !string.IsNullOrEmpty(extractedData.VendorName))
             {
                 var matchedContact = await _db.Contacts
                     .FirstOrDefaultAsync(c => c.CompanyId == companyId
-                        && c.Name.Contains(extractedData.VendorName));
+                        && c.Name.Contains(extractedData.VendorName) && !c.IsDeleted);
                 scanResult.MatchedContactId = matchedContact?.Id;
+            }
+
+            // Auto-create contact if not found but we have vendor info
+            if (!scanResult.MatchedContactId.HasValue
+                && (!string.IsNullOrEmpty(extractedData.VendorName) || !string.IsNullOrEmpty(extractedData.VendorTaxId)))
+            {
+                var newContact = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = extractedData.VendorName ?? $"ผู้ขาย (TaxID: {extractedData.VendorTaxId})",
+                    TaxId = extractedData.VendorTaxId,
+                    IsCustomer = false,
+                    IsSupplier = true,
+                    CreatedBy = "OCR-AutoCreate"
+                };
+                _db.Contacts.Add(newContact);
+                await _db.SaveChangesAsync();
+                scanResult.MatchedContactId = newContact.Id;
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-created contact: {newContact.Name}";
             }
 
             // Auto-create document if confidence >= threshold (85%)
