@@ -401,7 +401,26 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     }
 
     private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode)
-        => string.Join(" ", new[] { address, subDistrict, district, province, postalCode }.Where(s => !string.IsNullOrEmpty(s)));
+    {
+        // Many contacts have BOTH a free-form Address (already typed as a full
+        // address by the user, e.g. "44/75 ม.3 ต.สุรศักดิ์ อ.ศรีราชา จ.ชลบุรี 20110")
+        // AND structured fields (SubDistrict/District/Province/PostalCode).
+        // Naively joining all of them produced duplicate text on the WHT cert.
+        // Trust the free-form Address when it already looks complete (contains
+        // the postal code, the province name, or a "จ." marker); otherwise
+        // build the address from the structured fields.
+        var addr = (address ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(addr))
+        {
+            bool looksComplete =
+                (!string.IsNullOrEmpty(postalCode) && addr.Contains(postalCode!)) ||
+                (!string.IsNullOrEmpty(province)   && addr.Contains(province!))   ||
+                addr.Contains("จ.") || addr.Contains("จังหวัด");
+            if (looksComplete) return addr;
+        }
+        return string.Join(" ", new[] { addr, subDistrict, district, province, postalCode }
+            .Where(s => !string.IsNullOrEmpty(s)));
+    }
 
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
