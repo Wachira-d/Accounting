@@ -10,7 +10,8 @@ public record OcrResultResponse(
     OcrSuggestedAccountsDto? SuggestedAccounts = null,
     bool HasWht = false, decimal? WhtRate = null,
     int? PaymentTermsDays = null,
-    List<OcrLineItemDto>? ExtractedItems = null);
+    List<OcrLineItemDto>? ExtractedItems = null,
+    string? RawTextContent = null);
 
 public record OcrSuggestedAccountsDto(
     string? DebitAccountCode, string? DebitAccountName,

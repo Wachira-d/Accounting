@@ -1023,7 +1023,8 @@ public class OcrService : IOcrService
             r.IsDuplicate, r.DuplicateOfScanId, r.FileHash, r.ProcessingNotes,
             expenseCategory, suggestedAccounts,
             hasWht, whtRate,
-            paymentTermsDays, items);
+            paymentTermsDays, items,
+            r.RawTextContent);
     }
 }
 

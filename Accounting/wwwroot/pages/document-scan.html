@@ -1092,6 +1092,57 @@
                 <div class="contact-search-results" id="contactSearchResults"></div>
                 ${scan.matchedContactId ? `<div style="margin-top:6px;font-size:13px;color:#059669;font-weight:500">&#x2705; จับคู่แล้ว (ID: ${Layout.esc(scan.matchedContactId)})</div>` : ''}
               </div>
+            </div>
+
+            <div class="review-section">
+              <div class="review-section-title" style="cursor:pointer;user-select:none" onclick="document.getElementById('debugPanel').style.display = document.getElementById('debugPanel').style.display === 'none' ? 'block' : 'none'">
+                &#x1F50D; ข้อมูลดิบ (Debug) <span style="font-size:11px;color:var(--gray-400);font-weight:400;margin-left:8px">คลิกเพื่อเปิด/ปิด</span>
+              </div>
+              <div id="debugPanel" style="display:none">
+                <div style="margin-bottom:12px">
+                  <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 12px;font-size:12px;line-height:1.8">
+                    <span style="color:var(--gray-500);font-weight:600">Scan ID</span><span style="font-family:monospace;word-break:break-all">${scan.id}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Status</span><span>${scan.scanStatus}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Document Type</span><span><strong>${scan.documentType || 'null'}</strong></span>
+                    <span style="color:var(--gray-500);font-weight:600">Confidence</span><span>${scan.confidence != null ? (scan.confidence * 100).toFixed(1) + '%' : 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Vendor Name</span><span>${scan.extractedVendorName || '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Vendor TaxId</span><span style="font-family:monospace">${scan.extractedVendorTaxId || '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Doc Number</span><span>${scan.extractedDocumentNumber || '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Date</span><span>${scan.extractedDate || '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">SubTotal</span><span>${scan.extractedSubTotal != null ? scan.extractedSubTotal : '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">VAT</span><span>${scan.extractedVatAmount != null ? scan.extractedVatAmount : '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Total</span><span>${scan.extractedTotalAmount != null ? scan.extractedTotalAmount : '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Matched Contact</span><span style="font-family:monospace">${scan.matchedContactId || '<em style="color:var(--danger)">null (ไม่พบ)</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Created Doc</span><span style="font-family:monospace">${scan.createdDocumentId || 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Is Duplicate</span><span>${scan.isDuplicate ? 'YES - of ' + scan.duplicateOfScanId : 'No'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">File Hash</span><span style="font-family:monospace;font-size:10px;word-break:break-all">${scan.fileHash || 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Expense Category</span><span>${scan.expenseCategory || 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Suggested Acct</span><span>${scan.suggestedAccounts ? 'Dr:' + (scan.suggestedAccounts.debitAccountCode || '-') + ' / Cr:' + (scan.suggestedAccounts.creditAccountCode || '-') : 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">WHT</span><span>${scan.hasWht ? 'Yes (' + (scan.whtRate || '?') + '%)' : 'No'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Payment Terms</span><span>${scan.paymentTermsDays ? scan.paymentTermsDays + ' วัน' : 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Processed At</span><span>${scan.processedAt || 'null'}</span>
+                  </div>
+                </div>
+
+                ${scan.processingNotes ? `
+                <div style="margin-bottom:12px">
+                  <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Processing Notes</div>
+                  <pre style="font-size:11px;background:var(--gray-50);padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--gray-200);max-height:120px;overflow:auto">${Layout.esc(scan.processingNotes)}</pre>
+                </div>` : ''}
+
+                <div>
+                  <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Raw OCR Text</div>
+                  ${scan.rawTextContent ? `<pre style="font-size:11px;background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;line-height:1.6">${Layout.esc(scan.rawTextContent)}</pre>` : '<div style="padding:12px;background:var(--gray-50);border-radius:6px;color:var(--danger);font-size:12px;border:1px solid var(--gray-200)"><strong>ไม่มี Raw Text</strong> — OCR อาจไม่ได้เชื่อมต่อกับ local service หรือ text extraction ล้มเหลว<br>ตรวจสอบ: (1) ocr-service Docker ทำงานอยู่หรือไม่ (2) appsettings.json Ocr:Provider และ Ocr:LocalServiceUrl ถูกต้อง</div>'}
+                </div>
+
+                <div style="margin-top:12px">
+                  <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Full JSON Response</div>
+                  <details>
+                    <summary style="font-size:11px;color:var(--primary);cursor:pointer">คลิกเพื่อดู JSON ทั้งหมด</summary>
+                    <pre style="font-size:10px;background:#1e1e2e;color:#a6e3a1;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;margin-top:6px">${Layout.esc(JSON.stringify(scan, null, 2))}</pre>
+                  </details>
+                </div>
+              </div>
             </div>`;
 
           // Show/hide create button
