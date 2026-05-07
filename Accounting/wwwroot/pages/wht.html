@@ -576,11 +576,12 @@
                 </table>
               </td></tr>
 
-              <!-- TOTAL TEXT -->
+              <!-- TOTAL TEXT — value sits in a solid gray cell (no dotted
+                   underline) like the official form -->
               <tr><td class="totxt-cell">
                 <table class="inner" cellspacing="0"><tr>
                   <td style="white-space:nowrap;width:1%;padding-right:6px"><b>รวมเงินภาษีที่หักนำส่ง</b> <i>(ตัวอักษร)</i></td>
-                  <td style="border-bottom:1px dotted #000"><b>&nbsp;${thaiBahtText(d.totalTaxAmount)}&nbsp;</b></td>
+                  <td style="background:#d9d9d9;padding:1px 8px"><b>${thaiBahtText(d.totalTaxAmount)}</b></td>
                 </tr></table>
               </td></tr>
 
@@ -623,9 +624,9 @@
                         ? `<div style="text-align:center;font-size:11px;color:#444;margin-top:1px">${signature.title}</div>`
                         : ''}
                       <div class="sig-date">
-                        <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getDate() : '&nbsp;&nbsp;'}</span> /
-                        <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getMonth()+1 : '&nbsp;&nbsp;'}</span> /
-                        <span class="sig-dots-sm">${d.issuedDate ? (new Date(d.issuedDate).getFullYear()+543) : '&nbsp;&nbsp;&nbsp;&nbsp;'}</span>
+                        <span class="sig-date-line">${d.issuedDate
+                          ? `${new Date(d.issuedDate).getDate()} ${thaiMonths[new Date(d.issuedDate).getMonth()]} ${new Date(d.issuedDate).getFullYear()+543}`
+                          : '&nbsp;'}</span>
                       </div>
                       <div style="text-align:center;font-size:11px;color:#444">(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div>
                     </div>
@@ -753,6 +754,7 @@
   .sig-dots { display:inline-block; min-width:200px; border-bottom:1px dotted #000; vertical-align:bottom; position:relative; height:34px; }
   .sig-img { position:absolute; left:50%; bottom:1px; transform:translateX(-50%); max-height:32px; max-width:190px; object-fit:contain; }
   .sig-date { text-align:center; margin:3px 0 0; font-size:13px; }
+  .sig-date-line { display:inline-block; min-width:200px; border-bottom:1px dotted #000; text-align:center; padding:0 8px; }
   .sig-dots-sm { display:inline-block; min-width:36px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
   .stamp-area {
     position:absolute; right:6px; top:50%; transform:translateY(-50%);
