@@ -1392,7 +1392,7 @@ public class DocumentService : IDocumentService
             totalCount, page, pageSize, totalPages);
     }
 
-    public async Task DeleteContactAsync(Guid companyId, Guid contactId)
+    public async Task<ContactDeleteResult> DeleteContactAsync(Guid companyId, Guid contactId)
     {
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
@@ -1402,12 +1402,22 @@ public class DocumentService : IDocumentService
         {
             contact.IsActive = false;
             await _db.SaveChangesAsync();
-            throw new InvalidOperationException(
-                $"ผู้ติดต่อมีเอกสาร {docCount} รายการ และใบหัก ณ ที่จ่าย {whtCount} รายการ — " +
-                $"ระบบปิดการใช้งานแทนการลบเพื่อรักษาข้อมูลทางบัญชี");
+            return new ContactDeleteResult(
+                Deleted: false,
+                Deactivated: true,
+                LinkedDocumentsCount: docCount,
+                LinkedWhtCount: whtCount,
+                Message: $"ผู้ติดต่อมีเอกสาร {docCount} รายการ และใบหัก ณ ที่จ่าย {whtCount} รายการ — " +
+                         $"ระบบปิดการใช้งานแทนการลบเพื่อรักษาข้อมูลทางบัญชี");
         }
         _db.Contacts.Remove(contact);
         await _db.SaveChangesAsync();
+        return new ContactDeleteResult(
+            Deleted: true,
+            Deactivated: false,
+            LinkedDocumentsCount: 0,
+            LinkedWhtCount: 0,
+            Message: "ลบผู้ติดต่อสำเร็จ");
     }
 
     public async Task<ContactResponse> UpdateContactAsync(Guid companyId, Guid contactId, UpdateContactRequest request)

@@ -208,10 +208,10 @@ public class DocumentController : ControllerBase
     }
 
     [HttpDelete("contacts/{contactId:guid}")]
-    public async Task<ActionResult<ApiResponse<object>>> DeleteContact(Guid companyId, Guid contactId)
+    public async Task<ActionResult<ApiResponse<ContactDeleteResult>>> DeleteContact(Guid companyId, Guid contactId)
     {
-        await _documentService.DeleteContactAsync(companyId, contactId);
-        return Ok(new ApiResponse<object>(true, null, "ลบผู้ติดต่อสำเร็จ"));
+        var result = await _documentService.DeleteContactAsync(companyId, contactId);
+        return Ok(new ApiResponse<ContactDeleteResult>(true, result, result.Message));
     }
 
     /// <summary>

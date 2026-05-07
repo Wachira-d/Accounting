@@ -191,6 +191,7 @@ public class AccountingDbContext : DbContext
 
     // OCR
     public DbSet<OcrScanResult> OcrScanResults => Set<OcrScanResult>();
+    public DbSet<OcrLearnedPattern> OcrLearnedPatterns => Set<OcrLearnedPattern>();
 
     // Custom Reports
     public DbSet<CustomReport> CustomReports => Set<CustomReport>();
@@ -1372,6 +1373,15 @@ public class AccountingDbContext : DbContext
             e.Property(o => o.WhtRate).HasPrecision(5, 2);
             e.HasIndex(o => new { o.CompanyId, o.FileHash });
             e.HasIndex(o => new { o.CompanyId, o.ExtractedDocumentNumber, o.ExtractedTotalAmount });
+        });
+
+        // ===== OcrLearnedPattern =====
+        modelBuilder.Entity<OcrLearnedPattern>(e =>
+        {
+            e.Property(p => p.FieldName).HasMaxLength(50);
+            e.Property(p => p.ContextKeyword).HasMaxLength(200);
+            e.Property(p => p.VendorTaxId).HasMaxLength(13);
+            e.HasIndex(p => new { p.CompanyId, p.VendorTaxId, p.FieldName });
         });
 
         // ===== CustomReport =====

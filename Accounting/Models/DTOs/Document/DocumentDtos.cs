@@ -140,6 +140,17 @@ public record UpdateContactRequest(
     string? PostalCode = null,
     string? CountryCode = null);
 
+/// <summary>
+/// Result of attempting to delete a contact. May be a hard delete or
+/// a soft deactivation if the contact has linked accounting records.
+/// </summary>
+public record ContactDeleteResult(
+    bool Deleted,            // true = removed; false = deactivated only
+    bool Deactivated,        // true if the contact was set to inactive
+    int LinkedDocumentsCount,
+    int LinkedWhtCount,
+    string Message);
+
 public record ContactResponse(
     Guid Id,
     string Name,

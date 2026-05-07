@@ -929,6 +929,103 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PaymentTermsDays" integer NULL;
             """,
 
+            // ===== OcrLearnedPatterns: zone analyzer learning =====
+            """
+            CREATE TABLE IF NOT EXISTS "OcrLearnedPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorTaxId" varchar(13) NULL,
+                "FieldName" varchar(50) NOT NULL,
+                "ContextKeyword" varchar(200) NOT NULL,
+                "ExtractionRegex" text NULL,
+                "SearchRadius" integer NOT NULL DEFAULT 300,
+                "TimesConfirmed" integer NOT NULL DEFAULT 1,
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrLearnedPatterns" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_OcrLearnedPatterns_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrLearnedPatterns_CompanyId_VendorTaxId_FieldName"
+            ON "OcrLearnedPatterns" ("CompanyId", "VendorTaxId", "FieldName");
+            """,
+            """
+            ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "IsNegativeExample" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "NegativeValue" text NULL;
+            """,
+            """
+            ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "FailureCount" integer NOT NULL DEFAULT 0;
+            """,
+
+            // ===== Sites: CMS columns added after initial table creation =====
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CaptchaProvider" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CaptchaSiteKey" varchar(500) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CookieConsentEnabled" boolean NOT NULL DEFAULT true;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "PrivacyPolicyUrl" varchar(500) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "TermsOfServiceUrl" varchar(500) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MaxStorageBytes" bigint NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MaxBandwidthBytesPerMonth" bigint NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MaxProducts" integer NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MaxPages" integer NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CurrentStorageUsed" bigint NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CurrentBandwidthUsed" bigint NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "BandwidthResetDate" timestamp NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "OgImageUrl" text NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CanonicalUrl" varchar(500) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "RobotsDirective" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CustomHeadScripts" text NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CustomBodyScripts" text NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MetaTitle" varchar(500) NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MetaDescription" text NULL;
+            """,
+            """
+            ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MetaKeywords" text NULL;
+            """,
+
             // ===== Custom Roles & Per-Menu Permissions (per-company RBAC) =====
             // Each company can define its own roles and assign per-menu access.
             // CompanyUsers.CompanyRoleId is nullable so existing members default

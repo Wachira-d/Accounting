@@ -16,14 +16,17 @@ public class OcrService : IOcrService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OcrService> _logger;
+    private readonly IDbdLookupService _dbdLookup;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
-        IConfiguration configuration, ILogger<OcrService> logger)
+        IConfiguration configuration, ILogger<OcrService> logger,
+        IDbdLookupService dbdLookup)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
+        _dbdLookup = dbdLookup;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -102,7 +105,7 @@ public class OcrService : IOcrService
             else
             {
                 extractedText = await ExtractTextAsync(file);
-                extractedData = ParseThaiDocument(extractedText);
+                extractedData = await AnalyzeWithZones(companyId, extractedText);
             }
 
             scanResult.DocumentType = extractedData.DocumentType;
@@ -129,6 +132,18 @@ public class OcrService : IOcrService
             scanResult.HasWht = extractedData.HasWht;
             scanResult.WhtRate = extractedData.WhtRate;
             scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
+
+            // Store zone analysis info for debugging
+            if (!string.IsNullOrEmpty(extractedData.ZoneSummary))
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Zone Analysis]\n" + extractedData.ZoneSummary;
+            if (!string.IsNullOrEmpty(extractedData.BuyerName))
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Buyer] {extractedData.BuyerName} TaxID:{extractedData.BuyerTaxId ?? "N/A"}";
+            if (extractedData.FieldConfidence.Count > 0)
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
+                    string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
+            if (extractedData.ReasoningTrace.Count > 0)
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
+                    string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
 
             if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
             {
@@ -179,6 +194,30 @@ public class OcrService : IOcrService
                 }
             }
 
+            // If the seller is our own company, the real vendor is the buyer
+            if (!string.IsNullOrEmpty(extractedData.VendorTaxId) || !string.IsNullOrEmpty(extractedData.BuyerTaxId))
+            {
+                var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
+                if (company != null && !string.IsNullOrEmpty(company.TaxId))
+                {
+                    if (extractedData.VendorTaxId == company.TaxId && !string.IsNullOrEmpty(extractedData.BuyerName))
+                    {
+                        // Seller = our company → actual vendor is the buyer
+                        extractedData.VendorName = extractedData.BuyerName;
+                        extractedData.VendorTaxId = extractedData.BuyerTaxId;
+                        scanResult.ExtractedVendorName = extractedData.VendorName;
+                        scanResult.ExtractedVendorTaxId = extractedData.VendorTaxId;
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Swap] Seller is our company — using Buyer as vendor";
+                    }
+                }
+            }
+
+            // === DBD Verification: authoritative company info from กรมพัฒนาธุรกิจการค้า ===
+            // If the extracted Tax ID is a 13-digit juristic ID, query DBD to get the
+            // canonical company name + address. This is treated as ground truth — if OCR
+            // disagrees, we trust DBD and record the OCR mismatch as negative training.
+            await EnrichFromDbdAsync(companyId, extractedData, scanResult);
+
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
                 var matchedContact = await _db.Contacts
@@ -207,10 +246,39 @@ public class OcrService : IOcrService
                     IsSupplier = true,
                     CreatedBy = "OCR-AutoCreate"
                 };
+                // Apply DBD-enriched fields if we got them
+                if (extractedData.DbdCanonicalName != null)
+                    newContact.Name = extractedData.DbdCanonicalName;
+                if (!string.IsNullOrEmpty(extractedData.DbdAddress))
+                    newContact.Address = extractedData.DbdAddress;
                 _db.Contacts.Add(newContact);
                 await _db.SaveChangesAsync();
                 scanResult.MatchedContactId = newContact.Id;
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-created contact: {newContact.Name}";
+            }
+            else if (scanResult.MatchedContactId.HasValue && extractedData.DbdCanonicalName != null)
+            {
+                // Existing contact: enrich missing fields from DBD without overwriting user data
+                var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == scanResult.MatchedContactId);
+                if (existing != null)
+                {
+                    bool changed = false;
+                    if (string.IsNullOrWhiteSpace(existing.TaxId) && !string.IsNullOrEmpty(extractedData.VendorTaxId))
+                    {
+                        existing.TaxId = extractedData.VendorTaxId;
+                        changed = true;
+                    }
+                    if (string.IsNullOrWhiteSpace(existing.Address) && !string.IsNullOrEmpty(extractedData.DbdAddress))
+                    {
+                        existing.Address = extractedData.DbdAddress;
+                        changed = true;
+                    }
+                    if (changed)
+                    {
+                        existing.UpdatedBy = "OCR-DbdEnrich";
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[DBD] Enriched contact {existing.Name}";
+                    }
+                }
             }
 
             // Auto-create document if confidence >= threshold (85%)
@@ -239,7 +307,7 @@ public class OcrService : IOcrService
         }
 
         await _db.SaveChangesAsync();
-        return MapToResponse(scanResult, ocrProvider == "local" ? extractedData : null);
+        return MapToResponse(scanResult, extractedData);
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)
@@ -324,7 +392,7 @@ public class OcrService : IOcrService
         {
             _logger.LogWarning(ex, "Local OCR service unavailable, falling back to built-in");
             var text = await ExtractTextAsync(file);
-            return (text, ParseThaiDocument(text));
+            return (text, ParseThaiDocument(text)); // fallback uses simple parser since we don't have companyId here
         }
     }
 
@@ -333,6 +401,11 @@ public class OcrService : IOcrService
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
+
+        // Capture previous values BEFORE updating — used as negative examples
+        var prevVendorName = result.ExtractedVendorName;
+        var prevVendorTaxId = result.ExtractedVendorTaxId;
+        var prevDocNumber = result.ExtractedDocumentNumber;
 
         // Update the scan result with corrected data
         if (correction.DocumentType != null) result.DocumentType = correction.DocumentType;
@@ -375,6 +448,71 @@ public class OcrService : IOcrService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to submit correction to learning service");
+        }
+
+        // Learn patterns from correction using zone analyzer
+        try
+        {
+            if (!string.IsNullOrEmpty(result.RawTextContent))
+            {
+                var learnedPatterns = DocumentZoneAnalyzer.LearnFromCorrection(
+                    result.RawTextContent, companyId,
+                    correction.VendorTaxId ?? result.ExtractedVendorTaxId,
+                    correction.VendorName, correction.VendorTaxId,
+                    correction.DocumentNumber, correction.TotalAmount,
+                    previousVendorName: prevVendorName,
+                    previousTaxId: prevVendorTaxId,
+                    previousDocNumber: prevDocNumber);
+
+                foreach (var newPattern in learnedPatterns)
+                {
+                    if (newPattern.IsNegativeExample)
+                    {
+                        // Negative example: identified by FieldName + NegativeValue
+                        var existingNeg = await _db.OcrLearnedPatterns
+                            .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                                && p.FieldName == newPattern.FieldName
+                                && p.IsNegativeExample
+                                && p.NegativeValue == newPattern.NegativeValue
+                                && (p.VendorTaxId == newPattern.VendorTaxId || (p.VendorTaxId == null && newPattern.VendorTaxId == null)));
+                        if (existingNeg != null)
+                        {
+                            existingNeg.FailureCount++;
+                            existingNeg.LastConfirmedAt = DateTime.UtcNow;
+                        }
+                        else
+                        {
+                            _db.OcrLearnedPatterns.Add(newPattern);
+                        }
+                    }
+                    else
+                    {
+                        var existing = await _db.OcrLearnedPatterns
+                            .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                                && !p.IsNegativeExample
+                                && p.FieldName == newPattern.FieldName
+                                && p.ContextKeyword == newPattern.ContextKeyword
+                                && (p.VendorTaxId == newPattern.VendorTaxId || (p.VendorTaxId == null && newPattern.VendorTaxId == null)));
+
+                        if (existing != null)
+                        {
+                            existing.TimesConfirmed++;
+                            existing.LastConfirmedAt = DateTime.UtcNow;
+                            existing.ExtractionRegex = newPattern.ExtractionRegex;
+                            existing.SearchRadius = Math.Max(existing.SearchRadius, newPattern.SearchRadius);
+                        }
+                        else
+                        {
+                            _db.OcrLearnedPatterns.Add(newPattern);
+                        }
+                    }
+                }
+                await _db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to learn patterns from correction");
         }
     }
 
@@ -476,6 +614,219 @@ public class OcrService : IOcrService
     private static string ExtractFromFileName(FileAttachment file)
     {
         return file.OriginalFileName ?? "";
+    }
+
+    /// <summary>
+    /// Look up the extracted Tax ID against DBD (กรมพัฒนาธุรกิจการค้า) and use the
+    /// authoritative result as ground truth. Differences from OCR become training signals.
+    /// </summary>
+    private async Task EnrichFromDbdAsync(Guid companyId, OcrExtractedData data, OcrScanResult scanResult)
+    {
+        if (string.IsNullOrEmpty(data.VendorTaxId) || data.VendorTaxId.Length != 13)
+            return;
+
+        DbdCompanyResult? dbd = null;
+        try
+        {
+            dbd = await _dbdLookup.GetByJuristicIdAsync(data.VendorTaxId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "DBD lookup failed for TaxId {TaxId}", data.VendorTaxId);
+        }
+
+        if (dbd == null)
+        {
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") +
+                $"\n[DBD] ไม่พบข้อมูลในกรมพัฒนาธุรกิจการค้า (TaxID: {data.VendorTaxId}) — ใช้ข้อมูลจาก OCR";
+            data.DbdLookupAttempted = true;
+            return;
+        }
+
+        // DBD found — adopt as authoritative
+        data.DbdLookupAttempted = true;
+        data.DbdMatched = true;
+        data.DbdCanonicalName = dbd.NameTh;
+        data.DbdAddress = dbd.Address;
+        data.DbdJuristicType = dbd.JuristicType;
+        data.DbdStatus = dbd.Status;
+
+        // Compare OCR's vendor name with DBD canonical
+        var ocrName = data.VendorName?.Trim();
+        var dbdName = dbd.NameTh?.Trim();
+
+        bool nameMatches = false;
+        if (!string.IsNullOrEmpty(ocrName) && !string.IsNullOrEmpty(dbdName))
+        {
+            // Normalize: remove "บริษัท ... จำกัด" wrappers and whitespace for comparison
+            var normalizedOcr = NormalizeCompanyName(ocrName);
+            var normalizedDbd = NormalizeCompanyName(dbdName);
+            nameMatches = string.Equals(normalizedOcr, normalizedDbd, StringComparison.OrdinalIgnoreCase)
+                       || normalizedDbd.Contains(normalizedOcr, StringComparison.OrdinalIgnoreCase)
+                       || normalizedOcr.Contains(normalizedDbd, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (nameMatches)
+        {
+            // OCR was correct — boost confidence and use DBD's exact form for Contact
+            data.FieldConfidence["SellerName"] = 1.0;
+            data.FieldConfidence["SellerTaxId"] = 1.0;
+            data.VendorName = dbd.NameTh; // use DBD's exact spelling
+            data.ReasoningTrace.Add($"[DBD] ✓ ชื่อบริษัทตรงกับ DBD ({dbd.NameTh}) — ใช้ชื่อทางการ");
+        }
+        else if (string.IsNullOrEmpty(ocrName))
+        {
+            // OCR didn't find a name but DBD has one — use DBD
+            data.VendorName = dbd.NameTh;
+            data.FieldConfidence["SellerName"] = 1.0;
+            data.ReasoningTrace.Add($"[DBD] ใช้ชื่อจาก DBD: {dbd.NameTh}");
+        }
+        else
+        {
+            // OCR mismatch — DBD wins, but record OCR's wrong reading as negative training
+            data.ReasoningTrace.Add($"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ DBD ระบุ '{dbd.NameTh}' — ใช้จาก DBD และเรียนรู้");
+            await RecordOcrMismatchAsync(companyId, data.VendorTaxId, "SellerName",
+                wrongValue: ocrName, correctValue: dbd.NameTh);
+            data.VendorName = dbd.NameTh;
+            // Confidence stays moderate because OCR misread
+            data.FieldConfidence["SellerName"] = 0.95;
+        }
+
+        // Update scanResult so subsequent saves use the canonical name
+        scanResult.ExtractedVendorName = data.VendorName;
+
+        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") +
+            $"\n[DBD] ✓ พบข้อมูล: {dbd.NameTh}" +
+            (string.IsNullOrEmpty(dbd.Status) ? "" : $" (สถานะ: {dbd.Status})") +
+            (string.IsNullOrEmpty(dbd.Address) ? "" : $"\n[DBD Address] {dbd.Address}");
+    }
+
+    private static string NormalizeCompanyName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        var n = name.Trim();
+        // Strip common legal-entity prefixes/suffixes for comparison only
+        n = System.Text.RegularExpressions.Regex.Replace(n, @"^(บริษัท|ห้างหุ้นส่วนจำกัด|ห้างหุ้นส่วนสามัญ|หจก\.?|บจก\.?|ร้าน)\s*", "");
+        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s*จำกัด\s*\(?มหาชน\)?\s*$", "");
+        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s*จำกัด\s*$", "");
+        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s+", " ");
+        return n.Trim();
+    }
+
+    /// <summary>
+    /// Persist a negative training example: this OCR-extracted value was wrong
+    /// (according to DBD) for this vendor.
+    /// </summary>
+    private async Task RecordOcrMismatchAsync(Guid companyId, string vendorTaxId, string fieldName,
+        string? wrongValue, string? correctValue)
+    {
+        if (string.IsNullOrEmpty(wrongValue)) return;
+        try
+        {
+            var existing = await _db.OcrLearnedPatterns.FirstOrDefaultAsync(p =>
+                p.CompanyId == companyId && p.IsNegativeExample &&
+                p.FieldName == fieldName && p.NegativeValue == wrongValue &&
+                p.VendorTaxId == vendorTaxId);
+            if (existing != null)
+            {
+                existing.FailureCount++;
+                existing.LastConfirmedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _db.OcrLearnedPatterns.Add(new OcrLearnedPattern
+                {
+                    CompanyId = companyId,
+                    VendorTaxId = vendorTaxId,
+                    FieldName = fieldName,
+                    ContextKeyword = "(dbd-mismatch)",
+                    IsNegativeExample = true,
+                    NegativeValue = wrongValue,
+                    FailureCount = 1,
+                    CreatedBy = "DBD-Verify"
+                });
+            }
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record DBD mismatch for {Field}", fieldName);
+        }
+    }
+
+    private async Task<OcrExtractedData> AnalyzeWithZones(Guid companyId, string text)
+    {
+        List<OcrLearnedPattern>? patterns = null;
+        try
+        {
+            patterns = await _db.OcrLearnedPatterns
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted)
+                .OrderByDescending(p => p.TimesConfirmed)
+                .Take(200)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not load learned patterns — table may not exist yet");
+        }
+
+        // Load our company's TaxId so analyzer can disambiguate seller vs buyer
+        string? ourTaxId = null;
+        try
+        {
+            var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+            ourTaxId = company?.TaxId;
+        }
+        catch { /* non-fatal */ }
+
+        var zoneResult = DocumentZoneAnalyzer.Analyze(text, patterns, ourTaxId);
+
+        // GL account suggestions map
+        var glMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn, string? Vc, string? Vn)>
+        {
+            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "1140", "ภาษีซื้อ"),
+            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", null, null),
+            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด", null, null),
+            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า", null, null),
+            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด", null, null),
+            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย", null, null),
+            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", null, null),
+        };
+
+        var data = new OcrExtractedData
+        {
+            DocumentType = zoneResult.DocumentType ?? "Receipt",
+            Confidence = zoneResult.Confidence,
+            DocumentNumber = zoneResult.DocumentNumber,
+            DocumentDate = zoneResult.DocumentDate,
+            VendorName = zoneResult.SellerName,
+            VendorTaxId = zoneResult.SellerTaxId,
+            SubTotal = zoneResult.SubTotal,
+            VatAmount = zoneResult.VatAmount,
+            TotalAmount = zoneResult.TotalAmount,
+            ExpenseCategory = zoneResult.ExpenseCategory,
+            HasWht = zoneResult.HasWht,
+            WhtRate = zoneResult.WhtRate,
+            PaymentTermsDays = zoneResult.PaymentTermsDays,
+        };
+
+        if (data.DocumentType != null && glMap.TryGetValue(data.DocumentType, out var gl))
+        {
+            data.DebitAccountCode = gl.Dc;
+            data.DebitAccountName = gl.Dn;
+            data.CreditAccountCode = gl.Cc;
+            data.CreditAccountName = gl.Cn;
+            data.VatAccountCode = gl.Vc;
+            data.VatAccountName = gl.Vn;
+        }
+
+        data.ZoneSummary = zoneResult.ZoneSummary;
+        data.BuyerName = zoneResult.BuyerName;
+        data.BuyerTaxId = zoneResult.BuyerTaxId;
+        data.FieldConfidence = zoneResult.FieldConfidence;
+        data.ReasoningTrace = zoneResult.ReasoningTrace;
+
+        return data;
     }
 
     private static OcrExtractedData ParseThaiDocument(string text)
@@ -1015,6 +1366,18 @@ public class OcrService : IOcrService
         var whtRate = data?.WhtRate ?? r.WhtRate;
         var paymentTermsDays = data?.PaymentTermsDays ?? r.PaymentTermsDays;
 
+        OcrDbdInfo? dbdInfo = null;
+        if (data?.DbdLookupAttempted == true)
+        {
+            dbdInfo = new OcrDbdInfo(
+                LookupAttempted: true,
+                Matched: data.DbdMatched,
+                CanonicalName: data.DbdCanonicalName,
+                Address: data.DbdAddress,
+                JuristicType: data.DbdJuristicType,
+                Status: data.DbdStatus);
+        }
+
         return new OcrResultResponse(
             r.Id, r.OriginalFileName, r.ScanStatus, r.DocumentType, r.Confidence,
             r.ExtractedVendorName, r.ExtractedVendorTaxId, r.ExtractedDocumentNumber,
@@ -1023,7 +1386,12 @@ public class OcrService : IOcrService
             r.IsDuplicate, r.DuplicateOfScanId, r.FileHash, r.ProcessingNotes,
             expenseCategory, suggestedAccounts,
             hasWht, whtRate,
-            paymentTermsDays, items);
+            paymentTermsDays, items,
+            r.RawTextContent,
+            data?.FieldConfidence,
+            data?.BuyerName,
+            data?.BuyerTaxId,
+            dbdInfo);
     }
 }
 
@@ -1048,6 +1416,18 @@ internal class OcrExtractedData
     public bool HasWht { get; set; }
     public decimal? WhtRate { get; set; }
     public int? PaymentTermsDays { get; set; }
+    public string? ZoneSummary { get; set; }
+    public string? BuyerName { get; set; }
+    public string? BuyerTaxId { get; set; }
+    public Dictionary<string, double> FieldConfidence { get; set; } = new();
+    public List<string> ReasoningTrace { get; set; } = new();
+    // === DBD enrichment ===
+    public bool DbdLookupAttempted { get; set; }
+    public bool DbdMatched { get; set; }
+    public string? DbdCanonicalName { get; set; }
+    public string? DbdAddress { get; set; }
+    public string? DbdJuristicType { get; set; }
+    public string? DbdStatus { get; set; }
     public List<OcrExtractedLineItem> Items { get; set; } = new();
 }
 
