@@ -86,10 +86,11 @@ public class OcrService : IOcrService
             return MapToResponse(scanResult);
         }
 
+        var ocrProvider = _configuration["Ocr:Provider"]?.ToLower();
+        OcrExtractedData? extractedData = null;
+
         try
         {
-            var ocrProvider = _configuration["Ocr:Provider"]?.ToLower();
-            OcrExtractedData extractedData;
             string extractedText;
 
             if (ocrProvider == "local")
@@ -116,6 +117,35 @@ public class OcrService : IOcrService
             scanResult.RawTextContent = extractedText;
             scanResult.ScanStatus = "Completed";
             scanResult.ProcessedAt = DateTime.UtcNow;
+
+            // Store extracted items and account suggestions
+            if (extractedData.Items.Count > 0)
+            {
+                scanResult.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(
+                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode }));
+            }
+
+            // Match GL accounts from suggestions against company's chart of accounts
+            if (!string.IsNullOrEmpty(extractedData.DebitAccountCode))
+            {
+                var debitAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == extractedData.DebitAccountCode && !a.IsDeleted);
+                if (debitAccount != null)
+                {
+                    extractedData.DebitAccountCode = debitAccount.AccountCode;
+                    extractedData.DebitAccountName = debitAccount.AccountName;
+                }
+            }
+            if (!string.IsNullOrEmpty(extractedData.CreditAccountCode))
+            {
+                var creditAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == extractedData.CreditAccountCode && !a.IsDeleted);
+                if (creditAccount != null)
+                {
+                    extractedData.CreditAccountCode = creditAccount.AccountCode;
+                    extractedData.CreditAccountName = creditAccount.AccountName;
+                }
+            }
 
             // Check for duplicate by document number + amount
             if (!string.IsNullOrEmpty(extractedData.DocumentNumber) && extractedData.TotalAmount.HasValue)
@@ -157,7 +187,7 @@ public class OcrService : IOcrService
             {
                 try
                 {
-                    await AutoCreateDocumentAsync(companyId, scanResult);
+                    await AutoCreateDocumentAsync(companyId, scanResult, extractedData);
                 }
                 catch (Exception ex)
                 {
@@ -174,7 +204,7 @@ public class OcrService : IOcrService
         }
 
         await _db.SaveChangesAsync();
-        return MapToResponse(scanResult);
+        return MapToResponse(scanResult, ocrProvider == "local" ? extractedData : null);
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)
@@ -216,10 +246,41 @@ public class OcrService : IOcrService
                 SubTotal = root.TryGetProperty("subtotal", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)st.GetDouble() : null,
                 VatAmount = root.TryGetProperty("vat_amount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null,
                 TotalAmount = root.TryGetProperty("total_amount", out var ta) && ta.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)ta.GetDouble() : null,
+                ExpenseCategory = root.TryGetProperty("expense_category", out var ec) ? ec.GetString() : null,
+                HasWht = root.TryGetProperty("has_wht", out var hw) && hw.ValueKind == System.Text.Json.JsonValueKind.True,
+                WhtRate = root.TryGetProperty("wht_rate", out var wr) && wr.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)wr.GetDouble() : null,
+                PaymentTermsDays = root.TryGetProperty("payment_terms_days", out var pt) && pt.ValueKind == System.Text.Json.JsonValueKind.Number ? pt.GetInt32() : null,
             };
 
             if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr && DateTime.TryParse(dateStr, out var parsedDate))
                 data.DocumentDate = parsedDate;
+
+            // Parse suggested accounts
+            if (root.TryGetProperty("suggested_accounts", out var sa) && sa.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                data.DebitAccountCode = sa.TryGetProperty("debit_account_code", out var dac) ? dac.GetString() : null;
+                data.DebitAccountName = sa.TryGetProperty("debit_account_name", out var dan) ? dan.GetString() : null;
+                data.CreditAccountCode = sa.TryGetProperty("credit_account_code", out var cac) ? cac.GetString() : null;
+                data.CreditAccountName = sa.TryGetProperty("credit_account_name", out var can) ? can.GetString() : null;
+                data.VatAccountCode = sa.TryGetProperty("vat_account_code", out var vac) ? vac.GetString() : null;
+                data.VatAccountName = sa.TryGetProperty("vat_account_name", out var van) ? van.GetString() : null;
+            }
+
+            // Parse line items
+            if (root.TryGetProperty("items", out var items) && items.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    data.Items.Add(new OcrExtractedLineItem
+                    {
+                        Description = item.TryGetProperty("description", out var desc) ? desc.GetString() : null,
+                        Quantity = item.TryGetProperty("quantity", out var qty) && qty.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)qty.GetDouble() : null,
+                        UnitPrice = item.TryGetProperty("unit_price", out var up) && up.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)up.GetDouble() : null,
+                        Amount = item.TryGetProperty("amount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)amt.GetDouble() : null,
+                        SuggestedAccountCode = item.TryGetProperty("suggested_account_code", out var sac) ? sac.GetString() : null,
+                    });
+                }
+            }
 
             var rawText = root.TryGetProperty("raw_text", out var rt) ? rt.GetString() ?? "" : "";
             return (rawText, data);
@@ -605,14 +666,25 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
-    private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan)
+    private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan, OcrExtractedData? extractedData = null)
     {
         var docType = scan.DocumentType switch
         {
             "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
             "Receipt" => DocumentType.Expense,
+            "CreditNote" => DocumentType.CreditNote,
+            "DebitNote" => DocumentType.DebitNote,
             _ => DocumentType.Expense
         };
+
+        // Resolve expense account from suggestions
+        Guid? expenseAccountId = null;
+        if (extractedData?.DebitAccountCode != null)
+        {
+            var account = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == extractedData.DebitAccountCode && !a.IsDeleted);
+            expenseAccountId = account?.Id;
+        }
 
         var document = new Document
         {
@@ -631,18 +703,85 @@ public class OcrService : IOcrService
             CreatedBy = "OCR-AutoCreate"
         };
 
+        // Create document lines from extracted items or a single line
+        if (extractedData?.Items.Count > 0)
+        {
+            int lineOrder = 1;
+            foreach (var item in extractedData.Items)
+            {
+                Guid? lineAccountId = expenseAccountId;
+                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                {
+                    var lineAccount = await _db.ChartOfAccounts
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
+                    if (lineAccount != null) lineAccountId = lineAccount.Id;
+                }
+
+                document.Lines.Add(new DocumentLine
+                {
+                    LineOrder = lineOrder++,
+                    Description = item.Description ?? scan.DocumentType ?? "รายการจาก OCR",
+                    Quantity = item.Quantity ?? 1,
+                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    Amount = item.Amount ?? 0,
+                    VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
+                    AccountId = lineAccountId,
+                });
+            }
+        }
+        else
+        {
+            document.Lines.Add(new DocumentLine
+            {
+                LineOrder = 1,
+                Description = extractedData?.ExpenseCategory ?? scan.DocumentType ?? "รายการจาก OCR",
+                Quantity = 1,
+                UnitPrice = scan.ExtractedSubTotal ?? scan.ExtractedTotalAmount ?? 0,
+                Amount = scan.ExtractedSubTotal ?? scan.ExtractedTotalAmount ?? 0,
+                VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
+                VatAmount = scan.ExtractedVatAmount ?? 0,
+                WithholdingTaxRate = extractedData?.HasWht == true && extractedData.WhtRate.HasValue ? extractedData.WhtRate.Value : 0,
+                AccountId = expenseAccountId,
+            });
+        }
+
         _db.Documents.Add(document);
         scan.CreatedDocumentId = document.Id;
-        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + " Auto-created document.";
+        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + " Auto-created document with lines.";
         await _db.SaveChangesAsync();
     }
 
-    private static OcrResultResponse MapToResponse(OcrScanResult r) => new(
-        r.Id, r.OriginalFileName, r.ScanStatus, r.DocumentType, r.Confidence,
-        r.ExtractedVendorName, r.ExtractedVendorTaxId, r.ExtractedDocumentNumber,
-        r.ExtractedDate, r.ExtractedSubTotal, r.ExtractedVatAmount, r.ExtractedTotalAmount,
-        r.MatchedContactId, r.CreatedDocumentId, r.ProcessedAt,
-        r.IsDuplicate, r.DuplicateOfScanId, r.FileHash, r.ProcessingNotes);
+    private OcrResultResponse MapToResponse(OcrScanResult r, OcrExtractedData? data = null)
+    {
+        OcrSuggestedAccountsDto? suggestedAccounts = null;
+        List<OcrLineItemDto>? items = null;
+
+        if (data != null)
+        {
+            if (data.DebitAccountCode != null || data.CreditAccountCode != null)
+            {
+                suggestedAccounts = new OcrSuggestedAccountsDto(
+                    data.DebitAccountCode, data.DebitAccountName,
+                    data.CreditAccountCode, data.CreditAccountName,
+                    data.VatAccountCode, data.VatAccountName);
+            }
+            if (data.Items.Count > 0)
+            {
+                items = data.Items.Select(i => new OcrLineItemDto(
+                    i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode)).ToList();
+            }
+        }
+
+        return new OcrResultResponse(
+            r.Id, r.OriginalFileName, r.ScanStatus, r.DocumentType, r.Confidence,
+            r.ExtractedVendorName, r.ExtractedVendorTaxId, r.ExtractedDocumentNumber,
+            r.ExtractedDate, r.ExtractedSubTotal, r.ExtractedVatAmount, r.ExtractedTotalAmount,
+            r.MatchedContactId, r.CreatedDocumentId, r.ProcessedAt,
+            r.IsDuplicate, r.DuplicateOfScanId, r.FileHash, r.ProcessingNotes,
+            data?.ExpenseCategory, suggestedAccounts,
+            data?.HasWht ?? false, data?.WhtRate,
+            data?.PaymentTermsDays, items);
+    }
 }
 
 internal class OcrExtractedData
@@ -656,4 +795,24 @@ internal class OcrExtractedData
     public decimal? SubTotal { get; set; }
     public decimal? VatAmount { get; set; }
     public decimal? TotalAmount { get; set; }
+    public string? ExpenseCategory { get; set; }
+    public string? DebitAccountCode { get; set; }
+    public string? DebitAccountName { get; set; }
+    public string? CreditAccountCode { get; set; }
+    public string? CreditAccountName { get; set; }
+    public string? VatAccountCode { get; set; }
+    public string? VatAccountName { get; set; }
+    public bool HasWht { get; set; }
+    public decimal? WhtRate { get; set; }
+    public int? PaymentTermsDays { get; set; }
+    public List<OcrExtractedLineItem> Items { get; set; } = new();
+}
+
+internal class OcrExtractedLineItem
+{
+    public string? Description { get; set; }
+    public decimal? Quantity { get; set; }
+    public decimal? UnitPrice { get; set; }
+    public decimal? Amount { get; set; }
+    public string? SuggestedAccountCode { get; set; }
 }

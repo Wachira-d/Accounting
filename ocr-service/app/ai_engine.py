@@ -18,6 +18,12 @@ EXTRACTION_PROMPT = """คุณเป็น AI ผู้เชี่ยวช�
 - จำนวนเงินเป็นตัวเลข (ไม่มี comma)
 - confidence เป็น 0.0-1.0 แสดงความมั่นใจในผลลัพธ์โดยรวม
 - reasoning อธิบายสั้นๆ ว่าทำไมถึงตัดสินใจแบบนี้
+- expense_category ให้เลือกจาก: ค่าสินค้า, ค่าบริการ, ค่าเช่า, ค่าสาธารณูปโภค, ค่าขนส่ง, ค่าโฆษณา, ค่าซ่อมแซม, ค่าวัสดุสำนักงาน, ค่าเดินทาง, ค่าที่ปรึกษา, ค่าประกัน, อื่นๆ
+- suggested_accounts ให้แนะนำรหัสบัญชีที่น่าจะใช้บันทึก (ตามมาตรฐานผังบัญชีไทย):
+  - debit_account: บัญชีเดบิต เช่น 5100=ต้นทุนขาย, 5200=ค่าใช้จ่ายในการขาย, 5300=ค่าใช้จ่ายบริหาร, 1200=สินค้าคงเหลือ, 1400=ภาษีซื้อ
+  - credit_account: บัญชีเครดิต เช่น 2100=เจ้าหนี้การค้า, 1110=เงินสด, 1120=ธนาคาร
+- has_wht ถ้าเอกสารมีภาษีหัก ณ ที่จ่าย ให้ระบุ true + wht_rate (1, 2, 3, 5 %)
+- payment_terms ถ้าเห็นเงื่อนไขชำระเงิน เช่น "ชำระภายใน 30 วัน" ให้ระบุจำนวนวัน
 
 ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น:
 {
@@ -30,7 +36,19 @@ EXTRACTION_PROMPT = """คุณเป็น AI ผู้เชี่ยวช�
   "subtotal": null,
   "vat_amount": null,
   "total_amount": null,
-  "items": [{"description": "...", "quantity": 1, "unit_price": 100, "amount": 100}],
+  "items": [{"description": "...", "quantity": 1, "unit_price": 100, "amount": 100, "suggested_account_code": "5300"}],
+  "expense_category": "string or null",
+  "suggested_accounts": {
+    "debit_account_code": "5300",
+    "debit_account_name": "ค่าใช้จ่ายบริหาร",
+    "credit_account_code": "2100",
+    "credit_account_name": "เจ้าหนี้การค้า",
+    "vat_account_code": "1400",
+    "vat_account_name": "ภาษีซื้อ"
+  },
+  "has_wht": false,
+  "wht_rate": null,
+  "payment_terms_days": null,
   "reasoning": "string"
 }
 
@@ -217,5 +235,44 @@ def rule_based_extraction(text: str) -> dict:
                 result[field] = float(amount_str)
             except ValueError:
                 pass
+
+    # Suggest GL accounts based on document type
+    doc_type = result.get("document_type")
+    account_map = {
+        "TaxInvoice": {"debit": ("5100", "ต้นทุนขาย"), "credit": ("2100", "เจ้าหนี้การค้า"), "category": "ค่าสินค้า"},
+        "Invoice": {"debit": ("5100", "ต้นทุนขาย"), "credit": ("2100", "เจ้าหนี้การค้า"), "category": "ค่าสินค้า"},
+        "Receipt": {"debit": ("5300", "ค่าใช้จ่ายบริหาร"), "credit": ("1110", "เงินสด"), "category": "ค่าบริการ"},
+        "PurchaseOrder": {"debit": ("1200", "สินค้าคงเหลือ"), "credit": ("2100", "เจ้าหนี้การค้า"), "category": "ค่าสินค้า"},
+        "WHT": {"debit": ("2170", "ภาษีหัก ณ ที่จ่าย"), "credit": ("1110", "เงินสด"), "category": "อื่นๆ"},
+        "CreditNote": {"debit": ("2100", "เจ้าหนี้การค้า"), "credit": ("5100", "ต้นทุนขาย"), "category": "ค่าสินค้า"},
+        "DebitNote": {"debit": ("5100", "ต้นทุนขาย"), "credit": ("2100", "เจ้าหนี้การค้า"), "category": "ค่าสินค้า"},
+    }
+
+    if doc_type and doc_type in account_map:
+        mapping = account_map[doc_type]
+        result["suggested_accounts"] = {
+            "debit_account_code": mapping["debit"][0],
+            "debit_account_name": mapping["debit"][1],
+            "credit_account_code": mapping["credit"][0],
+            "credit_account_name": mapping["credit"][1],
+            "vat_account_code": "1400" if result.get("vat_amount") else None,
+            "vat_account_name": "ภาษีซื้อ" if result.get("vat_amount") else None,
+        }
+        result["expense_category"] = mapping["category"]
+
+    # Detect WHT from text
+    wht_match = re.search(r"หัก\s*ณ\s*ที่จ่าย|ภาษี\s*หัก|WHT|W/?T", text)
+    if wht_match:
+        result["has_wht"] = True
+        rate_match = re.search(r"(\d+)\s*%", text[max(0, wht_match.start()-20):wht_match.end()+30])
+        if rate_match:
+            rate = int(rate_match.group(1))
+            if rate in (1, 2, 3, 5, 10, 15):
+                result["wht_rate"] = rate
+
+    # Detect payment terms
+    terms_match = re.search(r"(?:ชำระ|จ่าย).*?(?:ภายใน|within)\s*(\d+)\s*(?:วัน|days)", text, re.IGNORECASE)
+    if terms_match:
+        result["payment_terms_days"] = int(terms_match.group(1))
 
     return result

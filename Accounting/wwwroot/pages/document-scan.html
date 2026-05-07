@@ -992,6 +992,66 @@
             </div>
 
             <div class="review-section">
+              <div class="review-section-title">📊 ผังบัญชีที่แนะนำ ${scan.suggestedAccounts ? '<span style="float:right;font-size:11px;color:#059669;font-weight:400">🤖 AI แนะนำ</span>' : ''}</div>
+              <div class="review-field">
+                <label>หมวดค่าใช้จ่าย</label>
+                <select class="form-input" id="revExpenseCategory" style="flex:1">
+                  <option value="">-- เลือก --</option>
+                  <option value="ค่าสินค้า" ${scan.expenseCategory === 'ค่าสินค้า' ? 'selected' : ''}>ค่าสินค้า</option>
+                  <option value="ค่าบริการ" ${scan.expenseCategory === 'ค่าบริการ' ? 'selected' : ''}>ค่าบริการ</option>
+                  <option value="ค่าเช่า" ${scan.expenseCategory === 'ค่าเช่า' ? 'selected' : ''}>ค่าเช่า</option>
+                  <option value="ค่าสาธารณูปโภค" ${scan.expenseCategory === 'ค่าสาธารณูปโภค' ? 'selected' : ''}>ค่าสาธารณูปโภค</option>
+                  <option value="ค่าขนส่ง" ${scan.expenseCategory === 'ค่าขนส่ง' ? 'selected' : ''}>ค่าขนส่ง</option>
+                  <option value="ค่าโฆษณา" ${scan.expenseCategory === 'ค่าโฆษณา' ? 'selected' : ''}>ค่าโฆษณา</option>
+                  <option value="ค่าซ่อมแซม" ${scan.expenseCategory === 'ค่าซ่อมแซม' ? 'selected' : ''}>ค่าซ่อมแซม</option>
+                  <option value="ค่าวัสดุสำนักงาน" ${scan.expenseCategory === 'ค่าวัสดุสำนักงาน' ? 'selected' : ''}>ค่าวัสดุสำนักงาน</option>
+                  <option value="ค่าเดินทาง" ${scan.expenseCategory === 'ค่าเดินทาง' ? 'selected' : ''}>ค่าเดินทาง</option>
+                  <option value="ค่าที่ปรึกษา" ${scan.expenseCategory === 'ค่าที่ปรึกษา' ? 'selected' : ''}>ค่าที่ปรึกษา</option>
+                  <option value="ค่าประกัน" ${scan.expenseCategory === 'ค่าประกัน' ? 'selected' : ''}>ค่าประกัน</option>
+                  <option value="อื่นๆ" ${scan.expenseCategory === 'อื่นๆ' ? 'selected' : ''}>อื่นๆ</option>
+                </select>
+              </div>
+              <div class="review-field">
+                <label>บัญชีเดบิต</label>
+                <select class="form-input" id="revDebitAccount" style="flex:1">
+                  <option value="">กำลังโหลด...</option>
+                </select>
+                ${scan.suggestedAccounts?.debitAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.debitAccountCode)} ${Layout.esc(scan.suggestedAccounts.debitAccountName || '')}</span>` : ''}
+              </div>
+              <div class="review-field">
+                <label>บัญชีเครดิต</label>
+                <select class="form-input" id="revCreditAccount" style="flex:1">
+                  <option value="">กำลังโหลด...</option>
+                </select>
+                ${scan.suggestedAccounts?.creditAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.creditAccountCode)} ${Layout.esc(scan.suggestedAccounts.creditAccountName || '')}</span>` : ''}
+              </div>
+              <div class="review-field">
+                <label>ภาษีหัก ณ ที่จ่าย</label>
+                <div style="display:flex;gap:8px;align-items:center;flex:1">
+                  <input type="checkbox" id="revHasWht" ${scan.hasWht ? 'checked' : ''} style="width:auto">
+                  <select class="form-input" id="revWhtRate" style="width:80px" ${!scan.hasWht ? 'disabled' : ''}>
+                    <option value="">-</option>
+                    <option value="1" ${scan.whtRate == 1 ? 'selected' : ''}>1%</option>
+                    <option value="2" ${scan.whtRate == 2 ? 'selected' : ''}>2%</option>
+                    <option value="3" ${scan.whtRate == 3 ? 'selected' : ''}>3%</option>
+                    <option value="5" ${scan.whtRate == 5 ? 'selected' : ''}>5%</option>
+                    <option value="10" ${scan.whtRate == 10 ? 'selected' : ''}>10%</option>
+                    <option value="15" ${scan.whtRate == 15 ? 'selected' : ''}>15%</option>
+                  </select>
+                </div>
+              </div>
+              ${scan.paymentTermsDays ? `<div class="review-field"><label>เงื่อนไขชำระ</label><span class="form-input" style="background:var(--gray-50)">${scan.paymentTermsDays} วัน</span></div>` : ''}
+              ${scan.extractedItems && scan.extractedItems.length > 0 ? `
+              <div style="margin-top:8px">
+                <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">รายการที่สกัดได้ (${scan.extractedItems.length} รายการ)</div>
+                <table style="width:100%;font-size:12px;border-collapse:collapse">
+                  <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th></tr>
+                  ${scan.extractedItems.map(it => `<tr style="border-bottom:1px solid var(--gray-100)"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td></tr>`).join('')}
+                </table>
+              </div>` : ''}
+            </div>
+
+            <div class="review-section">
               <div class="review-section-title">จับคู่ผู้ติดต่อ</div>
               <div class="contact-search-box" id="contactSearchBox">
                 <input type="text" class="form-input" id="contactSearchInput"
@@ -1022,8 +1082,47 @@
           }
 
           Layout.openModal('reviewModal');
+
+          // Load chart of accounts for dropdowns
+          this._loadAccountDropdowns(scan);
+
+          // WHT checkbox toggle
+          const whtCb = document.getElementById('revHasWht');
+          const whtRate = document.getElementById('revWhtRate');
+          if (whtCb) whtCb.onchange = () => { whtRate.disabled = !whtCb.checked; if (!whtCb.checked) whtRate.value = ''; };
+
         } catch (err) {
           Layout.toast('โหลดข้อมูลไม่สำเร็จ: ' + err.message, 'error');
+        }
+      },
+
+      async _loadAccountDropdowns(scan) {
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.get(`/api/companies/${cid}/accounting/chart-of-accounts?pageSize=500`);
+          const accounts = (res.data?.items || res.data || []);
+
+          const debitSel = document.getElementById('revDebitAccount');
+          const creditSel = document.getElementById('revCreditAccount');
+
+          const suggestedDebit = scan.suggestedAccounts?.debitAccountCode || '';
+          const suggestedCredit = scan.suggestedAccounts?.creditAccountCode || '';
+
+          const buildOptions = (selected) => {
+            let html = '<option value="">-- เลือกบัญชี --</option>';
+            for (const a of accounts) {
+              const sel = a.accountCode === selected ? 'selected' : '';
+              html += `<option value="${a.accountCode}" ${sel}>${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`;
+            }
+            return html;
+          };
+
+          if (debitSel) debitSel.innerHTML = buildOptions(suggestedDebit);
+          if (creditSel) creditSel.innerHTML = buildOptions(suggestedCredit);
+        } catch (err) {
+          const fallback = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
+          const d = document.getElementById('revDebitAccount'); if (d) d.innerHTML = fallback;
+          const c = document.getElementById('revCreditAccount'); if (c) c.innerHTML = fallback;
         }
       },
 
@@ -1092,6 +1191,11 @@
           subTotal: parseFloat(document.getElementById('revSubTotal').value) || null,
           vatAmount: parseFloat(document.getElementById('revVatAmount').value) || null,
           totalAmount: parseFloat(document.getElementById('revTotalAmount').value) || null,
+          expenseCategory: document.getElementById('revExpenseCategory').value || null,
+          debitAccountCode: document.getElementById('revDebitAccount').value || null,
+          creditAccountCode: document.getElementById('revCreditAccount').value || null,
+          hasWht: document.getElementById('revHasWht')?.checked || false,
+          whtRate: parseFloat(document.getElementById('revWhtRate').value) || null,
         };
 
         try {

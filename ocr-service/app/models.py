@@ -13,6 +13,16 @@ class LineItem(BaseModel):
     quantity: float | None = None
     unit_price: float | None = None
     amount: float | None = None
+    suggested_account_code: str | None = None
+
+
+class SuggestedAccounts(BaseModel):
+    debit_account_code: str | None = None
+    debit_account_name: str | None = None
+    credit_account_code: str | None = None
+    credit_account_name: str | None = None
+    vat_account_code: str | None = None
+    vat_account_name: str | None = None
 
 
 class OcrResult(BaseModel):
@@ -27,6 +37,11 @@ class OcrResult(BaseModel):
     vat_amount: float | None = None
     total_amount: float | None = None
     items: list[LineItem] = []
+    expense_category: str | None = None
+    suggested_accounts: SuggestedAccounts | None = None
+    has_wht: bool = False
+    wht_rate: float | None = None
+    payment_terms_days: int | None = None
     reasoning: str | None = None
     ocr_engine: str = "paddleocr"
     ai_engine: str | None = None

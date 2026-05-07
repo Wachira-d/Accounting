@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import OcrResult, CorrectionRequest, HealthResponse
+from .models import OcrResult, CorrectionRequest, HealthResponse, SuggestedAccounts, LineItem
 from .ocr_engine import extract_text, extract_text_from_pdf
 from .ai_engine import extract_with_fallback, check_ollama_health, AI_MODEL
 from .learning import save_correction, get_training_stats, export_for_finetuning
@@ -105,6 +105,12 @@ async def extract_document(file: UploadFile = File(...)):
     ai_result = await extract_with_fallback(raw_text)
 
     if ai_result:
+        suggested = ai_result.get("suggested_accounts")
+        sa = SuggestedAccounts(**suggested) if isinstance(suggested, dict) else None
+
+        items_raw = ai_result.get("items") or []
+        items = [LineItem(**it) if isinstance(it, dict) else it for it in items_raw]
+
         return OcrResult(
             raw_text=raw_text,
             document_type=ai_result.get("document_type"),
@@ -116,7 +122,12 @@ async def extract_document(file: UploadFile = File(...)):
             subtotal=ai_result.get("subtotal"),
             vat_amount=ai_result.get("vat_amount"),
             total_amount=ai_result.get("total_amount"),
-            items=[],
+            items=items,
+            expense_category=ai_result.get("expense_category"),
+            suggested_accounts=sa,
+            has_wht=bool(ai_result.get("has_wht", False)),
+            wht_rate=ai_result.get("wht_rate"),
+            payment_terms_days=ai_result.get("payment_terms_days"),
             reasoning=ai_result.get("reasoning"),
             ocr_engine="paddleocr",
             ai_engine=AI_MODEL if ai_result.get("reasoning") != "Rule-based extraction (AI unavailable)" else "rule-based",
