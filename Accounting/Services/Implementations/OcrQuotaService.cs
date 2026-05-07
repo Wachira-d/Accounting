@@ -9,8 +9,13 @@ namespace Accounting.Services.Implementations;
 public class OcrQuotaService : IOcrQuotaService
 {
     private readonly AccountingDbContext _db;
+    private readonly ILogger<OcrQuotaService> _logger;
 
-    public OcrQuotaService(AccountingDbContext db) => _db = db;
+    public OcrQuotaService(AccountingDbContext db, ILogger<OcrQuotaService> logger)
+    {
+        _db = db;
+        _logger = logger;
+    }
 
     public async Task<OcrQuotaStatus> GetQuotaStatusAsync(Guid companyId)
     {
@@ -30,12 +35,16 @@ public class OcrQuotaService : IOcrQuotaService
                 && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
             .SumAsync(p => p.PagesRemaining);
 
-        var totalAvailable = sub.MaxOcrPagesPerMonth - sub.CurrentMonthOcrPages + sub.OcrBonusPages + creditPages;
+        // Bonus pages expire if OcrBonusExpiresAt has passed
+        var effectiveBonus = (sub.OcrBonusExpiresAt == null || sub.OcrBonusExpiresAt > DateTime.UtcNow)
+            ? sub.OcrBonusPages : 0;
+
+        var totalAvailable = sub.MaxOcrPagesPerMonth - sub.CurrentMonthOcrPages + effectiveBonus + creditPages;
 
         return new OcrQuotaStatus(
             MaxPagesPerMonth: sub.MaxOcrPagesPerMonth,
             UsedThisMonth: sub.CurrentMonthOcrPages,
-            BonusPages: sub.OcrBonusPages,
+            BonusPages: effectiveBonus,
             CreditPagesRemaining: creditPages,
             TotalAvailable: Math.Max(0, totalAvailable),
             UsageResetDate: sub.UsageResetDate,
@@ -75,7 +84,8 @@ public class OcrQuotaService : IOcrQuotaService
             {
                 sub.CurrentMonthOcrPages++;
             }
-            else if (sub.OcrBonusPages > 0)
+            else if (sub.OcrBonusPages > 0
+                && (sub.OcrBonusExpiresAt == null || sub.OcrBonusExpiresAt > DateTime.UtcNow))
             {
                 sub.OcrBonusPages--;
             }
@@ -97,11 +107,16 @@ public class OcrQuotaService : IOcrQuotaService
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+
+            _logger.LogInformation(
+                "OCR quota consumed CompanyId={CompanyId} MonthlyUsed={MonthlyUsed}/{MonthlyMax} BonusRemaining={BonusRemaining}",
+                companyId, sub.CurrentMonthOcrPages, sub.MaxOcrPagesPerMonth, sub.OcrBonusPages);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
             await tx.RollbackAsync();
+            _logger.LogError(ex, "OCR quota consume failed CompanyId={CompanyId}", companyId);
             throw;
         }
     }
@@ -123,6 +138,9 @@ public class OcrQuotaService : IOcrQuotaService
         }
         // Note: not refunding to credit purchases — too complex to track which credit was debited
         await _db.SaveChangesAsync();
+
+        _logger.LogInformation("OCR quota refunded CompanyId={CompanyId} MonthlyUsed={MonthlyUsed}",
+            companyId, sub.CurrentMonthOcrPages);
     }
 
     // Kept for backward compat — delegates to atomic TryConsumeAsync

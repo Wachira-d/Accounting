@@ -109,6 +109,35 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Scan(Guid companyId, Guid fileAttachmentId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.ScanAsync(companyId, fileAttachmentId)));
 
+    /// <summary>
+    /// Re-process an existing scan without consuming additional quota.
+    /// Bounded by SiteSettings.OcrMaxRetriesPerScan to prevent abuse.
+    /// </summary>
+    [HttpPost("{scanId:guid}/retry")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Retry(Guid companyId, Guid scanId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.Id == scanId && r.CompanyId == companyId);
+        if (scan == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการสแกน"));
+
+        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
+        var maxRetries = settings?.OcrMaxRetriesPerScan ?? 1;
+        if (scan.RetryCount >= maxRetries)
+            return StatusCode(429, new ApiResponse<object>(false, null,
+                $"ใช้ retry ครบ {maxRetries} ครั้งแล้ว — กรุณาอัปโหลดใหม่ (ใช้โควต้า)"));
+
+        scan.RetryCount++;
+        scan.ScanStatus = "Processing";
+        await _db.SaveChangesAsync();
+
+        if (!scan.FileAttachmentId.HasValue)
+            return BadRequest(new ApiResponse<object>(false, null, "ไม่พบไฟล์ต้นฉบับ"));
+
+        var result = await _service.ScanAsync(companyId, scan.FileAttachmentId.Value);
+        return Ok(new ApiResponse<OcrResultResponse>(true, result, "Retry สำเร็จ (ไม่ใช้โควต้า)"));
+    }
+
     [HttpGet("{scanId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> GetResult(Guid companyId, Guid scanId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.GetResultAsync(companyId, scanId)));

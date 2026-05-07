@@ -49,6 +49,7 @@ public class Subscription : BaseEntity
     public long CurrentStorageUsed { get; set; }
     public int CurrentMonthOcrPages { get; set; }
     public int OcrBonusPages { get; set; }
+    public DateTime? OcrBonusExpiresAt { get; set; }
     public DateTime UsageResetDate { get; set; }
 
     // Payment

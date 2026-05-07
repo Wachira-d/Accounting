@@ -97,6 +97,11 @@ public class OcrService : IOcrService
         var ocrProvider = effectiveConfig.Provider;
         OcrExtractedData? extractedData = null;
 
+        var scanStartedAt = DateTime.UtcNow;
+        _logger.LogInformation(
+            "OCR scan started ScanId={ScanId} CompanyId={CompanyId} Provider={Provider} FileSize={FileSize} ContentType={ContentType}",
+            scanResult.Id, companyId, ocrProvider, file.FileSize, file.ContentType);
+
         try
         {
             string extractedText;
@@ -130,7 +135,9 @@ public class OcrService : IOcrService
                 extractedData = await AnalyzeWithZones(companyId, extractedText);
             }
 
-            // Math/confidence gateway — adjusts confidence based on business-rule violations
+            // Math/confidence gateway — adjusts confidence based on business-rule violations.
+            // Loads tunable thresholds from SiteSettings (admin-configurable).
+            var gatewayConfig = await LoadGatewayConfigAsync();
             var gatewayResult = OcrConfidenceGateway.Validate(
                 extractedData.Confidence,
                 extractedData.DocumentDate,
@@ -139,7 +146,8 @@ public class OcrService : IOcrService
                 extractedData.TotalAmount,
                 extractedData.VendorTaxId,
                 extractedData.BuyerTaxId,
-                extractedData.FieldConfidence.ToDictionary(kv => kv.Key, kv => (decimal)kv.Value));
+                extractedData.FieldConfidence.ToDictionary(kv => kv.Key, kv => (decimal)kv.Value),
+                config: gatewayConfig);
 
             extractedData.Confidence = gatewayResult.AdjustedConfidence;
             foreach (var w in gatewayResult.Warnings)
@@ -338,14 +346,44 @@ public class OcrService : IOcrService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "OCR processing failed for file {FileId}", fileAttachmentId);
+            _logger.LogError(ex,
+                "OCR scan failed ScanId={ScanId} CompanyId={CompanyId} FileId={FileId} Provider={Provider} ElapsedMs={ElapsedMs}",
+                scanResult.Id, companyId, fileAttachmentId, ocrProvider,
+                (int)(DateTime.UtcNow - scanStartedAt).TotalMilliseconds);
             scanResult.ScanStatus = "Failed";
             scanResult.ProcessedAt = DateTime.UtcNow;
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Error] {ex.Message}";
         }
 
         await _db.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "OCR scan finished ScanId={ScanId} CompanyId={CompanyId} Provider={Provider} Status={Status} Confidence={Confidence:P0} IsDuplicate={IsDuplicate} HasMatch={HasMatch} HasDocument={HasDocument} ElapsedMs={ElapsedMs}",
+            scanResult.Id, companyId, ocrProvider, scanResult.ScanStatus,
+            scanResult.Confidence, scanResult.IsDuplicate,
+            scanResult.MatchedContactId.HasValue, scanResult.CreatedDocumentId.HasValue,
+            (int)(DateTime.UtcNow - scanStartedAt).TotalMilliseconds);
         return MapToResponse(scanResult, extractedData);
     }
+
+    private async Task<OcrConfidenceGateway.GatewayConfig> LoadGatewayConfigAsync()
+    {
+        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (settings == null) return OcrConfidenceGateway.GatewayConfig.Default;
+        return new OcrConfidenceGateway.GatewayConfig
+        {
+            MaxPenalty = ClampPct(settings.OcrGatewayMaxPenalty, 0.20m, 1.0m, 0.60m),
+            MathTolerance = settings.OcrGatewayMathTolerance > 0 ? settings.OcrGatewayMathTolerance : 2.0m,
+            TaxIdPenalty = ClampPct(settings.OcrGatewayTaxIdPenalty, 0m, 1.0m, 0.15m),
+            MathPenalty = ClampPct(settings.OcrGatewayMathPenalty, 0m, 1.0m, 0.20m),
+            DatePenalty = ClampPct(settings.OcrGatewayDatePenalty, 0m, 1.0m, 0.15m),
+            VatRatePenalty = ClampPct(settings.OcrGatewayVatRatePenalty, 0m, 1.0m, 0.10m),
+            LowConfidencePenalty = ClampPct(settings.OcrGatewayLowConfidencePenalty, 0m, 1.0m, 0.05m),
+        };
+    }
+
+    private static decimal ClampPct(decimal value, decimal min, decimal max, decimal fallback)
+        => (value <= 0 || value > 1) ? fallback : Math.Clamp(value, min, max);
 
     private record EffectiveOcrConfig(string Provider, string? LocalServiceUrl, string? ApiKey, string? AzureEndpoint, decimal AutoCreateThreshold);
 

@@ -871,6 +871,7 @@
         if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สอนระบบ</button>`;
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; Debug</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${scan.id}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; Retry</button>`;
         }
         if (scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
@@ -985,6 +986,26 @@
       },
 
       // ==================== Review Modal ====================
+      async retryScan(scanId) {
+        if (!confirm('แกะข้อมูล OCR ใหม่อีกครั้ง? (ไม่ใช้โควต้า, จำกัดตามค่าที่ Admin ตั้งไว้)')) return;
+        try {
+          const res = await fetch(`/api/companies/${Layout.companyId}/ocr/${scanId}/retry`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+          });
+          const data = await res.json();
+          if (!data.success) {
+            Layout.toast(data.message || 'Retry ล้มเหลว', 'error');
+            return;
+          }
+          Layout.toast(data.message || 'Retry สำเร็จ', 'success');
+          this.loadScans();
+          this.loadQuota();
+        } catch (err) {
+          Layout.toast('Retry ล้มเหลว: ' + err.message, 'error');
+        }
+      },
+
       async openReview(scanId, options = {}) {
         const api = Layout.api();
         if (!api) return;

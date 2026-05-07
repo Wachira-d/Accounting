@@ -108,6 +108,11 @@ public class OcrScanResult : TenantEntity
     public string? DocumentType { get; set; }              // Invoice, Receipt, TaxInvoice, WHT
     public decimal Confidence { get; set; }
 
+    // Number of times this scan has been retried by the user/admin.
+    // Increments on retry; bounded by SiteSettings.OcrMaxRetriesPerScan.
+    // Retries do NOT consume additional quota (quota was charged on initial scan).
+    public int RetryCount { get; set; } = 0;
+
     // Extracted data
     public string? ExtractedVendorName { get; set; }
     public string? ExtractedVendorTaxId { get; set; }

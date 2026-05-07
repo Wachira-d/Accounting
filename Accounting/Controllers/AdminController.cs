@@ -1109,7 +1109,15 @@ public class AdminController : ControllerBase
             OcrFreePagesPro: s.OcrFreePagesPro,
             OcrFreePagesEnterprise: s.OcrFreePagesEnterprise,
             OcrCreditPricePerPage: s.OcrCreditPricePerPage,
-            OcrCreditMinPurchase: s.OcrCreditMinPurchase)));
+            OcrCreditMinPurchase: s.OcrCreditMinPurchase,
+            OcrGatewayMaxPenalty: s.OcrGatewayMaxPenalty,
+            OcrGatewayMathTolerance: s.OcrGatewayMathTolerance,
+            OcrGatewayTaxIdPenalty: s.OcrGatewayTaxIdPenalty,
+            OcrGatewayMathPenalty: s.OcrGatewayMathPenalty,
+            OcrGatewayDatePenalty: s.OcrGatewayDatePenalty,
+            OcrGatewayVatRatePenalty: s.OcrGatewayVatRatePenalty,
+            OcrGatewayLowConfidencePenalty: s.OcrGatewayLowConfidencePenalty,
+            OcrMaxRetriesPerScan: s.OcrMaxRetriesPerScan)));
     }
 
     [HttpPut("ocr-config")]
@@ -1133,8 +1141,26 @@ public class AdminController : ControllerBase
         if (req.OcrFreePagesEnterprise.HasValue) s.OcrFreePagesEnterprise = req.OcrFreePagesEnterprise.Value;
         if (req.OcrCreditPricePerPage.HasValue) s.OcrCreditPricePerPage = req.OcrCreditPricePerPage.Value;
         if (req.OcrCreditMinPurchase.HasValue) s.OcrCreditMinPurchase = req.OcrCreditMinPurchase.Value;
+        if (req.OcrGatewayMaxPenalty.HasValue) s.OcrGatewayMaxPenalty = req.OcrGatewayMaxPenalty.Value;
+        if (req.OcrGatewayMathTolerance.HasValue) s.OcrGatewayMathTolerance = req.OcrGatewayMathTolerance.Value;
+        if (req.OcrGatewayTaxIdPenalty.HasValue) s.OcrGatewayTaxIdPenalty = req.OcrGatewayTaxIdPenalty.Value;
+        if (req.OcrGatewayMathPenalty.HasValue) s.OcrGatewayMathPenalty = req.OcrGatewayMathPenalty.Value;
+        if (req.OcrGatewayDatePenalty.HasValue) s.OcrGatewayDatePenalty = req.OcrGatewayDatePenalty.Value;
+        if (req.OcrGatewayVatRatePenalty.HasValue) s.OcrGatewayVatRatePenalty = req.OcrGatewayVatRatePenalty.Value;
+        if (req.OcrGatewayLowConfidencePenalty.HasValue) s.OcrGatewayLowConfidencePenalty = req.OcrGatewayLowConfidencePenalty.Value;
+        if (req.OcrMaxRetriesPerScan.HasValue) s.OcrMaxRetriesPerScan = req.OcrMaxRetriesPerScan.Value;
+
+        // Track which fields changed (omit secrets — audit log shouldn't contain raw keys)
+        var changedFields = new List<string>();
+        if (req.AzureDiEndpoint != null) changedFields.Add("AzureDiEndpoint");
+        if (req.AzureDiApiKey != null) changedFields.Add("AzureDiApiKey:[redacted]");
+        if (req.OcrGoogleApiKey != null) changedFields.Add("OcrGoogleApiKey:[redacted]");
+        if (req.OcrTesseractApiKey != null) changedFields.Add("OcrTesseractApiKey:[redacted]");
+        if (req.AzureDiEnabled.HasValue) changedFields.Add($"AzureDiEnabled={req.AzureDiEnabled.Value}");
+        if (req.OcrProvider != null) changedFields.Add($"OcrProvider={req.OcrProvider}");
 
         await _db.SaveChangesAsync();
+        await LogAuditAsync(null, "OcrConfigUpdated", string.Join(", ", changedFields));
         return Ok(new ApiResponse<object>(true, null, "บันทึกการตั้งค่า OCR สำเร็จ"));
     }
 
@@ -1185,6 +1211,12 @@ public class AdminController : ControllerBase
     {
         var result = await _ocrQuota.ReviewCreditPurchaseAsync(
             purchaseId, req.Approve, req.Notes, User.Identity?.Name ?? "");
+
+        await LogAuditAsync(result.CompanyId,
+            req.Approve ? "OcrCreditApproved" : "OcrCreditRejected",
+            $"Pages: {result.PagesPurchased}, Amount: {result.AmountPaid:N2} THB, Notes: {req.Notes ?? "n/a"}",
+            entityId: purchaseId.ToString());
+
         return Ok(new ApiResponse<OcrCreditPurchaseResponse>(true, result,
             req.Approve ? "อนุมัติเครดิต OCR สำเร็จ" : "ปฏิเสธเครดิต OCR"));
     }
@@ -1223,9 +1255,34 @@ public class AdminController : ControllerBase
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบ Subscription"));
 
         sub.OcrBonusPages += req.Pages;
+        // Default to 12-month expiration when admin doesn't specify, to prevent
+        // perpetual bonus inflation across plan changes.
+        sub.OcrBonusExpiresAt = req.ExpiresAt ?? DateTime.UtcNow.AddMonths(12);
         await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<object>(true, new { sub.OcrBonusPages },
-            $"เพิ่มโบนัส {req.Pages} หน้าให้บริษัทสำเร็จ"));
+
+        await LogAuditAsync(companyId, "OcrBonusGranted",
+            $"Granted {req.Pages} bonus OCR pages (expires {sub.OcrBonusExpiresAt:yyyy-MM-dd}). Reason: {req.Reason ?? "n/a"}");
+
+        return Ok(new ApiResponse<object>(true,
+            new { sub.OcrBonusPages, sub.OcrBonusExpiresAt },
+            $"เพิ่มโบนัส {req.Pages} หน้าให้บริษัท (หมดอายุ {sub.OcrBonusExpiresAt:yyyy-MM-dd})"));
+    }
+
+    private async Task LogAuditAsync(Guid? companyId, string action, string details, string? entityId = null)
+    {
+        _db.AuditLogs.Add(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = JwtHelper.GetUserIdFromClaims(User),
+            UserEmail = User.Identity?.Name ?? "system-admin",
+            Action = AuditAction.Update,
+            EntityType = $"OcrAdmin.{action}",
+            EntityId = entityId,
+            NewValues = details,
+            IpAddress = HttpContext?.Connection?.RemoteIpAddress?.ToString(),
+            UserAgent = HttpContext?.Request?.Headers["User-Agent"].ToString(),
+        });
+        await _db.SaveChangesAsync();
     }
 
     // ===== OCR Self-Correction & Accuracy =====
@@ -1259,7 +1316,11 @@ public record OcrConfigResponse(
     string? OcrProvider, string? OcrLocalServiceUrl, bool OcrHasGoogleKey, bool OcrHasTesseractKey,
     decimal OcrAutoCreateThreshold,
     int OcrFreePagesTrial, int OcrFreePagesBasic, int OcrFreePagesPro, int OcrFreePagesEnterprise,
-    decimal OcrCreditPricePerPage, int OcrCreditMinPurchase);
+    decimal OcrCreditPricePerPage, int OcrCreditMinPurchase,
+    decimal OcrGatewayMaxPenalty, decimal OcrGatewayMathTolerance,
+    decimal OcrGatewayTaxIdPenalty, decimal OcrGatewayMathPenalty,
+    decimal OcrGatewayDatePenalty, decimal OcrGatewayVatRatePenalty,
+    decimal OcrGatewayLowConfidencePenalty, int OcrMaxRetriesPerScan);
 
 public record UpdateOcrConfigRequest(
     string? AzureDiEndpoint = null, string? AzureDiApiKey = null,
@@ -1270,7 +1331,11 @@ public record UpdateOcrConfigRequest(
     decimal? OcrAutoCreateThreshold = null,
     int? OcrFreePagesTrial = null, int? OcrFreePagesBasic = null,
     int? OcrFreePagesPro = null, int? OcrFreePagesEnterprise = null,
-    decimal? OcrCreditPricePerPage = null, int? OcrCreditMinPurchase = null);
+    decimal? OcrCreditPricePerPage = null, int? OcrCreditMinPurchase = null,
+    decimal? OcrGatewayMaxPenalty = null, decimal? OcrGatewayMathTolerance = null,
+    decimal? OcrGatewayTaxIdPenalty = null, decimal? OcrGatewayMathPenalty = null,
+    decimal? OcrGatewayDatePenalty = null, decimal? OcrGatewayVatRatePenalty = null,
+    decimal? OcrGatewayLowConfidencePenalty = null, int? OcrMaxRetriesPerScan = null);
 
 public record ReviewOcrCreditRequest(bool Approve, string? Notes = null);
-public record GrantOcrBonusRequest(int Pages);
+public record GrantOcrBonusRequest(int Pages, DateTime? ExpiresAt = null, string? Reason = null);

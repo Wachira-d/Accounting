@@ -104,4 +104,21 @@ public class SiteSettings : BaseEntity
     // Idempotency marker for daily OCR maintenance — prevents double-runs
     // when BackgroundJobService cycles multiple times during the maintenance window.
     public DateTime? LastOcrMaintenanceAt { get; set; }
+
+    // ===== OCR Confidence Gateway Tuning =====
+    // Tune these per-business-context: e-commerce with foreign invoices may want
+    // higher math tolerance; B2B with strict TaxId requirements may want larger
+    // checksum penalty. All values clamped to safe ranges in code.
+    public decimal OcrGatewayMaxPenalty { get; set; } = 0.60m;
+    public decimal OcrGatewayMathTolerance { get; set; } = 2.0m;
+    public decimal OcrGatewayTaxIdPenalty { get; set; } = 0.15m;
+    public decimal OcrGatewayMathPenalty { get; set; } = 0.20m;
+    public decimal OcrGatewayDatePenalty { get; set; } = 0.15m;
+    public decimal OcrGatewayVatRatePenalty { get; set; } = 0.10m;
+    public decimal OcrGatewayLowConfidencePenalty { get; set; } = 0.05m;
+
+    // Maximum number of times OcrService.ScanAsync may retry a single file.
+    // Each retry consumes one quota page UNLESS Azure DI auto-falls-back to local
+    // (in which case the original quota debit covers both attempts).
+    public int OcrMaxRetriesPerScan { get; set; } = 1;
 }
