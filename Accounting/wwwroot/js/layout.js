@@ -357,6 +357,7 @@ const Layout = {
     { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools' },
+    { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan' },
 
     { section: 'ตั้งค่า' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team' },

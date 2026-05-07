@@ -1347,6 +1347,9 @@ public class AccountingDbContext : DbContext
             e.Property(o => o.ExtractedSubTotal).HasPrecision(18, 2);
             e.Property(o => o.ExtractedVatAmount).HasPrecision(18, 2);
             e.Property(o => o.ExtractedTotalAmount).HasPrecision(18, 2);
+            e.Property(o => o.FileHash).HasMaxLength(64);
+            e.HasIndex(o => new { o.CompanyId, o.FileHash });
+            e.HasIndex(o => new { o.CompanyId, o.ExtractedDocumentNumber, o.ExtractedTotalAmount });
         });
 
         // ===== CustomReport =====

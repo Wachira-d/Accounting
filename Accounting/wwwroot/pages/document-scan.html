@@ -388,6 +388,7 @@
         </div>
         <div class="modal-footer" id="reviewFooter">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
+          <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()">💾 บันทึกการแก้ไข</button>
           <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()">สร้างเอกสาร</button>
         </div>
       </div>
@@ -950,6 +951,11 @@
                   <option value="TaxInvoice" ${scan.documentType === 'TaxInvoice' ? 'selected' : ''}>ใบกำกับภาษี</option>
                   <option value="Invoice" ${scan.documentType === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้</option>
                   <option value="Receipt" ${scan.documentType === 'Receipt' ? 'selected' : ''}>ใบเสร็จ</option>
+                  <option value="CreditNote" ${scan.documentType === 'CreditNote' ? 'selected' : ''}>ใบลดหนี้</option>
+                  <option value="DebitNote" ${scan.documentType === 'DebitNote' ? 'selected' : ''}>ใบเพิ่มหนี้</option>
+                  <option value="PurchaseOrder" ${scan.documentType === 'PurchaseOrder' ? 'selected' : ''}>ใบสั่งซื้อ</option>
+                  <option value="WHT" ${scan.documentType === 'WHT' ? 'selected' : ''}>หนังสือรับรอง 50 ทวิ</option>
+                  <option value="Other" ${scan.documentType === 'Other' ? 'selected' : ''}>อื่นๆ</option>
                 </select>
               </div>
               <div class="review-field">
@@ -1065,6 +1071,39 @@
           } catch (err) {
             Layout.toast('จับคู่ไม่สำเร็จ: ' + err.message, 'error');
           }
+        }
+      },
+
+      async saveCorrection() {
+        if (!this._reviewScan) return;
+        const api = Layout.api();
+        if (!api) return;
+
+        const btn = document.getElementById('reviewSaveBtn');
+        btn.disabled = true;
+        btn.textContent = 'กำลังบันทึก...';
+
+        const correction = {
+          documentType: document.getElementById('revDocType').value || null,
+          vendorName: document.getElementById('revVendorName').value || null,
+          vendorTaxId: document.getElementById('revVendorTaxId').value || null,
+          documentNumber: document.getElementById('revDocNumber').value || null,
+          documentDate: document.getElementById('revDate').value || null,
+          subTotal: parseFloat(document.getElementById('revSubTotal').value) || null,
+          vatAmount: parseFloat(document.getElementById('revVatAmount').value) || null,
+          totalAmount: parseFloat(document.getElementById('revTotalAmount').value) || null,
+        };
+
+        try {
+          await api.ocrCorrect(this._reviewScan.id, correction);
+          Layout.toast('บันทึกการแก้ไขสำเร็จ — ระบบเรียนรู้จากการแก้ไขของคุณ');
+          btn.textContent = '✅ บันทึกแล้ว';
+          btn.className = 'btn btn-success';
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('บันทึกไม่สำเร็จ: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = '💾 บันทึกการแก้ไข';
         }
       },
 
