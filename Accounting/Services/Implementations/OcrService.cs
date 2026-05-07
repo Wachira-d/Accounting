@@ -583,12 +583,13 @@ public class OcrService : IOcrService
 
         var totalCount = await query.CountAsync();
 
-        var items = await query
+        var rows = await query
             .OrderByDescending(r => r.CreatedAt)
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
-            .Select(r => MapToResponse(r))
             .ToListAsync();
+
+        var items = rows.Select(r => MapToResponse(r)).ToList();
 
         return new PagedResponse<OcrResultResponse>(
             items, totalCount, request.Page, request.PageSize,
