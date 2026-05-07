@@ -79,7 +79,10 @@ public class CompanyService : ICompanyService
             .FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
-        var cu = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        var cu = await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => new { cu.Role })
+            .FirstOrDefaultAsync();
         if (cu == null) throw new UnauthorizedAccessException("ไม่มีสิทธิ์เข้าถึงบริษัทนี้");
 
         return MapToResponse(company) with { MyRole = cu.Role.ToString() };
@@ -87,8 +90,12 @@ public class CompanyService : ICompanyService
 
     public async Task<List<CompanyResponse>> GetUserCompaniesAsync(Guid userId)
     {
+        // Project only the columns we need so a missing CompanyRoleId column
+        // (e.g. before DatabaseMigrationHelper has applied the new migration)
+        // can never break the company-list endpoint.
         var companyUsers = await _db.CompanyUsers
             .Where(cu => cu.UserId == userId)
+            .Select(cu => new { cu.CompanyId, cu.Role })
             .ToListAsync();
 
         var companyIds = companyUsers.Select(cu => cu.CompanyId).ToList();

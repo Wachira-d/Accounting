@@ -64,19 +64,46 @@ public class TenantAccessMiddleware
             return;
         }
 
-        // Check user has access to this company
-        var companyUser = await db.CompanyUsers
-            .FirstOrDefaultAsync(cu => cu.CompanyId == companyId.Value && cu.UserId == userId.Value);
-
-        if (companyUser == null)
+        // Check user has access to this company.
+        // Project to a minimal shape so a missing CompanyRoleId column (e.g. before
+        // DatabaseMigrationHelper has applied the new migration) cannot 500 every request.
+        Guid? companyRoleId = null;
+        UserRole? userRole = null;
+        try
         {
-            context.Response.StatusCode = 403;
-            await context.Response.WriteAsJsonAsync(new { success = false, message = "ไม่มีสิทธิ์เข้าถึงบริษัทนี้" });
-            return;
+            var row = await db.CompanyUsers
+                .Where(cu => cu.CompanyId == companyId.Value && cu.UserId == userId.Value)
+                .Select(cu => new { cu.Role, cu.CompanyRoleId })
+                .FirstOrDefaultAsync();
+            if (row == null)
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { success = false, message = "ไม่มีสิทธิ์เข้าถึงบริษัทนี้" });
+                return;
+            }
+            userRole = row.Role;
+            companyRoleId = row.CompanyRoleId;
+        }
+        catch
+        {
+            // Schema may be mid-migration (CompanyRoleId column not yet added).
+            // Fall back to a query that doesn't touch the new column so users can
+            // still access their companies while the auto-migration catches up.
+            var fallback = await db.CompanyUsers
+                .Where(cu => cu.CompanyId == companyId.Value && cu.UserId == userId.Value)
+                .Select(cu => new { cu.Role })
+                .FirstOrDefaultAsync();
+            if (fallback == null)
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { success = false, message = "ไม่มีสิทธิ์เข้าถึงบริษัทนี้" });
+                return;
+            }
+            userRole = fallback.Role;
         }
 
-        context.Items["UserRole"] = companyUser.Role;
-        context.Items["CompanyRoleId"] = companyUser.CompanyRoleId;
+        context.Items["UserRole"] = userRole;
+        context.Items["CompanyRoleId"] = companyRoleId;
 
         context.Items["CompanyId"] = companyId.Value;
         context.Items["UserId"] = userId.Value;
