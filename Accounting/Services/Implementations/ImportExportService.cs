@@ -331,9 +331,9 @@ public class ImportExportService : IImportExportService
         else
         {
             var series = await _db.NumberSeries
-                .FirstOrDefaultAsync(n => n.CompanyId == companyId && n.EntityType == "JournalEntry");
-            var nextNum = (series?.LastNumber ?? 0) + 1;
-            if (series != null) series.LastNumber = nextNum;
+                .FirstOrDefaultAsync(n => n.CompanyId == companyId && n.IsActive && n.Prefix == "JV");
+            var nextNum = (series?.CurrentNumber ?? 0) + 1;
+            if (series != null) series.CurrentNumber = nextNum;
 
             var entry = new JournalEntry
             {
@@ -342,7 +342,7 @@ public class ImportExportService : IImportExportService
                 EntryDate = date,
                 Description = description,
                 Reference = reference,
-                ContactId = contactId,
+                Note = contactId.HasValue ? $"ContactId:{contactId}" : null,
                 Status = JournalEntryStatus.Draft,
                 CreatedBy = performedBy,
                 Lines = new List<JournalEntryLine>

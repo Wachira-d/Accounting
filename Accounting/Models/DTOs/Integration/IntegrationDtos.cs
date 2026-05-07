@@ -214,17 +214,17 @@ public record OutboundContactResponse(
     string ContactType, bool IsCustomer, bool IsSupplier,
     string? Address, string? Phone, string? Email,
     DateTime CreatedAt,
-    string? BranchName = null,
-    string? BuildingNumber = null,
-    string? BuildingName = null,
-    string? StreetName = null,
-    string? SubDistrict = null,
-    string? District = null,
-    string? Province = null,
-    string? PostalCode = null,
-    string? CountryCode = null,
-    string? ContactPerson = null,
-    bool IsActive = true);
+    string? BranchName,
+    string? BuildingNumber,
+    string? BuildingName,
+    string? StreetName,
+    string? SubDistrict,
+    string? District,
+    string? Province,
+    string? PostalCode,
+    string? CountryCode,
+    string? ContactPerson,
+    bool IsActive);
 
 public record OutboundPaymentResponse(
     Guid Id, string PaymentNumber, Guid DocumentId, string? DocumentNumber,
