@@ -93,7 +93,10 @@ public class OcrService : IOcrService
             return MapToResponse(scanResult);
         }
 
-        var effectiveConfig = await GetEffectiveOcrConfigAsync();
+        // Load SiteSettings ONCE per scan — feeds gateway config + provider routing + Azure DI.
+        // Avoids 3 separate roundtrips for the same single-row table.
+        var siteSettings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+        var effectiveConfig = BuildEffectiveOcrConfig(siteSettings);
         var ocrProvider = effectiveConfig.Provider;
         OcrExtractedData? extractedData = null;
 
@@ -108,7 +111,7 @@ public class OcrService : IOcrService
 
             if (ocrProvider == "azure-di" || ocrProvider == "azuredi")
             {
-                var azureResult = await ExtractWithAzureDiAsync(companyId, file);
+                var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)
                 {
                     extractedText = azureResult.Text;
@@ -135,9 +138,8 @@ public class OcrService : IOcrService
                 extractedData = await AnalyzeWithZones(companyId, extractedText);
             }
 
-            // Math/confidence gateway — adjusts confidence based on business-rule violations.
-            // Loads tunable thresholds from SiteSettings (admin-configurable).
-            var gatewayConfig = await LoadGatewayConfigAsync();
+            // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
+            var gatewayConfig = BuildGatewayConfig(siteSettings);
             var gatewayResult = OcrConfidenceGateway.Validate(
                 extractedData.Confidence,
                 extractedData.DocumentDate,
@@ -239,13 +241,17 @@ public class OcrService : IOcrService
                 }
             }
 
-            // If the seller is our own company, the real vendor is the buyer
+            // If the seller is our own company, the real vendor is the buyer.
+            // Project just the TaxId column (not full Company entity) for efficiency.
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId) || !string.IsNullOrEmpty(extractedData.BuyerTaxId))
             {
-                var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
-                if (company != null && !string.IsNullOrEmpty(company.TaxId))
+                var ourTaxId = await _db.Companies
+                    .Where(c => c.Id == companyId)
+                    .Select(c => c.TaxId)
+                    .FirstOrDefaultAsync();
+                if (!string.IsNullOrEmpty(ourTaxId))
                 {
-                    if (extractedData.VendorTaxId == company.TaxId && !string.IsNullOrEmpty(extractedData.BuyerName))
+                    if (extractedData.VendorTaxId == ourTaxId && !string.IsNullOrEmpty(extractedData.BuyerName))
                     {
                         // Seller = our company → actual vendor is the buyer
                         extractedData.VendorName = extractedData.BuyerName;
@@ -366,9 +372,8 @@ public class OcrService : IOcrService
         return MapToResponse(scanResult, extractedData);
     }
 
-    private async Task<OcrConfidenceGateway.GatewayConfig> LoadGatewayConfigAsync()
+    private static OcrConfidenceGateway.GatewayConfig BuildGatewayConfig(SiteSettings? settings)
     {
-        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
         if (settings == null) return OcrConfidenceGateway.GatewayConfig.Default;
         return new OcrConfidenceGateway.GatewayConfig
         {
@@ -387,9 +392,8 @@ public class OcrService : IOcrService
 
     private record EffectiveOcrConfig(string Provider, string? LocalServiceUrl, string? ApiKey, string? AzureEndpoint, decimal AutoCreateThreshold);
 
-    private async Task<EffectiveOcrConfig> GetEffectiveOcrConfigAsync()
+    private EffectiveOcrConfig BuildEffectiveOcrConfig(SiteSettings? siteSettings)
     {
-        var siteSettings = await _db.SiteSettings.FirstOrDefaultAsync();
         return new EffectiveOcrConfig(
             Provider: (siteSettings?.OcrProvider ?? _configuration["Ocr:Provider"] ?? "local").ToLower(),
             LocalServiceUrl: siteSettings?.OcrLocalServiceUrl ?? _configuration["Ocr:LocalServiceUrl"] ?? "http://localhost:8501",
@@ -400,7 +404,7 @@ public class OcrService : IOcrService
 
     private record AzureExtractionResult(bool Success, string Text, OcrExtractedData Data, string? Error);
 
-    private async Task<AzureExtractionResult> ExtractWithAzureDiAsync(Guid companyId, FileAttachment file)
+    private async Task<AzureExtractionResult> ExtractWithAzureDiAsync(Guid companyId, FileAttachment file, SiteSettings? siteSettings)
     {
         if (!System.IO.File.Exists(file.StoragePath))
             return new AzureExtractionResult(false, "", new OcrExtractedData(), "Source file missing");
@@ -412,7 +416,7 @@ public class OcrService : IOcrService
         if (!preflight.Ok)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), preflight.ErrorMessage);
 
-        var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType);
+        var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType, siteSettings);
         if (azureResult == null)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), "Azure DI not enabled or not configured");
         if (!azureResult.Success)

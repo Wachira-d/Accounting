@@ -60,16 +60,23 @@ public class OcrQuotaService : IOcrQuotaService
 
     public async Task<bool> TryConsumeAsync(Guid companyId)
     {
-        // Use serializable isolation to prevent two parallel scans from both
-        // passing the availability check and over-consuming quota.
+        // ReadCommitted + explicit FOR UPDATE row-level lock — narrower scope than
+        // Serializable (which locks the whole table predicate). PostgreSQL row lock
+        // serializes only concurrent updates to the SAME subscription row, allowing
+        // other tenants' scans to proceed in parallel.
         using var tx = await _db.Database.BeginTransactionAsync(
-            System.Data.IsolationLevel.Serializable);
+            System.Data.IsolationLevel.ReadCommitted);
         try
         {
             var sub = await _db.Subscriptions
-                .FirstOrDefaultAsync(s => s.CompanyId == companyId
-                    && s.Status != SubscriptionStatus.Cancelled
-                    && s.Status != SubscriptionStatus.Suspended);
+                .FromSqlInterpolated($@"
+                    SELECT * FROM ""Subscriptions""
+                    WHERE ""CompanyId"" = {companyId}
+                      AND ""Status"" != {(int)SubscriptionStatus.Cancelled}
+                      AND ""Status"" != {(int)SubscriptionStatus.Suspended}
+                      AND ""IsDeleted"" = false
+                    FOR UPDATE")
+                .FirstOrDefaultAsync();
             if (sub == null) return false;
 
             // Lazy monthly reset — if we've crossed the reset boundary, zero usage now
@@ -223,22 +230,18 @@ public class OcrQuotaService : IOcrQuotaService
     public async Task ResetMonthlyUsageAsync()
     {
         // Idempotent — only resets subs whose UsageResetDate has passed.
-        // Safe to call multiple times within the same day.
+        // Direct SQL UPDATE — no entity materialization for thousands of subs.
         var now = DateTime.UtcNow;
         var startOfNextMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
-        var subsToReset = await _db.Subscriptions
+        var resetCount = await _db.Subscriptions
             .Where(s => s.UsageResetDate <= now)
-            .ToListAsync();
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.CurrentMonthOcrPages, 0)
+                .SetProperty(x => x.CurrentMonthDocuments, 0)
+                .SetProperty(x => x.CurrentMonthJournalEntries, 0)
+                .SetProperty(x => x.UsageResetDate, startOfNextMonth));
 
-        foreach (var sub in subsToReset)
-        {
-            sub.CurrentMonthOcrPages = 0;
-            sub.CurrentMonthDocuments = 0;
-            sub.CurrentMonthJournalEntries = 0;
-            sub.UsageResetDate = startOfNextMonth;
-        }
-
-        await _db.SaveChangesAsync();
+        _logger.LogInformation("Monthly usage reset for {Count} subscriptions", resetCount);
     }
 
     private static OcrCreditPurchaseResponse MapToResponse(OcrCreditPurchase p) => new(

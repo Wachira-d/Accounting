@@ -930,6 +930,35 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "RetryCount" integer NOT NULL DEFAULT 0;
             """,
+
+            // ===== Performance indexes — added after audit identified hot-path query slowdowns =====
+            // 60-second pre-upload duplicate check (OcrController.UploadAndScan):
+            // covers (CompanyId + FileHash + CreatedAt) for the most-recent-duplicate lookup.
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrScanResults_CompanyId_FileHash_CreatedAt"
+            ON "OcrScanResults" ("CompanyId", "FileHash", "CreatedAt");
+            """,
+            // Self-correction maintenance scans by IsNegativeExample + LastConfirmedAt:
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrLearnedPatterns_IsNegativeExample_LastConfirmedAt"
+            ON "OcrLearnedPatterns" ("IsNegativeExample", "LastConfirmedAt");
+            """,
+            // OcrCreditPurchases SUM aggregation in GetQuotaStatusAsync filters (Status, ExpiresAt, PagesRemaining):
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrCreditPurchases_Status_ExpiresAt"
+            ON "OcrCreditPurchases" ("Status", "ExpiresAt") WHERE "PagesRemaining" > 0;
+            """,
+            // Documents.RelatedDocumentId — used for cycle detection in ConvertDocumentAsync
+            // and for the "show child documents" UI in document chain rendering:
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_RelatedDocumentId"
+            ON "Documents" ("RelatedDocumentId") WHERE "RelatedDocumentId" IS NOT NULL;
+            """,
+            // Documents.RevenueContractId — used for "list invoices for contract" lookups:
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_RevenueContractId"
+            ON "Documents" ("RevenueContractId") WHERE "RevenueContractId" IS NOT NULL;
+            """,
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "IsDuplicate" boolean NOT NULL DEFAULT false;
             """,

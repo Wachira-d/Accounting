@@ -25,9 +25,14 @@ public class AzureDocumentIntelligenceService
         _logger = logger;
     }
 
-    public async Task<AzureDiResult?> AnalyzeAsync(byte[] fileBytes, string contentType, CancellationToken ct = default)
+    /// <summary>
+    /// Analyze a document using Azure DI. Caller may pass pre-loaded SiteSettings to
+    /// avoid a redundant DB roundtrip (OcrService.ScanAsync already loads it).
+    /// </summary>
+    public async Task<AzureDiResult?> AnalyzeAsync(byte[] fileBytes, string contentType,
+        Models.Entities.SiteSettings? settings = null, CancellationToken ct = default)
     {
-        var settings = await _db.SiteSettings.FirstOrDefaultAsync(ct);
+        settings ??= await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         if (settings == null || !settings.AzureDiEnabled
             || string.IsNullOrEmpty(settings.AzureDiEndpoint)
             || string.IsNullOrEmpty(settings.AzureDiApiKey))
