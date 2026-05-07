@@ -109,8 +109,8 @@
         const m = parseInt(document.getElementById('fMonth').value);
         const start = new Date(y, m - 1, 1);
         const end = new Date(y, m, 0);
-        document.getElementById('fStart').value = start.toISOString().split('T')[0];
-        document.getElementById('fEnd').value = end.toISOString().split('T')[0];
+        document.getElementById('fStart').value = Layout.toDateInput(start);
+        document.getElementById('fEnd').value = Layout.toDateInput(end);
         const months = ['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
         document.getElementById('fName').value = `${months[m]} ${y}`;
       },

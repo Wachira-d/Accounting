@@ -104,7 +104,7 @@
       async init() {
         if (!Layout.init('reports')) return;
         Layout.setTitle('รายงานการเงิน');
-        const today = new Date().toISOString().split('T')[0];
+        const today = Layout.toDateInput(new Date());
         const firstDay = today.substring(0,8) + '01';
         document.getElementById('asOfDate').value = today;
         document.getElementById('fromDate').value = firstDay;

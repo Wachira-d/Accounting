@@ -118,8 +118,8 @@
       async init() {
         if (!Layout.init('pos-reports')) return;
         Layout.setTitle('รายงาน POS');
-        const today = new Date().toISOString().slice(0,10);
-        const weekAgo = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+        const today = Layout.toDateInput(new Date());
+        const weekAgo = Layout.toDateInput(new Date(Date.now() - 7*86400000));
         document.getElementById('dateFrom').value = weekAgo;
         document.getElementById('dateTo').value = today;
         await this.load();

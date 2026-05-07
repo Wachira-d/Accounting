@@ -697,7 +697,7 @@
         if (expGroup) expGroup.style.display = isExpense ? '' : 'none';
         // Pre-select first option of the correct side
         sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
-        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
@@ -1088,7 +1088,7 @@
         try {
           await api.createPayment({
             documentId: docId,
-            paymentDate: new Date().toISOString().split('T')[0],
+            paymentDate: Layout.toDateInput(new Date()),
             amount: parsed,
             paymentMethod: 'Transfer'
           });

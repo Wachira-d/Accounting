@@ -176,7 +176,7 @@
         document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
         document.getElementById('fName').value = '';
         document.getElementById('fDesc').value = '';
-        document.getElementById('fStart').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fStart').value = Layout.toDateInput(new Date());
         document.getElementById('fEnd').value = '';
         document.getElementById('fBudget').value = '';
         document.getElementById('fContract').value = '';
@@ -316,7 +316,7 @@
         document.getElementById('taskProjectId').value = id;
         document.getElementById('taskName').value = '';
         document.getElementById('taskDesc').value = '';
-        document.getElementById('taskStart').value = new Date().toISOString().split('T')[0];
+        document.getElementById('taskStart').value = Layout.toDateInput(new Date());
         document.getElementById('taskEnd').value = '';
         Layout.openModal('taskModal');
       },
@@ -337,7 +337,7 @@
         document.getElementById('costProjectId').value = id;
         document.getElementById('costDesc').value = '';
         document.getElementById('costAmount').value = '';
-        document.getElementById('costDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('costDate').value = Layout.toDateInput(new Date());
         Layout.openModal('costModal');
       },
       async saveCost() {

@@ -157,7 +157,7 @@
         const now = new Date();
         const y = now.getFullYear();
         document.getElementById('fromDate').value = `${y}-01-01`;
-        document.getElementById('toDate').value = now.toISOString().split('T')[0];
+        document.getElementById('toDate').value = Layout.toDateInput(now);
         // Render export buttons in header
         const holder = document.getElementById('pageActions');
         if (holder) holder.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportData(f)');

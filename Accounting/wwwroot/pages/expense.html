@@ -137,7 +137,7 @@
         document.getElementById('formTitle').textContent = 'สร้างใบเบิกค่าใช้จ่าย';
         document.getElementById('fId').value = '';
         document.getElementById('fTitle').value = '';
-        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDesc').value = '';
         document.getElementById('linesBody').innerHTML = '';
         document.getElementById('fTotal').textContent = '0.00';

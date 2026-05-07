@@ -745,7 +745,7 @@
         printWin.document.close();
       },
       addLine() {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = Layout.toDateInput(new Date());
         const row = document.createElement('tr');
         row.innerHTML = `
           <td><select class="form-select" data-f="code" style="font-size:12px"><option value="1">40(1) เงินเดือน</option><option value="2">40(2) รับจ้าง</option><option value="3">40(3) ค่าลิขสิทธิ์</option><option value="5">40(5) ค่าเช่า</option><option value="6">40(6) วิชาชีพ</option><option value="8">40(8) อื่นๆ</option></select></td>
@@ -875,7 +875,7 @@
           lines.push({
             incomeTypeCode: row.querySelector('[data-f="code"]').value,
             incomeDescription: '',
-            paymentDate: date || new Date().toISOString().slice(0, 10),
+            paymentDate: date || Layout.toDateInput(new Date()),
             incomeAmount: income,
             taxRate: parseFloat(row.querySelector('[data-f="rate"]').value) || 0,
             taxAmount: parseFloat(row.querySelector('[data-f="tax"]').value) || 0,

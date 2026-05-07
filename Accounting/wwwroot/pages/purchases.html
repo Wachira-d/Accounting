@@ -334,7 +334,7 @@
         document.getElementById('formTitle').textContent = titles[docType] || 'สร้างเอกสาร';
         document.getElementById('fDocType').value = docType || 'PurchaseOrder';
         document.getElementById('fDocType').disabled = false;
-        document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';

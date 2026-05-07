@@ -41,7 +41,7 @@
       init() {
         if (!Layout.init('aging')) return;
         Layout.setTitle('รายงานอายุลูกหนี้/เจ้าหนี้');
-        document.getElementById('asOfDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('asOfDate').value = Layout.toDateInput(new Date());
       },
       setType(type, el) {
         this.reportType = type;
