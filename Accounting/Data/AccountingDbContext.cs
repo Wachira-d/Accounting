@@ -1369,6 +1369,7 @@ public class AccountingDbContext : DbContext
             e.Property(o => o.ExtractedVatAmount).HasPrecision(18, 2);
             e.Property(o => o.ExtractedTotalAmount).HasPrecision(18, 2);
             e.Property(o => o.FileHash).HasMaxLength(64);
+            e.Property(o => o.WhtRate).HasPrecision(5, 2);
             e.HasIndex(o => new { o.CompanyId, o.FileHash });
             e.HasIndex(o => new { o.CompanyId, o.ExtractedDocumentNumber, o.ExtractedTotalAmount });
         });

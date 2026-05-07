@@ -912,6 +912,23 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "DuplicateOfScanId" uuid NULL;
             """,
 
+            // ===== OcrScanResults: expense/account suggestion fields =====
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExpenseCategory" text NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedAccountsJson" text NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "HasWht" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "WhtRate" numeric(5,2) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PaymentTermsDays" integer NULL;
+            """,
+
             // ===== Custom Roles & Per-Menu Permissions (per-company RBAC) =====
             // Each company can define its own roles and assign per-menu access.
             // CompanyUsers.CompanyRoleId is nullable so existing members default
