@@ -1290,6 +1290,25 @@ public class DocumentService : IDocumentService
                 $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
         }
 
+        // Cycle detection — walk the RelatedDocumentId chain upwards from source.
+        // If any ancestor has the same DocumentType as targetType, block to prevent
+        // A→B→A (or A→B→C→A) loops that would corrupt audit trail and lookups.
+        var ancestorIds = new HashSet<Guid>();
+        var cursor = source.RelatedDocumentId;
+        while (cursor.HasValue && ancestorIds.Count < 20) // 20-deep cap as safety
+        {
+            if (!ancestorIds.Add(cursor.Value)) break; // already visited — pre-existing cycle
+            var ancestor = await _db.Documents
+                .Where(d => d.Id == cursor.Value && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentType, d.RelatedDocumentId, d.DocumentNumber })
+                .FirstOrDefaultAsync();
+            if (ancestor == null) break;
+            if (ancestor.DocumentType == targetType)
+                throw new InvalidOperationException(
+                    $"ตรวจพบวงกลมการแปลง: เอกสาร {ancestor.DocumentNumber} ({ancestor.DocumentType}) เป็นบรรพบุรุษของเอกสารต้นทางอยู่แล้ว");
+            cursor = ancestor.RelatedDocumentId;
+        }
+
         // For derivative types that adjust source's balance, source must be approved
         // and have outstanding balance. (CN/DN/Receipt validation happens at approval
         // via ApplySourceDocumentAdjustmentsAsync, but warn earlier for better UX.)
@@ -1353,16 +1372,37 @@ public class DocumentService : IDocumentService
 
         foreach (var src in sourceAttachments)
         {
+            // Copy the physical file so child documents own their own copy. This prevents
+            // orphaned StoragePaths if the parent is later purged. Storage cost is the
+            // tradeoff but it avoids 404s on detail views and keeps audit trail intact.
+            var newStoragePath = src.StoragePath;
+            try
+            {
+                if (!string.IsNullOrEmpty(src.StoragePath) && System.IO.File.Exists(src.StoragePath))
+                {
+                    var dir = Path.GetDirectoryName(src.StoragePath) ?? "";
+                    var ext = Path.GetExtension(src.StoragePath);
+                    newStoragePath = Path.Combine(dir, $"{Guid.NewGuid()}{ext}");
+                    System.IO.File.Copy(src.StoragePath, newStoragePath, overwrite: false);
+                }
+            }
+            catch
+            {
+                // Fall back to shared StoragePath if copy fails — caller logged elsewhere.
+                // Better to have a working reference than to lose the attachment entirely.
+                newStoragePath = src.StoragePath;
+            }
+
             _db.FileAttachments.Add(new FileAttachment
             {
                 CompanyId = companyId,
                 EntityType = "Document",
                 EntityId = targetDocId,
-                FileName = src.FileName,
+                FileName = Path.GetFileName(newStoragePath),
                 OriginalFileName = src.OriginalFileName,
                 ContentType = src.ContentType,
                 FileSize = src.FileSize,
-                StoragePath = src.StoragePath,         // shared underlying file
+                StoragePath = newStoragePath,
                 UploadedByUserId = src.UploadedByUserId,
                 CreatedBy = createdBy,
             });
@@ -1399,41 +1439,71 @@ public class DocumentService : IDocumentService
     public async Task<DocumentResponse> CreateInvoiceFromObligationAsync(
         Guid companyId, Guid performanceObligationId, string createdBy)
     {
-        var obligation = await _db.Set<PerformanceObligation>()
-            .Include(o => o.Contract)
-            .FirstOrDefaultAsync(o => o.Id == performanceObligationId && o.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบ Performance Obligation");
+        // Lock obligation row + contract row to prevent two parallel invoice-creations
+        // from both seeing IsSatisfied=false and creating duplicate invoices for the
+        // same milestone.
+        using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        try
+        {
+            var obligation = await _db.Set<PerformanceObligation>()
+                .Include(o => o.Contract)
+                .FirstOrDefaultAsync(o => o.Id == performanceObligationId && o.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบ Performance Obligation");
 
-        if (obligation.IsSatisfied)
-            throw new InvalidOperationException("ภาระงานนี้รับรู้รายได้ครบแล้ว — ไม่สามารถออกใบแจ้งหนี้ซ้ำ");
+            if (obligation.IsSatisfied)
+                throw new InvalidOperationException("ภาระงานนี้รับรู้รายได้ครบแล้ว — ไม่สามารถออกใบแจ้งหนี้ซ้ำ");
 
-        var unbilled = obligation.AllocatedPrice - obligation.RecognizedRevenue;
-        if (unbilled <= 0.01m)
-            throw new InvalidOperationException("ไม่มียอดคงเหลือสำหรับออกใบแจ้งหนี้");
+            var unbilled = obligation.AllocatedPrice - obligation.RecognizedRevenue;
+            if (unbilled <= 0.01m)
+                throw new InvalidOperationException("ไม่มียอดคงเหลือสำหรับออกใบแจ้งหนี้");
 
-        var contract = obligation.Contract
-            ?? throw new InvalidOperationException("ไม่พบสัญญารายได้ของภาระงานนี้");
+            var contract = obligation.Contract
+                ?? throw new InvalidOperationException("ไม่พบสัญญารายได้ของภาระงานนี้");
 
-        var lineDescription = string.IsNullOrEmpty(obligation.Description)
-            ? obligation.Name
-            : $"{obligation.Name} — {obligation.Description}";
+            var lineDescription = string.IsNullOrEmpty(obligation.Description)
+                ? obligation.Name
+                : $"{obligation.Name} — {obligation.Description}";
 
-        var invoice = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
-            DocumentType.Invoice,
-            DateTime.UtcNow,
-            DueDate: DateTime.UtcNow.AddDays(30),
-            ContactId: contract.ContactId,
-            Reference: contract.ContractNumber,
-            Notes: $"จากสัญญา {contract.ContractNumber}: {contract.Name}",
-            Lines: new List<DocumentLineRequest>
+            var invoice = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
+                DocumentType.Invoice,
+                DateTime.UtcNow,
+                DueDate: DateTime.UtcNow.AddDays(30),
+                ContactId: contract.ContactId,
+                Reference: contract.ContractNumber,
+                Notes: $"จากสัญญา {contract.ContractNumber}: {contract.Name}",
+                Lines: new List<DocumentLineRequest>
+                {
+                    new(lineDescription, 1m, "งวด", unbilled, 0m, 7m, 0m, AccountId: null),
+                },
+                ProjectId: contract.ProjectId,
+                RevenueContractId: contract.Id,
+                PerformanceObligationId: obligation.Id), createdBy);
+
+            // Update obligation state — invoice covers the unbilled portion
+            obligation.RecognizedRevenue = obligation.AllocatedPrice;
+            obligation.CompletionPercent = 100m;
+            obligation.IsSatisfied = true;
+            obligation.SatisfiedDate = DateTime.UtcNow;
+
+            // Cascade-mark contract complete if all obligations are satisfied
+            var allObligationsForContract = await _db.Set<PerformanceObligation>()
+                .Where(o => o.RevenueContractId == contract.Id && o.Id != obligation.Id)
+                .ToListAsync();
+            if (allObligationsForContract.All(o => o.IsSatisfied))
             {
-                new(lineDescription, 1m, "งวด", unbilled, 0m, 7m, 0m, AccountId: null),
-            },
-            ProjectId: contract.ProjectId,
-            RevenueContractId: contract.Id,
-            PerformanceObligationId: obligation.Id), createdBy);
+                contract.Status = "Completed";
+            }
 
-        return invoice;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return invoice;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     // ==================== Contacts ====================

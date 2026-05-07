@@ -100,4 +100,8 @@ public class SiteSettings : BaseEntity
     public int OcrFreePagesEnterprise { get; set; } = 5000;
     public decimal OcrCreditPricePerPage { get; set; } = 2.0m;
     public int OcrCreditMinPurchase { get; set; } = 100;
+
+    // Idempotency marker for daily OCR maintenance — prevents double-runs
+    // when BackgroundJobService cycles multiple times during the maintenance window.
+    public DateTime? LastOcrMaintenanceAt { get; set; }
 }

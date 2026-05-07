@@ -1103,6 +1103,9 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrCreditMinPurchase" integer NOT NULL DEFAULT 100;
             """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LastOcrMaintenanceAt" timestamp NULL;
+            """,
 
             // ===== Subscriptions: OCR quota fields =====
             """

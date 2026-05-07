@@ -427,21 +427,10 @@ public class OcrService : IOcrService
             });
         }
 
-        // Seller/buyer swap if Azure DI got it backwards (our company is the vendor)
-        var ourCompanyTaxId = await _db.Companies
-            .Where(c => c.Id == companyId)
-            .Select(c => c.TaxId)
-            .FirstOrDefaultAsync();
-
-        if (!string.IsNullOrEmpty(ourCompanyTaxId)
-            && !string.IsNullOrEmpty(data.VendorTaxId)
-            && data.VendorTaxId == ExtractDigits(ourCompanyTaxId, 13))
-        {
-            // Azure detected us as vendor — actually we're the seller, swap to buyer
-            data.ReasoningTrace.Add("[Swap] Vendor was our own company — using buyer as vendor");
-            (data.VendorName, data.BuyerName) = (data.BuyerName, data.VendorName);
-            (data.VendorTaxId, data.BuyerTaxId) = (data.BuyerTaxId, data.VendorTaxId);
-        }
+        // NOTE: Seller/buyer swap is intentionally NOT performed here. The unified
+        // swap block in ScanAsync runs AFTER OcrConfidenceGateway, ensuring all
+        // OCR providers (local + Azure DI) submit pre-swap data to the gateway —
+        // so checksum and math validations are consistent across paths.
 
         return data;
     }

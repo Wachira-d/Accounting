@@ -89,6 +89,9 @@ public class OcrSelfCorrectionService
 
         // 3. Garbage-collect positive patterns that haven't been re-confirmed in 180 days
         // and only have 1 confirmation (one-off / probably unreliable).
+        // NOTE: We use 180 days specifically to protect low-volume companies that
+        // may scan only a handful of vendor invoices per quarter — anything more
+        // aggressive would erase legitimate patterns from infrequent users.
         var abandonedCutoff = DateTime.UtcNow.AddDays(-180);
         var abandoned = await _db.OcrLearnedPatterns
             .Where(p => !p.IsNegativeExample && p.LastConfirmedAt < abandonedCutoff && p.TimesConfirmed <= 1)
@@ -97,9 +100,42 @@ public class OcrSelfCorrectionService
 
         await _db.SaveChangesAsync(ct);
 
+        // Per-company breakdown for observability
+        var perCompanyStats = capped.Concat(stale).Concat(abandoned)
+            .GroupBy(p => p.CompanyId)
+            .Select(g => new { CompanyId = g.Key, Count = g.Count() })
+            .ToList();
+
         _logger.LogInformation(
-            "OCR self-correction maintenance: capped {Capped}, pruned {Stale} stale negatives, removed {Abandoned} abandoned positives in {Elapsed}ms",
-            capped.Count, stale.Count, abandoned.Count,
+            "OCR self-correction maintenance: capped {Capped}, pruned {Stale} stale negatives, removed {Abandoned} abandoned positives across {Companies} companies in {Elapsed}ms",
+            capped.Count, stale.Count, abandoned.Count, perCompanyStats.Count,
             (int)(DateTime.UtcNow - maintenanceStart).TotalMilliseconds);
+    }
+
+    /// <summary>Run maintenance scoped to a single company (admin debug tool).</summary>
+    public async Task RunMaintenanceForCompanyAsync(Guid companyId, CancellationToken ct = default)
+    {
+        var capped = await _db.OcrLearnedPatterns
+            .Where(p => p.CompanyId == companyId && p.TimesConfirmed > 100)
+            .ToListAsync(ct);
+        foreach (var p in capped) p.TimesConfirmed = 100;
+
+        var staleCutoff = DateTime.UtcNow.AddDays(-60);
+        var stale = await _db.OcrLearnedPatterns
+            .Where(p => p.CompanyId == companyId
+                && p.IsNegativeExample && p.LastConfirmedAt < staleCutoff && p.FailureCount <= 2)
+            .ToListAsync(ct);
+        _db.OcrLearnedPatterns.RemoveRange(stale);
+
+        var abandonedCutoff = DateTime.UtcNow.AddDays(-180);
+        var abandoned = await _db.OcrLearnedPatterns
+            .Where(p => p.CompanyId == companyId
+                && !p.IsNegativeExample && p.LastConfirmedAt < abandonedCutoff && p.TimesConfirmed <= 1)
+            .ToListAsync(ct);
+        _db.OcrLearnedPatterns.RemoveRange(abandoned);
+
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation("Per-company OCR maintenance for {Company}: {Capped}/{Stale}/{Abandoned}",
+            companyId, capped.Count, stale.Count, abandoned.Count);
     }
 }

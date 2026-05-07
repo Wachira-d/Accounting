@@ -49,35 +49,86 @@ public class OcrQuotaService : IOcrQuotaService
         return status.TotalAvailable > 0;
     }
 
-    public async Task IncrementUsageAsync(Guid companyId)
+    public async Task<bool> TryConsumeAsync(Guid companyId)
     {
+        // Use serializable isolation to prevent two parallel scans from both
+        // passing the availability check and over-consuming quota.
+        using var tx = await _db.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable);
+        try
+        {
+            var sub = await _db.Subscriptions
+                .FirstOrDefaultAsync(s => s.CompanyId == companyId
+                    && s.Status != SubscriptionStatus.Cancelled
+                    && s.Status != SubscriptionStatus.Suspended);
+            if (sub == null) return false;
+
+            // Lazy monthly reset — if we've crossed the reset boundary, zero usage now
+            if (sub.UsageResetDate <= DateTime.UtcNow)
+            {
+                sub.CurrentMonthOcrPages = 0;
+                var now = DateTime.UtcNow;
+                sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
+            }
+
+            if (sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth)
+            {
+                sub.CurrentMonthOcrPages++;
+            }
+            else if (sub.OcrBonusPages > 0)
+            {
+                sub.OcrBonusPages--;
+            }
+            else
+            {
+                var credit = await _db.OcrCreditPurchases
+                    .Where(p => p.CompanyId == companyId && p.Status == "Approved"
+                        && p.PagesRemaining > 0
+                        && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
+                    .OrderBy(p => p.ExpiresAt ?? DateTime.MaxValue)
+                    .FirstOrDefaultAsync();
+                if (credit == null)
+                {
+                    await tx.RollbackAsync();
+                    return false;
+                }
+                credit.PagesRemaining--;
+            }
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return true;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task RefundAsync(Guid companyId)
+    {
+        // Refund in reverse order: monthly counter first (most recent debit)
         var sub = await _db.Subscriptions
-            .FirstOrDefaultAsync(s => s.CompanyId == companyId
-                && s.Status != SubscriptionStatus.Cancelled
-                && s.Status != SubscriptionStatus.Suspended);
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return;
 
-        if (sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth)
+        if (sub.CurrentMonthOcrPages > 0)
         {
-            sub.CurrentMonthOcrPages++;
+            sub.CurrentMonthOcrPages--;
         }
-        else if (sub.OcrBonusPages > 0)
+        else if (sub.OcrBonusPages < int.MaxValue)
         {
-            sub.OcrBonusPages--;
+            sub.OcrBonusPages++;
         }
-        else
-        {
-            var credit = await _db.OcrCreditPurchases
-                .Where(p => p.CompanyId == companyId && p.Status == "Approved"
-                    && p.PagesRemaining > 0
-                    && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
-                .OrderBy(p => p.ExpiresAt ?? DateTime.MaxValue)
-                .FirstOrDefaultAsync();
-            if (credit != null)
-                credit.PagesRemaining--;
-        }
-
+        // Note: not refunding to credit purchases — too complex to track which credit was debited
         await _db.SaveChangesAsync();
+    }
+
+    // Kept for backward compat — delegates to atomic TryConsumeAsync
+    public async Task IncrementUsageAsync(Guid companyId)
+    {
+        await TryConsumeAsync(companyId);
     }
 
     public async Task<OcrCreditPurchaseResponse> PurchaseCreditsAsync(Guid companyId, int pages, string performedBy)
@@ -153,7 +204,10 @@ public class OcrQuotaService : IOcrQuotaService
 
     public async Task ResetMonthlyUsageAsync()
     {
+        // Idempotent — only resets subs whose UsageResetDate has passed.
+        // Safe to call multiple times within the same day.
         var now = DateTime.UtcNow;
+        var startOfNextMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
         var subsToReset = await _db.Subscriptions
             .Where(s => s.UsageResetDate <= now)
             .ToListAsync();
@@ -161,7 +215,9 @@ public class OcrQuotaService : IOcrQuotaService
         foreach (var sub in subsToReset)
         {
             sub.CurrentMonthOcrPages = 0;
-            sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
+            sub.CurrentMonthDocuments = 0;
+            sub.CurrentMonthJournalEntries = 0;
+            sub.UsageResetDate = startOfNextMonth;
         }
 
         await _db.SaveChangesAsync();

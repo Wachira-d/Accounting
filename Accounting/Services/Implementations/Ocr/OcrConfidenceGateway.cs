@@ -11,6 +11,14 @@ public static class OcrConfidenceGateway
 {
     public record GatewayResult(decimal AdjustedConfidence, List<string> Warnings, bool MathConsistent);
 
+    /// <summary>Maximum penalty allowed — keeps confidence > 0.40 even when many checks fail.
+    /// Lets reviewers see the full warning list rather than an opaque "0% confidence" reject.</summary>
+    public const decimal MaxPenalty = 0.60m;
+
+    /// <summary>Math tolerance for SubTotal + VAT vs Total comparison.
+    /// Set to 2.0 baht to allow per-line VAT rounding accumulation across multi-item invoices.</summary>
+    public const decimal MathTolerance = 2.0m;
+
     public static GatewayResult Validate(
         decimal modelConfidence,
         DateTime? documentDate,
@@ -41,12 +49,12 @@ public static class OcrConfidenceGateway
             }
         }
 
-        // 2. Math consistency: SubTotal + VAT ≈ Total (within 1 baht for rounding)
+        // 2. Math consistency: SubTotal + VAT ≈ Total (within MathTolerance for per-line rounding)
         if (subTotal.HasValue && vatAmount.HasValue && total.HasValue)
         {
             var expected = subTotal.Value + vatAmount.Value;
             var diff = Math.Abs(expected - total.Value);
-            if (diff > 1.0m)
+            if (diff > MathTolerance)
             {
                 warnings.Add($"คณิตศาสตร์ไม่ตรง: {subTotal:N2} + {vatAmount:N2} = {expected:N2} ≠ {total:N2} (ห่าง {diff:N2})");
                 penalty += 0.20m;
@@ -54,24 +62,29 @@ public static class OcrConfidenceGateway
             }
         }
 
-        // 3. VAT rate sanity: should be ~7% in Thailand (or 0% / exempt)
-        if (subTotal.HasValue && vatAmount.HasValue && subTotal.Value > 0)
+        // 3. VAT rate sanity: should be ~7% in Thailand (or 0% / exempt).
+        // Cash receipts often have no VAT — only flag when VAT is reported but at wrong rate.
+        if (subTotal.HasValue && vatAmount.HasValue && subTotal.Value > 0 && vatAmount.Value > 0)
         {
             var rate = vatAmount.Value / subTotal.Value * 100m;
-            if (rate > 0.5m && (rate < 6.5m || rate > 7.5m))
+            if (rate < 6.5m || rate > 7.5m)
             {
-                warnings.Add($"อัตรา VAT ผิดปกติ: {rate:N1}% (ปกติ 7% หรือ 0%)");
+                warnings.Add($"อัตรา VAT ผิดปกติ: {rate:N1}% (ปกติ 7%)");
                 penalty += 0.10m;
             }
         }
 
-        // 4. Tax ID checksums
-        if (!string.IsNullOrEmpty(vendorTaxId) && !ValidateThaiTaxId(vendorTaxId))
+        // 4. Tax ID checksums — only penalize when extracted TaxId is non-empty AND
+        // looks like 13 digits (could be partial extraction we want to flag).
+        // A truly missing TaxId (cash receipt, individual seller) should not be penalized.
+        if (!string.IsNullOrEmpty(vendorTaxId) && new string(vendorTaxId.Where(char.IsDigit).ToArray()).Length == 13
+            && !ValidateThaiTaxId(vendorTaxId))
         {
             warnings.Add($"เลขผู้เสียภาษีผู้ขาย {vendorTaxId} checksum ไม่ผ่าน");
             penalty += 0.15m;
         }
-        if (!string.IsNullOrEmpty(buyerTaxId) && !ValidateThaiTaxId(buyerTaxId))
+        if (!string.IsNullOrEmpty(buyerTaxId) && new string(buyerTaxId.Where(char.IsDigit).ToArray()).Length == 13
+            && !ValidateThaiTaxId(buyerTaxId))
         {
             warnings.Add($"เลขผู้เสียภาษีผู้ซื้อ {buyerTaxId} checksum ไม่ผ่าน");
             penalty += 0.10m;
@@ -96,6 +109,10 @@ public static class OcrConfidenceGateway
             warnings.Add($"ยอดรวมติดลบ ({total:N2})");
             penalty += 0.20m;
         }
+
+        // Cap total penalty so legitimate edge cases (cash receipts, foreign invoices,
+        // hand-written bills) can still surface for reviewer rather than be silently rejected.
+        if (penalty > MaxPenalty) penalty = MaxPenalty;
 
         var adjusted = Math.Max(0m, Math.Min(1m, modelConfidence - penalty));
         return new GatewayResult(adjusted, warnings, mathConsistent);

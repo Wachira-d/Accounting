@@ -54,7 +54,9 @@ public class OcrController : ControllerBase
                 "ไฟล์นี้เพิ่งถูกอัปโหลดไปแล้ว — แสดงผลเดิม"));
         }
 
-        if (!await _quota.CanScanAsync(companyId))
+        // Atomic check-and-decrement — prevents two parallel uploads from both
+        // passing the availability check and over-consuming quota.
+        if (!await _quota.TryConsumeAsync(companyId))
         {
             var status = await _quota.GetQuotaStatusAsync(companyId);
             return StatusCode(429, new ApiResponse<object>(false, null,
@@ -83,8 +85,23 @@ public class OcrController : ControllerBase
         _db.FileAttachments.Add(attachment);
         await _db.SaveChangesAsync();
 
-        var result = await _service.ScanAsync(companyId, attachment.Id);
-        await _quota.IncrementUsageAsync(companyId);
+        OcrResultResponse result;
+        try
+        {
+            result = await _service.ScanAsync(companyId, attachment.Id);
+        }
+        catch
+        {
+            // Refund quota when scan crashes — caller didn't get a result
+            await _quota.RefundAsync(companyId);
+            throw;
+        }
+
+        // Refund if scan returned a duplicate (no new OCR work was actually done)
+        // OR if scan failed silently (status != Completed)
+        if (result.IsDuplicate || result.ScanStatus != "Completed")
+            await _quota.RefundAsync(companyId);
+
         return Ok(new ApiResponse<OcrResultResponse>(true, result));
     }
 
