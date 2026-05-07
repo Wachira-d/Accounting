@@ -313,6 +313,19 @@
           d = cert;
         }
 
+        // Pull the current user's saved signature (image + display name + title)
+        // so it can be auto-stamped onto the "ผู้จ่ายเงิน" line.
+        const escHtml = (s) => String(s || '').replace(/[&<>"']/g, c =>
+          ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+        let signature = { image: '', name: '', title: '' };
+        try {
+          const pres = await api.getProfile();
+          const p = pres?.data || {};
+          signature.image = p.signatureImageBase64 || '';
+          signature.name = escHtml(p.signatureName || p.fullName || '');
+          signature.title = escHtml(p.signatureTitle || '');
+        } catch { /* unsigned print is still allowed */ }
+
         const taxIdBoxes = (taxId) => {
           const dg = (taxId || '').replace(/\D/g, '').padEnd(13, ' ');
           const groups = [[0,1],[1,5],[5,10],[10,12],[12,13]];
@@ -592,7 +605,17 @@
                   <td class="bottom-right">
                     <div style="margin-bottom:6px">ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>
                     <div class="sig-block">
-                      <div class="sig-line" style="text-align:right">ลงชื่อ <span class="sig-dots"></span> ผู้จ่ายเงิน</div>
+                      <div class="sig-line" style="text-align:right;position:relative">
+                        ลงชื่อ <span class="sig-dots">${signature.image
+                          ? `<img class="sig-img" src="${signature.image.startsWith('data:') ? signature.image : `data:image/png;base64,${signature.image}`}" alt="signature">`
+                          : ''}</span> ผู้จ่ายเงิน
+                      </div>
+                      ${signature.name
+                        ? `<div style="text-align:center;font-size:11px;margin-top:2px">(${signature.name})</div>`
+                        : ''}
+                      ${signature.title
+                        ? `<div style="text-align:center;font-size:11px;color:#444;margin-top:1px">${signature.title}</div>`
+                        : ''}
                       <div class="sig-date">
                         <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getDate() : '&nbsp;&nbsp;'}</span> /
                         <span class="sig-dots-sm">${d.issuedDate ? new Date(d.issuedDate).getMonth()+1 : '&nbsp;&nbsp;'}</span> /
@@ -718,7 +741,8 @@
   .bottom-right { width:65%; font-size:12px; line-height:1.4; position:relative; padding-right:84px !important; }
   .sig-block { padding:3px 12px 0; }
   .sig-line { margin-bottom:4px; }
-  .sig-dots { display:inline-block; min-width:180px; border-bottom:1px dotted #000; }
+  .sig-dots { display:inline-block; min-width:180px; border-bottom:1px dotted #000; vertical-align:bottom; position:relative; height:32px; }
+  .sig-img { display:block; max-height:30px; max-width:170px; margin:0 auto; object-fit:contain; }
   .sig-date { text-align:center; margin:3px 0 0; font-size:13px; }
   .sig-dots-sm { display:inline-block; min-width:36px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
   .stamp-area {
