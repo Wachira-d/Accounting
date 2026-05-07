@@ -22,14 +22,14 @@
   .copy-labels div { color:#666; }
   .copy-labels .copy-active { color:#000; font-weight:700; }
 
-  .F { width:100%; border:4px double #000; border-collapse:collapse; }
-  .F > tbody > tr > td { border-bottom:1px solid #000; }
+  .F { width:100%; border:3px solid #000; border-collapse:collapse; }
+  .F > tbody > tr > td { border-bottom:1.5px solid #000; }
   .F > tbody > tr:last-child > td { border-bottom:none; }
 
   .inner { width:100%; border:none; border-collapse:collapse; }
   .inner td { border:none; padding:1px 0; vertical-align:baseline; }
 
-  .title-cell { padding:3px 8px; border-bottom:1px solid #000 !important; }
+  .title-cell { padding:3px 8px; border-bottom:1.5px solid #000 !important; }
   .title-main { font-size:18px; font-weight:700; letter-spacing:1.5px; text-align:center; }
   .title-sub { font-size:13px; text-align:center; margin-top:-1px; }
   .num-cell { width:160px; vertical-align:top; text-align:left; font-size:12px; line-height:1.4; padding-top:2px; }
@@ -70,7 +70,7 @@
   .cond-cell td { font-size:13px; }
 
   .bottom-split td { vertical-align:top; padding:4px 8px; }
-  .bottom-left { width:35%; font-size:11px; line-height:1.4; border-right:1px solid #000 !important; }
+  .bottom-left { width:35%; font-size:11px; line-height:1.4; border-right:1.5px solid #000 !important; }
   .bottom-right { width:65%; font-size:12px; line-height:1.4; position:relative; padding-right:84px !important; }
   .sig-block { padding:3px 12px 0; }
   .sig-line { margin-bottom:4px; }
@@ -97,7 +97,9 @@
     }
     .wht-page { width:100%; }
     .noprint { display:none !important; }
-    .F { border:4px double #000 !important; }
+    .F { border:3px solid #000 !important; }
+    .F > tbody > tr > td { border-bottom:1.5px solid #000 !important; }
+    .F > tbody > tr:last-child > td { border-bottom:none !important; }
   }
   @media screen {
     body { background:#c8c8c8; padding:20px 0; }
