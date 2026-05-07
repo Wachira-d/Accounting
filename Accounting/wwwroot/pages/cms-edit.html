@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>แก้ไขเว็บไซต์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .editor-tabs { display:flex; border-bottom:2px solid var(--gray-200); margin-bottom:20px; gap:0 }
+    .editor-tab { padding:12px 20px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; font-weight:500; color:var(--gray-600) }
+    .editor-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600 }
+    .editor-tab:hover { color:var(--primary) }
+    .tab-pane { display:none }
+    .tab-pane.active { display:block }
+    .page-row { display:flex; align-items:center; gap:12px; padding:12px; background:#fff; border:1px solid var(--gray-200); border-radius:8px; margin-bottom:8px }
+    .block-row { padding:14px; background:#fff; border:1px solid var(--gray-200); border-radius:8px; margin-bottom:10px; transition:all .15s }
+    .block-row:hover { border-color:var(--primary) }
+    .block-type-badge { display:inline-block; padding:2px 10px; background:var(--gray-100); border-radius:4px; font-size:11px; font-weight:600; color:var(--gray-700) }
+    .color-input { display:flex; align-items:center; gap:8px }
+    .color-input input[type="color"] { width:40px; height:40px; padding:2px; border:1px solid var(--gray-200); border-radius:6px; cursor:pointer }
+    .theme-preview { padding:20px; border-radius:10px; border:1px solid var(--gray-200); margin-top:12px }
+    .domain-row { display:flex; align-items:center; gap:12px; padding:12px; background:#fff; border:1px solid var(--gray-200); border-radius:8px; margin-bottom:8px }
+    .domain-status { display:inline-block; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:600 }
+    .domain-status.pending { background:#FEF3C7; color:#92400E }
+    .domain-status.verified { background:#D1FAE5; color:#065F46 }
+    .domain-status.failed { background:#FEE2E2; color:#991B1B }
+    .ld-row { display:flex; gap:8px; margin-bottom:8px }
+    .ld-row > * { flex:1 }
+    .verify-token-box { background:#F9FAFB; border:1px dashed var(--gray-300); padding:10px; border-radius:6px; font-family:monospace; font-size:12px; word-break:break-all; margin-top:8px }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <a href="/pages/cms-sites.html" style="font-size:13px;color:var(--gray-500)">← กลับไปยังเว็บไซต์ทั้งหมด</a>
+        <h2 class="page-title" id="siteTitleHeader">แก้ไขเว็บไซต์</h2>
+        <p class="page-subtitle" id="siteSubtitleHeader">โหลดข้อมูล...</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-success" id="publishBtn" onclick="Page.publishSite()">🚀 เผยแพร่</button>
+        <a id="viewLiveBtn" href="#" target="_blank" class="btn btn-secondary" style="display:none">🔗 เปิดเว็บ</a>
+      </div>
+    </div>
+
+    <div class="editor-tabs">
+      <div class="editor-tab active" data-tab="pages" onclick="Page.switchTab('pages')">📄 หน้าเว็บ</div>
+      <div class="editor-tab" data-tab="theme" onclick="Page.switchTab('theme')">🎨 ธีม</div>
+      <div class="editor-tab" data-tab="seo" onclick="Page.switchTab('seo')">🔍 SEO &amp; Analytics</div>
+      <div class="editor-tab" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
+    </div>
+
+    <!-- ====================== PAGES TAB ====================== -->
+    <div class="tab-pane active" id="tab-pages">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:16px;font-weight:600">หน้าเว็บทั้งหมด</h3>
+        <button class="btn btn-primary btn-sm" onclick="Page.openCreatePage()">+ เพิ่มหน้า</button>
+      </div>
+      <div id="pagesList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== THEME TAB ====================== -->
+    <div class="tab-pane" id="tab-theme">
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:16px">ปรับแต่งธีม</h3>
+      <div id="themeForm" class="card" style="padding:20px">กำลังโหลด...</div>
+    </div>
+
+    <!-- ====================== SEO TAB ====================== -->
+    <div class="tab-pane" id="tab-seo">
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:16px">SEO &amp; Analytics</h3>
+      <div class="card" style="padding:20px">
+        <div class="form-group">
+          <label class="form-label">Meta Title</label>
+          <input type="text" class="form-input" id="sMetaTitle" maxlength="70" placeholder="ชื่อที่แสดงใน Google search (50-60 ตัวอักษร)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Meta Description</label>
+          <textarea class="form-input" id="sMetaDescription" rows="2" maxlength="160" placeholder="คำอธิบายสั้นๆ ที่แสดงใน Google search (150-160 ตัวอักษร)"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Meta Keywords</label>
+          <input type="text" class="form-input" id="sMetaKeywords" placeholder="คำค้นหา คั่นด้วยเครื่องหมายจุลภาค">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Open Graph Image URL</label>
+          <input type="text" class="form-input" id="sOgImageUrl" placeholder="URL ภาพที่แสดงเมื่อแชร์ใน Facebook/LINE">
+        </div>
+        <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200)">
+        <h4 style="margin-bottom:12px">Analytics</h4>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Google Analytics ID</label>
+            <input type="text" class="form-input" id="sGaId" placeholder="G-XXXXXXXXXX">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Google Tag Manager ID</label>
+            <input type="text" class="form-input" id="sGtmId" placeholder="GTM-XXXXXXX">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Meta (Facebook) Pixel ID</label>
+          <input type="text" class="form-input" id="sMetaPixel" placeholder="123456789012345">
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO &amp; Analytics</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====================== DOMAIN TAB ====================== -->
+    <div class="tab-pane" id="tab-domain">
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:16px">การจัดการโดเมน</h3>
+      <div class="card" style="padding:20px;margin-bottom:16px">
+        <h4 style="font-size:14px;margin-bottom:12px">Subdomain ของระบบ</h4>
+        <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:12px">
+          <div id="systemSubdomainText" style="font-family:monospace;font-size:14px"></div>
+          <div style="font-size:12px;color:var(--gray-600);margin-top:6px">URL ฟรีจากระบบ — ใช้งานได้ทันทีโดยไม่ต้องตั้งค่า DNS</div>
+        </div>
+      </div>
+      <div class="card" style="padding:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h4 style="font-size:14px">โดเมนของคุณเอง (Custom Domain)</h4>
+          <button class="btn btn-primary btn-sm" onclick="Page.openAddDomain()">+ เพิ่มโดเมน</button>
+        </div>
+        <div id="domainList"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+      </div>
+    </div>
+
+    <!-- ====================== Modals ====================== -->
+
+    <!-- Page form modal (create/edit) -->
+    <div class="modal-overlay" id="pageModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="pageModalTitle">เพิ่มหน้าใหม่</h3>
+          <button class="modal-close" onclick="Layout.closeModal('pageModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="pgId">
+          <div class="form-group">
+            <label class="form-label">ชื่อหน้า *</label>
+            <input type="text" class="form-input" id="pgTitle" placeholder="เช่น เกี่ยวกับเรา">
+          </div>
+          <div class="form-group">
+            <label class="form-label">URL Slug *</label>
+            <input type="text" class="form-input" id="pgSlug" placeholder="about" oninput="Page.normalizeSlug(this)">
+            <p style="font-size:12px;color:var(--gray-500);margin-top:4px">ส่วนของ URL หลังโดเมน เช่น /about</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ประเภทหน้า</label>
+            <select class="form-input" id="pgType">
+              <option value="1">หน้าทั่วไป (Standard)</option>
+              <option value="2">Landing Page</option>
+              <option value="3">บล็อก</option>
+              <option value="5">รายการสินค้า</option>
+              <option value="6">Checkout</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Meta Description (SEO)</label>
+            <textarea class="form-input" id="pgMetaDesc" rows="2" maxlength="160"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('pageModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.savePage()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Block editor modal -->
+    <div class="modal-overlay" id="blocksModal">
+      <div class="modal" style="max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
+        <div class="modal-header" style="flex-shrink:0">
+          <h3 class="modal-title" id="blocksModalTitle">แก้ไขบล็อกบนหน้า</h3>
+          <button class="modal-close" onclick="Layout.closeModal('blocksModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div class="text-sm text-gray-500">เพิ่มหรือจัดเรียงเนื้อหา (Blocks) บนหน้านี้</div>
+            <button class="btn btn-primary btn-sm" onclick="Page.openAddBlock()">+ เพิ่มบล็อก</button>
+          </div>
+          <div id="blocksList"></div>
+        </div>
+        <div class="modal-footer" style="flex-shrink:0">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('blocksModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Block form modal -->
+    <div class="modal-overlay" id="blockFormModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="blockFormTitle">เพิ่มบล็อก</h3>
+          <button class="modal-close" onclick="Layout.closeModal('blockFormModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="blkId">
+          <div class="form-group">
+            <label class="form-label">ประเภทบล็อก</label>
+            <select class="form-input" id="blkType" onchange="Page.renderBlockConfigForm()"></select>
+          </div>
+          <div id="blkConfigForm"></div>
+          <div class="form-row">
+            <div class="form-group form-checkbox">
+              <input type="checkbox" id="blkVisible" checked><label for="blkVisible">แสดงบล็อกนี้</label>
+            </div>
+            <div class="form-group form-checkbox">
+              <input type="checkbox" id="blkHideMobile"><label for="blkHideMobile">ซ่อนบนมือถือ</label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('blockFormModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveBlock()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add domain modal -->
+    <div class="modal-overlay" id="domainModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header">
+          <h3 class="modal-title">เพิ่มโดเมน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('domainModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">โดเมน (เช่น mydomain.com)</label>
+            <input type="text" class="form-input" id="dmName" placeholder="example.com">
+          </div>
+          <div class="form-group form-checkbox">
+            <input type="checkbox" id="dmPrimary"><label for="dmPrimary">ใช้เป็นโดเมนหลัก</label>
+          </div>
+          <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:12px;font-size:13px">
+            <strong>หลังเพิ่มแล้ว</strong> ระบบจะให้ TXT/CNAME record สำหรับตั้งค่า DNS ที่ผู้ให้บริการของคุณ — เพื่อยืนยันความเป็นเจ้าของและเปิด SSL
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('domainModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveDomain()">เพิ่ม</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const BLOCK_TYPES = {
+      1:{n:'Hero',i:'🎬',f:'hero'},
+      2:{n:'ข้อความ Rich Text',i:'📝',f:'richtext'},
+      3:{n:'รูปภาพ',i:'🖼️',f:'image'},
+      4:{n:'แกลเลอรี',i:'🖼️',f:'gallery'},
+      5:{n:'วิดีโอ',i:'🎥',f:'video'},
+      6:{n:'รายการสินค้า',i:'🛒',f:'productgrid'},
+      8:{n:'ปฏิทินจอง',i:'📅',f:'booking'},
+      9:{n:'ฟอร์มติดต่อ',i:'📨',f:'contactform'},
+      11:{n:'แผนที่',i:'🗺️',f:'map'},
+      12:{n:'รีวิวลูกค้า',i:'💬',f:'testimonials'},
+      13:{n:'คำถามที่พบบ่อย',i:'❓',f:'faq'},
+      14:{n:'ตารางราคา',i:'💰',f:'pricing'},
+      15:{n:'Call-to-Action',i:'📢',f:'cta'},
+      19:{n:'เส้นแบ่ง',i:'➖',f:'divider'},
+      20:{n:'HTML กำหนดเอง',i:'</>',f:'html'},
+      23:{n:'สรุปตะกร้า',i:'🛒',f:'cart'},
+    };
+    const PAGE_STATUS = { 0:['ร่าง','draft'], 1:['เผยแพร่','published'], 2:['กำหนดเวลา','draft'], 3:['เก็บถาวร','draft'] };
+    const DOM_VERIFY = { 0:['รอยืนยัน','pending'], 1:['ยืนยันแล้ว','verified'], 2:['ล้มเหลว','failed'] };
+
+    const Page = {
+      siteId: null,
+      site: null,
+      pages: [],
+      currentPage: null,
+      currentBlocks: [],
+      themes: [],
+      activeThemeId: null,
+
+      async init() {
+        if (!Layout.init('cms-sites')) return;
+        Layout.setTitle('แก้ไขเว็บไซต์');
+        const params = new URLSearchParams(location.search);
+        this.siteId = params.get('siteId');
+        if (!this.siteId) {
+          Layout.toast('ไม่พบรหัสเว็บไซต์', 'error');
+          setTimeout(()=>{ window.location.href = '/pages/cms-sites.html'; }, 1500);
+          return;
+        }
+        await this.loadSite();
+        await this.loadPages();
+      },
+
+      async loadSite() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetSite(this.siteId);
+          this.site = res.data;
+          if (!this.site) throw new Error('ไม่พบเว็บไซต์');
+          document.getElementById('siteTitleHeader').textContent = this.site.name;
+          const isPublished = this.site.status === 1;
+          const url = this.site.customDomain ? `https://${this.site.customDomain}` : `https://${this.site.subdomain}.your-domain.com`;
+          document.getElementById('siteSubtitleHeader').innerHTML = `${this.site.subdomain}.your-domain.com · ${isPublished ? '<span style="color:#10B981">เผยแพร่แล้ว</span>' : '<span style="color:#92400E">ร่าง</span>'}`;
+          if (isPublished) {
+            const btn = document.getElementById('viewLiveBtn');
+            btn.href = url;
+            btn.style.display = '';
+            document.getElementById('publishBtn').textContent = '🔄 เผยแพร่อีกครั้ง';
+          }
+          document.getElementById('systemSubdomainText').textContent = `${this.site.subdomain}.your-domain.com`;
+          // Pre-fill SEO form
+          document.getElementById('sMetaTitle').value = this.site.metaTitle || '';
+          document.getElementById('sMetaDescription').value = this.site.metaDescription || '';
+          document.getElementById('sMetaKeywords').value = this.site.metaKeywords || '';
+          document.getElementById('sOgImageUrl').value = this.site.ogImageUrl || '';
+          document.getElementById('sGaId').value = this.site.googleAnalyticsId || '';
+          document.getElementById('sGtmId').value = this.site.googleTagManagerId || '';
+          document.getElementById('sMetaPixel').value = this.site.metaPixelId || '';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      switchTab(tab) {
+        document.querySelectorAll('.editor-tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
+        document.querySelectorAll('.tab-pane').forEach(el => el.classList.toggle('active', el.id === `tab-${tab}`));
+        if (tab === 'theme' && !this._themeLoaded) this.loadTheme();
+        if (tab === 'domain' && !this._domainLoaded) this.loadDomains();
+      },
+
+      // ============ PAGES ============
+      async loadPages() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListPages(this.siteId, '?pageSize=100');
+          this.pages = res.data?.items || res.data || [];
+          this.renderPages();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderPages() {
+        const list = document.getElementById('pagesList');
+        if (!this.pages.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีหน้าเว็บ — กดปุ่ม "+ เพิ่มหน้า"</div>';
+          return;
+        }
+        list.innerHTML = this.pages.sort((a,b)=>a.sortOrder-b.sortOrder).map(p => {
+          const [statusLabel, statusClass] = PAGE_STATUS[p.status] || ['?','draft'];
+          const isPublished = p.status === 1;
+          return `
+            <div class="page-row">
+              <div style="flex:1">
+                <div style="font-weight:600">${Layout.esc(p.title)}</div>
+                <div style="font-size:12px;color:var(--gray-500)">/${Layout.esc(p.slug)} · <span class="site-status ${statusClass}" style="display:inline-block;padding:1px 8px;border-radius:99px;font-size:10px;background:${statusClass==='published'?'#D1FAE5':'#FEF3C7'};color:${statusClass==='published'?'#065F46':'#92400E'}">${statusLabel}</span> · ${p.blockCount || 0} บล็อก</div>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="Page.openBlocks('${p.id}')">✏️ แก้ไขเนื้อหา</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page.openEditPage('${p.id}')">⚙️ ตั้งค่า</button>
+              ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publishPage('${p.id}')" title="เผยแพร่หน้านี้">🚀</button>` : ''}
+              <button class="btn btn-sm btn-danger" onclick="Page.deletePage('${p.id}','${Layout.esc(p.title)}')">🗑</button>
+            </div>`;
+        }).join('');
+      },
+
+      openCreatePage() {
+        document.getElementById('pageModalTitle').textContent = 'เพิ่มหน้าใหม่';
+        document.getElementById('pgId').value = '';
+        document.getElementById('pgTitle').value = '';
+        document.getElementById('pgSlug').value = '';
+        document.getElementById('pgType').value = '1';
+        document.getElementById('pgMetaDesc').value = '';
+        Layout.openModal('pageModal');
+      },
+
+      openEditPage(id) {
+        const p = this.pages.find(x => x.id === id);
+        if (!p) return;
+        document.getElementById('pageModalTitle').textContent = 'ตั้งค่าหน้า';
+        document.getElementById('pgId').value = p.id;
+        document.getElementById('pgTitle').value = p.title;
+        document.getElementById('pgSlug').value = p.slug;
+        document.getElementById('pgType').value = String(p.pageType);
+        document.getElementById('pgMetaDesc').value = p.metaDescription || '';
+        Layout.openModal('pageModal');
+      },
+
+      normalizeSlug(input) {
+        input.value = (input.value || '').toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/--+/g, '-').slice(0, 256);
+      },
+
+      async savePage() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('pgId').value;
+        const title = document.getElementById('pgTitle').value.trim();
+        const slug = document.getElementById('pgSlug').value.trim() || title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+        const pageType = parseInt(document.getElementById('pgType').value);
+        const metaDescription = document.getElementById('pgMetaDesc').value.trim();
+        if (!title) { Layout.toast('กรุณากรอกชื่อหน้า', 'error'); return; }
+        try {
+          if (id) {
+            await api.cmsUpdatePage(this.siteId, id, { title, slug, pageType, metaDescription });
+            Layout.toast('บันทึกสำเร็จ', 'success');
+          } else {
+            await api.cmsCreatePage(this.siteId, {
+              title, slug, pageType, sortOrder: this.pages.length,
+              metaDescription, templateLayout:'default', showHeader:true, showFooter:true
+            });
+            Layout.toast('สร้างหน้าใหม่สำเร็จ', 'success');
+          }
+          Layout.closeModal('pageModal');
+          await this.loadPages();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deletePage(id, title) {
+        if (!confirm(`ลบหน้า "${title}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeletePage(this.siteId, id);
+          Layout.toast('ลบสำเร็จ', 'success');
+          await this.loadPages();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async publishPage(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsPublishPage(this.siteId, id);
+          Layout.toast('เผยแพร่สำเร็จ', 'success');
+          await this.loadPages();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async publishSite() {
+        if (!confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsPublishSite(this.siteId);
+          Layout.toast('เผยแพร่เว็บไซต์สำเร็จ', 'success');
+          await this.loadSite();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ BLOCKS ============
+      async openBlocks(pageId) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetPage(this.siteId, pageId);
+          this.currentPage = res.data;
+          this.currentBlocks = (res.data?.blocks || []).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+          document.getElementById('blocksModalTitle').textContent = `เนื้อหา: ${this.currentPage.title}`;
+          this.renderBlocks();
+          Layout.openModal('blocksModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderBlocks() {
+        const list = document.getElementById('blocksList');
+        if (!this.currentBlocks.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีบล็อก — กดปุ่ม "+ เพิ่มบล็อก" เพื่อเริ่ม</div>';
+          return;
+        }
+        list.innerHTML = this.currentBlocks.map((b, idx) => {
+          const meta = BLOCK_TYPES[b.blockType] || { n: `ประเภท ${b.blockType}`, i: '📦' };
+          let preview = '';
+          try {
+            const cfg = JSON.parse(b.configJson || '{}');
+            preview = cfg.headline || cfg.content?.replace(/<[^>]+>/g,'').slice(0,80) || '';
+          } catch (_) {}
+          return `
+            <div class="block-row">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+                <div style="flex:1">
+                  <span class="block-type-badge">${meta.i} ${meta.n}</span>
+                  ${!b.isVisible ? '<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B;margin-left:6px">ซ่อน</span>' : ''}
+                  <div style="margin-top:6px;color:var(--gray-700);font-size:13px">${Layout.esc(preview).slice(0,120) || '<em style="color:var(--gray-400)">ไม่มีตัวอย่าง</em>'}</div>
+                </div>
+                <div class="flex gap-1" style="flex-shrink:0">
+                  ${idx > 0 ? `<button class="btn btn-sm btn-ghost" onclick="Page.moveBlock(${idx},-1)" title="ย้ายขึ้น">↑</button>` : ''}
+                  ${idx < this.currentBlocks.length - 1 ? `<button class="btn btn-sm btn-ghost" onclick="Page.moveBlock(${idx},1)" title="ย้ายลง">↓</button>` : ''}
+                  <button class="btn btn-sm btn-secondary" onclick="Page.openEditBlock('${b.id}')">แก้ไข</button>
+                  <button class="btn btn-sm btn-danger" onclick="Page.deleteBlock('${b.id}')">🗑</button>
+                </div>
+              </div>
+            </div>`;
+        }).join('');
+      },
+
+      openAddBlock() {
+        document.getElementById('blockFormTitle').textContent = 'เพิ่มบล็อก';
+        document.getElementById('blkId').value = '';
+        const sel = document.getElementById('blkType');
+        sel.innerHTML = Object.entries(BLOCK_TYPES).map(([k,v]) => `<option value="${k}">${v.i} ${v.n}</option>`).join('');
+        sel.value = '1'; // Hero default
+        document.getElementById('blkVisible').checked = true;
+        document.getElementById('blkHideMobile').checked = false;
+        this._editingConfig = {};
+        this.renderBlockConfigForm();
+        Layout.openModal('blockFormModal');
+      },
+
+      openEditBlock(id) {
+        const b = this.currentBlocks.find(x => x.id === id);
+        if (!b) return;
+        document.getElementById('blockFormTitle').textContent = 'แก้ไขบล็อก';
+        document.getElementById('blkId').value = b.id;
+        const sel = document.getElementById('blkType');
+        sel.innerHTML = Object.entries(BLOCK_TYPES).map(([k,v]) => `<option value="${k}">${v.i} ${v.n}</option>`).join('');
+        sel.value = String(b.blockType);
+        document.getElementById('blkVisible').checked = b.isVisible !== false;
+        document.getElementById('blkHideMobile').checked = !!b.hideOnMobile;
+        try { this._editingConfig = JSON.parse(b.configJson || '{}'); } catch(_) { this._editingConfig = {}; }
+        this.renderBlockConfigForm();
+        Layout.openModal('blockFormModal');
+      },
+
+      // Render a config form per block type — keep it simple, form-based.
+      renderBlockConfigForm() {
+        const type = parseInt(document.getElementById('blkType').value);
+        const cfg = this._editingConfig || {};
+        const wrap = document.getElementById('blkConfigForm');
+        const esc = Layout.esc;
+        const ta = (id, label, val, rows=2) => `<div class="form-group"><label class="form-label">${label}</label><textarea class="form-input" id="${id}" rows="${rows}">${esc(val||'')}</textarea></div>`;
+        const inp = (id, label, val, ph='') => `<div class="form-group"><label class="form-label">${label}</label><input type="text" class="form-input" id="${id}" value="${esc(val||'')}" placeholder="${esc(ph)}"></div>`;
+        let html = '';
+        switch (type) {
+          case 1: // Hero
+            html = inp('cfg_headline','หัวข้อหลัก',cfg.headline,'ยินดีต้อนรับ')
+                 + inp('cfg_subheadline','หัวข้อย่อย',cfg.subheadline,'อธิบายธุรกิจของคุณสั้นๆ')
+                 + inp('cfg_ctaText','ข้อความปุ่ม',cfg.ctaText,'เริ่มต้น')
+                 + inp('cfg_ctaUrl','ลิงก์ปุ่ม',cfg.ctaUrl,'/about')
+                 + inp('cfg_backgroundUrl','URL ภาพพื้นหลัง',cfg.backgroundUrl,'https://...');
+            break;
+          case 2: // RichText
+            html = ta('cfg_content','เนื้อหา (HTML รองรับ)',cfg.content,8);
+            break;
+          case 3: // Image
+            html = inp('cfg_url','URL ภาพ',cfg.url) + inp('cfg_alt','คำอธิบายภาพ (alt)',cfg.alt) + inp('cfg_caption','คำบรรยายใต้ภาพ',cfg.caption);
+            break;
+          case 5: // Video
+            html = inp('cfg_url','URL วิดีโอ (YouTube/Vimeo/MP4)',cfg.url) + inp('cfg_poster','URL ภาพปก (poster)',cfg.poster);
+            break;
+          case 9: // ContactForm
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'ติดต่อเรา')
+                 + inp('cfg_submitText','ข้อความปุ่มส่ง',cfg.submitText,'ส่งข้อความ')
+                 + inp('cfg_emailTo','อีเมลรับข้อความ',cfg.emailTo,'admin@example.com');
+            break;
+          case 11: // Map
+            html = inp('cfg_address','ที่อยู่',cfg.address)
+                 + inp('cfg_lat','Latitude',cfg.lat,'13.7563')
+                 + inp('cfg_lng','Longitude',cfg.lng,'100.5018');
+            break;
+          case 13: // FAQ
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'คำถามที่พบบ่อย')
+                 + ta('cfg_items','รายการ (1 ข้อ/บรรทัด รูปแบบ: คำถาม | คำตอบ)',
+                     (cfg.items||[]).map(x=>`${x.q||''} | ${x.a||''}`).join('\n'),6);
+            break;
+          case 14: // Pricing
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'แพ็กเกจของเรา')
+                 + ta('cfg_plansJson','ข้อมูลแพ็กเกจ (JSON)',JSON.stringify(cfg.plans||[],null,2),10);
+            break;
+          case 15: // CTA
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'พร้อมเริ่มต้น?')
+                 + inp('cfg_ctaText','ข้อความปุ่ม',cfg.ctaText,'ติดต่อเรา')
+                 + inp('cfg_ctaUrl','ลิงก์ปุ่ม',cfg.ctaUrl,'/contact');
+            break;
+          case 19: // Divider
+            html = '<div class="text-sm text-gray-500" style="padding:20px;text-align:center">บล็อกเส้นแบ่ง — ไม่มีตัวเลือก</div>';
+            break;
+          case 20: // HTML
+            html = ta('cfg_html','HTML',cfg.html,10);
+            break;
+          case 23: // Cart
+            html = '<div class="text-sm text-gray-500" style="padding:20px;text-align:center">บล็อกสรุปตะกร้า — แสดงตะกร้าสินค้าโดยอัตโนมัติ</div>';
+            break;
+          default:
+            html = ta('cfg_raw','Config JSON',JSON.stringify(cfg,null,2),8);
+        }
+        wrap.innerHTML = html;
+      },
+
+      collectBlockConfig() {
+        const type = parseInt(document.getElementById('blkType').value);
+        const get = id => { const e = document.getElementById(id); return e ? e.value : ''; };
+        let cfg = {};
+        switch (type) {
+          case 1: cfg = { headline:get('cfg_headline'), subheadline:get('cfg_subheadline'), ctaText:get('cfg_ctaText'), ctaUrl:get('cfg_ctaUrl'), backgroundUrl:get('cfg_backgroundUrl') }; break;
+          case 2: cfg = { content:get('cfg_content') }; break;
+          case 3: cfg = { url:get('cfg_url'), alt:get('cfg_alt'), caption:get('cfg_caption') }; break;
+          case 5: cfg = { url:get('cfg_url'), poster:get('cfg_poster') }; break;
+          case 9: cfg = { headline:get('cfg_headline'), submitText:get('cfg_submitText'), emailTo:get('cfg_emailTo') }; break;
+          case 11: cfg = { address:get('cfg_address'), lat:parseFloat(get('cfg_lat'))||null, lng:parseFloat(get('cfg_lng'))||null }; break;
+          case 13: {
+            const lines = get('cfg_items').split('\n').map(s => s.trim()).filter(Boolean);
+            cfg = { headline:get('cfg_headline'), items: lines.map(line => { const [q,a] = line.split('|').map(x=>x.trim()); return { q, a }; }) };
+            break;
+          }
+          case 14: {
+            let plans = []; try { plans = JSON.parse(get('cfg_plansJson')||'[]'); } catch(_) { plans = []; }
+            cfg = { headline:get('cfg_headline'), plans };
+            break;
+          }
+          case 15: cfg = { headline:get('cfg_headline'), ctaText:get('cfg_ctaText'), ctaUrl:get('cfg_ctaUrl') }; break;
+          case 19: cfg = {}; break;
+          case 20: cfg = { html:get('cfg_html') }; break;
+          case 23: cfg = {}; break;
+          default: try { cfg = JSON.parse(get('cfg_raw')||'{}'); } catch(_) { cfg = {}; } break;
+        }
+        return cfg;
+      },
+
+      async saveBlock() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('blkId').value;
+        const blockType = parseInt(document.getElementById('blkType').value);
+        const cfg = this.collectBlockConfig();
+        const body = {
+          blockType,
+          sortOrder: id ? (this.currentBlocks.find(x=>x.id===id)?.sortOrder ?? 0) : this.currentBlocks.length,
+          configJson: JSON.stringify(cfg),
+          isVisible: document.getElementById('blkVisible').checked,
+          hideOnMobile: document.getElementById('blkHideMobile').checked,
+          hideOnDesktop: false
+        };
+        try {
+          if (id) await api.cmsUpdateBlock(this.siteId, this.currentPage.id, id, body);
+          else await api.cmsAddBlock(this.siteId, this.currentPage.id, body);
+          Layout.toast('บันทึกบล็อกสำเร็จ', 'success');
+          Layout.closeModal('blockFormModal');
+          // Reload blocks
+          const res = await api.cmsGetPage(this.siteId, this.currentPage.id);
+          this.currentPage = res.data;
+          this.currentBlocks = (res.data?.blocks || []).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+          this.renderBlocks();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteBlock(id) {
+        if (!confirm('ลบบล็อกนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteBlock(this.siteId, this.currentPage.id, id);
+          Layout.toast('ลบสำเร็จ', 'success');
+          this.currentBlocks = this.currentBlocks.filter(x => x.id !== id);
+          this.renderBlocks();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async moveBlock(idx, dir) {
+        const newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= this.currentBlocks.length) return;
+        const arr = this.currentBlocks.slice();
+        [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+        // Update local view immediately
+        this.currentBlocks = arr;
+        this.renderBlocks();
+        // Persist new order
+        const api = Layout.api(); if (!api) return;
+        try {
+          const items = arr.map((b, i) => ({ blockId: b.id, sortOrder: i }));
+          await api.cmsReorderBlocks(this.siteId, this.currentPage.id, items);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ THEME ============
+      async loadTheme() {
+        this._themeLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListThemes();
+          this.themes = res.data || [];
+          // Pick site's current theme or default
+          let theme = this.themes.find(t => t.id === this.site?.themeId);
+          if (!theme) theme = this.themes.find(t => t.isDefault) || this.themes[0];
+          this.activeThemeId = theme?.id || null;
+          this.renderThemeForm(theme);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderThemeForm(t) {
+        if (!t) {
+          document.getElementById('themeForm').innerHTML = `
+            <div class="text-center text-gray-400" style="padding:40px">
+              ยังไม่มีธีม
+              <div style="margin-top:12px"><button class="btn btn-primary" onclick="Page.createDefaultTheme()">สร้างธีมเริ่มต้น</button></div>
+            </div>`;
+          return;
+        }
+        const colorRow = (id, label, val) => `
+          <div class="form-group">
+            <label class="form-label">${label}</label>
+            <div class="color-input">
+              <input type="color" id="${id}" value="${val||'#000000'}" oninput="document.getElementById('${id}_text').value=this.value;Page.previewTheme()">
+              <input type="text" class="form-input" id="${id}_text" value="${val||''}" oninput="document.getElementById('${id}').value=this.value;Page.previewTheme()" style="flex:1;font-family:monospace">
+            </div>
+          </div>`;
+        document.getElementById('themeForm').innerHTML = `
+          <div class="form-group">
+            <label class="form-label">ชื่อธีม</label>
+            <input type="text" class="form-input" id="th_name" value="${Layout.esc(t.name||'')}">
+          </div>
+          <h4 style="font-size:14px;margin:16px 0 12px">สีหลัก</h4>
+          <div class="grid grid-3 gap-3">
+            ${colorRow('th_primary','สีหลัก (Primary)',t.primaryColor)}
+            ${colorRow('th_secondary','สีรอง (Secondary)',t.secondaryColor)}
+            ${colorRow('th_accent','สีเน้น (Accent)',t.accentColor)}
+          </div>
+          <h4 style="font-size:14px;margin:16px 0 12px">สีพื้นและข้อความ</h4>
+          <div class="grid grid-3 gap-3">
+            ${colorRow('th_bg','พื้นหลัง',t.backgroundColor)}
+            ${colorRow('th_surface','พื้นการ์ด',t.surfaceColor)}
+            ${colorRow('th_text','ข้อความหลัก',t.textColor)}
+          </div>
+          <h4 style="font-size:14px;margin:16px 0 12px">ตัวอักษร</h4>
+          <div class="grid grid-2 gap-3">
+            <div class="form-group">
+              <label class="form-label">ฟอนต์หัวข้อ</label>
+              <select class="form-input" id="th_headingFont">
+                ${['Inter','Noto Sans Thai','Sarabun','Prompt','Kanit','Mitr','Roboto','Poppins'].map(f=>`<option ${t.headingFont===f?'selected':''}>${f}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">ฟอนต์เนื้อหา</label>
+              <select class="form-input" id="th_bodyFont">
+                ${['Noto Sans Thai','Sarabun','Prompt','Kanit','Mitr','Inter','Roboto','Poppins'].map(f=>`<option ${t.bodyFont===f?'selected':''}>${f}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">มุมโค้ง (Border Radius, px)</label>
+              <input type="number" class="form-input" id="th_radius" value="${t.borderRadius||8}" min="0" max="32">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ความกว้างเนื้อหาสูงสุด</label>
+              <input type="text" class="form-input" id="th_maxWidth" value="${t.maxContentWidth||'1280px'}" placeholder="1280px">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">CSS เพิ่มเติม (กำหนดเอง)</label>
+            <textarea class="form-input" id="th_css" rows="4" placeholder="/* เช่น: .my-class { ... } */" style="font-family:monospace;font-size:12px">${Layout.esc(t.customCss||'')}</textarea>
+          </div>
+
+          <h4 style="font-size:14px;margin:20px 0 8px">ตัวอย่าง</h4>
+          <div class="theme-preview" id="themePreview"></div>
+
+          <div style="margin-top:20px">
+            <button class="btn btn-primary" onclick="Page.saveTheme()">บันทึกธีม</button>
+          </div>`;
+        this.previewTheme();
+      },
+
+      previewTheme() {
+        const get = id => document.getElementById(id)?.value || '';
+        const primary = get('th_primary');
+        const surface = get('th_surface');
+        const text = get('th_text');
+        const radius = get('th_radius') || 8;
+        const headingFont = get('th_headingFont');
+        const bodyFont = get('th_bodyFont');
+        document.getElementById('themePreview').style.cssText = `background:${surface};color:${text};border-radius:${radius}px;font-family:'${bodyFont}',sans-serif;padding:24px`;
+        document.getElementById('themePreview').innerHTML = `
+          <h2 style="font-family:'${headingFont}',sans-serif;color:${text};margin-bottom:8px">หัวข้อตัวอย่าง</h2>
+          <p style="margin-bottom:16px">ข้อความตัวอย่างที่แสดงด้วยธีมและฟอนต์ที่คุณกำลังปรับแต่ง</p>
+          <button style="background:${primary};color:#fff;border:none;padding:10px 20px;border-radius:${radius}px;font-weight:600;cursor:pointer;font-family:inherit">ปุ่มหลัก</button>`;
+      },
+
+      async saveTheme() {
+        const api = Layout.api(); if (!api) return;
+        const get = id => document.getElementById(id)?.value;
+        const body = {
+          name: get('th_name'),
+          primaryColor: get('th_primary'),
+          secondaryColor: get('th_secondary'),
+          accentColor: get('th_accent'),
+          backgroundColor: get('th_bg'),
+          surfaceColor: get('th_surface'),
+          textColor: get('th_text'),
+          textSecondaryColor: '#6B7280',
+          headingFont: get('th_headingFont'),
+          bodyFont: get('th_bodyFont'),
+          borderRadius: parseInt(get('th_radius')) || 8,
+          maxContentWidth: get('th_maxWidth') || '1280px',
+          customCss: get('th_css') || null
+        };
+        try {
+          if (this.activeThemeId) {
+            await api.cmsUpdateTheme(this.activeThemeId, body);
+          } else {
+            const res = await api.cmsCreateTheme(body);
+            this.activeThemeId = res.data?.id;
+            await api.cmsUpdateSite(this.siteId, { themeId: this.activeThemeId });
+          }
+          Layout.toast('บันทึกธีมสำเร็จ', 'success');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async createDefaultTheme() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsCreateTheme({ name: 'ธีมเริ่มต้น', primaryColor: '#4F46E5', secondaryColor: '#0EA5E9', accentColor: '#F59E0B', backgroundColor: '#FFFFFF', surfaceColor: '#F9FAFB', textColor: '#111827' });
+          this.activeThemeId = res.data?.id;
+          await api.cmsUpdateSite(this.siteId, { themeId: this.activeThemeId });
+          await this.loadTheme();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ SEO ============
+      async saveSeo() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsUpdateSite(this.siteId, {
+            metaTitle: document.getElementById('sMetaTitle').value || null,
+            metaDescription: document.getElementById('sMetaDescription').value || null,
+            metaKeywords: document.getElementById('sMetaKeywords').value || null,
+            ogImageUrl: document.getElementById('sOgImageUrl').value || null,
+            googleAnalyticsId: document.getElementById('sGaId').value || null,
+            googleTagManagerId: document.getElementById('sGtmId').value || null,
+            metaPixelId: document.getElementById('sMetaPixel').value || null
+          });
+          Layout.toast('บันทึก SEO &amp; Analytics สำเร็จ', 'success');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ============ DOMAINS ============
+      async loadDomains() {
+        this._domainLoaded = true;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListDomains(this.siteId);
+          this.domains = res.data || [];
+          this.renderDomains();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderDomains() {
+        const list = document.getElementById('domainList');
+        if (!this.domains.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ยังไม่มีโดเมนของคุณเอง — เว็บใช้ subdomain ของระบบไปก่อน</div>';
+          return;
+        }
+        list.innerHTML = this.domains.map(d => {
+          const [verifyLabel, verifyClass] = DOM_VERIFY[d.verificationStatus] || ['?','pending'];
+          return `
+            <div class="domain-row">
+              <div style="flex:1">
+                <div style="font-weight:600;font-family:monospace">${Layout.esc(d.domain)}</div>
+                <div style="font-size:12px;color:var(--gray-500);margin-top:4px">
+                  <span class="domain-status ${verifyClass}">${verifyLabel}</span>
+                  ${d.sslEnabled ? '<span style="margin-left:8px;color:#065F46">🔒 SSL เปิดใช้งาน</span>' : '<span style="margin-left:8px;color:var(--gray-500)">SSL รอเปิด</span>'}
+                  ${d.isPrimary ? '<span style="margin-left:8px;color:var(--primary)">⭐ โดเมนหลัก</span>' : ''}
+                </div>
+                ${d.verificationStatus === 0 && d.verificationToken ? `
+                  <div class="verify-token-box">
+                    <strong>เพิ่ม TXT record:</strong><br>
+                    Host: <code>_verify.${Layout.esc(d.domain)}</code><br>
+                    Value: <code>${Layout.esc(d.verificationToken)}</code>
+                  </div>` : ''}
+              </div>
+              <div class="flex gap-2" style="flex-shrink:0">
+                ${d.verificationStatus !== 1 ? `<button class="btn btn-sm btn-primary" onclick="Page.verifyDomain('${d.id}')">ตรวจสอบ</button>` : ''}
+                <button class="btn btn-sm btn-danger" onclick="Page.deleteDomain('${d.id}','${Layout.esc(d.domain)}')">🗑</button>
+              </div>
+            </div>`;
+        }).join('');
+      },
+
+      openAddDomain() {
+        document.getElementById('dmName').value = '';
+        document.getElementById('dmPrimary').checked = false;
+        Layout.openModal('domainModal');
+      },
+
+      async saveDomain() {
+        const api = Layout.api(); if (!api) return;
+        const domain = document.getElementById('dmName').value.trim().toLowerCase();
+        if (!domain || !/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(domain)) {
+          Layout.toast('กรุณากรอกโดเมนให้ถูกต้อง', 'error');
+          return;
+        }
+        try {
+          await api.cmsAddDomain(this.siteId, { domain, domainType: 1, isPrimary: document.getElementById('dmPrimary').checked });
+          Layout.toast('เพิ่มโดเมนสำเร็จ — ตั้งค่า DNS ตามคำแนะนำเพื่อยืนยัน', 'success');
+          Layout.closeModal('domainModal');
+          await this.loadDomains();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async verifyDomain(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsVerifyDomain(this.siteId, id);
+          const status = res.data?.verificationStatus;
+          if (status === 1) Layout.toast('ยืนยันสำเร็จ — SSL กำลังออกอัตโนมัติ', 'success');
+          else Layout.toast('ยังไม่พบ DNS record — รอ DNS อัปเดต (อาจใช้เวลาถึง 24 ชม.)', 'error');
+          await this.loadDomains();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteDomain(id, domain) {
+        if (!confirm(`ลบโดเมน "${domain}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteDomain(this.siteId, id);
+          Layout.toast('ลบสำเร็จ', 'success');
+          await this.loadDomains();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+
+    Page.init();
+  </script>
+</body>
+</html>
