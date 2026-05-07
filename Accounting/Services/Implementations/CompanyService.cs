@@ -166,7 +166,7 @@ public class CompanyService : ICompanyService
                 cu.User.Phone,
                 cu.Role,
                 cu.CompanyRoleId,
-                cu.CompanyRole != null ? cu.CompanyRole.Name : null,
+                cu.CompanyRoleId != null ? cu.CompanyRole!.Name : null,
                 cu.JoinedAt,
                 cu.User.LastLoginAt,
                 cu.User.Status))
