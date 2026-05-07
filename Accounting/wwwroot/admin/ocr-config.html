@@ -112,9 +112,9 @@
           <select id="ocrProvider">
             <option value="">อัตโนมัติ (Azure DI ถ้าตั้งค่าแล้ว, มิฉะนั้นใช้ Local)</option>
             <option value="azure-di">บังคับใช้ Azure Document Intelligence v4.0</option>
-            <option value="local">บังคับใช้ Local (PaddleOCR + Tesseract)</option>
+            <option value="local">บังคับใช้ Local (PaddleOCR + EasyOCR)</option>
           </select>
-          <div class="hint">โหมด <b>อัตโนมัติ</b> = Azure DI เป็นหลัก, fallback ไป Local ถ้า Azure ล่ม. <b>Local</b> รวม PaddleOCR + Tesseract ในตัวเดียว</div>
+          <div class="hint">โหมด <b>อัตโนมัติ</b> = Azure DI เป็นหลัก, fallback ไป Local ถ้า Azure ล่ม. <b>Local</b> รวม PaddleOCR + EasyOCR ในตัวเดียว</div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -185,8 +185,8 @@
       <div class="admin-card">
         <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
           <div>
-            <div class="admin-card-title">🐍 Local OCR Service (PaddleOCR + Tesseract)</div>
-            <div style="font-size:13px;color:#94a3b8;margin-top:4px">Microservice ที่รวม PaddleOCR สำหรับตัวอักษร + Tesseract สำหรับ verification — ใช้เป็น fallback หลักของระบบ</div>
+            <div class="admin-card-title">🐍 Local OCR Service (PaddleOCR + EasyOCR)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">Microservice ที่รวม <b>PaddleOCR</b> (PP-OCRv4) + <b>EasyOCR</b> (CRNN) — สอง engine ต่างสถาปัตยกรรม รัน ensemble verification ทำให้แม่นกว่าใช้ตัวเดียว ทั้งสองเป็น pure-Python (ไม่ต้อง apt-get)</div>
           </div>
           <span id="localStatusBadge" class="status-badge status-pending">ยังไม่ทดสอบ</span>
         </div>
@@ -197,10 +197,13 @@
         <details style="margin-top:12px;background:#f8fafc;padding:12px;border-radius:8px">
           <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#475569">📋 วิธีตั้งค่า Local OCR Service</summary>
           <div style="margin-top:12px;font-size:13px;color:#334155;line-height:1.6">
-            <p style="margin:0 0 8px"><b>1. รัน microservice:</b></p>
+            <p style="margin:0 0 8px"><b>1. รัน microservice (ทั้ง 2 engine ติดตั้งด้วย pip — ไม่ต้อง apt-get):</b></p>
             <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px">cd ocr-service
-pip install paddleocr pytesseract pillow fastapi uvicorn
-uvicorn app:app --host 0.0.0.0 --port 8501</pre>
+pip install -r requirements.txt   # ลง paddleocr + easyocr + ทั้งหมด
+uvicorn app.main:app --host 0.0.0.0 --port 8501
+
+# หรือใช้ Docker (พร้อม pre-pull models)
+docker compose up -d</pre>
             <p style="margin:12px 0 8px"><b>2. ระบุ URL ที่ฟิลด์ "Local Service URL" ด้านบน</b> (ค่าเริ่มต้น: <code>http://localhost:8501</code>)</p>
             <p style="margin:8px 0"><b>3. คลิกปุ่ม "ทดสอบการเชื่อมต่อ"</b> — ระบบจะส่ง health check ไปที่ <code>{url}/health</code></p>
             <p style="margin:8px 0"><b>4. Endpoint ที่ใช้งาน:</b> <code>POST {url}/ocr/extract</code> (multipart/form-data)</p>

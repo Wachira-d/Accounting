@@ -112,10 +112,10 @@ public class OcrService : IOcrService
         {
             string extractedText;
 
-            // ─── Strict provider chain: Azure DI (if configured) → Local (PaddleOCR+Tesseract) ───
-            // Legacy providers (Google Vision, Azure v3.x, standalone Tesseract) are
+            // ─── Strict provider chain: Azure DI (if configured) → Local (PaddleOCR+EasyOCR) ───
+            // Legacy providers (Google Vision, Azure v3.x, standalone Tesseract/EasyOCR) are
             // intentionally removed — their accuracy on Thai invoices is consistently
-            // worse than Azure DI v4 and the local PaddleOCR+Tesseract combo.
+            // worse than Azure DI v4 and the local PaddleOCR+EasyOCR combo.
             //
             // The local microservice (default http://localhost:8501) runs PaddleOCR for
             // primary recognition + Tesseract for verification on low-confidence regions.
@@ -135,7 +135,7 @@ public class OcrService : IOcrService
                 }
                 else
                 {
-                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to local PaddleOCR+Tesseract", azureResult.Error ?? "unknown");
+                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to local PaddleOCR+EasyOCR", azureResult.Error ?? "unknown");
                     var localResult = await ExtractWithLocalServiceAsync(file);
                     extractedText = localResult.RawText;
                     extractedData = localResult.Data;
@@ -144,12 +144,12 @@ public class OcrService : IOcrService
             }
             else
             {
-                // Local pipeline (PaddleOCR + Tesseract combined inside the microservice)
+                // Local pipeline (PaddleOCR + EasyOCR combined inside the microservice)
                 var localResult = await ExtractWithLocalServiceAsync(file);
                 extractedText = localResult.RawText;
                 extractedData = localResult.Data;
                 if (!azureEnabled)
-                    extractedData.ReasoningTrace.Insert(0, "[Provider] Azure DI ไม่เปิดใช้ — ใช้ Local (PaddleOCR+Tesseract)");
+                    extractedData.ReasoningTrace.Insert(0, "[Provider] Azure DI ไม่เปิดใช้ — ใช้ Local (PaddleOCR+EasyOCR)");
             }
 
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
@@ -776,7 +776,7 @@ public class OcrService : IOcrService
         }
         catch (Exception ex)
         {
-            // Local PaddleOCR+Tesseract microservice unavailable. Without external providers
+            // Local PaddleOCR+EasyOCR microservice unavailable. Without external providers
             // (Google/Azure v3.x), the only thing we can return is the original filename so
             // user can manually re-upload or fix infrastructure.
             _logger.LogError(ex, "Local OCR service unreachable at {Url} — admin must verify the microservice is running",

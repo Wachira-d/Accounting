@@ -5,15 +5,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_ocr_instance = None
-_tesseract_available = None
+_paddle_instance = None
+_easyocr_instance = None
+_easyocr_available = None
 
 
 def get_ocr():
-    global _ocr_instance
-    if _ocr_instance is None:
+    """Primary engine: PaddleOCR. Loaded lazily on first request."""
+    global _paddle_instance
+    if _paddle_instance is None:
         from paddleocr import PaddleOCR
-        _ocr_instance = PaddleOCR(
+        _paddle_instance = PaddleOCR(
             use_angle_cls=True,
             lang="th",
             use_gpu=False,
@@ -22,82 +24,82 @@ def get_ocr():
             rec_batch_num=6,
         )
         logger.info("PaddleOCR initialized (Thai)")
-    return _ocr_instance
+    return _paddle_instance
 
 
-def _tesseract_ready() -> bool:
-    """Probe Tesseract once; cache result. Used only for verification of low-confidence
-    PaddleOCR detections — keeps Tesseract optional (engine still works without it)."""
-    global _tesseract_available
-    if _tesseract_available is not None:
-        return _tesseract_available
+def _get_easyocr():
+    """Secondary engine: EasyOCR. Pure-Python, pip-installable, different
+    architecture (CRNN) from PaddleOCR (PP-OCRv4) — gives true ensemble value.
+    Lazy-loaded; cached at module level. Returns None if init fails."""
+    global _easyocr_instance, _easyocr_available
+    if _easyocr_available is False:
+        return None
+    if _easyocr_instance is not None:
+        return _easyocr_instance
     try:
-        import pytesseract
-        pytesseract.get_tesseract_version()
-        _tesseract_available = True
-        logger.info("Tesseract available — will be used for low-confidence verification")
+        import easyocr
+        # Thai + English. gpu=False keeps it CPU-bound by default; flip to True
+        # if you have a GPU available — same Reader works either way.
+        _easyocr_instance = easyocr.Reader(["th", "en"], gpu=False, verbose=False)
+        _easyocr_available = True
+        logger.info("EasyOCR initialized (Thai+English) — will be used as ensemble partner")
+        return _easyocr_instance
     except Exception as e:
-        _tesseract_available = False
-        logger.info(f"Tesseract not available ({e}) — using PaddleOCR only")
-    return _tesseract_available
+        _easyocr_available = False
+        logger.info(f"EasyOCR not available ({e}) — using PaddleOCR only (still functional)")
+        return None
 
 
-def _tesseract_recognize(crop_image: Image.Image) -> tuple[str, float]:
-    """Run Tesseract on a cropped region. Returns (text, confidence).
-    Confidence is averaged across detected words; 0 if Tesseract returns nothing."""
-    if not _tesseract_ready():
+def _easyocr_recognize_crop(crop_array: np.ndarray) -> tuple[str, float]:
+    """Run EasyOCR on a cropped image array. Returns (text, confidence).
+    Concatenates multiple text regions if EasyOCR finds more than one in the crop."""
+    reader = _get_easyocr()
+    if reader is None:
         return "", 0.0
     try:
-        import pytesseract
-        # Try Thai+English; fall back to eng if Thai language pack missing
-        try:
-            data = pytesseract.image_to_data(
-                crop_image, lang="tha+eng",
-                output_type=pytesseract.Output.DICT,
-            )
-        except Exception:
-            data = pytesseract.image_to_data(
-                crop_image, lang="eng",
-                output_type=pytesseract.Output.DICT,
-            )
-        words = [(w, c) for w, c in zip(data["text"], data["conf"]) if w.strip() and int(c) > 0]
-        if not words:
+        # detail=1 returns (bbox, text, confidence); paragraph=False keeps lines separate
+        results = reader.readtext(crop_array, detail=1, paragraph=False)
+        if not results:
             return "", 0.0
-        text = " ".join(w for w, _ in words)
-        avg_conf = sum(int(c) for _, c in words) / len(words) / 100.0
-        return text, avg_conf
+        # Sort top-to-bottom, left-to-right
+        results.sort(key=lambda r: (min(p[1] for p in r[0]), min(p[0] for p in r[0])))
+        text = " ".join(r[1].strip() for r in results if r[1].strip())
+        # Average confidence across recognized regions
+        confs = [float(r[2]) for r in results if r[2] is not None]
+        avg = sum(confs) / len(confs) if confs else 0.0
+        return text, avg
     except Exception as e:
-        logger.warning(f"Tesseract recognize failed: {e}")
+        logger.warning(f"EasyOCR recognize failed: {e}")
         return "", 0.0
 
 
 def extract_text(image_bytes: bytes) -> tuple[str, list[dict]]:
-    """Extract text from image bytes using PaddleOCR primary + Tesseract verification.
+    """Extract text using PaddleOCR primary + EasyOCR verification ensemble.
 
     For each PaddleOCR detection with confidence below 0.70, we crop the bounding
-    box and re-run Tesseract on it. If Tesseract gives a higher confidence, we
-    use that text instead. This combination is consistently more accurate on
-    Thai invoices than either engine alone.
+    box and re-run EasyOCR (different model architecture). If EasyOCR's confidence
+    is higher AND its text differs significantly, we use it. Both engines are
+    pure-Python — no Docker apt-get needed.
 
     Returns (full_text, detailed_results) where each detailed entry includes:
       - text, confidence, box
-      - engine: "paddleocr" or "tesseract" (which one's output was kept)
-      - paddle_conf, tesseract_conf (when both were tried, for transparency)
+      - engine: "paddleocr" or "easyocr" (which one's output was kept)
+      - paddle_conf, easyocr_conf (when both were tried, for transparency)
     """
-    ocr = get_ocr()
+    paddle = get_ocr()
 
     image = Image.open(io.BytesIO(image_bytes))
     if image.mode != "RGB":
         image = image.convert("RGB")
     img_array = np.array(image)
 
-    results = ocr.ocr(img_array, cls=True)
+    results = paddle.ocr(img_array, cls=True)
 
     if not results or not results[0]:
         return "", []
 
     detailed: list[dict] = []
-    use_tess = _tesseract_ready()
+    use_easy = _get_easyocr() is not None
     LOW_CONF_THRESHOLD = 0.70
 
     for line in results[0]:
@@ -105,27 +107,29 @@ def extract_text(image_bytes: bytes) -> tuple[str, list[dict]]:
         text = paddle_text
         conf = float(paddle_conf)
         engine = "paddleocr"
-        tess_conf = None
+        easy_conf = None
 
-        # Verify low-confidence detections with Tesseract
-        if use_tess and conf < LOW_CONF_THRESHOLD:
+        # Verify low-confidence detections with EasyOCR
+        if use_easy and conf < LOW_CONF_THRESHOLD:
             try:
                 xs = [p[0] for p in box]
                 ys = [p[1] for p in box]
                 left, top, right, bottom = int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
-                # Add small padding for Tesseract margin
-                left = max(0, left - 3); top = max(0, top - 3)
-                right = min(image.width, right + 3); bottom = min(image.height, bottom + 3)
+                # Tiny padding helps EasyOCR margin handling
+                left = max(0, left - 4); top = max(0, top - 4)
+                right = min(image.width, right + 4); bottom = min(image.height, bottom + 4)
                 if right > left and bottom > top:
-                    crop = image.crop((left, top, right, bottom))
-                    tess_text, tess_conf_val = _tesseract_recognize(crop)
-                    tess_conf = tess_conf_val
-                    if tess_text.strip() and tess_conf_val > conf:
-                        text = tess_text
-                        conf = tess_conf_val
-                        engine = "tesseract"
+                    crop = img_array[top:bottom, left:right]
+                    easy_text, easy_conf_val = _easyocr_recognize_crop(crop)
+                    easy_conf = easy_conf_val
+                    # Replace only when EasyOCR is meaningfully more confident
+                    # (5pp margin) — avoids flip-flopping on near-tie cases
+                    if easy_text.strip() and easy_conf_val > conf + 0.05:
+                        text = easy_text
+                        conf = easy_conf_val
+                        engine = "easyocr"
             except Exception as e:
-                logger.debug(f"Tesseract verification skipped: {e}")
+                logger.debug(f"EasyOCR verification skipped: {e}")
 
         entry = {
             "text": text,
@@ -134,8 +138,8 @@ def extract_text(image_bytes: bytes) -> tuple[str, list[dict]]:
             "engine": engine,
             "paddle_conf": float(paddle_conf),
         }
-        if tess_conf is not None:
-            entry["tesseract_conf"] = tess_conf
+        if easy_conf is not None:
+            entry["easyocr_conf"] = easy_conf
         detailed.append(entry)
 
     detailed.sort(key=lambda d: (min(p[1] for p in d["box"]), min(p[0] for p in d["box"])))

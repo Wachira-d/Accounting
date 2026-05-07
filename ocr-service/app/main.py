@@ -20,13 +20,22 @@ async def lifespan(app: FastAPI):
     logger.info(f"Ollama URL: {os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')}")
     logger.info(f"AI Model: {AI_MODEL}")
 
-    # Pre-load PaddleOCR model
+    # Pre-load PaddleOCR model (primary)
     try:
         from .ocr_engine import get_ocr
         get_ocr()
         logger.info("PaddleOCR loaded successfully")
     except Exception as e:
         logger.warning(f"PaddleOCR pre-load failed (will retry on first request): {e}")
+
+    # Pre-load EasyOCR model (verification ensemble partner).
+    # Background-load to keep startup snappy — first request still works while it warms up.
+    try:
+        from .ocr_engine import _get_easyocr
+        _get_easyocr()
+        logger.info("EasyOCR loaded successfully — ensemble ready")
+    except Exception as e:
+        logger.info(f"EasyOCR pre-load skipped: {e} (PaddleOCR-only mode is still functional)")
 
     yield
     logger.info("OCR+AI Service shutting down")
@@ -50,17 +59,21 @@ app.add_middleware(
 async def health_check():
     ai_ready, ai_info = await check_ollama_health()
     try:
-        from .ocr_engine import get_ocr
+        from .ocr_engine import get_ocr, _get_easyocr
         get_ocr()
         ocr_ready = True
+        # EasyOCR is optional — if it fails, primary OCR still works
+        easy_loaded = _get_easyocr() is not None
     except Exception:
         ocr_ready = False
+        easy_loaded = False
 
     return HealthResponse(
         status="ok" if ocr_ready else "degraded",
         ocr_ready=ocr_ready,
         ai_ready=ai_ready,
-        ai_model=AI_MODEL if ai_ready else ai_info,
+        ai_model=f"{AI_MODEL} | EasyOCR={'✓' if easy_loaded else '✗'}" if ai_ready
+                 else f"{ai_info} | EasyOCR={'✓' if easy_loaded else '✗'}",
     )
 
 
@@ -165,8 +178,8 @@ async def extract_document(file: UploadFile = File(...)):
             raw_text="",
             confidence=0.0,
             reasoning="OCR ไม่สามารถอ่านข้อความจากไฟล์นี้ได้",
-            reasoning_trace=["[Local OCR] PaddleOCR + Tesseract ไม่พบข้อความที่อ่านได้"],
-            ocr_engine="paddleocr+tesseract",
+            reasoning_trace=["[Local OCR] PaddleOCR + EasyOCR ไม่พบข้อความที่อ่านได้"],
+            ocr_engine="paddleocr+easyocr",
             warnings=warnings,
             page_count=page_count,
         )
@@ -174,9 +187,9 @@ async def extract_document(file: UploadFile = File(...)):
     # Step 2: AI structured extraction
     ai_result = await extract_with_fallback(raw_text)
 
-    # Engine label: combined when Tesseract was actually used
-    engine_label = "paddleocr+tesseract" if any(
-        d.get("engine") == "tesseract" for d in detailed
+    # Engine label: combined when EasyOCR actually replaced any PaddleOCR detection
+    engine_label = "paddleocr+easyocr" if any(
+        d.get("engine") == "easyocr" for d in detailed
     ) else "paddleocr"
 
     if ai_result:
@@ -196,9 +209,9 @@ async def extract_document(file: UploadFile = File(...)):
             if detailed else 0.0
         )
         trace.append(f"[Local OCR] Average PaddleOCR confidence: {avg_paddle_conf:.0%}")
-        tess_replaced = sum(1 for d in detailed if d.get("engine") == "tesseract")
-        if tess_replaced > 0:
-            trace.append(f"[Local OCR] Tesseract corrected {tess_replaced} low-confidence regions")
+        easy_replaced = sum(1 for d in detailed if d.get("engine") == "easyocr")
+        if easy_replaced > 0:
+            trace.append(f"[Local OCR] EasyOCR corrected {easy_replaced} low-confidence regions")
         if ai_result.get("reasoning"):
             trace.append(f"[Local AI] {ai_result['reasoning']}")
 

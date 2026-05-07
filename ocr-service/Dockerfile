@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies for PaddleOCR + Tesseract (Thai+English language packs)
+# System dependencies for PaddleOCR + EasyOCR + pdf2image.
+# No language packs needed — EasyOCR ships its own model files via pip.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
@@ -11,9 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libgomp1 \
     poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-tha \
-    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
