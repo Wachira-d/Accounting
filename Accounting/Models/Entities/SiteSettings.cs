@@ -76,4 +76,28 @@ public class SiteSettings : BaseEntity
 
     // Application base URL — used to build invitation/reset links in system emails
     public string? AppBaseUrl { get; set; }
+
+    // ===== Azure Document Intelligence (System-wide) =====
+    public string? AzureDiEndpoint { get; set; }
+    public string? AzureDiApiKey { get; set; }
+    public string? AzureDiModelId { get; set; } = "prebuilt-invoice";
+    public string? AzureDiApiVersion { get; set; } = "2024-11-30";
+    public bool AzureDiEnabled { get; set; } = false;
+    public DateTime? AzureDiLastTestedAt { get; set; }
+    public string? AzureDiLastTestStatus { get; set; }
+
+    // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
+    public string? OcrProvider { get; set; }
+    public string? OcrLocalServiceUrl { get; set; }
+    public string? OcrGoogleApiKey { get; set; }
+    public string? OcrTesseractApiKey { get; set; }
+    public decimal OcrAutoCreateThreshold { get; set; } = 0.85m;
+
+    // ===== OCR Quota Defaults =====
+    public int OcrFreePagesTrial { get; set; } = 10;
+    public int OcrFreePagesBasic { get; set; } = 50;
+    public int OcrFreePagesPro { get; set; } = 500;
+    public int OcrFreePagesEnterprise { get; set; } = 5000;
+    public decimal OcrCreditPricePerPage { get; set; } = 2.0m;
+    public int OcrCreditMinPurchase { get; set; } = 100;
 }

@@ -233,6 +233,8 @@
         const items = [
           { label: 'เอกสาร / เดือน', used: d.documentsThisMonth, max: d.maxDocumentsPerMonth, icon: '📄' },
           { label: 'รายการบัญชี / เดือน', used: d.journalEntriesThisMonth, max: d.maxJournalEntriesPerMonth, icon: '📝' },
+          { label: 'OCR สแกน / เดือน', used: d.ocrPagesThisMonth || 0, max: d.maxOcrPagesPerMonth || 0, icon: '🔍',
+            extra: (d.ocrBonusPages > 0 ? ` +โบนัส ${d.ocrBonusPages}` : '') + (d.ocrCreditPagesRemaining > 0 ? ` +เครดิต ${d.ocrCreditPagesRemaining}` : '') },
           { label: 'ผู้ใช้งาน', used: d.currentUsers, max: d.maxUsers, icon: '👥' },
           { label: 'พื้นที่จัดเก็บ', used: d.storageUsed, max: d.maxStorageBytes, isBytes: true, icon: '💾' },
         ];
@@ -245,7 +247,7 @@
           return `<div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
               <span style="font-size:14px">${u.icon} ${u.label}</span>
-              <span style="font-weight:600;font-size:14px">${usedStr} / ${maxStr}</span>
+              <span style="font-weight:600;font-size:14px">${usedStr} / ${maxStr}${u.extra || ''}</span>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
             <div class="pct-label" style="color:${color}">${pct.toFixed(1)}%</div>

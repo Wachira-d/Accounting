@@ -29,17 +29,20 @@ public class AdminController : ControllerBase
     private readonly ISubscriptionService _subscriptionService;
     private readonly IRecurringTransactionService _recurringService;
     private readonly IEmailSenderFactory _emailSenderFactory;
+    private readonly IOcrQuotaService _ocrQuota;
 
     public AdminController(
         AccountingDbContext db,
         ISubscriptionService subscriptionService,
         IRecurringTransactionService recurringService,
-        IEmailSenderFactory emailSenderFactory)
+        IEmailSenderFactory emailSenderFactory,
+        IOcrQuotaService ocrQuota)
     {
         _db = db;
         _subscriptionService = subscriptionService;
         _recurringService = recurringService;
         _emailSenderFactory = emailSenderFactory;
+        _ocrQuota = ocrQuota;
     }
 
     // ===== Dashboard Analytics =====
@@ -1082,8 +1085,169 @@ public class AdminController : ControllerBase
             !string.IsNullOrEmpty(s.SystemGmailRefreshToken)));
 }
 
+    // ===== Azure Document Intelligence Config =====
+
+    [HttpGet("ocr-config")]
+    public async Task<ActionResult<ApiResponse<OcrConfigResponse>>> GetOcrConfig()
+    {
+        var s = await GetOrCreateSiteSettings();
+        return Ok(new ApiResponse<OcrConfigResponse>(true, new OcrConfigResponse(
+            AzureDiEndpoint: s.AzureDiEndpoint,
+            AzureDiHasKey: !string.IsNullOrEmpty(s.AzureDiApiKey),
+            AzureDiModelId: s.AzureDiModelId,
+            AzureDiApiVersion: s.AzureDiApiVersion,
+            AzureDiEnabled: s.AzureDiEnabled,
+            AzureDiLastTestedAt: s.AzureDiLastTestedAt,
+            AzureDiLastTestStatus: s.AzureDiLastTestStatus,
+            OcrProvider: s.OcrProvider,
+            OcrLocalServiceUrl: s.OcrLocalServiceUrl,
+            OcrHasGoogleKey: !string.IsNullOrEmpty(s.OcrGoogleApiKey),
+            OcrHasTesseractKey: !string.IsNullOrEmpty(s.OcrTesseractApiKey),
+            OcrAutoCreateThreshold: s.OcrAutoCreateThreshold,
+            OcrFreePagesTrial: s.OcrFreePagesTrial,
+            OcrFreePagesBasic: s.OcrFreePagesBasic,
+            OcrFreePagesPro: s.OcrFreePagesPro,
+            OcrFreePagesEnterprise: s.OcrFreePagesEnterprise,
+            OcrCreditPricePerPage: s.OcrCreditPricePerPage,
+            OcrCreditMinPurchase: s.OcrCreditMinPurchase)));
+    }
+
+    [HttpPut("ocr-config")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateOcrConfig([FromBody] UpdateOcrConfigRequest req)
+    {
+        var s = await GetOrCreateSiteSettings();
+
+        if (req.AzureDiEndpoint != null) s.AzureDiEndpoint = req.AzureDiEndpoint;
+        if (req.AzureDiApiKey != null) s.AzureDiApiKey = req.AzureDiApiKey;
+        if (req.AzureDiModelId != null) s.AzureDiModelId = req.AzureDiModelId;
+        if (req.AzureDiApiVersion != null) s.AzureDiApiVersion = req.AzureDiApiVersion;
+        if (req.AzureDiEnabled.HasValue) s.AzureDiEnabled = req.AzureDiEnabled.Value;
+        if (req.OcrProvider != null) s.OcrProvider = req.OcrProvider;
+        if (req.OcrLocalServiceUrl != null) s.OcrLocalServiceUrl = req.OcrLocalServiceUrl;
+        if (req.OcrGoogleApiKey != null) s.OcrGoogleApiKey = req.OcrGoogleApiKey;
+        if (req.OcrTesseractApiKey != null) s.OcrTesseractApiKey = req.OcrTesseractApiKey;
+        if (req.OcrAutoCreateThreshold.HasValue) s.OcrAutoCreateThreshold = req.OcrAutoCreateThreshold.Value;
+        if (req.OcrFreePagesTrial.HasValue) s.OcrFreePagesTrial = req.OcrFreePagesTrial.Value;
+        if (req.OcrFreePagesBasic.HasValue) s.OcrFreePagesBasic = req.OcrFreePagesBasic.Value;
+        if (req.OcrFreePagesPro.HasValue) s.OcrFreePagesPro = req.OcrFreePagesPro.Value;
+        if (req.OcrFreePagesEnterprise.HasValue) s.OcrFreePagesEnterprise = req.OcrFreePagesEnterprise.Value;
+        if (req.OcrCreditPricePerPage.HasValue) s.OcrCreditPricePerPage = req.OcrCreditPricePerPage.Value;
+        if (req.OcrCreditMinPurchase.HasValue) s.OcrCreditMinPurchase = req.OcrCreditMinPurchase.Value;
+
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, "บันทึกการตั้งค่า OCR สำเร็จ"));
+    }
+
+    [HttpPost("ocr-config/test-azure")]
+    public async Task<ActionResult<ApiResponse<object>>> TestAzureDi()
+    {
+        var s = await GetOrCreateSiteSettings();
+        if (string.IsNullOrEmpty(s.AzureDiEndpoint) || string.IsNullOrEmpty(s.AzureDiApiKey))
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณากรอก Azure DI Endpoint และ API Key ก่อน"));
+
+        try
+        {
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", s.AzureDiApiKey);
+            var response = await client.GetAsync($"{s.AzureDiEndpoint.TrimEnd('/')}/formrecognizer/info?api-version={s.AzureDiApiVersion ?? "2024-11-30"}");
+
+            s.AzureDiLastTestedAt = DateTime.UtcNow;
+            s.AzureDiLastTestStatus = response.IsSuccessStatusCode ? "OK" : $"Error: {response.StatusCode}";
+            await _db.SaveChangesAsync();
+
+            return Ok(new ApiResponse<object>(response.IsSuccessStatusCode,
+                new { StatusCode = (int)response.StatusCode },
+                response.IsSuccessStatusCode ? "เชื่อมต่อ Azure DI สำเร็จ" : $"ไม่สามารถเชื่อมต่อได้: {response.StatusCode}"));
+        }
+        catch (Exception ex)
+        {
+            s.AzureDiLastTestedAt = DateTime.UtcNow;
+            s.AzureDiLastTestStatus = $"Error: {ex.Message}";
+            await _db.SaveChangesAsync();
+            return Ok(new ApiResponse<object>(false, null, $"เชื่อมต่อไม่สำเร็จ: {ex.Message}"));
+        }
+    }
+
+    // ===== OCR Credit Management (Admin) =====
+
+    [HttpGet("ocr-credits/pending")]
+    public async Task<ActionResult<ApiResponse<List<OcrCreditPurchaseResponse>>>> GetPendingOcrCredits()
+        => Ok(new ApiResponse<List<OcrCreditPurchaseResponse>>(true, await _ocrQuota.GetPendingPurchasesAsync()));
+
+    [HttpPost("ocr-credits/{purchaseId:guid}/review")]
+    public async Task<ActionResult<ApiResponse<OcrCreditPurchaseResponse>>> ReviewOcrCredit(
+        Guid purchaseId, [FromBody] ReviewOcrCreditRequest req)
+    {
+        var result = await _ocrQuota.ReviewCreditPurchaseAsync(
+            purchaseId, req.Approve, req.Notes, User.Identity?.Name ?? "");
+        return Ok(new ApiResponse<OcrCreditPurchaseResponse>(true, result,
+            req.Approve ? "อนุมัติเครดิต OCR สำเร็จ" : "ปฏิเสธเครดิต OCR"));
+    }
+
+    [HttpGet("ocr-usage-summary")]
+    public async Task<ActionResult<ApiResponse<object>>> GetOcrUsageSummary()
+    {
+        var now = DateTime.UtcNow;
+        var thisMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var totalScans = await _db.Set<OcrScanResult>().CountAsync();
+        var thisMonthScans = await _db.Set<OcrScanResult>().CountAsync(s => s.CreatedAt >= thisMonth);
+        var activeCredits = await _db.OcrCreditPurchases
+            .Where(p => p.Status == "Approved" && p.PagesRemaining > 0)
+            .SumAsync(p => p.PagesRemaining);
+        var pendingCredits = await _db.OcrCreditPurchases.CountAsync(p => p.Status == "Pending");
+        var totalCreditRevenue = await _db.OcrCreditPurchases
+            .Where(p => p.Status == "Approved")
+            .SumAsync(p => p.AmountPaid);
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            totalScans,
+            thisMonthScans,
+            activeCredits,
+            pendingCredits,
+            totalCreditRevenue,
+        }));
+    }
+
+    [HttpPost("ocr-credits/{companyId:guid}/grant-bonus")]
+    public async Task<ActionResult<ApiResponse<object>>> GrantOcrBonus(Guid companyId, [FromBody] GrantOcrBonusRequest req)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบ Subscription"));
+
+        sub.OcrBonusPages += req.Pages;
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { sub.OcrBonusPages },
+            $"เพิ่มโบนัส {req.Pages} หน้าให้บริษัทสำเร็จ"));
+    }
+}
+
 // ===== Admin-specific DTOs =====
 
 public record UpdateCustomerStatusRequest(CompanyStatus Status);
 public record UpdateUserStatusRequest(UserStatus Status);
 public record ToggleAdminRequest(bool IsAdmin);
+
+public record OcrConfigResponse(
+    string? AzureDiEndpoint, bool AzureDiHasKey, string? AzureDiModelId, string? AzureDiApiVersion,
+    bool AzureDiEnabled, DateTime? AzureDiLastTestedAt, string? AzureDiLastTestStatus,
+    string? OcrProvider, string? OcrLocalServiceUrl, bool OcrHasGoogleKey, bool OcrHasTesseractKey,
+    decimal OcrAutoCreateThreshold,
+    int OcrFreePagesTrial, int OcrFreePagesBasic, int OcrFreePagesPro, int OcrFreePagesEnterprise,
+    decimal OcrCreditPricePerPage, int OcrCreditMinPurchase);
+
+public record UpdateOcrConfigRequest(
+    string? AzureDiEndpoint = null, string? AzureDiApiKey = null,
+    string? AzureDiModelId = null, string? AzureDiApiVersion = null,
+    bool? AzureDiEnabled = null,
+    string? OcrProvider = null, string? OcrLocalServiceUrl = null,
+    string? OcrGoogleApiKey = null, string? OcrTesseractApiKey = null,
+    decimal? OcrAutoCreateThreshold = null,
+    int? OcrFreePagesTrial = null, int? OcrFreePagesBasic = null,
+    int? OcrFreePagesPro = null, int? OcrFreePagesEnterprise = null,
+    decimal? OcrCreditPricePerPage = null, int? OcrCreditMinPurchase = null);
+
+public record ReviewOcrCreditRequest(bool Approve, string? Notes = null);
+public record GrantOcrBonusRequest(int Pages);

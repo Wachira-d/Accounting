@@ -34,6 +34,8 @@ public record OcrLineItemDto(
     string? Description, decimal? Quantity, decimal? UnitPrice, decimal? Amount,
     string? SuggestedAccountCode = null);
 
+public record OcrCreditPurchaseRequest(int Pages);
+
 public record OcrCorrectionRequest(
     string? DocumentType = null,
     string? VendorName = null,

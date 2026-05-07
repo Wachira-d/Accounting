@@ -41,11 +41,14 @@ public class Subscription : BaseEntity
     public int MaxDocumentsPerMonth { get; set; } = 50;
     public int MaxJournalEntriesPerMonth { get; set; } = 100;
     public long MaxStorageBytes { get; set; } = 100 * 1024 * 1024; // 100MB
+    public int MaxOcrPagesPerMonth { get; set; } = 10;
 
     // Usage Tracking
     public int CurrentMonthDocuments { get; set; }
     public int CurrentMonthJournalEntries { get; set; }
     public long CurrentStorageUsed { get; set; }
+    public int CurrentMonthOcrPages { get; set; }
+    public int OcrBonusPages { get; set; }
     public DateTime UsageResetDate { get; set; }
 
     // Payment
@@ -93,6 +96,7 @@ public class TrialConfig : BaseEntity
     public int TrialMaxUsers { get; set; } = 2;
     public int TrialMaxDocumentsPerMonth { get; set; } = 20;
     public int TrialMaxJournalEntriesPerMonth { get; set; } = 50;
+    public int TrialMaxOcrPagesPerMonth { get; set; } = 10;
     public int TrialMaxCompanies { get; set; } = 1;
 
     // Watermark / Branding
@@ -165,6 +169,7 @@ public class PlanTemplate : BaseEntity
     public int MaxDocumentsPerMonth { get; set; }
     public int MaxJournalEntriesPerMonth { get; set; }
     public long MaxStorageBytes { get; set; }
+    public int MaxOcrPagesPerMonth { get; set; }
 
     // Features
     public FeatureFlags EnabledFeatures { get; set; }
@@ -180,6 +185,7 @@ public class PlanTemplate : BaseEntity
     public int TrialMaxUsers { get; set; } = 2;
     public int TrialMaxDocumentsPerMonth { get; set; } = 20;
     public int TrialMaxJournalEntriesPerMonth { get; set; } = 50;
+    public int TrialMaxOcrPagesPerMonth { get; set; } = 10;
     public bool TrialBlockOnExpiry { get; set; } = false;
     public int TrialGracePeriodDays { get; set; } = 7;
 }

@@ -317,6 +317,18 @@
       <button class="btn btn-secondary" onclick="Page.refreshAll()">&#x21bb; รีเฟรช</button>
     </div>
 
+    <!-- OCR Quota Bar -->
+    <div id="ocrQuotaBar" style="display:none;background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:12px;padding:14px 20px;margin-bottom:16px;font-size:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:600;color:#0c4a6e">&#x1F4CA; โควต้า OCR</span>
+        <span id="quotaText" style="font-weight:600;color:#0369a1"></span>
+      </div>
+      <div style="height:8px;background:#e0f2fe;border-radius:4px;overflow:hidden">
+        <div id="quotaFill" style="height:100%;border-radius:4px;transition:width .5s"></div>
+      </div>
+      <div id="quotaExtra" style="font-size:12px;color:#0369a1;margin-top:6px"></div>
+    </div>
+
     <!-- Upload Zone -->
     <div class="upload-zone" id="uploadZone">
       <div class="upload-zone-icon">&#x1F4C4;</div>
@@ -438,6 +450,30 @@
         document.getElementById('thresholdInput').value = this.threshold;
         this.bindUpload();
         this.loadScans();
+        this.loadQuota();
+      },
+
+      async loadQuota() {
+        try {
+          const res = await Layout.api(`/api/companies/${Layout.companyId}/ocr/quota`);
+          if (!res.success || !res.data) return;
+          const q = res.data;
+          const bar = document.getElementById('ocrQuotaBar');
+          bar.style.display = '';
+          const used = q.usedThisMonth;
+          const max = q.maxPagesPerMonth;
+          const total = q.totalAvailable;
+          const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
+          document.getElementById('quotaText').textContent = `${used} / ${max} หน้า`;
+          const fill = document.getElementById('quotaFill');
+          fill.style.width = pct + '%';
+          fill.style.background = pct > 90 ? '#ef4444' : pct > 70 ? '#f59e0b' : '#22c55e';
+          const extras = [];
+          if (q.bonusPages > 0) extras.push(`โบนัส: ${q.bonusPages} หน้า`);
+          if (q.creditPagesRemaining > 0) extras.push(`เครดิต: ${q.creditPagesRemaining} หน้า`);
+          if (total <= 0) extras.push('โควต้าหมด — กรุณาซื้อเครดิตเพิ่ม');
+          document.getElementById('quotaExtra').textContent = extras.join(' | ');
+        } catch (e) { /* quota display is optional */ }
       },
 
       // ==================== Upload ====================

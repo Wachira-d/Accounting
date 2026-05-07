@@ -159,6 +159,26 @@ public class OcrLearnedPattern : TenantEntity
     public int FailureCount { get; set; } = 0;              // How many times this pattern was wrong
 }
 
+/// <summary>
+/// การซื้อเครดิต OCR เพิ่มเติม (add-on pages)
+/// </summary>
+public class OcrCreditPurchase : TenantEntity
+{
+    public Guid SubscriptionId { get; set; }
+    public int PagesPurchased { get; set; }
+    public int PagesRemaining { get; set; }
+    public decimal AmountPaid { get; set; }
+    public string Currency { get; set; } = "THB";
+    public string Status { get; set; } = "Pending";
+    public string? PaymentReference { get; set; }
+    public string? SlipFileName { get; set; }
+    public string? SlipStoragePath { get; set; }
+    public Guid? ReviewedByUserId { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public string? ReviewNotes { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+}
+
 // ===== Custom Report Builder =====
 
 /// <summary>

@@ -89,7 +89,8 @@ public class OcrService : IOcrService
             return MapToResponse(scanResult);
         }
 
-        var ocrProvider = _configuration["Ocr:Provider"]?.ToLower();
+        var effectiveConfig = await GetEffectiveOcrConfigAsync();
+        var ocrProvider = effectiveConfig.Provider;
         OcrExtractedData? extractedData = null;
 
         try
@@ -308,6 +309,19 @@ public class OcrService : IOcrService
 
         await _db.SaveChangesAsync();
         return MapToResponse(scanResult, extractedData);
+    }
+
+    private record EffectiveOcrConfig(string Provider, string? LocalServiceUrl, string? ApiKey, string? AzureEndpoint, decimal AutoCreateThreshold);
+
+    private async Task<EffectiveOcrConfig> GetEffectiveOcrConfigAsync()
+    {
+        var siteSettings = await _db.SiteSettings.FirstOrDefaultAsync();
+        return new EffectiveOcrConfig(
+            Provider: (siteSettings?.OcrProvider ?? _configuration["Ocr:Provider"] ?? "local").ToLower(),
+            LocalServiceUrl: siteSettings?.OcrLocalServiceUrl ?? _configuration["Ocr:LocalServiceUrl"] ?? "http://localhost:8501",
+            ApiKey: _configuration["Ocr:ApiKey"],
+            AzureEndpoint: siteSettings?.AzureDiEndpoint ?? _configuration["Ocr:AzureEndpoint"],
+            AutoCreateThreshold: siteSettings?.OcrAutoCreateThreshold ?? (decimal.TryParse(_configuration["Ocr:AutoCreateThreshold"], out var t2) ? t2 : 0.85m));
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)

@@ -16,8 +16,10 @@ namespace Accounting.Controllers;
 public class OcrController : ControllerBase
 {
     private readonly IOcrService _service;
+    private readonly IOcrQuotaService _quota;
     private readonly AccountingDbContext _db;
-    public OcrController(IOcrService service, AccountingDbContext db) { _service = service; _db = db; }
+    public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db)
+    { _service = service; _quota = quota; _db = db; }
 
     [HttpPost("upload")]
     [RequestSizeLimit(10 * 1024 * 1024)]
@@ -52,6 +54,13 @@ public class OcrController : ControllerBase
                 "ไฟล์นี้เพิ่งถูกอัปโหลดไปแล้ว — แสดงผลเดิม"));
         }
 
+        if (!await _quota.CanScanAsync(companyId))
+        {
+            var status = await _quota.GetQuotaStatusAsync(companyId);
+            return StatusCode(429, new ApiResponse<object>(false, null,
+                $"โควต้า OCR หมด — ใช้ไป {status.UsedThisMonth}/{status.MaxPagesPerMonth} หน้าในเดือนนี้ กรุณาซื้อเครดิตเพิ่ม"));
+        }
+
         var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "ocr");
         Directory.CreateDirectory(uploadsDir);
         var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
@@ -75,6 +84,7 @@ public class OcrController : ControllerBase
         await _db.SaveChangesAsync();
 
         var result = await _service.ScanAsync(companyId, attachment.Id);
+        await _quota.IncrementUsageAsync(companyId);
         return Ok(new ApiResponse<OcrResultResponse>(true, result));
     }
 
@@ -111,6 +121,22 @@ public class OcrController : ControllerBase
         await _service.DeleteScanAsync(companyId, scanId);
         return Ok(new ApiResponse<object>(true, null, "ลบสำเร็จ"));
     }
+
+    [HttpGet("quota")]
+    public async Task<ActionResult<ApiResponse<OcrQuotaStatus>>> GetQuota(Guid companyId)
+        => Ok(new ApiResponse<OcrQuotaStatus>(true, await _quota.GetQuotaStatusAsync(companyId)));
+
+    [HttpPost("credits/purchase")]
+    public async Task<ActionResult<ApiResponse<OcrCreditPurchaseResponse>>> PurchaseCredits(
+        Guid companyId, [FromBody] OcrCreditPurchaseRequest request)
+    {
+        var result = await _quota.PurchaseCreditsAsync(companyId, request.Pages, User.Identity?.Name ?? "");
+        return Ok(new ApiResponse<OcrCreditPurchaseResponse>(true, result, "สร้างรายการซื้อเครดิตสำเร็จ — รอ Admin อนุมัติ"));
+    }
+
+    [HttpGet("credits/history")]
+    public async Task<ActionResult<ApiResponse<List<OcrCreditPurchaseResponse>>>> GetCreditHistory(Guid companyId)
+        => Ok(new ApiResponse<List<OcrCreditPurchaseResponse>>(true, await _quota.GetPurchaseHistoryAsync(companyId)));
 
     [HttpGet("{scanId:guid}/image")]
     public async Task<IActionResult> GetImage(Guid companyId, Guid scanId)

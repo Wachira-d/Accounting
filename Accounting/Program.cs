@@ -145,6 +145,7 @@ builder.Services.AddScoped<ICommissionService, CommissionService>();
 // Phase 4: Intelligence
 builder.Services.AddScoped<IAiService, AiService>();
 builder.Services.AddScoped<IOcrService, OcrService>();
+builder.Services.AddScoped<IOcrQuotaService, OcrQuotaService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
 

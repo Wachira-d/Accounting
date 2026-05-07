@@ -1026,6 +1026,117 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MetaKeywords" text NULL;
             """,
 
+            // ===== SiteSettings: Azure Document Intelligence + OCR config (system-wide) =====
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiEndpoint" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiApiKey" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiModelId" varchar(100) NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiApiVersion" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiEnabled" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiLastTestedAt" timestamp NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiLastTestStatus" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrProvider" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrLocalServiceUrl" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGoogleApiKey" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrTesseractApiKey" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrAutoCreateThreshold" decimal(5,2) NOT NULL DEFAULT 0.85;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesTrial" integer NOT NULL DEFAULT 10;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesBasic" integer NOT NULL DEFAULT 50;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesPro" integer NOT NULL DEFAULT 500;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesEnterprise" integer NOT NULL DEFAULT 5000;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrCreditPricePerPage" decimal(10,2) NOT NULL DEFAULT 2.00;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrCreditMinPurchase" integer NOT NULL DEFAULT 100;
+            """,
+
+            // ===== Subscriptions: OCR quota fields =====
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "MaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CurrentMonthOcrPages" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "OcrBonusPages" integer NOT NULL DEFAULT 0;
+            """,
+
+            // ===== PlanTemplates: OCR quota fields =====
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "MaxOcrPagesPerMonth" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+
+            // ===== TrialConfigs: OCR quota fields =====
+            """
+            ALTER TABLE "TrialConfigs" ADD COLUMN IF NOT EXISTS "TrialMaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+
+            // ===== OcrCreditPurchases table =====
+            """
+            CREATE TABLE IF NOT EXISTS "OcrCreditPurchases" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "SubscriptionId" uuid NOT NULL,
+                "PagesPurchased" integer NOT NULL DEFAULT 0,
+                "PagesRemaining" integer NOT NULL DEFAULT 0,
+                "AmountPaid" decimal(18,2) NOT NULL DEFAULT 0,
+                "Currency" varchar(3) NOT NULL DEFAULT 'THB',
+                "Status" varchar(20) NOT NULL DEFAULT 'Pending',
+                "PaymentReference" text NULL,
+                "SlipFileName" text NULL,
+                "SlipStoragePath" text NULL,
+                "ReviewedByUserId" uuid NULL,
+                "ReviewedAt" timestamp NULL,
+                "ReviewNotes" text NULL,
+                "ExpiresAt" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrCreditPurchases" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrCreditPurchases_CompanyId_SubscriptionId"
+            ON "OcrCreditPurchases" ("CompanyId", "SubscriptionId");
+            """,
+
             // ===== Custom Roles & Per-Menu Permissions (per-company RBAC) =====
             // Each company can define its own roles and assign per-menu access.
             // CompanyUsers.CompanyRoleId is nullable so existing members default
