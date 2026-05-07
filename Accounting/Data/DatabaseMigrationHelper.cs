@@ -911,6 +911,52 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "DuplicateOfScanId" uuid NULL;
             """,
+
+            // ===== Custom Roles & Per-Menu Permissions (per-company RBAC) =====
+            // Each company can define its own roles and assign per-menu access.
+            // CompanyUsers.CompanyRoleId is nullable so existing members default
+            // to "no custom role" (full access — backward compatible).
+            """
+            CREATE TABLE IF NOT EXISTS "CompanyRoles" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Name" varchar(100) NOT NULL,
+                "Description" text NULL,
+                "Color" varchar(20) NOT NULL DEFAULT '#6B7280',
+                "Icon" varchar(10) NOT NULL DEFAULT '👤',
+                "IsSystemRole" boolean NOT NULL DEFAULT false,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_CompanyRoles" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_CompanyRoles_CompanyId_Name"
+            ON "CompanyRoles" ("CompanyId", "Name");
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "CompanyRolePermissions" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyRoleId" uuid NOT NULL,
+                "MenuItemId" varchar(100) NOT NULL,
+                "CanAccess" boolean NOT NULL DEFAULT true,
+                CONSTRAINT "PK_CompanyRolePermissions" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_CompanyRolePermissions_CompanyRoles" FOREIGN KEY ("CompanyRoleId")
+                    REFERENCES "CompanyRoles"("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_CompanyRolePermissions_CompanyRoleId_MenuItemId"
+            ON "CompanyRolePermissions" ("CompanyRoleId", "MenuItemId");
+            """,
+            // Add CompanyRoleId to existing CompanyUsers — nullable so old rows stay valid.
+            """
+            ALTER TABLE "CompanyUsers" ADD COLUMN IF NOT EXISTS "CompanyRoleId" uuid NULL;
+            """,
         ];
     }
 
