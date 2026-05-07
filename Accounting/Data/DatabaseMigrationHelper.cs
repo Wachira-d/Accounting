@@ -954,6 +954,15 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_OcrLearnedPatterns_CompanyId_VendorTaxId_FieldName"
             ON "OcrLearnedPatterns" ("CompanyId", "VendorTaxId", "FieldName");
             """,
+            """
+            ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "IsNegativeExample" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "NegativeValue" text NULL;
+            """,
+            """
+            ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "FailureCount" integer NOT NULL DEFAULT 0;
+            """,
 
             // ===== Custom Roles & Per-Menu Permissions (per-company RBAC) =====
             // Each company can define its own roles and assign per-menu access.

@@ -151,6 +151,12 @@ public class OcrLearnedPattern : TenantEntity
     public int SearchRadius { get; set; } = 300;           // How far from keyword to search
     public int TimesConfirmed { get; set; } = 1;           // Increases each time this pattern is confirmed
     public DateTime LastConfirmedAt { get; set; } = DateTime.UtcNow;
+
+    // Negative learning: a value that was previously extracted but corrected away from
+    // — should be down-weighted when seen again for this vendor.
+    public bool IsNegativeExample { get; set; } = false;
+    public string? NegativeValue { get; set; }              // The wrong value that was rejected
+    public int FailureCount { get; set; } = 0;              // How many times this pattern was wrong
 }
 
 // ===== Custom Report Builder =====

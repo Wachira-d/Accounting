@@ -11,7 +11,10 @@ public record OcrResultResponse(
     bool HasWht = false, decimal? WhtRate = null,
     int? PaymentTermsDays = null,
     List<OcrLineItemDto>? ExtractedItems = null,
-    string? RawTextContent = null);
+    string? RawTextContent = null,
+    Dictionary<string, double>? FieldConfidence = null,
+    string? BuyerName = null,
+    string? BuyerTaxId = null);
 
 public record OcrSuggestedAccountsDto(
     string? DebitAccountCode, string? DebitAccountName,

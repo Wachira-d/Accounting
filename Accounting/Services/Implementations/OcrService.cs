@@ -135,6 +135,12 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Zone Analysis]\n" + extractedData.ZoneSummary;
             if (!string.IsNullOrEmpty(extractedData.BuyerName))
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Buyer] {extractedData.BuyerName} TaxID:{extractedData.BuyerTaxId ?? "N/A"}";
+            if (extractedData.FieldConfidence.Count > 0)
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
+                    string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
+            if (extractedData.ReasoningTrace.Count > 0)
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
+                    string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
 
             if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
             {
@@ -263,7 +269,7 @@ public class OcrService : IOcrService
         }
 
         await _db.SaveChangesAsync();
-        return MapToResponse(scanResult, ocrProvider == "local" ? extractedData : null);
+        return MapToResponse(scanResult, extractedData);
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)
@@ -358,6 +364,11 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
 
+        // Capture previous values BEFORE updating — used as negative examples
+        var prevVendorName = result.ExtractedVendorName;
+        var prevVendorTaxId = result.ExtractedVendorTaxId;
+        var prevDocNumber = result.ExtractedDocumentNumber;
+
         // Update the scan result with corrected data
         if (correction.DocumentType != null) result.DocumentType = correction.DocumentType;
         if (correction.VendorName != null) result.ExtractedVendorName = correction.VendorName;
@@ -410,26 +421,52 @@ public class OcrService : IOcrService
                     result.RawTextContent, companyId,
                     correction.VendorTaxId ?? result.ExtractedVendorTaxId,
                     correction.VendorName, correction.VendorTaxId,
-                    correction.DocumentNumber, correction.TotalAmount);
+                    correction.DocumentNumber, correction.TotalAmount,
+                    previousVendorName: prevVendorName,
+                    previousTaxId: prevVendorTaxId,
+                    previousDocNumber: prevDocNumber);
 
                 foreach (var newPattern in learnedPatterns)
                 {
-                    var existing = await _db.OcrLearnedPatterns
-                        .FirstOrDefaultAsync(p => p.CompanyId == companyId
-                            && p.FieldName == newPattern.FieldName
-                            && p.ContextKeyword == newPattern.ContextKeyword
-                            && (p.VendorTaxId == newPattern.VendorTaxId || (p.VendorTaxId == null && newPattern.VendorTaxId == null)));
-
-                    if (existing != null)
+                    if (newPattern.IsNegativeExample)
                     {
-                        existing.TimesConfirmed++;
-                        existing.LastConfirmedAt = DateTime.UtcNow;
-                        existing.ExtractionRegex = newPattern.ExtractionRegex;
-                        existing.SearchRadius = Math.Max(existing.SearchRadius, newPattern.SearchRadius);
+                        // Negative example: identified by FieldName + NegativeValue
+                        var existingNeg = await _db.OcrLearnedPatterns
+                            .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                                && p.FieldName == newPattern.FieldName
+                                && p.IsNegativeExample
+                                && p.NegativeValue == newPattern.NegativeValue
+                                && (p.VendorTaxId == newPattern.VendorTaxId || (p.VendorTaxId == null && newPattern.VendorTaxId == null)));
+                        if (existingNeg != null)
+                        {
+                            existingNeg.FailureCount++;
+                            existingNeg.LastConfirmedAt = DateTime.UtcNow;
+                        }
+                        else
+                        {
+                            _db.OcrLearnedPatterns.Add(newPattern);
+                        }
                     }
                     else
                     {
-                        _db.OcrLearnedPatterns.Add(newPattern);
+                        var existing = await _db.OcrLearnedPatterns
+                            .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                                && !p.IsNegativeExample
+                                && p.FieldName == newPattern.FieldName
+                                && p.ContextKeyword == newPattern.ContextKeyword
+                                && (p.VendorTaxId == newPattern.VendorTaxId || (p.VendorTaxId == null && newPattern.VendorTaxId == null)));
+
+                        if (existing != null)
+                        {
+                            existing.TimesConfirmed++;
+                            existing.LastConfirmedAt = DateTime.UtcNow;
+                            existing.ExtractionRegex = newPattern.ExtractionRegex;
+                            existing.SearchRadius = Math.Max(existing.SearchRadius, newPattern.SearchRadius);
+                        }
+                        else
+                        {
+                            _db.OcrLearnedPatterns.Add(newPattern);
+                        }
                     }
                 }
                 await _db.SaveChangesAsync();
@@ -557,7 +594,16 @@ public class OcrService : IOcrService
             _logger.LogWarning(ex, "Could not load learned patterns — table may not exist yet");
         }
 
-        var zoneResult = DocumentZoneAnalyzer.Analyze(text, patterns);
+        // Load our company's TaxId so analyzer can disambiguate seller vs buyer
+        string? ourTaxId = null;
+        try
+        {
+            var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+            ourTaxId = company?.TaxId;
+        }
+        catch { /* non-fatal */ }
+
+        var zoneResult = DocumentZoneAnalyzer.Analyze(text, patterns, ourTaxId);
 
         // GL account suggestions map
         var glMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn, string? Vc, string? Vn)>
@@ -601,6 +647,8 @@ public class OcrService : IOcrService
         data.ZoneSummary = zoneResult.ZoneSummary;
         data.BuyerName = zoneResult.BuyerName;
         data.BuyerTaxId = zoneResult.BuyerTaxId;
+        data.FieldConfidence = zoneResult.FieldConfidence;
+        data.ReasoningTrace = zoneResult.ReasoningTrace;
 
         return data;
     }
@@ -1151,7 +1199,10 @@ public class OcrService : IOcrService
             expenseCategory, suggestedAccounts,
             hasWht, whtRate,
             paymentTermsDays, items,
-            r.RawTextContent);
+            r.RawTextContent,
+            data?.FieldConfidence,
+            data?.BuyerName,
+            data?.BuyerTaxId);
     }
 }
 
@@ -1179,6 +1230,8 @@ internal class OcrExtractedData
     public string? ZoneSummary { get; set; }
     public string? BuyerName { get; set; }
     public string? BuyerTaxId { get; set; }
+    public Dictionary<string, double> FieldConfidence { get; set; } = new();
+    public List<string> ReasoningTrace { get; set; } = new();
     public List<OcrExtractedLineItem> Items { get; set; } = new();
 }
 

@@ -968,6 +968,13 @@
             return `<span class="conf-badge ${l}">${p}%</span>`;
           };
 
+          // Per-field confidence: prefer FieldConfidence dict if backend supplied it
+          const fieldConf = scan.fieldConfidence || {};
+          const fc = (fieldName) => {
+            if (fieldName in fieldConf) return confBadge(fieldConf[fieldName]);
+            return confBadge(scan.confidence);
+          };
+
           document.getElementById('reviewTitle').textContent = 'ตรวจสอบ: ' + (scan.originalFileName || 'เอกสาร');
 
           document.getElementById('reviewBody').innerHTML = `
@@ -990,20 +997,22 @@
               <div class="review-field">
                 <label>ชื่อผู้ขาย</label>
                 <input type="text" class="form-input" id="revVendorName" value="${Layout.esc(scan.extractedVendorName || '')}">
-                ${confBadge(scan.confidence)}
+                ${fc('SellerName')}
               </div>
               <div class="review-field">
                 <label>เลขผู้เสียภาษี</label>
                 <input type="text" class="form-input" id="revVendorTaxId" value="${Layout.esc(scan.extractedVendorTaxId || '')}">
+                ${fc('SellerTaxId')}
               </div>
               <div class="review-field">
                 <label>เลขที่เอกสาร</label>
                 <input type="text" class="form-input" id="revDocNumber" value="${Layout.esc(scan.extractedDocumentNumber || '')}">
-                ${confBadge(scan.confidence)}
+                ${fc('DocumentNumber')}
               </div>
               <div class="review-field">
                 <label>วันที่</label>
                 <input type="date" class="form-input" id="revDate" value="${scan.extractedDate ? Layout.dateInput(scan.extractedDate) : ''}">
+                ${fc('DocumentDate')}
               </div>
               <div class="review-field">
                 <label>ยอดก่อน VAT</label>
@@ -1016,8 +1025,13 @@
               <div class="review-field">
                 <label>ยอดรวมทั้งสิ้น</label>
                 <input type="number" class="form-input" id="revTotalAmount" step="0.01" value="${scan.extractedTotalAmount != null ? scan.extractedTotalAmount : ''}">
-                ${confBadge(scan.confidence)}
+                ${fc('TotalAmount')}
               </div>
+              ${scan.buyerName || scan.buyerTaxId ? `
+              <div class="review-field" style="background:#f0f9ff;border:1px solid #bae6fd;padding:8px;border-radius:6px">
+                <label style="color:#0369a1">ผู้ซื้อ (Buyer detected)</label>
+                <span style="font-size:13px;color:#0c4a6e">${Layout.esc(scan.buyerName || '-')} ${scan.buyerTaxId ? `(${Layout.esc(scan.buyerTaxId)})` : ''}</span>
+              </div>` : ''}
             </div>
 
             <div class="review-section">
@@ -1124,10 +1138,27 @@
                   </div>
                 </div>
 
+                ${scan.fieldConfidence && Object.keys(scan.fieldConfidence).length > 0 ? `
+                <div style="margin-bottom:12px">
+                  <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">🎯 ความเชื่อมั่นแยกตามฟิลด์</div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px">
+                    ${Object.entries(scan.fieldConfidence).map(([k,v]) => {
+                      const p = Math.round(v * 100);
+                      const color = p >= 85 ? '#059669' : p >= 60 ? '#d97706' : '#dc2626';
+                      return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 8px;background:var(--gray-50);border-radius:4px;border-left:3px solid ${color}"><span style="color:var(--gray-700)">${k}</span><span style="font-weight:600;color:${color}">${p}%</span></div>`;
+                    }).join('')}
+                  </div>
+                </div>` : ''}
+
                 ${scan.processingNotes ? `
                 <div style="margin-bottom:12px">
                   <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Processing Notes & Zone Analysis</div>
-                  <pre style="font-size:11px;background:var(--gray-50);padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--gray-200);max-height:250px;overflow:auto;line-height:1.6">${Layout.esc(scan.processingNotes).replace(/\[Zone Analysis\]/g,'<strong style="color:var(--primary)">[Zone Analysis]</strong>').replace(/\[(Seller|Buyer|Header|Items|Summary|Payment)\]/g,'<span style="color:#2563eb;font-weight:600">[$1]</span>').replace(/\[Swap\]/g,'<strong style="color:#d97706">[Swap]</strong>')}</pre>
+                  <pre style="font-size:11px;background:var(--gray-50);padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--gray-200);max-height:280px;overflow:auto;line-height:1.6">${Layout.esc(scan.processingNotes)
+                    .replace(/\[Zone Analysis\]/g,'<strong style="color:var(--primary)">[Zone Analysis]</strong>')
+                    .replace(/\[Field Confidence\]/g,'<strong style="color:#059669">[Field Confidence]</strong>')
+                    .replace(/\[Reasoning\]/g,'<strong style="color:#7c3aed">[Reasoning]</strong>')
+                    .replace(/\[(Seller|Buyer|Header|Items|Summary|Payment)\]/g,'<span style="color:#2563eb;font-weight:600">[$1]</span>')
+                    .replace(/\[Swap\]/g,'<strong style="color:#d97706">[Swap]</strong>')}</pre>
                 </div>` : ''}
 
                 <div>

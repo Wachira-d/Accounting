@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using Accounting.Models.Entities;
+using Accounting.Services.Implementations.Ocr;
+using static Accounting.Services.Implementations.Ocr.FieldPatternLibrary;
 
 namespace Accounting.Services.Implementations;
 
@@ -52,6 +54,12 @@ public static class DocumentZoneAnalyzer
         public int? PaymentTermsDays { get; set; }
 
         public string ZoneSummary { get; set; } = "";
+
+        // Per-field confidence scores (0-1) — for UI to show traffic-light per field
+        public Dictionary<string, double> FieldConfidence { get; set; } = new();
+
+        // Trace of reasoning steps for debug panel
+        public List<string> ReasoningTrace { get; set; } = new();
     }
 
     static readonly Dictionary<ZoneType, (string[] Keywords, int Radius)> ZoneDefinitions = new()
@@ -86,7 +94,9 @@ public static class DocumentZoneAnalyzer
     /// <summary>
     /// Main entry point: analyze OCR text into zones and extract structured data.
     /// </summary>
-    public static ZoneAnalysisResult Analyze(string text, List<OcrLearnedPattern>? learnedPatterns = null)
+    public static ZoneAnalysisResult Analyze(string text,
+        List<OcrLearnedPattern>? learnedPatterns = null,
+        string? ourCompanyTaxId = null)
     {
         if (string.IsNullOrWhiteSpace(text))
             return new ZoneAnalysisResult { DocumentType = "Receipt", Confidence = 0.3m };
@@ -98,18 +108,23 @@ public static class DocumentZoneAnalyzer
         var result = new ZoneAnalysisResult { Zones = zones };
         DetectDocumentType(text, result);
 
-        // Step 3: Extract fields from each zone
-        ExtractFromZones(text, zones, result);
+        // Step 3: Extract fields using pattern library + zone awareness + learned patterns
+        ExtractFromZones(text, zones, result, learnedPatterns, ourCompanyTaxId);
 
-        // Step 4: Apply learned patterns to override or fill gaps
+        // Step 4: Apply learned patterns to override or fill gaps (legacy support)
         if (learnedPatterns?.Count > 0)
             ApplyLearnedPatterns(text, result, learnedPatterns);
 
-        // Step 5: Calculate missing amounts
-        CalculateMissingAmounts(result);
-
-        // Step 6: Build zone summary for debugging
+        // Step 5: Build zone summary for debugging
         result.ZoneSummary = BuildZoneSummary(zones, text);
+
+        // Step 6: Calculate overall confidence as weighted average of per-field
+        if (result.FieldConfidence.Count > 0)
+        {
+            var weighted = result.FieldConfidence.Values.Average();
+            // Blend with the doc-type confidence
+            result.Confidence = Math.Round((decimal)((double)result.Confidence * 0.4 + weighted * 0.6), 2);
+        }
 
         return result;
     }
@@ -206,70 +221,126 @@ public static class DocumentZoneAnalyzer
         else                    { result.DocumentType = "Receipt"; result.Confidence = 0.4m; }
     }
 
-    static void ExtractFromZones(string text, List<TextZone> zones, ZoneAnalysisResult result)
+    static void ExtractFromZones(string text, List<TextZone> zones, ZoneAnalysisResult result,
+        List<OcrLearnedPattern>? learnedPatterns = null, string? ourCompanyTaxId = null)
     {
-        // --- Seller zone: extract company name + tax ID ---
+        // Build extraction context shared across all field extractions
+        var ctx = new FieldExtractor.ExtractionContext
+        {
+            FullText = text,
+            Zones = zones,
+            LearnedPatterns = learnedPatterns,
+            OurCompanyTaxId = ourCompanyTaxId,
+            NegativeExamples = new HashSet<string>(
+                (learnedPatterns ?? new()).Where(p => p.IsNegativeExample && p.NegativeValue != null)
+                    .Select(p => p.NegativeValue!),
+                StringComparer.OrdinalIgnoreCase),
+        };
+
+        // --- Tax IDs: extract all candidates, classify by zone (seller/buyer) ---
+        var allTaxIds = ExtractCandidates(text, FieldType.TaxId)
+            .Where(c => c.IsChecksumValid || c.Score >= 0.4)
+            .ToList();
+
         var sellerZone = zones.FirstOrDefault(z => z.Type == ZoneType.Seller);
-        if (sellerZone != null)
-        {
-            result.SellerName = ExtractCompanyName(sellerZone.Text);
-            result.SellerTaxId = ExtractTaxId(sellerZone.Text);
-            result.Confidence += 0.05m; // boost confidence if we found seller zone
-        }
-
-        // --- Buyer zone: extract company name + tax ID ---
         var buyerZone = zones.FirstOrDefault(z => z.Type == ZoneType.Buyer);
-        if (buyerZone != null)
+
+        // Tax IDs in seller zone → SellerTaxId; in buyer zone → BuyerTaxId
+        var sellerTaxIds = sellerZone != null
+            ? allTaxIds.Where(c => c.Position >= sellerZone.Start && c.Position <= sellerZone.End).ToList()
+            : new();
+        var buyerTaxIds = buyerZone != null
+            ? allTaxIds.Where(c => c.Position >= buyerZone.Start && c.Position <= buyerZone.End).ToList()
+            : new();
+
+        result.SellerTaxId = sellerTaxIds.OrderByDescending(c => c.Score).FirstOrDefault()?.NormalizedValue;
+        result.BuyerTaxId = buyerTaxIds.OrderByDescending(c => c.Score).FirstOrDefault()?.NormalizedValue;
+
+        // If no tax id in seller/buyer zones, use positional heuristic: first one = seller
+        if (result.SellerTaxId == null && result.BuyerTaxId == null && allTaxIds.Count > 0)
         {
-            result.BuyerName = ExtractCompanyName(buyerZone.Text);
-            result.BuyerTaxId = ExtractTaxId(buyerZone.Text);
+            var ordered = allTaxIds.OrderBy(c => c.Position).ToList();
+            result.SellerTaxId = ordered[0].NormalizedValue;
+            if (ordered.Count > 1) result.BuyerTaxId = ordered[1].NormalizedValue;
+        }
+        else if (result.SellerTaxId == null && allTaxIds.Count > 0)
+        {
+            // Pick first tax ID outside buyer zone
+            var notInBuyer = allTaxIds.Where(c => buyerZone == null || c.Position < buyerZone.Start || c.Position > buyerZone.End).ToList();
+            result.SellerTaxId = notInBuyer.FirstOrDefault()?.NormalizedValue;
         }
 
-        // --- If no explicit seller/buyer zones, use positional fallback ---
-        if (sellerZone == null && buyerZone == null)
+        // If our own tax ID is detected as seller — it actually means we're the seller (this is OUR invoice)
+        // and the real vendor is the buyer
+        if (!string.IsNullOrEmpty(ourCompanyTaxId) && result.SellerTaxId == ourCompanyTaxId
+            && !string.IsNullOrEmpty(result.BuyerTaxId))
         {
-            FallbackCompanyExtraction(text, result);
-        }
-        else if (sellerZone == null && buyerZone != null)
-        {
-            // We know the buyer but not seller — look for company info outside buyer zone
-            var outsideBuyer = text[..buyerZone.Start] +
-                (buyerZone.End < text.Length ? text[buyerZone.End..] : "");
-            result.SellerName = ExtractCompanyName(outsideBuyer);
-            result.SellerTaxId = ExtractTaxId(outsideBuyer);
-        }
-        else if (sellerZone != null && buyerZone == null)
-        {
-            var outsideSeller = text[..sellerZone.Start] +
-                (sellerZone.End < text.Length ? text[sellerZone.End..] : "");
-            result.BuyerName = ExtractCompanyName(outsideSeller);
-            result.BuyerTaxId = ExtractTaxId(outsideSeller);
+            // swap: real vendor is the buyer
+            (result.SellerTaxId, result.BuyerTaxId) = (result.BuyerTaxId, result.SellerTaxId);
         }
 
-        // --- Header zone: document number + date ---
-        var headerZone = zones.FirstOrDefault(z => z.Type == ZoneType.Header);
-        var headerText = headerZone?.Text ?? text;
+        // --- Company names: extract candidates, match to zones ---
+        var allCompanies = ExtractCandidates(text, FieldType.CompanyName);
+        var sellerCompanies = sellerZone != null
+            ? allCompanies.Where(c => c.Position >= sellerZone.Start && c.Position <= sellerZone.End).ToList()
+            : new();
+        var buyerCompanies = buyerZone != null
+            ? allCompanies.Where(c => c.Position >= buyerZone.Start && c.Position <= buyerZone.End).ToList()
+            : new();
 
-        result.DocumentNumber = ExtractDocNumber(headerText);
-        if (result.DocumentNumber == null && headerZone != null)
-            result.DocumentNumber = ExtractDocNumber(text);
+        result.SellerName = sellerCompanies.OrderByDescending(c => c.Score).FirstOrDefault()?.NormalizedValue;
+        result.BuyerName = buyerCompanies.OrderByDescending(c => c.Score).FirstOrDefault()?.NormalizedValue;
 
-        result.DocumentDate = ExtractDate(headerText);
-        if (!result.DocumentDate.HasValue && headerZone != null)
-            result.DocumentDate = ExtractDate(text);
+        // Fallback: positional
+        if (result.SellerName == null && result.BuyerName == null && allCompanies.Count > 0)
+        {
+            var ordered = allCompanies.OrderBy(c => c.Position).ToList();
+            result.SellerName = ordered[0].NormalizedValue;
+            if (ordered.Count > 1) result.BuyerName = ordered[1].NormalizedValue;
+        }
+        else if (result.SellerName == null && allCompanies.Count > 0)
+        {
+            var notInBuyer = allCompanies.Where(c => buyerZone == null || c.Position < buyerZone.Start || c.Position > buyerZone.End).ToList();
+            result.SellerName = notInBuyer.OrderByDescending(c => c.Score).FirstOrDefault()?.NormalizedValue;
+        }
 
-        // --- Summary zone: amounts ---
-        var summaryZone = zones.FirstOrDefault(z => z.Type == ZoneType.Summary);
-        var summaryText = summaryZone?.Text ?? text;
+        // --- Document number: prefer header zone, exclude tax IDs and phone numbers ---
+        var docNumberResult = FieldExtractor.ExtractField(FieldType.DocumentNumber, ctx, ZoneType.Header,
+            customFilter: c =>
+                !Regex.IsMatch(c.NormalizedValue, @"^\d{13}$") &&         // not tax id
+                !Regex.IsMatch(c.NormalizedValue, @"^0\d{8,9}$") &&        // not phone
+                c.NormalizedValue != result.SellerTaxId &&                 // not our seller tax id
+                c.NormalizedValue != result.BuyerTaxId);
+        result.DocumentNumber = docNumberResult.Best?.NormalizedValue;
 
-        result.TotalAmount = ExtractTotal(summaryText);
-        result.VatAmount = ExtractVat(summaryText);
-        result.SubTotal = ExtractSubTotal(summaryText);
+        // --- Date: prefer header zone ---
+        var dateResult = FieldExtractor.ExtractField(FieldType.Date, ctx, ZoneType.Header);
+        if (dateResult.Best != null && DateTime.TryParse(dateResult.Best.NormalizedValue, out var d))
+            result.DocumentDate = d;
 
-        // If amounts not found in summary zone, try full text
-        if (result.TotalAmount == null) result.TotalAmount = ExtractTotal(text);
-        if (result.VatAmount == null) result.VatAmount = ExtractVat(text);
-        if (result.SubTotal == null) result.SubTotal = ExtractSubTotal(text);
+        // Amounts: use context-keyword scanning to distinguish subtotal/vat/total
+        ExtractAmountsByContext(text, zones, result);
+
+        // Cross-validate and fill missing amounts
+        var (sub, vat, total) = CrossValidator.FillMissingAmounts(result.SubTotal, result.VatAmount, result.TotalAmount);
+        result.SubTotal = sub;
+        result.VatAmount = vat;
+        result.TotalAmount = total;
+
+        var amountValidation = CrossValidator.ValidateAmounts(sub, vat, total);
+        if (!amountValidation.IsValid)
+            result.Confidence *= (decimal)amountValidation.ConfidenceAdjustment;
+
+        // --- Per-field confidence ---
+        result.FieldConfidence["SellerName"] = result.SellerName != null ? 0.9 : 0;
+        result.FieldConfidence["SellerTaxId"] = result.SellerTaxId != null
+            ? (FieldPatternLibrary.ValidateThaiTaxId(result.SellerTaxId) ? 1.0 : 0.5) : 0;
+        result.FieldConfidence["BuyerName"] = result.BuyerName != null ? 0.85 : 0;
+        result.FieldConfidence["BuyerTaxId"] = result.BuyerTaxId != null
+            ? (FieldPatternLibrary.ValidateThaiTaxId(result.BuyerTaxId) ? 1.0 : 0.5) : 0;
+        result.FieldConfidence["DocumentNumber"] = docNumberResult.Confidence;
+        result.FieldConfidence["DocumentDate"] = dateResult.Confidence;
+        result.FieldConfidence["TotalAmount"] = result.TotalAmount.HasValue ? 0.9 : 0;
 
         // --- WHT detection ---
         var whtMatch = Regex.Match(text, @"หัก\s*ณ\s*ที่จ่าย|ภาษี\s*หัก|WHT|W/?T", RegexOptions.IgnoreCase);
@@ -290,8 +361,57 @@ public static class DocumentZoneAnalyzer
         if (termsMatch.Success)
             result.PaymentTermsDays = int.Parse(termsMatch.Groups[1].Value);
 
+        // --- Reasoning trace ---
+        result.ReasoningTrace.Add($"TaxIDs found: {allTaxIds.Count}, valid: {allTaxIds.Count(c => c.IsChecksumValid)}");
+        result.ReasoningTrace.Add($"Companies found: {allCompanies.Count}");
+        result.ReasoningTrace.Add($"DocNumber: {docNumberResult.Reasoning}");
+        result.ReasoningTrace.Add($"Date: {dateResult.Reasoning}");
+        if (amountValidation.Issues.Count > 0)
+            result.ReasoningTrace.AddRange(amountValidation.Issues.Select(i => "Amount: " + i));
+
         // --- GL suggestions ---
         AssignAccountSuggestions(result);
+    }
+
+    /// <summary>
+    /// Extract subtotal/vat/total by scanning context keywords — more reliable
+    /// than just picking the largest amount.
+    /// </summary>
+    static void ExtractAmountsByContext(string text, List<TextZone> zones, ZoneAnalysisResult result)
+    {
+        var summaryZone = zones.FirstOrDefault(z => z.Type == ZoneType.Summary);
+        var searchText = summaryZone?.Text ?? text;
+
+        // Total: look for "รวมทั้งสิ้น" or "GRAND TOTAL" or "NET TOTAL"
+        var totalMatch = Regex.Match(searchText,
+            @"(?:รวมทั้งสิ้น|รวมเงินทั้งสิ้น|ยอดรวมสุทธิ|จำนวนเงินสุทธิ|GRAND\s*TOTAL|NET\s*TOTAL|รวมเงิน(?=\s|$))\s*[:：]?\s*([\d,]+\.\d{2})",
+            RegexOptions.IgnoreCase);
+        if (totalMatch.Success)
+            result.TotalAmount = ParseAmount(totalMatch.Groups[1].Value);
+
+        // VAT: "ภาษีมูลค่าเพิ่ม 7%" / "VAT 7%"
+        var vatMatch = Regex.Match(searchText,
+            @"(?:ภาษีมูลค่าเพิ่ม|VAT|Vat)(?:\s*\(?\s*7\s*%?\)?)?\s*[:：]?\s*([\d,]+\.\d{2})",
+            RegexOptions.IgnoreCase);
+        if (vatMatch.Success)
+            result.VatAmount = ParseAmount(vatMatch.Groups[1].Value);
+
+        // SubTotal: "ราคาสินค้า" / "ก่อนภาษี" / "Sub Total"
+        var subMatch = Regex.Match(searchText,
+            @"(?:ราคาสินค้า|ก่อนภาษี|มูลค่าก่อนภาษี|รวมก่อนภาษี|SUB\s*TOTAL|Subtotal)\s*[:：]?\s*([\d,]+\.\d{2})",
+            RegexOptions.IgnoreCase);
+        if (subMatch.Success)
+            result.SubTotal = ParseAmount(subMatch.Groups[1].Value);
+
+        // If still missing, try full text
+        if (result.TotalAmount == null && summaryZone != null)
+        {
+            totalMatch = Regex.Match(text,
+                @"(?:รวมทั้งสิ้น|GRAND\s*TOTAL|TOTAL)\s*[:：]?\s*([\d,]+\.\d{2})",
+                RegexOptions.IgnoreCase);
+            if (totalMatch.Success)
+                result.TotalAmount = ParseAmount(totalMatch.Groups[1].Value);
+        }
     }
 
     static string? ExtractCompanyName(string zoneText)
@@ -463,20 +583,6 @@ public static class DocumentZoneAnalyzer
         return $"{prefix} {name}{suffix}".Trim();
     }
 
-    static void CalculateMissingAmounts(ZoneAnalysisResult r)
-    {
-        bool isTaxDoc = r.DocumentType is "TaxInvoice" or "Invoice" or "CreditNote" or "DebitNote";
-        if (r.TotalAmount > 0 && r.VatAmount > 0 && r.SubTotal == null)
-            r.SubTotal = r.TotalAmount - r.VatAmount;
-        else if (r.SubTotal > 0 && r.VatAmount > 0 && r.TotalAmount == null)
-            r.TotalAmount = r.SubTotal + r.VatAmount;
-        else if (r.TotalAmount > 0 && r.SubTotal == null && r.VatAmount == null && isTaxDoc)
-        {
-            r.SubTotal = Math.Round(r.TotalAmount.Value / 1.07m, 2);
-            r.VatAmount = r.TotalAmount.Value - r.SubTotal.Value;
-        }
-    }
-
     static void AssignAccountSuggestions(ZoneAnalysisResult r)
     {
         var map = new Dictionary<string, (string Cat, string Dc, string Dn, string Cc, string Cn)>
@@ -533,18 +639,22 @@ public static class DocumentZoneAnalyzer
 
     /// <summary>
     /// Learn patterns from a user correction by finding where corrected values
-    /// appear in the raw text and what keywords are nearby.
+    /// appear in the raw text and what keywords are nearby. Also record negative
+    /// examples for the previously-extracted (wrong) values.
     /// </summary>
     public static List<OcrLearnedPattern> LearnFromCorrection(
         string rawText, Guid companyId,
         string? vendorTaxId,
         string? correctedVendorName, string? correctedTaxId,
-        string? correctedDocNumber, decimal? correctedTotal)
+        string? correctedDocNumber, decimal? correctedTotal,
+        // Previous (wrong) values — used to record negative examples
+        string? previousVendorName = null, string? previousTaxId = null,
+        string? previousDocNumber = null)
     {
         var patterns = new List<OcrLearnedPattern>();
         if (string.IsNullOrWhiteSpace(rawText)) return patterns;
 
-        // Find where each corrected value appears in the text
+        // POSITIVE examples: the corrected value is the right one
         if (!string.IsNullOrEmpty(correctedVendorName))
         {
             var learned = FindContextForValue(rawText, correctedVendorName, "SellerName", companyId, vendorTaxId);
@@ -561,8 +671,28 @@ public static class DocumentZoneAnalyzer
             if (learned != null) patterns.Add(learned);
         }
 
+        // NEGATIVE examples: previous values that the user corrected away from
+        if (!string.IsNullOrEmpty(previousVendorName) && previousVendorName != correctedVendorName)
+            patterns.Add(BuildNegativePattern(companyId, vendorTaxId, "SellerName", previousVendorName));
+        if (!string.IsNullOrEmpty(previousTaxId) && previousTaxId != correctedTaxId)
+            patterns.Add(BuildNegativePattern(companyId, vendorTaxId, "SellerTaxId", previousTaxId));
+        if (!string.IsNullOrEmpty(previousDocNumber) && previousDocNumber != correctedDocNumber)
+            patterns.Add(BuildNegativePattern(companyId, vendorTaxId, "DocumentNumber", previousDocNumber));
+
         return patterns;
     }
+
+    static OcrLearnedPattern BuildNegativePattern(Guid companyId, string? vendorTaxId, string fieldName, string wrongValue)
+        => new()
+        {
+            CompanyId = companyId,
+            VendorTaxId = vendorTaxId,
+            FieldName = fieldName,
+            ContextKeyword = "(negative)",
+            IsNegativeExample = true,
+            NegativeValue = wrongValue,
+            FailureCount = 1,
+        };
 
     static OcrLearnedPattern? FindContextForValue(string text, string value, string fieldName,
         Guid companyId, string? vendorTaxId)
