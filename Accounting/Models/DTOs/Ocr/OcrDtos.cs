@@ -14,7 +14,16 @@ public record OcrResultResponse(
     string? RawTextContent = null,
     Dictionary<string, double>? FieldConfidence = null,
     string? BuyerName = null,
-    string? BuyerTaxId = null);
+    string? BuyerTaxId = null,
+    OcrDbdInfo? DbdInfo = null);
+
+public record OcrDbdInfo(
+    bool LookupAttempted,
+    bool Matched,
+    string? CanonicalName = null,
+    string? Address = null,
+    string? JuristicType = null,
+    string? Status = null);
 
 public record OcrSuggestedAccountsDto(
     string? DebitAccountCode, string? DebitAccountName,

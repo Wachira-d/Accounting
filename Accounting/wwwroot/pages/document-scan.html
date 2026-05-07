@@ -977,8 +977,33 @@
 
           document.getElementById('reviewTitle').textContent = 'ตรวจสอบ: ' + (scan.originalFileName || 'เอกสาร');
 
+          // DBD verification banner
+          let dbdBanner = '';
+          if (scan.dbdInfo && scan.dbdInfo.lookupAttempted) {
+            if (scan.dbdInfo.matched) {
+              dbdBanner = `
+                <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-left:4px solid #059669;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px">
+                  <div style="display:flex;align-items:center;gap:8px;font-weight:600;color:#065f46;margin-bottom:4px">
+                    <span style="font-size:16px">&#10004;</span> ตรวจสอบแล้วกับ DBD (กรมพัฒนาธุรกิจการค้า)
+                  </div>
+                  <div style="color:#047857;line-height:1.6">
+                    <strong>ชื่อทางการ:</strong> ${Layout.esc(scan.dbdInfo.canonicalName || '-')}<br>
+                    ${scan.dbdInfo.juristicType ? `<strong>ประเภท:</strong> ${Layout.esc(scan.dbdInfo.juristicType)}` : ''}
+                    ${scan.dbdInfo.status ? ` &nbsp; <strong>สถานะ:</strong> ${Layout.esc(scan.dbdInfo.status)}` : ''}
+                    ${scan.dbdInfo.address ? `<br><strong>ที่อยู่:</strong> ${Layout.esc(scan.dbdInfo.address)}` : ''}
+                  </div>
+                </div>`;
+            } else {
+              dbdBanner = `
+                <div style="background:#fffbeb;border:1px solid #fcd34d;border-left:4px solid #d97706;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;color:#92400e">
+                  <strong>&#9888; ไม่พบในฐานข้อมูล DBD</strong> — เลขผู้เสียภาษีนี้อาจไม่ใช่นิติบุคคลจดทะเบียน หรือ DBD API ไม่ตอบสนอง
+                </div>`;
+            }
+          }
+
           document.getElementById('reviewBody').innerHTML = `
             ${imagePreview}
+            ${dbdBanner}
             <div class="review-section">
               <div class="review-section-title">ข้อมูลที่สกัดได้ ${confPercent !== null ? `<span style="float:right;font-size:12px;font-weight:400;color:var(--gray-500)">ความเชื่อมั่นรวม: <strong class="confidence-label ${confLevel}">${confPercent}%</strong></span>` : ''}</div>
               <div class="review-field">
@@ -997,12 +1022,12 @@
               <div class="review-field">
                 <label>ชื่อผู้ขาย</label>
                 <input type="text" class="form-input" id="revVendorName" value="${Layout.esc(scan.extractedVendorName || '')}">
-                ${fc('SellerName')}
+                ${scan.dbdInfo && scan.dbdInfo.matched ? '<span title="ชื่อจาก DBD" style="background:#ecfdf5;color:#059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">DBD &#10004;</span>' : fc('SellerName')}
               </div>
               <div class="review-field">
                 <label>เลขผู้เสียภาษี</label>
                 <input type="text" class="form-input" id="revVendorTaxId" value="${Layout.esc(scan.extractedVendorTaxId || '')}">
-                ${fc('SellerTaxId')}
+                ${scan.dbdInfo && scan.dbdInfo.matched ? '<span title="ยืนยันโดย DBD" style="background:#ecfdf5;color:#059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">DBD &#10004;</span>' : fc('SellerTaxId')}
               </div>
               <div class="review-field">
                 <label>เลขที่เอกสาร</label>
