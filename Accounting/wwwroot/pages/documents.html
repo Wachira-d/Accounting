@@ -1187,8 +1187,18 @@
           // Try to get full company info
           let companyInfo = company;
           try { const cr = await API.getCompany(company.id); companyInfo = cr.data || company; } catch(e){}
+          // Pull current user's saved signature (image + display name + title)
+          // so it can be auto-stamped onto ผู้จัดทำ / ผู้อนุมัติ lines.
+          let signature = { image: '', name: '', title: '' };
+          try {
+            const pres = await API.getProfile();
+            const p = pres?.data || {};
+            signature.image = p.signatureImageBase64 || '';
+            signature.name = p.signatureName || p.fullName || '';
+            signature.title = p.signatureTitle || '';
+          } catch (e) { console.warn('Failed to load signature for document print:', e); }
           document.getElementById('pdfTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
-          document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo);
+          document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo, signature);
           // Toggle etax-only UI: download button + green banner appear only when this
           // document has an associated EtaxInvoice (i.e. its XML has been generated).
           // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.
@@ -1255,9 +1265,25 @@
         setTimeout(() => URL.revokeObjectURL(u), 1000);
         Layout.toast('ดาวน์โหลด HTML สำเร็จ — เปิดด้วย browser แล้วกดพิมพ์เลือก "Save as PDF" ได้');
       },
-      generatePdfHtml(d, company) {
+      generatePdfHtml(d, company, signature) {
         const docTitle = Layout.docTypeLabel(d.documentType);
         const isTaxInvoice = d.documentType === 'TaxInvoice' || d.documentType === 'Invoice';
+        signature = signature || { image: '', name: '', title: '' };
+        // Document is "approved" when status indicates the approval flow has
+        // completed (Approved / Issued / Sent / Posted / Paid). Draft/Pending
+        // get only the ผู้จัดทำ stamp.
+        const approvedStatus = ['Approved', 'Issued', 'Sent', 'Posted', 'Paid', 'PartiallyPaid'];
+        const isApproved = approvedStatus.includes(d.status);
+        const sigSrc = signature.image
+          ? (signature.image.startsWith('data:') ? signature.image : `data:image/png;base64,${signature.image}`)
+          : '';
+        const sigImg = sigSrc
+          ? `<img src="${sigSrc}" alt="signature" style="max-height:40px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px">`
+          : '<div style="height:44px"></div>';
+        const sigName = signature.name ? `<div style="font-size:11px;color:#444">(${signature.name})</div>` : '';
+        const sigTitle = signature.title ? `<div style="font-size:10px;color:#666">${signature.title}</div>` : '';
+        const today = new Date();
+        const todayStr = `${String(today.getDate()).padStart(2,'0')}/${String(today.getMonth()+1).padStart(2,'0')}/${today.getFullYear()+543}`;
         return `<div id="pdfPrintArea" style="padding:40px;font-family:'Noto Sans Thai',sans-serif;font-size:14px;color:#111;background:#fff;max-width:780px;margin:0 auto">
           <!-- Header -->
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px">
@@ -1331,18 +1357,25 @@
           ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>หมายเหตุ:</strong> ${d.notes}</div>` : ''}
 
           <!-- Signature -->
-          <div style="display:flex;justify-content:space-between;margin-top:48px;padding-top:16px">
+          <div style="display:flex;justify-content:space-between;margin-top:48px;padding-top:16px;gap:12px">
             <div style="text-align:center;width:100%;max-width:200px">
-              <div style="border-top:1px solid #999;padding-top:8px;font-size:12px">ผู้จัดทำ</div>
-              <div style="font-size:11px;color:#999">วันที่ ____/____/____</div>
+              ${sigImg}
+              <div style="border-top:1px solid #999;padding-top:6px;font-size:12px">ผู้จัดทำ</div>
+              ${sigName}
+              ${sigTitle}
+              <div style="font-size:11px;color:#999;margin-top:2px">วันที่ ${todayStr}</div>
             </div>
             <div style="text-align:center;width:100%;max-width:200px">
-              <div style="border-top:1px solid #999;padding-top:8px;font-size:12px">ผู้อนุมัติ</div>
-              <div style="font-size:11px;color:#999">วันที่ ____/____/____</div>
+              ${isApproved ? sigImg : '<div style="height:44px"></div>'}
+              <div style="border-top:1px solid #999;padding-top:6px;font-size:12px">ผู้อนุมัติ</div>
+              ${isApproved ? sigName : ''}
+              ${isApproved ? sigTitle : ''}
+              <div style="font-size:11px;color:#999;margin-top:2px">วันที่ ${isApproved ? todayStr : '____/____/____'}</div>
             </div>
             <div style="text-align:center;width:100%;max-width:200px">
-              <div style="border-top:1px solid #999;padding-top:8px;font-size:12px">ผู้รับสินค้า/บริการ</div>
-              <div style="font-size:11px;color:#999">วันที่ ____/____/____</div>
+              <div style="height:44px"></div>
+              <div style="border-top:1px solid #999;padding-top:6px;font-size:12px">ผู้รับสินค้า/บริการ</div>
+              <div style="font-size:11px;color:#999;margin-top:2px">วันที่ ____/____/____</div>
             </div>
           </div>
         </div>`;
