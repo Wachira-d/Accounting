@@ -316,6 +316,17 @@ public class ExternalIntegrationController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    [HttpPost("certificates-in-lieu")]
+    public async Task<ActionResult<InboundSyncResponse>> CreateCertificateInLieu([FromBody] InboundCertificateInLieuRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessCertificateInLieuAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("products")]
     public async Task<ActionResult<InboundSyncResponse>> SyncProduct([FromBody] InboundProductRequest request)
     {

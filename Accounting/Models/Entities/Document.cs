@@ -67,6 +67,14 @@ public class Document : TenantEntity
     public Guid? RevenueContractId { get; set; }
     public Guid? PerformanceObligationId { get; set; }
 
+    // ===== ใบรับรองแทนใบเสร็จ (CertificateInLieu) =====
+    public string? CertificateReason { get; set; }       // เหตุผลที่ไม่ได้รับใบเสร็จ
+    public string? CertifierName { get; set; }            // ชื่อผู้รับรอง
+    public string? CertifierPosition { get; set; }        // ตำแหน่งผู้รับรอง
+    public string? WitnessName { get; set; }              // ชื่อพยาน
+    public string? WitnessPosition { get; set; }          // ตำแหน่งพยาน
+    public DateTime? PaymentDate { get; set; }            // วันที่จ่ายเงินจริง
+
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();

@@ -56,7 +56,8 @@ public class DocumentService : IDocumentService
         };
         var purchaseDocTypes = new[] {
             DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
-            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
+            DocumentType.CertificateInLieu
         };
         if (revenueDocTypes.Contains(request.DocumentType) && !contact.IsCustomer)
             throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย");
@@ -79,6 +80,15 @@ public class DocumentService : IDocumentService
                 .CountAsync(p => p.CompanyId == companyId && lineProjectIds.Contains(p.Id));
             if (validCount != lineProjectIds.Count)
                 throw new InvalidOperationException("รหัสโครงการในรายการบางบรรทัดไม่ถูกต้อง");
+        }
+
+        // CertificateInLieu requires reason and certifier
+        if (request.DocumentType == DocumentType.CertificateInLieu)
+        {
+            if (string.IsNullOrWhiteSpace(request.CertificateReason))
+                throw new InvalidOperationException("ใบรับรองแทนใบเสร็จต้องระบุเหตุผลที่ไม่ได้รับใบเสร็จ");
+            if (string.IsNullOrWhiteSpace(request.CertifierName))
+                throw new InvalidOperationException("ใบรับรองแทนใบเสร็จต้องระบุชื่อผู้รับรอง");
         }
 
         // Validate at least 1 line item
@@ -129,6 +139,7 @@ public class DocumentService : IDocumentService
             DocumentType.PurchaseInvoice => "PI",
             DocumentType.Expense => "EXP",
             DocumentType.PaymentVoucher => "PV",
+            DocumentType.CertificateInLieu => "CIL",
             _ => "DOC"
         };
 
@@ -172,6 +183,12 @@ public class DocumentService : IDocumentService
                 CustomTermsAndConditions = request.CustomTermsAndConditions,
                 RevenueContractId = request.RevenueContractId,
                 PerformanceObligationId = request.PerformanceObligationId,
+                CertificateReason = request.CertificateReason,
+                CertifierName = request.CertifierName,
+                CertifierPosition = request.CertifierPosition,
+                WitnessName = request.WitnessName,
+                WitnessPosition = request.WitnessPosition,
+                PaymentDate = request.PaymentDate,
                 CreatedBy = createdBy
             };
 
@@ -391,6 +408,14 @@ public class DocumentService : IDocumentService
         if (request.ExpenseCategoryId.HasValue)
             doc.ExpenseCategoryId = request.ExpenseCategoryId.Value;
 
+        // CertificateInLieu fields
+        if (request.CertificateReason != null) doc.CertificateReason = request.CertificateReason;
+        if (request.CertifierName != null) doc.CertifierName = request.CertifierName;
+        if (request.CertifierPosition != null) doc.CertifierPosition = request.CertifierPosition;
+        if (request.WitnessName != null) doc.WitnessName = request.WitnessName;
+        if (request.WitnessPosition != null) doc.WitnessPosition = request.WitnessPosition;
+        if (request.PaymentDate.HasValue) doc.PaymentDate = request.PaymentDate.Value;
+
         if (request.Lines != null)
         {
             _db.DocumentLines.RemoveRange(doc.Lines);
@@ -481,7 +506,7 @@ public class DocumentService : IDocumentService
                     DocumentType.DebitNote, DocumentType.CreditNote,
                     DocumentType.PurchaseInvoice, DocumentType.Expense,
                     DocumentType.Receipt, DocumentType.ReceiptVoucher,
-                    DocumentType.PaymentVoucher,
+                    DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
                 };
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
                 {
@@ -1247,7 +1272,12 @@ public class DocumentService : IDocumentService
         [DocumentType.Expense] = new[]
         {
             DocumentType.PaymentVoucher,
-            DocumentType.CreditNote, DocumentType.DebitNote
+            DocumentType.CreditNote, DocumentType.DebitNote,
+            DocumentType.CertificateInLieu
+        },
+        [DocumentType.CertificateInLieu] = new[]
+        {
+            DocumentType.PaymentVoucher
         }
         // Terminal types (no further conversion):
         // Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
@@ -1360,6 +1390,13 @@ public class DocumentService : IDocumentService
             created.CustomTermsAndConditions = source.CustomTermsAndConditions;
             created.RevenueContractId = source.RevenueContractId;
             created.PerformanceObligationId = source.PerformanceObligationId;
+            // Cascade CertificateInLieu fields
+            created.CertificateReason = source.CertificateReason;
+            created.CertifierName = source.CertifierName;
+            created.CertifierPosition = source.CertifierPosition;
+            created.WitnessName = source.WitnessName;
+            created.WitnessPosition = source.WitnessPosition;
+            created.PaymentDate = source.PaymentDate;
             await _db.SaveChangesAsync();
         }
 
@@ -1799,7 +1836,8 @@ public class DocumentService : IDocumentService
             if (doc.WithholdingTaxAmount > 0
                 && (doc.DocumentType == DocumentType.PurchaseInvoice
                     || doc.DocumentType == DocumentType.Expense
-                    || doc.DocumentType == DocumentType.PaymentVoucher))
+                    || doc.DocumentType == DocumentType.PaymentVoucher
+                    || doc.DocumentType == DocumentType.CertificateInLieu))
             {
                 try
                 {
@@ -2026,7 +2064,8 @@ public class DocumentService : IDocumentService
 
             var isPurchaseSide = source != null && (
                 source.DocumentType == DocumentType.PurchaseInvoice
-                || source.DocumentType == DocumentType.Expense);
+                || source.DocumentType == DocumentType.Expense
+                || source.DocumentType == DocumentType.CertificateInLieu);
             var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
 
@@ -2129,10 +2168,11 @@ public class DocumentService : IDocumentService
             }
         }
         // ============================================================
-        // PURCHASE SIDE: PurchaseInvoice / Expense (on credit)
+        // PURCHASE SIDE: PurchaseInvoice / Expense / CertificateInLieu (on credit)
         // ============================================================
         else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                 || doc.DocumentType == DocumentType.Expense)
+                 || doc.DocumentType == DocumentType.Expense
+                 || doc.DocumentType == DocumentType.CertificateInLieu)
         {
             journalType = JournalType.Purchase;
 
@@ -2503,7 +2543,13 @@ public class DocumentService : IDocumentService
         CustomTermsAndConditions: d.CustomTermsAndConditions,
         RevenueContractId: d.RevenueContractId,
         PerformanceObligationId: d.PerformanceObligationId,
-        RelatedDocumentId: d.RelatedDocumentId);
+        RelatedDocumentId: d.RelatedDocumentId,
+        CertificateReason: d.CertificateReason,
+        CertifierName: d.CertifierName,
+        CertifierPosition: d.CertifierPosition,
+        WitnessName: d.WitnessName,
+        WitnessPosition: d.WitnessPosition,
+        PaymentDate: d.PaymentDate);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,

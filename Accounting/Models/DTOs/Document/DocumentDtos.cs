@@ -19,7 +19,14 @@ public record CreateDocumentRequest(
     string? CustomFooterNotes = null,
     string? CustomTermsAndConditions = null,
     Guid? RevenueContractId = null,
-    Guid? PerformanceObligationId = null);
+    Guid? PerformanceObligationId = null,
+    // ===== ใบรับรองแทนใบเสร็จ =====
+    string? CertificateReason = null,
+    string? CertifierName = null,
+    string? CertifierPosition = null,
+    string? WitnessName = null,
+    string? WitnessPosition = null,
+    DateTime? PaymentDate = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -48,7 +55,13 @@ public record UpdateDocumentRequest(
     string? CustomFooterNotes = null,
     string? CustomTermsAndConditions = null,
     Guid? RevenueContractId = null,
-    Guid? PerformanceObligationId = null);
+    Guid? PerformanceObligationId = null,
+    string? CertificateReason = null,
+    string? CertifierName = null,
+    string? CertifierPosition = null,
+    string? WitnessName = null,
+    string? WitnessPosition = null,
+    DateTime? PaymentDate = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -88,7 +101,13 @@ public record DocumentResponse(
     string? CustomTermsAndConditions = null,
     Guid? RevenueContractId = null,
     Guid? PerformanceObligationId = null,
-    Guid? RelatedDocumentId = null);
+    Guid? RelatedDocumentId = null,
+    string? CertificateReason = null,
+    string? CertifierName = null,
+    string? CertifierPosition = null,
+    string? WitnessName = null,
+    string? WitnessPosition = null,
+    DateTime? PaymentDate = null);
 
 public record DocumentLineResponse(
     Guid Id,

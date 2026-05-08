@@ -1083,8 +1083,10 @@ public class OcrService : IOcrService
         bool hasWhtDoc = text.Contains("หนังสือรับรอง") || text.Contains("50 ทวิ") || text.Contains("ภาษีหัก ณ ที่จ่าย");
         bool hasCreditNote = text.Contains("ใบลดหนี้") || upperText.Contains("CREDIT NOTE");
         bool hasDebitNote = text.Contains("ใบเพิ่มหนี้") || upperText.Contains("DEBIT NOTE");
+        bool hasCertInLieu = text.Contains("ใบรับรองแทนใบเสร็จ") || upperText.Contains("CERTIFICATE IN LIEU");
 
         if (hasTaxInvoice) { data.DocumentType = "TaxInvoice"; data.Confidence = 0.95m; }
+        else if (hasCertInLieu) { data.DocumentType = "CertificateInLieu"; data.Confidence = 0.90m; }
         else if (hasCreditNote) { data.DocumentType = "CreditNote"; data.Confidence = 0.90m; }
         else if (hasDebitNote) { data.DocumentType = "DebitNote"; data.Confidence = 0.90m; }
         else if (hasWhtDoc) { data.DocumentType = "WHT"; data.Confidence = 0.90m; }

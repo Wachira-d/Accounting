@@ -148,6 +148,23 @@ public record InboundExpenseRequest(
     bool IncludeVat = true,
     List<InboundAttachment>? Attachments = null);
 
+/// <summary>ใบรับรองแทนใบเสร็จจากระบบภายนอก</summary>
+public record InboundCertificateInLieuRequest(
+    string? ExternalId, string? ExternalRef,
+    string? SupplierExternalId, string? SupplierName, string? SupplierTaxId,
+    DateTime DocumentDate,
+    DateTime? PaymentDate,
+    string CertificateReason,
+    string CertifierName,
+    string? CertifierPosition,
+    string? WitnessName,
+    string? WitnessPosition,
+    List<InboundInvoiceLineRequest> Lines,
+    decimal? VatRate,
+    string? Notes,
+    bool IncludeVat = true,
+    List<InboundAttachment>? Attachments = null);
+
 /// <summary>สินค้า/บริการจากระบบภายนอก</summary>
 public record InboundProductRequest(
     string? ExternalId,
@@ -187,7 +204,8 @@ public record InboundBatchRequest(
     [property: MaxLength(500)] List<InboundPaymentRequest>? Payments,
     [property: MaxLength(500)] List<InboundExpenseRequest>? Expenses,
     [property: MaxLength(500)] List<InboundProductRequest>? Products,
-    [property: MaxLength(500)] List<InboundJournalRequest>? Journals);
+    [property: MaxLength(500)] List<InboundJournalRequest>? Journals,
+    [property: MaxLength(500)] List<InboundCertificateInLieuRequest>? CertificatesInLieu = null);
 
 public record InboundBatchResponse(
     int TotalProcessed, int SuccessCount, int ErrorCount,

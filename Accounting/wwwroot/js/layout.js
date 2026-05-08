@@ -1260,7 +1260,7 @@ const Layout = {
 
   // Document type labels & categorization
   _revenueDocTypes: ['Quotation','Invoice','TaxInvoice','Receipt','DeliveryNote','BillingNote','DebitNote','CreditNote','ReceiptVoucher'],
-  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher'],
+  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
 
   docTypeLabel(type) {
     const map = {
@@ -1268,7 +1268,8 @@ const Layout = {
       TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
       DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
       PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
-      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย'
+      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
+      CertificateInLieu: 'ใบรับรองแทนใบเสร็จ'
     };
     return map[type] || type;
   },

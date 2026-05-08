@@ -1646,6 +1646,85 @@ public class IntegrationService : IIntegrationService
         }
     }
 
+    public async Task<InboundSyncResponse> ProcessCertificateInLieuAsync(Guid companyId, Guid integrationId, InboundCertificateInLieuRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "certificate_in_lieu.created", request.ExternalId, request.ExternalRef);
+
+        try
+        {
+            // Resolve supplier contact
+            Contact? supplier = null;
+            if (!string.IsNullOrEmpty(request.SupplierTaxId))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
+            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
+
+            if (supplier == null)
+            {
+                supplier = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
+                    TaxId = request.SupplierTaxId,
+                    IsCustomer = false,
+                    IsSupplier = true,
+                    IsActive = true
+                };
+                _db.Set<Contact>().Add(supplier);
+                await _db.SaveChangesAsync();
+            }
+
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu);
+            var vatRate = request.VatRate ?? 7m;
+            var lines = BuildDocumentLines(request.Lines, vatRate);
+            var subTotal = lines.Sum(l => l.Amount);
+            var totalVat = lines.Sum(l => l.VatAmount);
+            var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+
+            var document = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = DocumentType.CertificateInLieu,
+                Status = DocumentStatus.Approved,
+                DocumentDate = NormalizeDate(request.DocumentDate),
+                ContactId = supplier.Id,
+                Reference = request.ExternalRef,
+                SubTotal = subTotal,
+                VatAmount = totalVat,
+                TotalAmount = totalAmount,
+                BalanceDue = totalAmount,
+                Notes = request.Notes,
+                Lines = lines,
+                CertificateReason = request.CertificateReason,
+                CertifierName = request.CertifierName,
+                CertifierPosition = request.CertifierPosition,
+                WitnessName = request.WitnessName,
+                WitnessPosition = request.WitnessPosition,
+                PaymentDate = request.PaymentDate.HasValue ? NormalizeDate(request.PaymentDate.Value) : null
+            };
+
+            _db.Documents.Add(document);
+            await _db.SaveChangesAsync();
+
+            var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
+
+            log.Status = "Success";
+            log.CreatedDocumentId = document.Id;
+            log.CreatedContactId = supplier.Id;
+            log.CreatedJournalEntryId = journalEntryId;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+
+            return new InboundSyncResponse(true, "Certificate in lieu created", document.Id, supplier.Id, journalEntryId, null, docNumber);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
     public async Task<InboundSyncResponse> ProcessProductAsync(Guid companyId, Guid integrationId, InboundProductRequest request)
     {
         var sw = Stopwatch.StartNew();
@@ -1952,6 +2031,16 @@ public class IntegrationService : IIntegrationService
             {
                 var r = await ProcessJournalAsync(companyId, integrationId, j);
                 results.Add(new BatchResultItem("Journal", j.ExternalRef, r.Success, r.Message, r.JournalEntryId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        if (request.CertificatesInLieu != null)
+        {
+            foreach (var c in request.CertificatesInLieu)
+            {
+                var r = await ProcessCertificateInLieuAsync(companyId, integrationId, c);
+                results.Add(new BatchResultItem("CertificateInLieu", c.ExternalRef, r.Success, r.Message, r.DocumentId, r.DocumentNumber));
                 if (r.Success) success++; else errors++;
             }
         }
