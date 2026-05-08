@@ -153,7 +153,7 @@ public class TaxService : ITaxService
                 var label = doc.Lines.Any(l => l.AccountId.HasValue) ? "[ใบลดหนี้-ภาษีซื้อ]" : "[ใบลดหนี้-ภาษีขาย]";
                 var isPurchaseSide = doc.RelatedDocumentId.HasValue &&
                     docs.Any(d => d.Id == doc.RelatedDocumentId.Value &&
-                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense));
+                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu));
                 if (isPurchaseSide)
                 {
                     inputVat -= doc.VatAmount;
@@ -183,7 +183,7 @@ public class TaxService : ITaxService
             {
                 var isPurchaseSide = doc.RelatedDocumentId.HasValue &&
                     docs.Any(d => d.Id == doc.RelatedDocumentId.Value &&
-                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense));
+                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu));
                 if (isPurchaseSide)
                 {
                     inputVat += doc.VatAmount;
@@ -213,7 +213,8 @@ public class TaxService : ITaxService
             }
             // Input VAT - from purchase documents (PurchaseOrder excluded: no VAT obligation)
             else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                  || doc.DocumentType == DocumentType.Expense)
+                  || doc.DocumentType == DocumentType.Expense
+                  || doc.DocumentType == DocumentType.CertificateInLieu)
             {
                 inputVat += doc.VatAmount;
                 report.Lines.Add(new TaxReportLine

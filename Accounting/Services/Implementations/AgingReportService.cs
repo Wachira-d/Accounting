@@ -39,7 +39,7 @@ public class AgingReportService : IAgingReportService
         // Determine document types based on report type
         var documentTypes = reportType == AgingReportType.AccountsReceivable
             ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote }
-            : new[] { DocumentType.PurchaseInvoice };
+            : new[] { DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu };
 
         var query = _db.Documents
             .Include(d => d.Contact)

@@ -220,7 +220,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense)
+                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu)
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount > 0)
             .OrderBy(d => d.DocumentDate)

@@ -103,7 +103,7 @@ public class DashboardService : IDashboardService
 
         var payables = await _db.Documents
             .Where(d => d.CompanyId == companyId
-                && d.DocumentType == DocumentType.PurchaseInvoice
+                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.CertificateInLieu)
                 && arApStatuses.Contains(d.Status))
             .SumAsync(d => d.BalanceDue);
 
@@ -316,7 +316,7 @@ public class DashboardService : IDashboardService
         var payables = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && d.DocumentType == DocumentType.PurchaseInvoice
+                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.CertificateInLieu)
                 && d.DueDate >= today && d.DueDate <= cutoff
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid
                 && d.BalanceDue > 0)
@@ -364,7 +364,7 @@ public class DashboardService : IDashboardService
         var inputVat = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense)
+                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu)
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .SumAsync(d => d.VatAmount);
 

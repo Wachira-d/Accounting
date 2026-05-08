@@ -279,7 +279,7 @@ public class BankFeedService : IBankFeedService
 
         // Deposits match revenue docs (Invoice/TaxInvoice), withdrawals match expense docs (PurchaseInvoice)
         var revenueTypes = new[] { Models.Enums.DocumentType.Invoice, Models.Enums.DocumentType.TaxInvoice };
-        var expenseTypes = new[] { Models.Enums.DocumentType.PurchaseInvoice };
+        var expenseTypes = new[] { Models.Enums.DocumentType.PurchaseInvoice, Models.Enums.DocumentType.CertificateInLieu };
         var matchTypes = txn.TransactionType == Models.Enums.BankTransactionType.Deposit ? revenueTypes : expenseTypes;
 
         var matchedDoc = await _db.Documents

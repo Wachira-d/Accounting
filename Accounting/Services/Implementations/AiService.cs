@@ -614,7 +614,8 @@ public class AiService : IAiService
         var historicalOutflows = historicalDocs
             .Where(d => d.DocumentType == DocumentType.Expense
                      || d.DocumentType == DocumentType.PurchaseInvoice
-                     || d.DocumentType == DocumentType.PurchaseOrder)
+                     || d.DocumentType == DocumentType.PurchaseOrder
+                     || d.DocumentType == DocumentType.CertificateInLieu)
             .Sum(d => d.TotalAmount);
 
         var avgMonthlyInflow = historicalMonths > 0 ? historicalInflows / historicalMonths : 0;

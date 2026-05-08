@@ -1359,6 +1359,7 @@ public class OcrService : IOcrService
         {
             "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
             "Receipt" => DocumentType.Expense,
+            "CertificateInLieu" => DocumentType.CertificateInLieu,
             _ => DocumentType.Expense
         };
 
@@ -1444,6 +1445,7 @@ public class OcrService : IOcrService
             "Receipt" => DocumentType.Expense,
             "CreditNote" => DocumentType.CreditNote,
             "DebitNote" => DocumentType.DebitNote,
+            "CertificateInLieu" => DocumentType.CertificateInLieu,
             _ => DocumentType.Expense
         };
 
