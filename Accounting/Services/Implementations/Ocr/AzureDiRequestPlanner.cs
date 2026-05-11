@@ -55,14 +55,27 @@ public static class AzureDiRequestPlanner
         }
 
         // 2. Locale selection
-        //    Default to th-TH (this is a Thai SaaS). Switch when the filename
-        //    is clearly English, when content type is not Thai-friendly, or
-        //    when the admin overrode in settings.
+        //    Three signals, evaluated in order — strongest first:
+        //      a) Content peek: scan the raw bytes for Thai UTF-8 sequences.
+        //         When found, the document HAS Thai text in it, so th-TH is
+        //         correct regardless of filename. This catches PDFs / images
+        //         with English filenames but Thai content.
+        //      b) Filename hint: when no Thai bytes appear AND the filename
+        //         carries an English-vendor / English-locale signal
+        //         (aws-, microsoft, google-cloud, _en.pdf, etc.) and no
+        //         Thai chars in the name → en-US.
+        //      c) Default: th-TH (this is a Thai SaaS, most uploads are
+        //         Thai-language receipts).
         string locale;
-        if (LooksLikeEnglishFile(fileName))
+        if (ContainsThaiInContent(fileBytes))
+        {
+            locale = "th-TH";
+            reasons.Add("locale=th-TH (Thai UTF-8 bytes detected in content)");
+        }
+        else if (LooksLikeEnglishFile(fileName))
         {
             locale = "en-US";
-            reasons.Add("locale=en-US (filename hint)");
+            reasons.Add("locale=en-US (filename hint + no Thai bytes)");
         }
         else
         {
@@ -158,6 +171,46 @@ public static class AzureDiRequestPlanner
 
     private static bool ContainsThaiChar(string s)
         => s.Any(c => c >= '฀' && c <= '๿');
+
+    /// <summary>
+    /// Scan raw file bytes for Thai-language UTF-8 sequences. Thai
+    /// Unicode block U+0E00–U+0E7F encodes in UTF-8 as 3-byte sequences
+    /// starting with 0xE0 followed by 0xB8 or 0xB9 plus a valid trail
+    /// byte (0x80–0xBF). When any such sequence appears we treat the
+    /// document as Thai regardless of filename.
+    ///
+    /// Coverage:
+    ///   • PDFs with UTF-8 text streams (most modern PDF generators)
+    ///   • Images with Thai EXIF / IPTC metadata
+    ///   • PDFs embedding Unicode CMap tables for Thai fonts (CIDs
+    ///     reference original Thai codepoints, often visible as UTF-8
+    ///     literals in `/ToUnicode` streams)
+    ///
+    /// Misses (false negatives accepted):
+    ///   • Old PDFs that encode Thai via custom Type1 fonts with no
+    ///     ToUnicode mapping — content unreadable as bytes; falls
+    ///     through to the filename hint / default.
+    ///   • Pure-image scans (JPEG / PNG) — pixel bytes only; falls
+    ///     through to default (which is th-TH anyway).
+    ///
+    /// Cost: O(N) over first 256KB of the file — bounded so big PDFs
+    /// don't slow scan submission.
+    /// </summary>
+    private static bool ContainsThaiInContent(byte[] bytes)
+    {
+        if (bytes == null || bytes.Length < 3) return false;
+        int scanLen = Math.Min(bytes.Length - 2, 256 * 1024);   // cap 256KB
+        for (int i = 0; i < scanLen; i++)
+        {
+            // Thai UTF-8 prefix: 0xE0 followed by 0xB8 or 0xB9 followed by 0x80–0xBF
+            if (bytes[i] != 0xE0) continue;
+            var b1 = bytes[i + 1];
+            if (b1 != 0xB8 && b1 != 0xB9) continue;
+            var b2 = bytes[i + 2];
+            if (b2 >= 0x80 && b2 <= 0xBF) return true;
+        }
+        return false;
+    }
 
     private static bool ShouldUseHighResolution(byte[] fileBytes, string contentType, out string reason)
     {

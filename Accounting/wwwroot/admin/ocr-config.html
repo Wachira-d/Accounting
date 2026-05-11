@@ -529,6 +529,93 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         <div id="trainSysResult" style="margin-top:8px;font-size:12px;text-align:center"></div>
       </div>
 
+      <!-- ML Operations: trigger background batches manually -->
+      <div class="admin-card" style="border:2px solid #0d9488;background:#f0fdfa">
+        <div class="admin-card-header">
+          <div class="admin-card-title" style="color:#134e4a">🧠 ML / Data-mining Operations</div>
+          <div style="font-size:13px;color:#0f766e;margin-top:4px;line-height:1.5">
+            ปุ่มเหล่านี้รัน batch job ที่อัปเดต system-wide knowledge — แนะนำให้รันเป็น cron กลางคืน
+            หรือกดเมื่อ approve เอกสารใหม่จำนวนมากแล้วต้องการ rebuild patterns
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px">
+          <div style="padding:12px;background:white;border:1px solid #99f6e4;border-radius:8px">
+            <div style="font-weight:600;color:#134e4a;margin-bottom:4px">🌱 Seed Knowledge (cold-start)</div>
+            <div style="font-size:12px;color:#0f766e;margin-bottom:8px">
+              เพิ่ม 40+ Thai vendor brands (PTT/AIS/HomePro/Kerry/...) เข้า system tables —
+              ใช้ครั้งแรกเมื่อ deploy หรือเมื่อต้องการ reset to defaults
+            </div>
+            <button type="button" onclick="runOp('seed-knowledge', this)"
+              style="background:#0d9488;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">
+              ▶ Seed Knowledge
+            </button>
+            <div class="op-result" style="font-size:11px;margin-top:6px;color:#0f766e"></div>
+          </div>
+
+          <div style="padding:12px;background:white;border:1px solid #99f6e4;border-radius:8px">
+            <div style="font-weight:600;color:#134e4a;margin-bottom:4px">🔄 Aggregate Tenant Knowledge</div>
+            <div style="font-size:12px;color:#0f766e;margin-bottom:8px">
+              รวมข้อมูล train ของทุก tenant → system tables (k-anonymity: ≥2 tenants ต่อ pattern)
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+              <label style="font-size:11px;color:#0f766e">min tenants:</label>
+              <input type="number" id="aggMinTenants" min="1" max="20" value="2" style="width:60px;padding:2px 6px;border:1px solid #99f6e4;border-radius:4px;font-size:12px">
+            </div>
+            <button type="button" onclick="runOp('aggregate-tenant-knowledge', this, () => '?minTenants=' + document.getElementById('aggMinTenants').value)"
+              style="background:#0d9488;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">
+              ▶ Aggregate
+            </button>
+            <div class="op-result" style="font-size:11px;margin-top:6px;color:#0f766e"></div>
+          </div>
+
+          <div style="padding:12px;background:white;border:1px solid #99f6e4;border-radius:8px">
+            <div style="font-weight:600;color:#134e4a;margin-bottom:4px">⛏️ Mine Association Rules</div>
+            <div style="font-size:12px;color:#0f766e;margin-bottom:8px">
+              Apriori basket analysis — ขุดรูปแบบ {brand+keyword} → account จากทุก tenant
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <input type="number" id="mineSupport" step="0.001" min="0.001" max="0.5" value="0.005" placeholder="support" title="min support" style="width:80px;padding:2px 6px;border:1px solid #99f6e4;border-radius:4px;font-size:12px">
+              <input type="number" id="mineConfidence" step="0.05" min="0.1" max="1" value="0.5" placeholder="confidence" title="min confidence" style="width:80px;padding:2px 6px;border:1px solid #99f6e4;border-radius:4px;font-size:12px">
+              <input type="number" id="mineMonths" min="1" max="60" value="24" placeholder="months" title="since months" style="width:60px;padding:2px 6px;border:1px solid #99f6e4;border-radius:4px;font-size:12px">
+            </div>
+            <button type="button" onclick="runOp('mine-association-rules', this, () => '?minSupport=' + document.getElementById('mineSupport').value + '&minConfidence=' + document.getElementById('mineConfidence').value + '&sinceMonths=' + document.getElementById('mineMonths').value)"
+              style="background:#0d9488;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">
+              ▶ Mine Rules
+            </button>
+            <div class="op-result" style="font-size:11px;margin-top:6px;color:#0f766e"></div>
+          </div>
+
+          <div style="padding:12px;background:white;border:1px solid #99f6e4;border-radius:8px">
+            <div style="font-weight:600;color:#134e4a;margin-bottom:4px">📊 Cluster Vendors (K-means)</div>
+            <div style="font-size:12px;color:#0f766e;margin-bottom:8px">
+              จัดกลุ่ม vendor ตาม spend pattern — ใช้สำหรับ "similar vendor" suggestion
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+              <label style="font-size:11px;color:#0f766e">K:</label>
+              <input type="number" id="clusterK" min="2" max="20" value="8" style="width:60px;padding:2px 6px;border:1px solid #99f6e4;border-radius:4px;font-size:12px">
+            </div>
+            <button type="button" onclick="runOp('cluster-vendors', this, () => '?k=' + document.getElementById('clusterK').value)"
+              style="background:#0d9488;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">
+              ▶ Cluster
+            </button>
+            <div class="op-result" style="font-size:11px;margin-top:6px;color:#0f766e"></div>
+          </div>
+
+          <div style="padding:12px;background:white;border:1px solid #99f6e4;border-radius:8px">
+            <div style="font-weight:600;color:#134e4a;margin-bottom:4px">🔍 Benford's Law Audit</div>
+            <div style="font-size:12px;color:#0f766e;margin-bottom:8px">
+              ตรวจ first-digit distribution หา fraud / data anomaly — ต้องระบุ company
+            </div>
+            <input type="text" id="benfordCompanyId" placeholder="Company GUID" style="width:100%;padding:4px 8px;border:1px solid #99f6e4;border-radius:4px;font-size:11px;font-family:monospace;margin-bottom:6px">
+            <button type="button" onclick="runBenford(this)"
+              style="background:#0d9488;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">
+              ▶ Run Benford
+            </button>
+            <div class="op-result" style="font-size:11px;margin-top:6px;color:#0f766e"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Confidence Gateway Tuning -->
       <div class="admin-card">
         <div class="admin-card-header">
@@ -915,6 +1002,74 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       } finally {
         btn.disabled = false;
         btn.textContent = 'บันทึกทั้งหมด';
+      }
+    }
+
+    // ───── ML Operations runners ─────
+    // Shared helper that POSTs to /admin/ocr-config/<op>, updates the
+    // button + result div inline. The optional queryFn returns a query
+    // string (with leading `?`) so per-op param controls can be wired
+    // declaratively from the HTML markup.
+    async function runOp(op, btn, queryFn) {
+      const resultEl = btn.parentElement.querySelector('.op-result');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'กำลังรัน...';
+      resultEl.textContent = '';
+      resultEl.style.color = '#0f766e';
+      try {
+        const query = queryFn ? queryFn() : '';
+        const res = await AdminAPI.post(`/ocr-config/${op}${query}`);
+        const msg = res?.message || 'สำเร็จ';
+        const data = res?.data;
+        let detail = '';
+        if (data) {
+          // Compact summary of common counter fields
+          const fields = ['categoryMappingsAdded','vendorIntelligenceAdded','associationRulesAdded',
+                          'categoryMappingsPromoted','vendorIntelligencePromoted','tenantsConsidered',
+                          'rulesPersisted','rulesDiscovered','transactionsScanned',
+                          'vendorsClustered','iterations','durationSeconds'];
+          const parts = fields.filter(f => data[f] != null).map(f => `${f}=${data[f]}`);
+          if (parts.length) detail = ' • ' + parts.join(' • ');
+        }
+        resultEl.style.color = '#059669';
+        resultEl.textContent = '✓ ' + msg + detail;
+      } catch (err) {
+        resultEl.style.color = '#dc2626';
+        resultEl.textContent = '❌ ' + (err.message || err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    // Benford takes a GET + companyId path param, so it doesn't fit
+    // runOp's POST shape — separate function.
+    async function runBenford(btn) {
+      const cid = document.getElementById('benfordCompanyId').value.trim();
+      const resultEl = btn.parentElement.querySelector('.op-result');
+      if (!cid || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid)) {
+        resultEl.style.color = '#dc2626';
+        resultEl.textContent = '❌ Company GUID ไม่ถูกต้อง';
+        return;
+      }
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'กำลังตรวจ...';
+      resultEl.textContent = '';
+      try {
+        const res = await AdminAPI.get(`/ocr-config/benford/${cid}`);
+        const data = res?.data;
+        resultEl.style.color = data?.notableDeviation ? '#dc2626' : (data?.conformsWell ? '#059669' : '#d97706');
+        let line = res?.message || 'เสร็จ';
+        if (data?.chiSquared != null) line += ` (χ²=${data.chiSquared.toFixed(2)}, n=${data.sampleSize})`;
+        resultEl.textContent = line;
+      } catch (err) {
+        resultEl.style.color = '#dc2626';
+        resultEl.textContent = '❌ ' + (err.message || err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     }
 
