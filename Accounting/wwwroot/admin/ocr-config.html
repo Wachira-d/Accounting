@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCR / Azure DI - Admin Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/admin.css">
+  <link rel="stylesheet" href="/admin/admin.css?v=20260114b">
   <style>
     .ocr-grid { display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 960px; }
     .form-group { margin-bottom: 16px; }
@@ -80,10 +80,37 @@
   </style>
 </head>
 <body>
+  <!-- ─── DIAGNOSTIC: visible viewport info + build marker (top-left fixed) ─── -->
+  <!-- Helps debug "sidebar missing" symptoms — user can read this badge even when
+       the rest of the page is broken. Auto-hides on JS errors. -->
+  <div id="diagBadge" style="position:fixed;top:8px;right:8px;z-index:99999;background:#1e293b;color:#94a3b8;font-family:monospace;font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #334155;line-height:1.4;pointer-events:none">
+    build: 7de140e<br>
+    <span id="diagViewport">viewport: ?</span><br>
+    <span id="diagAuth">auth: ?</span><br>
+    <span id="diagSidebar" style="color:#94a3b8">sidebar: ?</span>
+  </div>
+  <script>
+    // Populate diagnostic immediately (before any other script runs)
+    (function() {
+      try {
+        var vp = document.getElementById('diagViewport');
+        if (vp) vp.textContent = 'viewport: ' + window.innerWidth + '×' + window.innerHeight + (window.innerWidth <= 900 ? ' (≤900 — sidebar collapsed)' : ' (>900 — sidebar should show)');
+        var auth = document.getElementById('diagAuth');
+        if (auth) {
+          var token = localStorage.getItem('admin_token');
+          var user = localStorage.getItem('admin_user');
+          auth.textContent = 'auth: ' + (token ? 'token✓' : 'NO_TOKEN') + (user ? ' user✓' : ' NO_USER');
+          if (!token || !user) auth.style.color = '#ef4444';
+        }
+      } catch (e) { /* swallow */ }
+    })();
+  </script>
+
   <div id="pageContent">
     <div class="info-box">
       <strong>OCR & Azure Document Intelligence</strong> ตั้งค่า Provider สำหรับสแกนเอกสาร (ระดับ System — ใช้ร่วมกันทุกบริษัท),
       จัดการโควต้าหน้า OCR ตามแพ็กเกจ, และอนุมัติการซื้อเครดิตเพิ่ม
+      <span style="float:right;font-size:11px;font-family:monospace;color:#64748b" id="deployVersion">build: loading...</span>
     </div>
     <div style="background:#f0fdfa;border:1px solid #5eead4;color:#134e4a;padding:12px 18px;border-radius:8px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
       <div>
@@ -549,10 +576,46 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     </div>
   </div>
 
-  <script src="/admin/admin-api.js"></script>
-  <script src="/admin/admin-layout.js"></script>
+  <script src="/admin/admin-api.js?v=20260114"></script>
+  <script src="/admin/admin-layout.js?v=20260114"></script>
   <script>
-    AdminLayout.init('ocr-config');
+    // ─── DEPLOYMENT VERSION + DIAGNOSTIC ───────────────────────────────────
+    // Visible stamp so admins can confirm which build is deployed; also wraps
+    // AdminLayout.init in try/catch so script execution continues to define
+    // all functions (systemTestScan etc.) even if sidebar rendering fails.
+    const __PAGE_VERSION = '7de140e+diag';
+    console.log('[ocr-config.html] version:', __PAGE_VERSION);
+    try {
+      AdminLayout.init('ocr-config');
+      console.log('[ocr-config.html] AdminLayout.init succeeded');
+      // Update diagnostic badge — confirm sidebar element exists after init
+      setTimeout(function() {
+        var d = document.getElementById('diagSidebar');
+        if (!d) return;
+        var s = document.querySelector('.admin-sidebar');
+        if (!s) { d.textContent = 'sidebar: NOT RENDERED'; d.style.color = '#ef4444'; return; }
+        var rect = s.getBoundingClientRect();
+        var styles = window.getComputedStyle(s);
+        var visible = rect.width > 0 && rect.height > 0 && styles.display !== 'none' && styles.visibility !== 'hidden';
+        var translated = styles.transform && styles.transform !== 'none';
+        d.textContent = 'sidebar: ' + (visible ? '✓ rendered' : '✗ hidden') +
+          ' (w=' + Math.round(rect.width) + ' x=' + Math.round(rect.left) + (translated ? ' transformed' : '') + ')';
+        d.style.color = visible && rect.left >= 0 ? '#22c55e' : '#ef4444';
+      }, 50);
+    } catch (err) {
+      console.error('[ocr-config.html] AdminLayout.init FAILED:', err);
+      // Show a visible diagnostic banner so the user can see what failed
+      const pc = document.getElementById('pageContent');
+      if (pc) {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'background:#fee2e2;border:2px solid #fca5a5;color:#991b1b;padding:14px 18px;border-radius:8px;margin:12px;font-size:13px';
+        banner.innerHTML = `
+          <strong>⚠️ Sidebar render failed</strong><br>
+          ${err && err.message ? String(err.message).replace(/[<>]/g, '') : String(err)}<br>
+          <small>Version: ${__PAGE_VERSION} — copy this message to dev support</small>`;
+        pc.prepend(banner);
+      }
+    }
 
     let currentConfig = null;
 
@@ -847,9 +910,18 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     }
 
     async function systemTestScan(file) {
-      if (!file) return;
+      console.log('[ocr-config.html] systemTestScan called with file:', file?.name, file?.size, 'bytes');
+      if (!file) {
+        console.warn('[ocr-config.html] systemTestScan: no file provided — aborting');
+        return;
+      }
       const provider = document.getElementById('systemTestProvider').value;
       const resultBox = document.getElementById('systemTestResult');
+      if (!resultBox) {
+        console.error('[ocr-config.html] systemTestScan: #systemTestResult element NOT FOUND in DOM');
+        alert('Error: #systemTestResult element not found. Sidebar render may have wiped it.');
+        return;
+      }
       resultBox.style.display = 'block';
       document.getElementById('systemParsedFields').innerHTML = '<em style="color:#64748b">กำลังประมวลผล...</em>';
       document.getElementById('systemRawText').textContent = '';
@@ -861,12 +933,29 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       fd.append('file', file);
       try {
         const token = localStorage.getItem('admin_token');
+        if (!token) {
+          console.error('[ocr-config.html] No admin_token in localStorage — user must re-login');
+          document.getElementById('systemParsedFields').innerHTML =
+            '<span style="color:#dc2626">❌ No admin_token — กรุณา <a href="/admin/login.html">login ใหม่</a></span>';
+          return;
+        }
+        console.log('[ocr-config.html] POST /api/admin/ocr-config/test-scan?provider=' + provider);
         const r = await fetch(`/api/admin/ocr-config/test-scan?provider=${provider}`, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + token },
           body: fd
         });
-        const res = await r.json();
+        console.log('[ocr-config.html] response status:', r.status);
+        const res = await r.json().catch(e => {
+          console.error('[ocr-config.html] JSON parse failed:', e);
+          return null;
+        });
+        console.log('[ocr-config.html] response body:', res);
+        if (!r.ok) {
+          document.getElementById('systemParsedFields').innerHTML =
+            `<span style="color:#dc2626">❌ HTTP ${r.status}: ${res?.message || res?.title || 'Server error'} — endpoint อาจยังไม่ deploy</span>`;
+          return;
+        }
         if (!r.ok || !res?.success) {
           document.getElementById('systemParsedFields').innerHTML =
             `<span style="color:#dc2626">❌ ${res?.message || res?.data?.error || 'ผิดพลาด'}</span>`;
@@ -1052,6 +1141,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     // because AdminLayout.init() at the top of this script already set
     // AdminAPI.token from localStorage.
     function initOcrConfigPage() {
+      console.log('[ocr-config.html] initOcrConfigPage starting...');
+      const v = document.getElementById('deployVersion');
+      if (v) v.textContent = 'build: ' + __PAGE_VERSION;
       loadConfig();
       checkEmbeddedStatus();
       loadTrainCompanies();
