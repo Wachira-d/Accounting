@@ -283,8 +283,13 @@ public class OcrService : IOcrService
                     .Where(c => c.Id == companyId && !c.IsDeleted)
                     .Select(c => new { c.TaxId, c.Name })
                     .FirstOrDefaultAsync();
+                // Normalize once: collapse Tesseract's inter-character Thai
+                // spacing so every keyword scan (role inferrer, category
+                // resolver, basket-rule lookup) sees readable Thai.
+                // Original extractedText is preserved for display.
+                var normalizedText = Ocr.ThaiTextNormalizer.Normalize(extractedText);
                 var role = OcrDocumentRoleInferrer.Infer(
-                    rawText: extractedText,
+                    rawText: normalizedText,
                     vendorTaxId: extractedData.VendorTaxId,
                     buyerTaxId: extractedData.BuyerTaxId,
                     vendorName: extractedData.VendorName,
@@ -317,11 +322,16 @@ public class OcrService : IOcrService
             // surfaced (or the user's prior corrections produced) is kept.
             // ExpenseCategoryLearner below may then override with company-
             // specific habits when they exist.
+            // Normalize Thai before keyword scanning — same reason as the
+            // role inferrer above; the brand/keyword rules in the resolver
+            // can't find "ค่าไฟฟ้า" / "การไฟฟ้า" in a "ค ่ า ไฟ ฟ ้ า" /
+            // "ก า ร ไฟ ฟ ้ า" string.
+            var categoryResolverText = Ocr.ThaiTextNormalizer.Normalize(extractedText);
             var categoryResult = Ocr.ExpenseCategoryResolver.Resolve(
                 vendorName: extractedData.VendorName,
                 headerDescription: extractedData.ExpenseCategory,
                 lineDescriptions: extractedData.Items.Select(i => i.Description),
-                rawText: extractedText);
+                rawText: categoryResolverText);
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult);
 
@@ -1128,7 +1138,13 @@ public class OcrService : IOcrService
         // local service — it works on raw text from any source. So Tesseract's
         // output flows through the same field extraction (vendor name, tax ID,
         // amounts, document type detection from keywords).
-        var data = ParseThaiDocument(result.Text);
+        // Run the rule-based parser against a normalized copy of the
+        // text so the Thai keyword anchors actually match. Tesseract
+        // emits "ค ่ า ไฟ ฟ้า" with spaces between every cluster; without
+        // collapsing those spaces every Thai regex below silently misses
+        // its target. The original text is kept for storage / display.
+        var normalizedForParse = Ocr.ThaiTextNormalizer.Normalize(result.Text ?? "");
+        var data = ParseThaiDocument(normalizedForParse);
         // Use Tesseract's mean word confidence as the baseline; ParseThaiDocument
         // may bump it up if it found high-signal keywords (e.g. "ใบกำกับภาษี").
         data.Confidence = Math.Max(result.Confidence, data.Confidence);

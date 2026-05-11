@@ -43,6 +43,18 @@ internal static class SmartFieldExtractor
     {
         if (string.IsNullOrWhiteSpace(rawText)) rawText = "";
 
+        // 0a. Normalize Tesseract Thai output — collapse inter-character
+        // spaces so every keyword regex below has a chance of matching.
+        // Without this, "ก า ร ไฟ ฟ้า" silently misses every Thai anchor
+        // and the entire extraction stack degrades to numeric-only data.
+        rawText = ThaiTextNormalizer.Normalize(rawText);
+
+        // 0b. Re-extract anchored amounts now that the text is normalized
+        // — overrides any partial values the provider left behind.
+        TryExtractAmountsFromRawText(rawText, data);
+        TryExtractDocumentNumberFromRawText(rawText, data);
+        TryExtractVendorNameFromRawText(rawText, data);
+
         // 0. Clear any pre-existing tax IDs that fail checksum (e.g. OCR
         // confused 0↔O, 1↔I, 8↔B). Cheaper to re-derive from raw text below
         // than to ship a wrong 13-digit number downstream.
@@ -592,5 +604,164 @@ internal static class SmartFieldExtractor
     {
         var m = Regex.Match(text, @"\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b");
         return m.Success ? m.Groups[1].Value : null;
+    }
+
+    // ─── Anchored amount extraction (post-normalize) ──────────────────────
+    // Tesseract reads English-in-brackets ("(Total)", "(Sub Total)", "(VAT)")
+    // far more reliably than free-form Thai labels, so these patterns
+    // anchor on the English bracketed token first. Thai anchors are added
+    // as backups for documents that don't carry the English text.
+    private static void TryExtractAmountsFromRawText(string text, OcrExtractedData data)
+    {
+        // Total: prefer English "(Total)" anchor — common on Thai e-Tax invoices
+        var totalPatterns = new[]
+        {
+            @"\(\s*Total\s*\)\s*([\d,]+\.\d{2})",
+            @"\(\s*Grand\s*Total\s*\)\s*([\d,]+\.\d{2})",
+            @"รวมทั้งสิ้น\s*\(?\s*Total\s*\)?\s*([\d,]+\.\d{2})",
+            @"ยอดรวมสุทธิ[^\d]{0,40}([\d,]+\.\d{2})",
+            @"(?:^|\s)Total\s*[:：]?\s*([\d,]+\.\d{2})",
+            @"รวมทั้งสิ้น[^\d]{0,40}([\d,]+\.\d{2})",
+        };
+        if (data.TotalAmount is null or 0m)
+        {
+            foreach (var p in totalPatterns)
+            {
+                var m = Regex.Match(text, p, RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                if (m.Success && decimal.TryParse(m.Groups[1].Value.Replace(",", ""),
+                    System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var t)
+                    && t > 0)
+                {
+                    data.TotalAmount = t;
+                    data.FieldConfidence["TotalAmount"] = 0.9;
+                    break;
+                }
+            }
+        }
+
+        // VAT: bracketed (VAT) anchor; also handle "(VAT)T %" where T is OCR'd 7
+        if (data.VatAmount is null or 0m)
+        {
+            var vatPatterns = new[]
+            {
+                @"\(\s*VAT\s*\)\s*(?:[T7]\s*%)?\s*([\d,]+\.\d{2})",
+                @"ภาษีมูลค่าเพิ่ม[^\d]{0,40}([\d,]+\.\d{2})",
+                @"VAT\s*[T7]?\s*%?\s*([\d,]+\.\d{2})",
+            };
+            foreach (var p in vatPatterns)
+            {
+                var m = Regex.Match(text, p, RegexOptions.IgnoreCase);
+                if (m.Success && decimal.TryParse(m.Groups[1].Value.Replace(",", ""),
+                    System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var v)
+                    && v > 0)
+                {
+                    data.VatAmount = v;
+                    data.FieldConfidence["VatAmount"] = 0.9;
+                    break;
+                }
+            }
+        }
+
+        // SubTotal: bracketed (Sub Total) anchor
+        if (data.SubTotal is null or 0m)
+        {
+            var subPatterns = new[]
+            {
+                @"\(\s*Sub\s*Total\s*\)\s*([\d,]+\.\d{2})",
+                @"\(\s*Subtotal\s*\)\s*([\d,]+\.\d{2})",
+                @"รวมราคาสินค้า[^\d]{0,40}([\d,]+\.\d{2})",
+                @"ราคาก่อนภาษี[^\d]{0,40}([\d,]+\.\d{2})",
+                @"(?:^|\s)Sub\s*Total\s*[:：]?\s*([\d,]+\.\d{2})",
+            };
+            foreach (var p in subPatterns)
+            {
+                var m = Regex.Match(text, p, RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                if (m.Success && decimal.TryParse(m.Groups[1].Value.Replace(",", ""),
+                    System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var s)
+                    && s > 0)
+                {
+                    data.SubTotal = s;
+                    data.FieldConfidence["SubTotal"] = 0.9;
+                    break;
+                }
+            }
+        }
+    }
+
+    private static void TryExtractDocumentNumberFromRawText(string text, OcrExtractedData data)
+    {
+        // Skip when we already have something plausible
+        if (!string.IsNullOrEmpty(data.DocumentNumber) && data.DocumentNumber.Length >= 4
+            && data.DocumentNumber.Any(char.IsDigit))
+            return;
+
+        // Anchor patterns, ordered by reliability. "Invoice No." sits on
+        // Thai e-Tax invoices nearly always; "(No.)" is the standalone
+        // bracketed form. The grabbed value must contain ≥3 digits — kills
+        // the "T" / "TX" false positives the bare prefix regex produced.
+        var patterns = new[]
+        {
+            @"(?:Invoice\s*No\.?|เลขที่ใบแจ้งหนี้)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"(?:เลขที่|เลขที|เลข\s?ที่|No\.?)\s*\(\s*No\.?\s*\)\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"เลขที่\s*\(?\s*(?:No\.?)?\s*\)?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"(?:^|\s)No\.\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+        };
+        foreach (var p in patterns)
+        {
+            foreach (Match m in Regex.Matches(text, p, RegexOptions.IgnoreCase))
+            {
+                var v = m.Groups[1].Value.Trim().TrimEnd('.', ',', ';');
+                if (v.Count(char.IsDigit) < 3) continue;
+                data.DocumentNumber = v;
+                data.FieldConfidence["DocumentNumber"] = 0.85;
+                return;
+            }
+        }
+    }
+
+    private static void TryExtractVendorNameFromRawText(string text, OcrExtractedData data)
+    {
+        if (!string.IsNullOrEmpty(data.VendorName)) return;
+
+        // Thai government entities don't use บริษัท/ห้างหุ้นส่วน prefixes —
+        // pattern-match them explicitly because the static company-name
+        // regex (which requires those prefixes) would silently miss them.
+        var govPatterns = new[]
+        {
+            @"(การไฟฟ้า(?:นครหลวง|ส่วนภูมิภาค))",
+            @"(การประปา(?:นครหลวง|ส่วนภูมิภาค))",
+            @"(บริษัท\s+ท่าอากาศยานไทย[^\n]{0,40})",
+            @"(ไปรษณีย์ไทย)",
+            @"(การรถไฟแห่งประเทศไทย)",
+            @"(บริษัท\s+ปตท\.[^\n]{0,40})",
+        };
+        foreach (var p in govPatterns)
+        {
+            var m = Regex.Match(text, p);
+            if (m.Success)
+            {
+                data.VendorName = m.Groups[1].Value.Trim();
+                data.FieldConfidence["SellerName"] = 0.9;
+                return;
+            }
+        }
+
+        // Generic บริษัท/ห้างหุ้นส่วน — re-run with the now-normalized text
+        // so the prefix anchor matches even when Tesseract had spaced it out.
+        var named = Regex.Match(text,
+            @"(บริษัท|ห้างหุ้นส่วนจำกัด|ห้างหุ้นส่วน|หจก\.?)\s*([฀-๿0-9A-Za-z][^\n]{2,80}?)\s*(จำกัด\s*\(?(?:มหาชน)?\)?|$)",
+            RegexOptions.Multiline);
+        if (named.Success)
+        {
+            var prefix = named.Groups[1].Value.Trim();
+            var core = named.Groups[2].Value.Trim();
+            var suffix = named.Groups[3].Value.Trim();
+            var full = $"{prefix} {core}{(string.IsNullOrEmpty(suffix) ? "" : " " + suffix)}".Trim();
+            if (full.Length > 6 && full.Length < 200)
+            {
+                data.VendorName = full;
+                data.FieldConfidence["SellerName"] = 0.85;
+            }
+        }
     }
 }
