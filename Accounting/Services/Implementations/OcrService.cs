@@ -1070,7 +1070,8 @@ public class OcrService : IOcrService
         if (!preflight.Ok)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), preflight.ErrorMessage);
 
-        var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType, siteSettings);
+        var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType, siteSettings,
+            fileName: file.OriginalFileName);
         if (azureResult == null)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), "Azure DI not enabled or not configured");
         if (!azureResult.Success)

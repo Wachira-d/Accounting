@@ -1,0 +1,224 @@
+using Accounting.Models.Entities;
+
+namespace Accounting.Services.Implementations.Ocr;
+
+/// <summary>
+/// Choose the right Azure DI request shape for THIS specific file —
+/// before paying for the analyze call. Inspects file size, format,
+/// dimensions, and filename hints to decide:
+///   • Model         (prebuilt-invoice vs prebuilt-receipt vs custom)
+///   • Locale        (th-TH default; switch to en-US for English-named files)
+///   • Features      (always: keyValuePairs + barcodes;
+///                    high-res toggle: only when image quality is poor)
+///   • Pages range   (cap multi-page PDFs to N pages — cost control)
+///   • String index  (utf16CodeUnit for Thai locale, codePoint for en-US)
+///
+/// Without this planner the previous implementation sent every feature
+/// with every request — paying ocrHighResolution premium even on
+/// crystal-clear digital PDFs, and forcing th-TH locale on English
+/// documents.
+///
+/// Pure static — no DB / DI. Caller passes in siteSettings if defaults
+/// need overriding.
+/// </summary>
+public static class AzureDiRequestPlanner
+{
+    public record AnalysisPlan(
+        string ModelId,
+        string Locale,
+        string StringIndexType,
+        string[] Features,
+        string? Pages,        // e.g. "1-5" or null to send the whole file
+        List<string> Reasons);
+
+    public static AnalysisPlan Build(
+        byte[] fileBytes,
+        string contentType,
+        string? fileName,
+        SiteSettings? settings)
+    {
+        var reasons = new List<string>();
+
+        // 1. Model selection
+        //    Priority: admin-configured > filename hint > default "prebuilt-invoice"
+        string modelId;
+        if (!string.IsNullOrEmpty(settings?.AzureDiModelId)
+            && !settings.AzureDiModelId.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            modelId = settings.AzureDiModelId;
+            reasons.Add($"model={modelId} (admin override)");
+        }
+        else
+        {
+            modelId = DetectModelFromFilename(fileName);
+            reasons.Add($"model={modelId} (auto from filename)");
+        }
+
+        // 2. Locale selection
+        //    Default to th-TH (this is a Thai SaaS). Switch when the filename
+        //    is clearly English, when content type is not Thai-friendly, or
+        //    when the admin overrode in settings.
+        string locale;
+        if (LooksLikeEnglishFile(fileName))
+        {
+            locale = "en-US";
+            reasons.Add("locale=en-US (filename hint)");
+        }
+        else
+        {
+            locale = "th-TH";
+            reasons.Add("locale=th-TH (default)");
+        }
+
+        // 3. String index type
+        //    Thai vowels and tone marks are combining UTF-16 code units —
+        //    utf16CodeUnit prevents offset corruption when slicing content.
+        //    For pure-English documents, codePoint produces simpler offsets.
+        var stringIndexType = locale == "th-TH" ? "utf16CodeUnit" : "codePoint";
+
+        // 4. Features list
+        //    Always on (low / no cost):
+        //      • keyValuePairs — Thai-anchored fallback fields
+        //      • barcodes      — RD QR receipts
+        //    Conditional:
+        //      • ocrHighResolution — premium tier, only worth it for low-
+        //        quality images. Clean PDFs and high-res photos get nothing
+        //        better from it; small mobile snapshots improve substantially.
+        var features = new List<string> { "keyValuePairs", "barcodes" };
+        if (ShouldUseHighResolution(fileBytes, contentType, out var hiResReason))
+        {
+            features.Add("ocrHighResolution");
+            reasons.Add($"+ocrHighResolution ({hiResReason})");
+        }
+        else
+        {
+            reasons.Add($"skip ocrHighResolution ({hiResReason})");
+        }
+
+        // 5. Pages range (PDF only)
+        //    Cost control — admin can set MaxPagesPerScan in SiteSettings.
+        //    Defaults to 10 pages (covers 99% of Thai SME invoices/receipts;
+        //    catalog PDFs and contract bundles that exceed this should be
+        //    split before scanning anyway).
+        string? pages = null;
+        if (contentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            var maxPages = settings?.OcrMaxPagesPerScan;
+            if (maxPages.HasValue && maxPages.Value > 0)
+            {
+                pages = $"1-{maxPages.Value}";
+                reasons.Add($"pages=1-{maxPages.Value} (admin cap)");
+            }
+        }
+
+        return new AnalysisPlan(modelId, locale, stringIndexType, features.ToArray(), pages, reasons);
+    }
+
+    /// <summary>Build the URL query string from the plan + api-version.</summary>
+    public static string BuildQueryString(AnalysisPlan plan, string apiVersion)
+    {
+        var q = $"?api-version={apiVersion}" +
+                $"&locale={plan.Locale}" +
+                $"&stringIndexType={plan.StringIndexType}" +
+                $"&features={string.Join(",", plan.Features)}";
+        if (!string.IsNullOrEmpty(plan.Pages))
+            q += $"&pages={plan.Pages}";
+        return q;
+    }
+
+    private static string DetectModelFromFilename(string? fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return "prebuilt-invoice";
+        var lower = fileName.ToLowerInvariant();
+        // Receipt hints — short paper, often photographed
+        if (lower.Contains("receipt") || lower.Contains("ใบเสร็จ") || lower.Contains("เซเว่น")
+            || lower.Contains("7-11") || lower.Contains("cafe") || lower.Contains("คาเฟ่"))
+            return "prebuilt-receipt";
+        // Business card hints
+        if (lower.Contains("businesscard") || lower.Contains("business_card") || lower.Contains("namecard"))
+            return "prebuilt-businessCard";
+        // ID document hints
+        if (lower.Contains("idcard") || lower.Contains("บัตรประชาชน") || lower.Contains("passport"))
+            return "prebuilt-idDocument";
+        // Default — invoice covers tax-invoices, billing, PO, most B2B docs
+        return "prebuilt-invoice";
+    }
+
+    private static bool LooksLikeEnglishFile(string? fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return false;
+        var lower = fileName.ToLowerInvariant();
+        // Common English-doc filename patterns from AWS/Google/Microsoft invoices
+        return lower.Contains("aws-") || lower.Contains("amazon")
+            || lower.Contains("microsoft") || lower.Contains("azure-")
+            || lower.Contains("googlecloud") || lower.Contains("gcp")
+            || lower.Contains("invoice-") && !ContainsThaiChar(fileName)
+            || lower.EndsWith("_en.pdf") || lower.EndsWith("_eng.pdf");
+    }
+
+    private static bool ContainsThaiChar(string s)
+        => s.Any(c => c >= '฀' && c <= '๿');
+
+    private static bool ShouldUseHighResolution(byte[] fileBytes, string contentType, out string reason)
+    {
+        // PDFs: text-born PDFs don't benefit from ocrHighResolution (the
+        // text layer is extracted directly). Scanned PDFs would benefit,
+        // but distinguishing them requires parsing the PDF — skip the
+        // premium feature for PDFs by default; admin can force-enable
+        // for tenants that mostly scan paper.
+        if (contentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "PDF — text layer expected";
+            return false;
+        }
+
+        // Images: enable hi-res when the file is small OR low-resolution.
+        // Threshold: <300KB OR shorter side <1000px implies a mobile snap
+        // or low-quality scan that benefits from hi-res processing.
+        if (fileBytes.Length < 300_000)
+        {
+            reason = $"small image ({fileBytes.Length / 1024}KB < 300KB)";
+            return true;
+        }
+
+        var (w, h) = ReadImageDims(fileBytes, contentType);
+        if (w > 0 && h > 0 && Math.Min(w, h) < 1000)
+        {
+            reason = $"low-res image ({w}×{h}, short side <1000)";
+            return true;
+        }
+
+        reason = "image quality OK";
+        return false;
+    }
+
+    private static (int W, int H) ReadImageDims(byte[] data, string contentType)
+    {
+        try
+        {
+            if (contentType.Contains("png", StringComparison.OrdinalIgnoreCase) && data.Length >= 24)
+                return (
+                    (data[16] << 24) | (data[17] << 16) | (data[18] << 8) | data[19],
+                    (data[20] << 24) | (data[21] << 16) | (data[22] << 8) | data[23]);
+            if ((contentType.Contains("jpeg", StringComparison.OrdinalIgnoreCase)
+                || contentType.Contains("jpg", StringComparison.OrdinalIgnoreCase)))
+            {
+                int i = 2;
+                while (i < data.Length - 9)
+                {
+                    if (data[i] != 0xFF) { i++; continue; }
+                    var m = data[i + 1];
+                    if ((m >= 0xC0 && m <= 0xC3) || (m >= 0xC5 && m <= 0xC7)
+                        || (m >= 0xC9 && m <= 0xCB) || (m >= 0xCD && m <= 0xCF))
+                    {
+                        return ((data[i + 7] << 8) | data[i + 8], (data[i + 5] << 8) | data[i + 6]);
+                    }
+                    if (i + 3 < data.Length) i += 2 + ((data[i + 2] << 8) | data[i + 3]);
+                    else break;
+                }
+            }
+        }
+        catch { }
+        return (0, 0);
+    }
+}

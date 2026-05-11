@@ -30,7 +30,8 @@ public class AzureDocumentIntelligenceService
     /// avoid a redundant DB roundtrip (OcrService.ScanAsync already loads it).
     /// </summary>
     public async Task<AzureDiResult?> AnalyzeAsync(byte[] fileBytes, string contentType,
-        Models.Entities.SiteSettings? settings = null, CancellationToken ct = default)
+        Models.Entities.SiteSettings? settings = null, string? fileName = null,
+        CancellationToken ct = default)
     {
         settings ??= await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         if (settings == null || !settings.AzureDiEnabled
@@ -42,32 +43,26 @@ public class AzureDocumentIntelligenceService
 
         var endpoint = settings.AzureDiEndpoint.TrimEnd('/');
         var apiKey = settings.AzureDiApiKey;
-        var modelId = string.IsNullOrEmpty(settings.AzureDiModelId) ? "prebuilt-invoice" : settings.AzureDiModelId;
         var apiVersion = string.IsNullOrEmpty(settings.AzureDiApiVersion) ? "2024-11-30" : settings.AzureDiApiVersion;
 
         var client = _httpClientFactory.CreateClient();
         client.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", apiKey);
         client.Timeout = TimeSpan.FromMinutes(2);
 
-        // ─── Maximize Azure DI extraction for Thai documents ───
-        // locale=th-TH tells the OCR engine to use Thai language/date/number
-        //   conventions — without this Azure may guess en-US and parse
-        //   "12/03/2026" as Dec-3 instead of 12-Mar.
-        // stringIndexType=utf16CodeUnit fixes Thai character boundary handling
-        //   (sara/tone marks don't get split off from their consonants).
-        // features=keyValuePairs,barcodes,ocrHighResolution unlocks extra
-        //   data the basic invoice schema misses:
-        //   • keyValuePairs catches "เลขประจำตัวผู้เสียภาษี: ..." anchored
-        //     fields that aren't part of the standard Invoice schema.
-        //   • barcodes finds RD QR codes / asset-tag barcodes.
-        //   • ocrHighResolution improves accuracy on mobile-camera photos
-        //     (extra Azure cost — disabled when not Latin-friendly model).
-        // output=pdf would produce a searchable PDF (skipped — extra cost,
-        //   we keep original file).
-        var query = $"?api-version={apiVersion}" +
-            "&locale=th-TH" +
-            "&stringIndexType=utf16CodeUnit" +
-            "&features=keyValuePairs,barcodes,ocrHighResolution";
+        // ─── Per-file request planning ───
+        // AzureDiRequestPlanner inspects size / format / dimensions /
+        // filename and decides which model + locale + features + page
+        // range to send for THIS particular file — instead of sending a
+        // hardcoded one-size-fits-all set. Skips paying the
+        // ocrHighResolution premium on clean PDFs, switches locale to
+        // en-US on English-named files, caps multi-page PDFs to the
+        // admin-configured MaxPagesPerScan, and chooses prebuilt-receipt
+        // / prebuilt-invoice / prebuilt-businessCard based on filename.
+        var plan = AzureDiRequestPlanner.Build(fileBytes, contentType, fileName, settings);
+        var query = AzureDiRequestPlanner.BuildQueryString(plan, apiVersion);
+        var modelId = plan.ModelId;
+        _logger.LogInformation("Azure DI plan: {Plan}", string.Join("; ", plan.Reasons));
+
         var analyzeUrl = $"{endpoint}/documentintelligence/documentModels/{modelId}:analyze{query}";
         using var content = new ByteArrayContent(fileBytes);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
@@ -122,7 +117,12 @@ public class AzureDocumentIntelligenceService
 
             var status = root.TryGetProperty("status", out var s) ? s.GetString() : null;
             if (status == "succeeded")
-                return ParseResult(root, modelId);
+                var parsed = ParseResult(root, modelId);
+                // Surface the request-planner reasons so the debug panel
+                // shows exactly which params we chose for this file.
+                if (parsed.Success)
+                    parsed.Warnings.Insert(0, $"[RequestPlan] {string.Join(" | ", plan.Reasons)}");
+                return parsed;
             if (status == "failed")
             {
                 var err = root.TryGetProperty("error", out var e) ? e.ToString() : "unknown";

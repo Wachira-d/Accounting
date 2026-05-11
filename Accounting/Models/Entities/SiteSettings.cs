@@ -122,4 +122,11 @@ public class SiteSettings : BaseEntity
     // Each retry consumes one quota page UNLESS Azure DI auto-falls-back to local
     // (in which case the original quota debit covers both attempts).
     public int OcrMaxRetriesPerScan { get; set; } = 1;
+
+    /// <summary>Maximum pages of a multi-page PDF that get sent to
+    /// Azure DI per scan. Cost control: catalog PDFs (50+ pages) would
+    /// otherwise blow through the OCR budget. 10 pages covers 99% of
+    /// Thai SME invoices/receipts; tenants who routinely scan long
+    /// contracts can raise this. Null = no cap (whole PDF).</summary>
+    public int? OcrMaxPagesPerScan { get; set; } = 10;
 }

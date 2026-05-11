@@ -1206,6 +1206,9 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrMaxRetriesPerScan" integer NOT NULL DEFAULT 1;
             """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrMaxPagesPerScan" integer NULL DEFAULT 10;
+            """,
 
             // ===== Subscriptions: OCR quota fields =====
             """

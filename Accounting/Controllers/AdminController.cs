@@ -1491,7 +1491,9 @@ public class AdminController : ControllerBase
                         error = "Azure DI ยังไม่ได้ตั้งค่าหรือปิดอยู่";
                         break;
                     }
-                    var azResult = await azureDi.AnalyzeAsync(fileBytes, file.ContentType ?? "application/octet-stream", s);
+                    var azResult = await azureDi.AnalyzeAsync(fileBytes,
+                        file.ContentType ?? "application/octet-stream", s,
+                        fileName: file.FileName);
                     rawText = azResult?.RawText ?? "";
                     confidence = azResult?.OverallConfidence ?? 0m;
                     break;
