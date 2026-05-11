@@ -105,7 +105,8 @@ public class OcrService : IOcrService
             scanResult.ExtractedVatAmount = duplicateOf.ExtractedVatAmount;
             scanResult.ExtractedTotalAmount = duplicateOf.ExtractedTotalAmount;
             scanResult.MatchedContactId = duplicateOf.MatchedContactId;
-            scanResult.ProcessingNotes = $"Duplicate of scan {duplicateOf.Id}";
+            scanResult.OcrEngine = "Cached";   // copied from a prior scan; no OCR engine ran
+            scanResult.ProcessingNotes = $"Duplicate of scan {duplicateOf.Id} (engine: {duplicateOf.OcrEngine ?? "unknown"})";
             scanResult.ProcessedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
             return MapToResponse(scanResult);
@@ -157,6 +158,7 @@ public class OcrService : IOcrService
             extractedData = null;
             extractedText = "";
             string? lastError = null;
+            string? ocrEngineUsed = null;   // surfaced on scanResult.OcrEngine for the debug panel
 
             // Tier 1: Azure DI (unless explicitly forced to local)
             if (azureEnabled && ocrProvider != "local")
@@ -166,6 +168,7 @@ public class OcrService : IOcrService
                 {
                     extractedText = azureResult.Text;
                     extractedData = azureResult.Data;
+                    ocrEngineUsed = "AzureDI";
                 }
                 else
                 {
@@ -184,6 +187,7 @@ public class OcrService : IOcrService
                     {
                         extractedText = localResult.RawText;
                         extractedData = localResult.Data;
+                        ocrEngineUsed = "LocalPython";
                         if (lastError != null)
                             extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {lastError} — used Python local pipeline");
                         else if (azureSkipReason != null)
@@ -203,6 +207,7 @@ public class OcrService : IOcrService
                 var embeddedResult = await ExtractWithEmbeddedTesseractAsync(file);
                 extractedText = embeddedResult.RawText;
                 extractedData = embeddedResult.Data;
+                ocrEngineUsed = "EmbeddedTesseract";
                 if (lastError != null)
                     extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
                 else
@@ -211,6 +216,8 @@ public class OcrService : IOcrService
                 if (azureSkipReason != null)
                     extractedData.ReasoningTrace.Add($"[Azure DI] {azureSkipReason}");
             }
+
+            scanResult.OcrEngine = ocrEngineUsed;
 
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
             var gatewayConfig = BuildGatewayConfig(siteSettings);
@@ -2281,7 +2288,8 @@ public class OcrService : IOcrService
             dbdInfo,
             r.ScannedDocumentType,
             r.OurRole,
-            r.TargetDocumentType);
+            r.TargetDocumentType,
+            r.OcrEngine);
     }
 }
 

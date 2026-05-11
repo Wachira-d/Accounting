@@ -24,7 +24,12 @@ public record OcrResultResponse(
     // DocumentType field mirrors ScannedDocumentType for back-compat.
     string? ScannedDocumentType = null,
     string? OurRole = null,
-    string? TargetDocumentType = null);
+    string? TargetDocumentType = null,
+    /// <summary>Which OCR engine produced this result: "AzureDI",
+    /// "LocalPython", "EmbeddedTesseract", or "Cached" (duplicate-detection
+    /// short-circuit). Useful in the debug panel for accuracy
+    /// troubleshooting.</summary>
+    string? OcrEngine = null);
 
 public record OcrDbdInfo(
     bool LookupAttempted,

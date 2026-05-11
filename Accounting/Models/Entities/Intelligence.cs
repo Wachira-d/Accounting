@@ -165,6 +165,17 @@ public class OcrScanResult : TenantEntity
     public string? FileHash { get; set; }
     public bool IsDuplicate { get; set; }
     public Guid? DuplicateOfScanId { get; set; }
+
+    // ─── Which OCR engine actually produced the text ───
+    // Records which tier of the cascade returned the result that was used:
+    //   "AzureDI"           — Azure Document Intelligence (cloud, prebuilt models)
+    //   "LocalPython"        — PaddleOCR + EasyOCR microservice
+    //   "EmbeddedTesseract"  — in-process Tesseract via NuGet (always-on fallback)
+    //   "Cached"             — duplicate-detection short-circuit; copied an earlier scan
+    // Surfaced in the debug panel so users can see at a glance which engine
+    // handled their document — useful when troubleshooting accuracy regressions
+    // ("the embedded fallback ran because the Python service was down").
+    public string? OcrEngine { get; set; }
 }
 
 /// <summary>

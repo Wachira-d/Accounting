@@ -974,6 +974,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "DuplicateOfScanId" uuid NULL;
             """,
 
+            // OcrScanResults: which OCR engine produced this result
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OcrEngine" varchar(40) NULL;
+            """,
+
             // ===== OcrScanResults: document role inference fields =====
             // Thai-accounting workflow: a scanned receipt from a supplier should
             // create a PaymentVoucher in our books — not a "Receipt" document.

@@ -1301,9 +1301,29 @@
                 &#x1F50D; ข้อมูลดิบ (Debug) <span style="font-size:11px;color:var(--gray-400);font-weight:400;margin-left:8px">คลิกเพื่อเปิด/ปิด</span>
               </div>
               <div id="debugPanel" style="display:none">
+                ${(() => {
+                  // OCR engine badge — biggest visual cue at the top of the debug
+                  // panel so users instantly see which engine handled the scan.
+                  const engineMap = {
+                    'AzureDI':           { label: '☁️ Azure Document Intelligence', bg: '#dbeafe', fg: '#1e40af' },
+                    'LocalPython':       { label: '🐍 Local Python (PaddleOCR + EasyOCR)', bg: '#ecfeff', fg: '#0e7490' },
+                    'EmbeddedTesseract': { label: '🧩 Embedded Tesseract (in-process fallback)', bg: '#fef3c7', fg: '#92400e' },
+                    'Cached':            { label: '♻️ Cached (duplicate of an earlier scan)', bg: '#f3e8ff', fg: '#6b21a8' },
+                  };
+                  const e = scan.ocrEngine && engineMap[scan.ocrEngine];
+                  if (!e) return `
+                  <div style="background:#fee2e2;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;border-left:4px solid #dc2626">
+                    <strong>⚠️ OCR Engine</strong>: ${scan.ocrEngine || '<em>not recorded</em>'} — scan อาจมาจากเวอร์ชันก่อนเก็บข้อมูลนี้
+                  </div>`;
+                  return `
+                  <div style="background:${e.bg};color:${e.fg};padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:14px;font-weight:600;border-left:4px solid ${e.fg}">
+                    OCR Engine: ${e.label}
+                  </div>`;
+                })()}
                 <div style="margin-bottom:12px">
                   <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 12px;font-size:12px;line-height:1.8">
                     <span style="color:var(--gray-500);font-weight:600">Scan ID</span><span style="font-family:monospace;word-break:break-all">${scan.id}</span>
+                    <span style="color:var(--gray-500);font-weight:600">OCR Engine</span><span><strong>${scan.ocrEngine || '<em style="color:var(--gray-400)">unknown</em>'}</strong></span>
                     <span style="color:var(--gray-500);font-weight:600">Status</span><span>${scan.scanStatus}</span>
                     <span style="color:var(--gray-500);font-weight:600">Document Type</span><span><strong>${scan.documentType || 'null'}</strong></span>
                     <span style="color:var(--gray-500);font-weight:600">Confidence</span><span>${scan.confidence != null ? (scan.confidence * 100).toFixed(1) + '%' : 'null'}</span>
