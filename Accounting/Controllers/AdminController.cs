@@ -1300,6 +1300,34 @@ public class AdminController : ControllerBase
     public record TrainLineItem(string Description, string? AccountCode, decimal? Amount);
 
     /// <summary>
+    /// Cold-start seeder for system-wide OCR knowledge. Populates the
+    /// SystemOcrCategoryMappings, SystemOcrVendorIntelligence, and
+    /// SystemOcrAssociationRules tables with hand-curated defaults for
+    /// the top ~40 Thai SME vendor brands (fuel / utilities / telecom /
+    /// logistics / advertising / travel / banking / insurance / cloud /
+    /// office / hardware). After this runs, brand-new tenants get
+    /// reasonable predictions on day one — before they've accumulated
+    /// any history of their own.
+    ///
+    /// Idempotent: each row is added only when the same key combination
+    /// doesn't already exist. Safe to re-run after schema upgrades.
+    /// </summary>
+    [HttpPost("ocr-config/seed-knowledge")]
+    public async Task<ActionResult<ApiResponse<object>>> SeedSystemOcrKnowledge(
+        [FromServices] Services.Implementations.Ocr.SystemOcrKnowledgeSeeder seeder)
+    {
+        var result = await seeder.SeedAsync();
+        await LogAuditAsync(null, "SystemOcrKnowledgeSeeded",
+            $"category+{result.CategoryMappings} vendorIntel+{result.VendorIntelligence} associationRules+{result.AssociationRules}");
+        return Ok(new ApiResponse<object>(true, new
+        {
+            categoryMappingsAdded = result.CategoryMappings,
+            vendorIntelligenceAdded = result.VendorIntelligence,
+            associationRulesAdded = result.AssociationRules,
+        }, $"Seed สำเร็จ: category+{result.CategoryMappings} vi+{result.VendorIntelligence} rules+{result.AssociationRules}"));
+    }
+
+    /// <summary>
     /// Run the system-wide Apriori-style basket-analysis miner. Scans every
     /// approved/paid Document in the last `sinceMonths` months across all
     /// tenants, discovers (vendor + keyword) → account association rules,

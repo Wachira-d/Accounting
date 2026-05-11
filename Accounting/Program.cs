@@ -156,6 +156,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.TfIdfNaiveBay
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RecurringExpenseDetector>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.DocumentWorkflowPredictor>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorClusteringService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder>();
 builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkflowService>();
 // Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
 // and the service maintains a thread-local engine pool for thread safety.
@@ -1163,6 +1164,24 @@ try
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
     await SeedAdminUser.SeedAsync(db, app.Configuration);
+
+    // Cold-start OCR knowledge seed: only runs on the very first startup
+    // after the tables exist (i.e. when SystemOcrAssociationRules is empty).
+    // After that, the admin endpoint POST /admin/ocr-config/seed-knowledge
+    // is the only way to re-seed — preserves any operator-tuned data.
+    try
+    {
+        if (!await db.SystemOcrAssociationRules.AnyAsync())
+        {
+            var logger = app.Services.GetRequiredService<ILogger<Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder>>();
+            var seeder = new Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder(db, logger);
+            await seeder.SeedAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "SystemOcrKnowledgeSeeder failed at startup (non-fatal — can be triggered via admin endpoint)");
+    }
 }
 catch (Exception ex)
 {
