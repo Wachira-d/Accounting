@@ -85,6 +85,11 @@
       <strong>OCR & Azure Document Intelligence</strong> ตั้งค่า Provider สำหรับสแกนเอกสาร (ระดับ System — ใช้ร่วมกันทุกบริษัท),
       จัดการโควต้าหน้า OCR ตามแพ็กเกจ, และอนุมัติการซื้อเครดิตเพิ่ม
     </div>
+    <div style="background:#f0fdfa;border:1px solid #5eead4;color:#134e4a;padding:12px 18px;border-radius:8px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div>
+        💡 <strong>ต้องการทดสอบ OCR แบบ end-to-end + train ระบบ?</strong> หน้านี้เป็น <em>system-level config</em> เท่านั้น สำหรับ test playground (drag & drop ไฟล์ + ดู extracted fields + train) ไปที่ <a href="/pages/admin-ocr.html" style="color:#0d9488;font-weight:600">OCR Admin Console (per-tenant)</a>
+      </div>
+    </div>
 
     <div class="ocr-grid">
       <!-- Usage Summary -->
@@ -101,25 +106,29 @@
         </div>
       </div>
 
-      <!-- OCR Provider Selection -->
+      <!-- OCR Provider Selection — 3-tier cascade -->
       <div class="admin-card">
         <div class="admin-card-header">
-          <div class="admin-card-title">OCR Provider</div>
-          <div style="font-size:13px;color:#94a3b8;margin-top:4px">เลือก Provider หลักที่ใช้แปลงภาพเป็นข้อความ</div>
+          <div class="admin-card-title">OCR Provider Cascade (3 ชั้น)</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">
+            ระบบจะลองตามลำดับ: <b>Azure DI</b> (cloud) → <b>Python service</b> (optional) → <b>Embedded Tesseract</b> (in-process, always-on)
+            ถ้าชั้นบนล่ม ระบบจะ fallback ลงชั้นถัดไปอัตโนมัติ — ผู้ใช้จะไม่เคยเจอ "OCR ใช้ไม่ได้"
+          </div>
         </div>
         <div class="form-group">
-          <label>Provider หลัก</label>
+          <label>โหมด</label>
           <select id="ocrProvider">
-            <option value="">อัตโนมัติ (Azure DI ถ้าตั้งค่าแล้ว, มิฉะนั้นใช้ Local)</option>
-            <option value="azure-di">บังคับใช้ Azure Document Intelligence v4.0</option>
-            <option value="local">บังคับใช้ Local (PaddleOCR + EasyOCR)</option>
+            <option value="">อัตโนมัติ (Azure → Python → Embedded — ลำดับ cascade เต็ม)</option>
+            <option value="azure-di">บังคับ Azure DI (ถ้าล่มจะ fallback ไป Embedded)</option>
+            <option value="local">บังคับ Local (ข้าม Azure — ใช้ Python ก่อน, แล้ว Embedded)</option>
           </select>
-          <div class="hint">โหมด <b>อัตโนมัติ</b> = Azure DI เป็นหลัก, fallback ไป Local ถ้า Azure ล่ม. <b>Local</b> รวม PaddleOCR + EasyOCR ในตัวเดียว</div>
+          <div class="hint">โหมด <b>อัตโนมัติ</b> เหมาะกับ production. <b>Local</b> ใช้ตอน test หรือ Azure quota หมด</div>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Local Service URL</label>
+            <label>Python Service URL (optional)</label>
             <input type="text" id="ocrLocalServiceUrl" placeholder="http://localhost:8501">
+            <div class="hint">เว้นว่าง = ข้าม tier 2 ไป Embedded เลย</div>
           </div>
           <div class="form-group">
             <label>Auto-Create Threshold</label>
@@ -181,12 +190,48 @@
         </div>
       </div>
 
-      <!-- Local Service Health -->
+      <!-- Tier 3: Embedded Tesseract — always-on in-process fallback -->
+      <div class="admin-card" style="border:2px solid #0d9488">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">🧠 Embedded Tesseract (in-process — ไม่ต้องติดตั้งภายนอก)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">
+              OCR engine ที่ฝังในแอป .NET โดยตรง (Tesseract NuGet + ImageSharp) — รันใน process เดียวกับ web server
+              ไม่ต้อง Docker, ไม่ต้อง Python, ไม่ต้อง install ของข้างนอก เป็นชั้น <b>fallback สุดท้าย</b> ที่รับประกันว่า OCR จะไม่ล่ม
+            </div>
+          </div>
+          <span id="embeddedStatusBadge" class="status-badge status-pending">กำลังตรวจ...</span>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn-secondary" onclick="checkEmbeddedStatus()">🔄 รีเฟรชสถานะ</button>
+          <span id="embeddedStatusDetail" style="font-size:13px;line-height:40px;color:#64748b"></span>
+        </div>
+        <details style="margin-top:12px;background:#f0fdfa;padding:12px;border-radius:8px;border:1px solid #5eead4">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#134e4a">📋 วิธีติดตั้ง Tesseract language data (ครั้งเดียวตอน deploy)</summary>
+          <div style="margin-top:12px;font-size:13px;color:#134e4a;line-height:1.6">
+            <p style="margin:0 0 8px">Tesseract NuGet ติดมากับ project แล้ว แต่ language data files (~10MB สำหรับ Thai+English) ไม่ commit ลง git</p>
+            <p style="margin:8px 0"><b>วิธี 1: ใช้ helper script (แนะนำ)</b></p>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px">./scripts/download-tessdata.sh          # ดาวน์โหลด tessdata_fast (เล็ก, เร็ว)
+./scripts/download-tessdata.sh best     # ดาวน์โหลด tessdata_best (แม่นขึ้น แต่ช้ากว่า)</pre>
+            <p style="margin:12px 0 8px"><b>วิธี 2: Manual download</b></p>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px">cd Accounting/wwwroot/tessdata
+curl -LO https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+curl -LO https://github.com/tesseract-ocr/tessdata_fast/raw/main/tha.traineddata</pre>
+            <p style="margin:8px 0">หลัง install เสร็จ → restart app → log จะแสดง <code>[OCR] Embedded Tesseract initialized — languages: eng+tha</code></p>
+            <p style="margin:8px 0;color:#92400e"><b>หมายเหตุ:</b> Embedded engine รองรับเฉพาะรูปภาพ (JPG, PNG, BMP, TIFF, WebP) — สำหรับ <b>PDF</b> ต้องใช้ Azure DI หรือ Python service ที่ tier บนๆ</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- Tier 2: Optional Python service -->
       <div class="admin-card">
         <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
           <div>
-            <div class="admin-card-title">🐍 Local OCR Service (PaddleOCR + EasyOCR)</div>
-            <div style="font-size:13px;color:#94a3b8;margin-top:4px">Microservice ที่รวม <b>PaddleOCR</b> (PP-OCRv4) + <b>EasyOCR</b> (CRNN) — สอง engine ต่างสถาปัตยกรรม รัน ensemble verification ทำให้แม่นกว่าใช้ตัวเดียว ทั้งสองเป็น pure-Python (ไม่ต้อง apt-get)</div>
+            <div class="admin-card-title">🐍 Python OCR Service (Optional — high-accuracy tier)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">
+              External microservice ที่รวม <b>PaddleOCR</b> (PP-OCRv4) + <b>EasyOCR</b> (CRNN) สำหรับ accuracy สูงสุด
+              เป็น <b>optional tier</b> — ถ้าไม่ติดตั้งระบบจะข้ามไป Embedded Tesseract เลย ไม่กระทบการใช้งาน
+            </div>
           </div>
           <span id="localStatusBadge" class="status-badge status-pending">ยังไม่ทดสอบ</span>
         </div>
@@ -195,18 +240,14 @@
           <span id="localTestResult" style="font-size:13px;line-height:40px;color:#64748b"></span>
         </div>
         <details style="margin-top:12px;background:#f8fafc;padding:12px;border-radius:8px">
-          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#475569">📋 วิธีตั้งค่า Local OCR Service</summary>
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#475569">📋 วิธีตั้งค่า Python service (ถ้าต้องการ accuracy สูง)</summary>
           <div style="margin-top:12px;font-size:13px;color:#334155;line-height:1.6">
-            <p style="margin:0 0 8px"><b>1. รัน microservice (ทั้ง 2 engine ติดตั้งด้วย pip — ไม่ต้อง apt-get):</b></p>
+            <p style="margin:0 0 8px"><b>1. รัน microservice:</b></p>
             <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px">cd ocr-service
-pip install -r requirements.txt   # ลง paddleocr + easyocr + ทั้งหมด
-uvicorn app.main:app --host 0.0.0.0 --port 8501
-
-# หรือใช้ Docker (พร้อม pre-pull models)
-docker compose up -d</pre>
-            <p style="margin:12px 0 8px"><b>2. ระบุ URL ที่ฟิลด์ "Local Service URL" ด้านบน</b> (ค่าเริ่มต้น: <code>http://localhost:8501</code>)</p>
-            <p style="margin:8px 0"><b>3. คลิกปุ่ม "ทดสอบการเชื่อมต่อ"</b> — ระบบจะส่ง health check ไปที่ <code>{url}/health</code></p>
-            <p style="margin:8px 0"><b>4. Endpoint ที่ใช้งาน:</b> <code>POST {url}/ocr/extract</code> (multipart/form-data)</p>
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
+            <p style="margin:12px 0 8px"><b>2. ใส่ URL ที่ "Python Service URL" ด้านบน</b> (default: <code>http://localhost:8501</code>)</p>
+            <p style="margin:8px 0">ถ้า Python service ล่ม ระบบจะ fallback ไป <b>Embedded Tesseract</b> อัตโนมัติ — ไม่มี downtime</p>
           </div>
         </details>
       </div>
@@ -555,6 +596,34 @@ docker compose up -d</pre>
       }
     }
 
+    async function checkEmbeddedStatus() {
+      const badge = document.getElementById('embeddedStatusBadge');
+      const detail = document.getElementById('embeddedStatusDetail');
+      badge.className = 'status-badge status-pending';
+      badge.textContent = 'กำลังตรวจ...';
+      detail.textContent = '';
+      try {
+        const res = await AdminAPI.get('/ocr-config/embedded-status');
+        const d = res.data || {};
+        if (d.available) {
+          badge.className = 'status-badge status-ok';
+          badge.textContent = 'พร้อมใช้งาน';
+          detail.style.color = '#16a34a';
+          detail.textContent = `ภาษาที่โหลดแล้ว: ${(d.languages || []).join(', ') || '(none)'} • path: ${d.tessdataPath || ''}`;
+        } else {
+          badge.className = 'status-badge status-error';
+          badge.textContent = 'ใช้ไม่ได้ (missing tessdata)';
+          detail.style.color = '#dc2626';
+          detail.innerHTML = `ต้อง install language files: <code>${d.installCommand || 'scripts/download-tessdata.sh'}</code> แล้ว restart app`;
+        }
+      } catch (err) {
+        badge.className = 'status-badge status-error';
+        badge.textContent = 'ตรวจไม่ได้';
+        detail.style.color = '#dc2626';
+        detail.textContent = err.message;
+      }
+    }
+
     async function testLocalService() {
       const el = document.getElementById('localTestResult');
       const badge = document.getElementById('localStatusBadge');
@@ -625,6 +694,7 @@ docker compose up -d</pre>
     }
 
     loadConfig();
+    checkEmbeddedStatus();
   </script>
 </body>
 </html>
