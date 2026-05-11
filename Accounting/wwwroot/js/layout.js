@@ -416,7 +416,6 @@ const Layout = {
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools' },
     { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan' },
-    { id: 'admin-ocr', label: 'OCR Admin', icon: '⚙️', href: '/pages/admin-ocr.html', feature: 'AI_Features', adminOnly: true, _i18nKey: 'nav.adminOcr' },
 
     { section: 'ตั้งค่า' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team' },
