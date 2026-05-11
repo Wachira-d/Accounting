@@ -259,13 +259,14 @@ public class EmbeddedTesseractOcrService : IDisposable
         var pages = new List<byte[]>();
         // PDFtoImage.Conversion.ToImages enumerates SKBitmap per page. Each is
         // disposed after encoding to PNG so memory pressure stays bounded by
-        // single-page size, not full-doc size. We render with Grayscale=true
-        // because Tesseract's LSTM works internally on grayscale anyway — saves
-        // a redundant ImageSharp pass downstream and reduces PNG size ~3x.
+        // single-page size, not full-doc size. WithAnnotations=true so form-field
+        // text (common in scanned PDFs) shows up in the OCR output. Grayscale
+        // conversion happens downstream in PreprocessAsync — keeps this code
+        // version-agnostic across PDFtoImage 5.x releases where the Grayscale
+        // option arrived in different minor versions.
         var renderOptions = new PDFtoImage.RenderOptions(
             Dpi: dpi,
-            WithAnnotations: true,      // include form-field text in extraction
-            Grayscale: true);
+            WithAnnotations: true);
         int pageIndex = 0;
         foreach (var bitmap in PDFtoImage.Conversion.ToImages(pdfBytes, options: renderOptions))
         {
