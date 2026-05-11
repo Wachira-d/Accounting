@@ -159,10 +159,12 @@ public class IntegrationController : ControllerBase
 public class ExternalIntegrationController : ControllerBase
 {
     private readonly IIntegrationService _service;
+    private readonly IFileAttachmentService _attachmentService;
 
-    public ExternalIntegrationController(IIntegrationService service)
+    public ExternalIntegrationController(IIntegrationService service, IFileAttachmentService attachmentService)
     {
         _service = service;
+        _attachmentService = attachmentService;
     }
 
     // ===== Inbound endpoints (external systems push data TO Next Acc) =====
