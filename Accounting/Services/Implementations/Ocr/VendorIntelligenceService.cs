@@ -60,7 +60,40 @@ public class VendorIntelligenceService
 
         var intel = await _db.OcrVendorIntelligence
             .FirstOrDefaultAsync(v => v.CompanyId == companyId && v.VendorKey == key && !v.IsDeleted);
-        if (intel == null || intel.TotalDocuments == 0) return prediction;
+
+        // No tenant row → fall back to the SystemAdmin-trained knowledge base
+        // (system-wide row, no CompanyId). Tenant data always wins when present.
+        var isSystemFallback = false;
+        if (intel == null || intel.TotalDocuments == 0)
+        {
+            var sysIntel = await _db.SystemOcrVendorIntelligence
+                .FirstOrDefaultAsync(v => v.VendorKey == key && !v.IsDeleted);
+            if (sysIntel == null || sysIntel.TotalDocuments == 0) return prediction;
+
+            intel = new OcrVendorIntelligence
+            {
+                VendorKey = sysIntel.VendorKey,
+                VendorName = sysIntel.VendorName,
+                VendorTaxId = sysIntel.VendorTaxId,
+                MostCommonDocumentType = sysIntel.MostCommonDocumentType,
+                MostCommonDocumentTypeCount = sysIntel.MostCommonDocumentTypeCount,
+                TotalDocuments = sysIntel.TotalDocuments,
+                DocumentTypeBreakdownJson = sysIntel.DocumentTypeBreakdownJson,
+                MostCommonDebitAccountCode = sysIntel.MostCommonDebitAccountCode,
+                MostCommonDebitAccountName = sysIntel.MostCommonDebitAccountName,
+                MostCommonDebitAccountCount = sysIntel.MostCommonDebitAccountCount,
+                DebitAccountBreakdownJson = sysIntel.DebitAccountBreakdownJson,
+                TypicallyHasWht = sysIntel.TypicallyHasWht,
+                TypicalWhtRate = sysIntel.TypicalWhtRate,
+                WhtUsageCount = sysIntel.WhtUsageCount,
+                AvgTotalAmount = sysIntel.AvgTotalAmount,
+                MinTotalAmount = sysIntel.MinTotalAmount,
+                MaxTotalAmount = sysIntel.MaxTotalAmount,
+                MedianTotalAmount = sysIntel.MedianTotalAmount,
+                TypicalPaymentTermsDays = sysIntel.TypicalPaymentTermsDays,
+            };
+            isSystemFallback = true;
+        }
 
         prediction.HasHistory = true;
         prediction.SampleSize = intel.TotalDocuments;
@@ -126,6 +159,11 @@ public class VendorIntelligenceService
                 prediction.Reasons.Add(
                     $"⚠️ ยอดเงิน {scannedTotalAmount.Value:N2} ผิดปกติ (ปกติอยู่ระหว่าง {intel.MinTotalAmount:N2}–{intel.MaxTotalAmount:N2}, เฉลี่ย {intel.AvgTotalAmount:N2}) — โปรดตรวจสอบ");
             }
+        }
+
+        if (isSystemFallback)
+        {
+            prediction.Reasons.Add("ℹ️ ข้อมูลจากระบบกลาง — บริษัทยังไม่มีประวัติกับผู้ขายรายนี้");
         }
 
         return prediction;
@@ -225,6 +263,84 @@ public class VendorIntelligenceService
         await _db.SaveChangesAsync();
         _logger.LogInformation("Admin trained vendor intelligence: company={C} vendor={V} weight={W}",
             companyId, key, weight);
+    }
+
+    /// <summary>
+    /// SystemAdmin variant of TrainFromAdminAsync — writes to the system-wide
+    /// SystemOcrVendorIntelligence table (no CompanyId). Used by /admin/ocr-config
+    /// to seed a central knowledge base that every tenant falls back to when
+    /// they have no prior history with a given vendor.
+    /// </summary>
+    public async Task TrainFromAdminSystemAsync(
+        string? vendorTaxId,
+        string? vendorName,
+        Models.Enums.DocumentType? documentType,
+        string? debitAccountCode,
+        string? debitAccountName,
+        decimal? whtRate,
+        int? paymentTermsDays,
+        int weight = 1)
+    {
+        var key = NormalizeVendorKey(vendorTaxId, vendorName);
+        if (string.IsNullOrEmpty(key) || weight < 1) return;
+
+        var intel = await _db.SystemOcrVendorIntelligence
+            .FirstOrDefaultAsync(v => v.VendorKey == key && !v.IsDeleted);
+
+        if (intel == null)
+        {
+            intel = new SystemOcrVendorIntelligence
+            {
+                VendorKey = key,
+                VendorName = vendorName,
+                VendorTaxId = vendorTaxId,
+                CreatedBy = "system-admin-training",
+            };
+            _db.SystemOcrVendorIntelligence.Add(intel);
+        }
+
+        if (documentType.HasValue)
+        {
+            var dtBreakdown = ParseBreakdown(intel.DocumentTypeBreakdownJson);
+            var dtKey = documentType.Value.ToString();
+            dtBreakdown[dtKey] = dtBreakdown.GetValueOrDefault(dtKey) + weight;
+            intel.DocumentTypeBreakdownJson = JsonSerializer.Serialize(dtBreakdown);
+            var topDt = dtBreakdown.OrderByDescending(kv => kv.Value).First();
+            intel.MostCommonDocumentType = topDt.Key;
+            intel.MostCommonDocumentTypeCount = topDt.Value;
+        }
+
+        if (!string.IsNullOrEmpty(debitAccountCode))
+        {
+            var debitBreakdown = ParseBreakdown(intel.DebitAccountBreakdownJson);
+            debitBreakdown[debitAccountCode] = debitBreakdown.GetValueOrDefault(debitAccountCode) + weight;
+            intel.DebitAccountBreakdownJson = JsonSerializer.Serialize(debitBreakdown);
+            var topAcc = debitBreakdown.OrderByDescending(kv => kv.Value).First();
+            intel.MostCommonDebitAccountCode = topAcc.Key;
+            intel.MostCommonDebitAccountCount = topAcc.Value;
+            if (topAcc.Key == debitAccountCode && !string.IsNullOrEmpty(debitAccountName))
+                intel.MostCommonDebitAccountName = debitAccountName;
+        }
+
+        if (whtRate.HasValue && whtRate.Value > 0)
+        {
+            intel.WhtUsageCount += weight;
+            if (whtRate.Value is 1m or 2m or 3m or 5m or 10m or 15m)
+                intel.TypicalWhtRate = whtRate;
+        }
+
+        intel.TotalDocuments += weight;
+        intel.TypicallyHasWht = intel.TotalDocuments > 0 && (decimal)intel.WhtUsageCount / intel.TotalDocuments >= 0.5m;
+
+        if (paymentTermsDays.HasValue && paymentTermsDays.Value > 0)
+            intel.TypicalPaymentTermsDays = paymentTermsDays;
+
+        intel.LastTrainedAt = DateTime.UtcNow;
+        intel.UpdatedAt = DateTime.UtcNow;
+        intel.UpdatedBy = "system-admin-training";
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("SystemAdmin trained SYSTEM vendor intelligence: vendor={V} weight={W}", key, weight);
     }
 
     /// <summary>

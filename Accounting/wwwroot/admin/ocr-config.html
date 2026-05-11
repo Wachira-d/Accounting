@@ -82,7 +82,7 @@
 <body>
   <!-- ─── DIAGNOSTIC: visible viewport info + build marker (top-right fixed) ─── -->
   <div id="diagBadge" style="position:fixed;top:8px;right:8px;z-index:99999;background:#1e293b;color:#94a3b8;font-family:monospace;font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #334155;line-height:1.5;pointer-events:none;max-width:340px">
-    <div id="diagBuild">build: ba87760+steps</div>
+    <div id="diagBuild">build: system-train</div>
     <div id="diagViewport">viewport: ?</div>
     <div id="diagAuth">auth: ?</div>
     <div id="diagStep1" style="color:#94a3b8">step 1: ?</div>
@@ -336,24 +336,17 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         </div>
       </div>
 
-      <!-- 🎓 SystemAdmin Training Form — always visible, independent of test scan -->
+      <!-- 🎓 SystemAdmin Training Form — system-wide knowledge base, no company picker -->
       <div class="admin-card" style="border:2px solid #d97706;background:#fef3c7">
         <div class="admin-card-header">
-          <div class="admin-card-title" style="color:#78350f">🎓 Train ระบบเรียนรู้ (per-tenant)</div>
+          <div class="admin-card-title" style="color:#78350f">🎓 Train ระบบเรียนรู้ (ระบบกลาง — ใช้ได้ทุกบริษัท)</div>
           <div style="font-size:13px;color:#92400e;margin-top:4px;line-height:1.5">
-            กรอกข้อมูล หรือ <b>อัปโหลดไฟล์ทดสอบด้านบนเพื่อ auto-fill</b> → เลือกบริษัทที่จะ train → กดปุ่ม "บันทึก Training"
-            ระบบจะอัพเดต <b>ExpenseCategoryLearner</b> (vendor + description → account)
-            และ <b>VendorIntelligence</b> (ประเภทเอกสาร, WHT, payment terms) ของบริษัทที่เลือก
+            กรอกข้อมูล หรือ <b>อัปโหลดไฟล์ทดสอบด้านบนเพื่อ auto-fill</b> → กดปุ่ม "บันทึก Training"
+            ระบบจะอัพเดต <b>SystemOcrCategoryMappings</b> (vendor + description → account)
+            และ <b>SystemOcrVendorIntelligence</b> (ประเภทเอกสาร, WHT, payment terms) แบบ <b>ระบบกลาง</b>
+            <br>
+            <span style="font-size:11px">📌 ทุกบริษัทจะใช้ knowledge base นี้เป็น fallback เมื่อยังไม่มีประวัติกับผู้ขายรายนั้น — ส่วนข้อมูล per-tenant ที่ learn จากเอกสารจริงของบริษัทจะมาก่อนเสมอ</span>
           </div>
-        </div>
-
-        <!-- Company selector — required -->
-        <div style="margin-bottom:12px">
-          <label style="display:block;font-size:13px;font-weight:600;color:#78350f;margin-bottom:4px">บริษัทที่จะ train *</label>
-          <select id="trainCompanyId" style="width:100%;padding:8px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:13px;background:white">
-            <option value="">— เลือกบริษัท —</option>
-          </select>
-          <div style="font-size:11px;color:#92400e;margin-top:2px">รายการบริษัทโหลดจาก customers (500 รายแรก)</div>
         </div>
 
         <!-- Vendor identity -->
@@ -412,7 +405,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         </div>
 
         <!-- Booking + account -->
-        <div style="display:grid;grid-template-columns:1fr 140px 100px 80px;gap:8px;margin-bottom:10px">
+        <div style="display:grid;grid-template-columns:1fr 120px 1fr;gap:8px;margin-bottom:8px">
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">คำอธิบายหลัก (header)</label>
             <input type="text" id="trainSysDescription" placeholder="เช่น ค่าน้ำมัน, ค่าโฆษณา" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
@@ -421,6 +414,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">รหัสบัญชี Debit</label>
             <input type="text" id="trainSysAccountCode" placeholder="5402" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
           </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ชื่อบัญชี (optional)</label>
+            <input type="text" id="trainSysAccountName" placeholder="เช่น ค่าน้ำมันเชื้อเพลิง" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:140px 140px;gap:8px;margin-bottom:10px">
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Credit Days</label>
             <input type="number" id="trainSysPaymentTerms" min="0" max="365" placeholder="30" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
@@ -442,7 +441,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         </div>
 
         <button type="button" onclick="submitSystemTraining()" id="btnTrainSystem" style="background:#d97706;color:white;border:none;padding:10px 24px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;width:100%">
-          ✓ บันทึก Training สำหรับบริษัทที่เลือก
+          ✓ บันทึก Training เข้าระบบกลาง (ใช้ได้ทุกบริษัท)
         </button>
         <div id="trainSysResult" style="margin-top:8px;font-size:12px;text-align:center"></div>
       </div>
@@ -600,7 +599,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     // Visible stamp so admins can confirm which build is deployed; also wraps
     // AdminLayout.init in try/catch so script execution continues to define
     // all functions (systemTestScan etc.) even if sidebar rendering fails.
-    const __PAGE_VERSION = 'ba87760+steps';
+    const __PAGE_VERSION = 'system-train';
     console.log('[ocr-config.html] version:', __PAGE_VERSION);
     __diagStep('diagStep1', 'step 1: script start ✓', '#22c55e');
 
@@ -844,22 +843,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       }
     }
 
-    // Companies list cached for train dropdown
-    let _trainCompanies = [];
-    async function loadTrainCompanies() {
-      try {
-        const res = await AdminAPI.customers('?pageSize=500');
-        const items = res?.data?.items || res?.items || [];
-        _trainCompanies = items;
-        const sel = document.getElementById('trainCompanyId');
-        if (!sel) return;
-        sel.innerHTML = '<option value="">— เลือกบริษัท —</option>' +
-          items.map(c => `<option value="${c.id}">${escapeHtml(c.name)}${c.taxId ? ' • ' + c.taxId : ''}</option>`).join('');
-      } catch (e) {
-        console.warn('Failed to load companies for train dropdown:', e);
-      }
-    }
-
     function escapeHtml(s) {
       return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
@@ -884,12 +867,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     async function submitSystemTraining() {
       const btn = document.getElementById('btnTrainSystem');
       const result = document.getElementById('trainSysResult');
-      const companyId = document.getElementById('trainCompanyId').value;
-      if (!companyId) {
-        result.style.color = '#dc2626';
-        result.textContent = '❌ กรุณาเลือกบริษัทก่อน';
-        return;
-      }
       const vendorName = document.getElementById('trainSysVendorName').value.trim();
       const vendorTaxId = document.getElementById('trainSysVendorTaxId').value.trim();
       if (!vendorName && !vendorTaxId) {
@@ -898,6 +875,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         return;
       }
       const accountCode = document.getElementById('trainSysAccountCode').value.trim();
+      const accountName = document.getElementById('trainSysAccountName').value.trim();
       const whtRate = parseFloat(document.getElementById('trainSysWhtRate').value);
       const paymentTerms = parseInt(document.getElementById('trainSysPaymentTerms').value);
       const weight = parseInt(document.getElementById('trainSysWeight').value) || 1;
@@ -910,11 +888,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       })).filter(l => l.description);
 
       const body = {
-        companyId,
         vendorName: vendorName || null,
         vendorTaxId: vendorTaxId || null,
         description: document.getElementById('trainSysDescription').value.trim() || null,
         accountCode: accountCode || null,
+        accountName: accountName || null,
         documentType: docType,
         whtRate: isNaN(whtRate) ? null : whtRate,
         paymentTermsDays: isNaN(paymentTerms) ? null : paymentTerms,
@@ -929,7 +907,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         const res = await AdminAPI.post('/ocr-config/train', body);
         if (res?.success) {
           result.style.color = '#16a34a';
-          result.textContent = '✓ ' + (res.message || 'บันทึกสำเร็จ');
+          result.textContent = '✓ ' + (res.message || 'บันทึกระบบกลางสำเร็จ');
         } else {
           result.style.color = '#dc2626';
           result.textContent = '❌ ' + (res?.message || 'ไม่สำเร็จ');
@@ -939,7 +917,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         result.textContent = '❌ ' + e.message;
       } finally {
         btn.disabled = false;
-        btn.textContent = '✓ บันทึก Training สำหรับบริษัทที่เลือก';
+        btn.textContent = '✓ บันทึก Training เข้าระบบกลาง (ใช้ได้ทุกบริษัท)';
       }
     }
 
@@ -960,8 +938,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       document.getElementById('systemParsedFields').innerHTML = '<em style="color:#64748b">กำลังประมวลผล...</em>';
       document.getElementById('systemRawText').textContent = '';
       document.getElementById('systemTestProviderLabel').textContent = '';
-      // Ensure companies are loaded (lazy on first scan)
-      if (_trainCompanies.length === 0) loadTrainCompanies();
 
       const fd = new FormData();
       fd.append('file', file);
@@ -1179,7 +1155,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       if (v) v.textContent = 'build: ' + __PAGE_VERSION;
       loadConfig();
       checkEmbeddedStatus();
-      loadTrainCompanies();
       // Seed one empty line-item row so the table is visible immediately.
       if (document.getElementById('trainSysLines') && document.getElementById('trainSysLines').children.length === 0) {
         addTrainLine();

@@ -195,6 +195,8 @@ public class AccountingDbContext : DbContext
     public DbSet<OcrCreditPurchase> OcrCreditPurchases => Set<OcrCreditPurchase>();
     public DbSet<OcrCategoryMapping> OcrCategoryMappings => Set<OcrCategoryMapping>();
     public DbSet<OcrVendorIntelligence> OcrVendorIntelligence => Set<OcrVendorIntelligence>();
+    public DbSet<SystemOcrCategoryMapping> SystemOcrCategoryMappings => Set<SystemOcrCategoryMapping>();
+    public DbSet<SystemOcrVendorIntelligence> SystemOcrVendorIntelligence => Set<SystemOcrVendorIntelligence>();
 
     // Custom Reports
     public DbSet<CustomReport> CustomReports => Set<CustomReport>();
@@ -1416,6 +1418,29 @@ public class AccountingDbContext : DbContext
             // One row per vendor — must be unique so training upsert is safe
             e.HasIndex(p => new { p.CompanyId, p.VendorKey }).IsUnique();
             // Soft delete — consistent with every other entity
+            e.HasQueryFilter(v => !v.IsDeleted);
+        });
+
+        // ===== SystemOcrCategoryMapping (system-wide, no CompanyId) =====
+        modelBuilder.Entity<SystemOcrCategoryMapping>(e =>
+        {
+            e.Property(p => p.VendorKey).HasMaxLength(200);
+            e.Property(p => p.DescriptionKeyword).HasMaxLength(200);
+            e.Property(p => p.AccountCode).HasMaxLength(20);
+            e.HasIndex(p => new { p.VendorKey, p.DescriptionKeyword });
+            e.HasQueryFilter(m => !m.IsDeleted);
+        });
+
+        // ===== SystemOcrVendorIntelligence (system-wide, no CompanyId) =====
+        modelBuilder.Entity<SystemOcrVendorIntelligence>(e =>
+        {
+            e.Property(p => p.VendorKey).HasMaxLength(200);
+            e.Property(p => p.VendorName).HasMaxLength(300);
+            e.Property(p => p.VendorTaxId).HasMaxLength(20);
+            e.Property(p => p.MostCommonDocumentType).HasMaxLength(50);
+            e.Property(p => p.MostCommonDebitAccountCode).HasMaxLength(20);
+            // One row per vendor across the entire system
+            e.HasIndex(p => p.VendorKey).IsUnique();
             e.HasQueryFilter(v => !v.IsDeleted);
         });
 

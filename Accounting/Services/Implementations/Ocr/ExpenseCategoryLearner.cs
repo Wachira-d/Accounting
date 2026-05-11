@@ -97,7 +97,77 @@ public class ExpenseCategoryLearner
         if (vendorOnly != null)
             return (vendorOnly.AccountCode, vendorOnly.AccountName, ScoreConfidence(vendorOnly.Sum) * 0.65m);
 
+        // ─── Tier 4: system-wide fallback — SystemAdmin-trained knowledge base ───
+        // Tenant has no row for this vendor at all. Consult the shared system
+        // mappings (trained by SystemAdmin in /admin/ocr-config). Confidence is
+        // halved relative to per-tenant signals because the system data reflects
+        // generic best-practice, not this company's actual booking habits.
+        if (!string.IsNullOrEmpty(keyword))
+        {
+            var sysExact = await _db.SystemOcrCategoryMappings
+                .Where(m => m.VendorKey == vendorKey && m.DescriptionKeyword == keyword && !m.IsDeleted)
+                .OrderByDescending(m => m.TimesUsed)
+                .FirstOrDefaultAsync();
+            if (sysExact != null)
+                return (sysExact.AccountCode, sysExact.AccountName, ScoreConfidence(sysExact.TimesUsed) * 0.5m);
+        }
+
+        var sysVendor = await _db.SystemOcrCategoryMappings
+            .Where(m => m.VendorKey == vendorKey && !m.IsDeleted)
+            .GroupBy(m => new { m.AccountCode, m.AccountName })
+            .Select(g => new { g.Key.AccountCode, g.Key.AccountName, Sum = g.Sum(x => x.TimesUsed) })
+            .OrderByDescending(g => g.Sum)
+            .FirstOrDefaultAsync();
+        if (sysVendor != null)
+            return (sysVendor.AccountCode, sysVendor.AccountName, ScoreConfidence(sysVendor.Sum) * 0.35m);
+
         return (null, null, 0m);
+    }
+
+    /// <summary>
+    /// SystemAdmin variant of RecordAsync — writes to the system-wide
+    /// SystemOcrCategoryMappings table (no CompanyId). Trained mappings here
+    /// are consulted as a fallback for every tenant.
+    /// </summary>
+    public async Task RecordSystemAsync(string? vendorTaxId, string? vendorName,
+        string? description, string accountCode, string? accountName, Guid? userId = null, int weight = 1)
+    {
+        if (string.IsNullOrEmpty(accountCode)) return;
+        var vendorKey = NormalizeVendorKey(vendorTaxId, vendorName);
+        if (string.IsNullOrEmpty(vendorKey)) return;
+        if (weight < 1) weight = 1;
+        var keyword = NormalizeDescription(description);
+
+        var existing = await _db.SystemOcrCategoryMappings
+            .FirstOrDefaultAsync(m => m.VendorKey == vendorKey
+                && m.DescriptionKeyword == keyword
+                && m.AccountCode == accountCode
+                && !m.IsDeleted);
+
+        if (existing != null)
+        {
+            existing.TimesUsed += weight;
+            existing.LastUsedAt = DateTime.UtcNow;
+            if (string.IsNullOrEmpty(existing.AccountName) && !string.IsNullOrEmpty(accountName))
+                existing.AccountName = accountName;
+        }
+        else
+        {
+            _db.SystemOcrCategoryMappings.Add(new SystemOcrCategoryMapping
+            {
+                VendorKey = vendorKey,
+                DescriptionKeyword = keyword,
+                AccountCode = accountCode,
+                AccountName = accountName,
+                TimesUsed = weight,
+                LastUsedAt = DateTime.UtcNow,
+                TrainedByUserId = userId,
+                CreatedBy = userId?.ToString() ?? "system-admin",
+            });
+        }
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Learned SYSTEM category mapping: vendor={V} keyword={K} → {Code} (+{W})",
+            vendorKey, keyword, accountCode, weight);
     }
 
     /// <summary>

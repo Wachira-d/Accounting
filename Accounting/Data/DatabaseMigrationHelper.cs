@@ -1262,6 +1262,72 @@ public static class DatabaseMigrationHelper
             ON "OcrVendorIntelligence" ("CompanyId", "VendorKey");
             """,
 
+            // ===== SystemOcrCategoryMappings: system-wide vendor → account knowledge =====
+            // Mirrors OcrCategoryMappings but without CompanyId. Trained by SystemAdmin
+            // from /admin/ocr-config; consulted as fallback when tenant has no row.
+            """
+            CREATE TABLE IF NOT EXISTS "SystemOcrCategoryMappings" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorKey" varchar(200) NOT NULL DEFAULT '',
+                "DescriptionKeyword" varchar(200) NOT NULL DEFAULT '',
+                "AccountCode" varchar(20) NOT NULL DEFAULT '',
+                "AccountName" text NULL,
+                "TimesUsed" integer NOT NULL DEFAULT 1,
+                "LastUsedAt" timestamp NOT NULL DEFAULT now(),
+                "TrainedByUserId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SystemOcrCategoryMappings" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_SystemOcrCategoryMappings_VendorKey_Description"
+            ON "SystemOcrCategoryMappings" ("VendorKey", "DescriptionKeyword");
+            """,
+
+            // ===== SystemOcrVendorIntelligence: system-wide per-vendor stats =====
+            // One row per VendorKey for the whole system; tenant rows always win at
+            // prediction time, this is consulted as fallback for unseen vendors.
+            """
+            CREATE TABLE IF NOT EXISTS "SystemOcrVendorIntelligence" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorKey" varchar(200) NOT NULL DEFAULT '',
+                "VendorName" varchar(300) NULL,
+                "VendorTaxId" varchar(20) NULL,
+                "MostCommonDocumentType" varchar(50) NULL,
+                "MostCommonDocumentTypeCount" integer NOT NULL DEFAULT 0,
+                "TotalDocuments" integer NOT NULL DEFAULT 0,
+                "DocumentTypeBreakdownJson" text NULL,
+                "MostCommonDebitAccountCode" varchar(20) NULL,
+                "MostCommonDebitAccountName" text NULL,
+                "MostCommonDebitAccountCount" integer NOT NULL DEFAULT 0,
+                "DebitAccountBreakdownJson" text NULL,
+                "TypicallyHasWht" boolean NOT NULL DEFAULT false,
+                "TypicalWhtRate" decimal(5,2) NULL,
+                "WhtUsageCount" integer NOT NULL DEFAULT 0,
+                "AvgTotalAmount" decimal(18,2) NULL,
+                "MinTotalAmount" decimal(18,2) NULL,
+                "MaxTotalAmount" decimal(18,2) NULL,
+                "MedianTotalAmount" decimal(18,2) NULL,
+                "TypicalPaymentTermsDays" integer NULL,
+                "LastTrainedAt" timestamp NOT NULL DEFAULT now(),
+                "LastDocumentDate" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SystemOcrVendorIntelligence" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_SystemOcrVendorIntelligence_VendorKey"
+            ON "SystemOcrVendorIntelligence" ("VendorKey");
+            """,
+
             // ===== OcrCreditPurchases table =====
             """
             CREATE TABLE IF NOT EXISTS "OcrCreditPurchases" (

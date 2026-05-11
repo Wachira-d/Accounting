@@ -242,6 +242,67 @@ public class OcrVendorIntelligence : TenantEntity
 }
 
 /// <summary>
+/// System-wide vendor → expense-account mappings. Trained by SystemAdmin from
+/// the /admin/ocr-config page and shared across every tenant. Acts as a
+/// fallback knowledge base when the tenant's own OcrCategoryMappings has no
+/// match for a vendor/keyword combination — so newly-onboarded companies
+/// get useful OCR predictions on day one.
+///
+/// Mirrors OcrCategoryMapping but without CompanyId. Tenant-specific
+/// mappings always win at predict time; this is consulted only when no
+/// tenant row matches.
+/// </summary>
+public class SystemOcrCategoryMapping : BaseEntity
+{
+    public string VendorKey { get; set; } = "";
+    public string DescriptionKeyword { get; set; } = "";
+    public string AccountCode { get; set; } = "";
+    public string? AccountName { get; set; }
+    public int TimesUsed { get; set; } = 1;
+    public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;
+    public Guid? TrainedByUserId { get; set; }
+}
+
+/// <summary>
+/// System-wide per-vendor intelligence. Trained by SystemAdmin from the
+/// /admin/ocr-config page; shared across every tenant. Acts as a fallback
+/// when the tenant has no OcrVendorIntelligence row for a given vendor yet.
+///
+/// Mirrors OcrVendorIntelligence but without CompanyId; one row per VendorKey
+/// for the entire system.
+/// </summary>
+public class SystemOcrVendorIntelligence : BaseEntity
+{
+    public string VendorKey { get; set; } = "";
+    public string? VendorName { get; set; }
+    public string? VendorTaxId { get; set; }
+
+    public string? MostCommonDocumentType { get; set; }
+    public int MostCommonDocumentTypeCount { get; set; }
+    public int TotalDocuments { get; set; }
+    public string? DocumentTypeBreakdownJson { get; set; }
+
+    public string? MostCommonDebitAccountCode { get; set; }
+    public string? MostCommonDebitAccountName { get; set; }
+    public int MostCommonDebitAccountCount { get; set; }
+    public string? DebitAccountBreakdownJson { get; set; }
+
+    public bool TypicallyHasWht { get; set; }
+    public decimal? TypicalWhtRate { get; set; }
+    public int WhtUsageCount { get; set; }
+
+    public decimal? AvgTotalAmount { get; set; }
+    public decimal? MinTotalAmount { get; set; }
+    public decimal? MaxTotalAmount { get; set; }
+    public decimal? MedianTotalAmount { get; set; }
+
+    public int? TypicalPaymentTermsDays { get; set; }
+
+    public DateTime LastTrainedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastDocumentDate { get; set; }
+}
+
+/// <summary>
 /// การซื้อเครดิต OCR เพิ่มเติม (add-on pages)
 /// </summary>
 public class OcrCreditPurchase : TenantEntity
