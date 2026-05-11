@@ -1185,6 +1185,174 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// System-level OCR test — SystemAdmin uploads a file from the /admin
+    /// shell, runs it through the requested provider (no quota, no tenant
+    /// context, no training), and gets back raw text + parsed fields for
+    /// inspection. Lets the SystemAdmin verify "is OCR actually working in
+    /// production?" without having to switch into a tenant login.
+    /// </summary>
+    [HttpPost("ocr-config/test-scan")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> TestScanSystemLevel(
+        IFormFile file,
+        [FromQuery] string? provider,  // "embedded" (default) | "azure" | "python"
+        [FromServices] Services.Implementations.Ocr.EmbeddedTesseractOcrService embedded,
+        [FromServices] Services.Implementations.Ocr.AzureDocumentIntelligenceService azureDi,
+        [FromServices] IHttpClientFactory httpClientFactory,
+        [FromServices] IConfiguration configuration)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
+
+        byte[] fileBytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms);
+            fileBytes = ms.ToArray();
+        }
+
+        string rawText = "";
+        decimal confidence = 0;
+        string providerUsed = "";
+        string? error = null;
+
+        try
+        {
+            switch ((provider ?? "embedded").ToLowerInvariant())
+            {
+                case "embedded":
+                    providerUsed = "Embedded Tesseract";
+                    var emb = await embedded.ExtractTextAsync(fileBytes, file.ContentType ?? "", file.FileName);
+                    rawText = emb.Text;
+                    confidence = emb.Confidence;
+                    error = emb.Success ? null : emb.Error;
+                    break;
+
+                case "azure":
+                {
+                    providerUsed = "Azure DI";
+                    var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+                    if (s?.AzureDiEnabled != true || string.IsNullOrEmpty(s.AzureDiEndpoint) || string.IsNullOrEmpty(s.AzureDiApiKey))
+                    {
+                        error = "Azure DI ยังไม่ได้ตั้งค่าหรือปิดอยู่";
+                        break;
+                    }
+                    var azResult = await azureDi.AnalyzeAsync(fileBytes, file.ContentType ?? "application/octet-stream", s);
+                    rawText = azResult?.RawText ?? "";
+                    confidence = azResult?.OverallConfidence ?? 0m;
+                    break;
+                }
+
+                case "python":
+                {
+                    providerUsed = "Python local service";
+                    var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+                    var pyUrl = string.IsNullOrEmpty(s?.OcrLocalServiceUrl)
+                        ? (configuration["Ocr:LocalServiceUrl"] ?? "")
+                        : s.OcrLocalServiceUrl;
+                    if (string.IsNullOrEmpty(pyUrl))
+                    {
+                        error = "Python service URL ไม่ได้ตั้งค่า";
+                        break;
+                    }
+                    try
+                    {
+                        var client = httpClientFactory.CreateClient();
+                        client.Timeout = TimeSpan.FromSeconds(60);
+                        using var content = new MultipartFormDataContent();
+                        var byteContent = new ByteArrayContent(fileBytes);
+                        byteContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
+                        content.Add(byteContent, "file", file.FileName ?? "upload");
+                        var resp = await client.PostAsync($"{pyUrl.TrimEnd('/')}/ocr", content);
+                        var body = await resp.Content.ReadAsStringAsync();
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            error = $"Python service HTTP {(int)resp.StatusCode}";
+                            break;
+                        }
+                        using var doc = System.Text.Json.JsonDocument.Parse(body);
+                        if (doc.RootElement.TryGetProperty("text", out var t)) rawText = t.GetString() ?? "";
+                        else if (doc.RootElement.TryGetProperty("raw_text", out var rt)) rawText = rt.GetString() ?? "";
+                        if (doc.RootElement.TryGetProperty("confidence", out var c) && c.ValueKind == System.Text.Json.JsonValueKind.Number)
+                            confidence = (decimal)c.GetDouble();
+                    }
+                    catch (Exception ex) { error = $"Python service error: {ex.Message}"; }
+                    break;
+                }
+
+                default:
+                    error = $"Unknown provider: {provider}";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+
+        // Run rule-based parser on whatever text we got — same regex as the
+        // tenant test playground so SystemAdmin sees the same field extraction
+        // preview that production gives.
+        var parsed = string.IsNullOrEmpty(rawText) ? null : ParseAdminPreview(rawText);
+
+        return Ok(new ApiResponse<object>(error == null, new
+        {
+            provider = providerUsed,
+            embeddedAvailable = embedded.IsAvailable,
+            embeddedLanguages = embedded.Languages,
+            rawText,
+            confidence,
+            parsedFields = parsed,
+            error
+        }, error ?? "OCR สำเร็จ"));
+    }
+
+    /// <summary>
+    /// Minimal regex-based parser duplicated from OcrController — keeps this
+    /// admin endpoint self-contained so SystemAdmin testing doesn't require a
+    /// tenant context to extract preview fields.
+    /// </summary>
+    private static object ParseAdminPreview(string text)
+    {
+        var upperText = text.ToUpperInvariant();
+        string? docType = null;
+        if (text.Contains("ใบกำกับภาษี") || upperText.Contains("TAX INVOICE")) docType = "TaxInvoice";
+        else if (text.Contains("ใบรับรองแทนใบเสร็จ") || upperText.Contains("CERTIFICATE IN LIEU")) docType = "CertificateInLieu";
+        else if (text.Contains("ใบลดหนี้") || upperText.Contains("CREDIT NOTE")) docType = "CreditNote";
+        else if (text.Contains("ใบเพิ่มหนี้") || upperText.Contains("DEBIT NOTE")) docType = "DebitNote";
+        else if (text.Contains("ใบสั่งซื้อ") || upperText.Contains("PURCHASE ORDER")) docType = "PurchaseOrder";
+        else if (text.Contains("ใบแจ้งหนี้") || (upperText.Contains("INVOICE") && !upperText.Contains("TAX INVOICE"))) docType = "Invoice";
+        else if (text.Contains("ใบเสร็จรับเงิน") || upperText.Contains("RECEIPT")) docType = "Receipt";
+
+        var taxIdPattern = @"(\d{1}\s*-?\s*\d{4}\s*-?\s*\d{5}\s*-?\s*\d{2}\s*-?\s*\d{1})";
+        var taxIds = System.Text.RegularExpressions.Regex.Matches(text, taxIdPattern)
+            .Select(m => new string(m.Value.Where(char.IsDigit).ToArray()))
+            .Where(s => s.Length == 13).Distinct().Take(5).ToArray();
+        if (taxIds.Length == 0)
+            taxIds = System.Text.RegularExpressions.Regex.Matches(text, @"\d{13}")
+                .Select(m => m.Value).Distinct().Take(5).ToArray();
+
+        var amounts = System.Text.RegularExpressions.Regex.Matches(text, @"(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})")
+            .Select(m => m.Value).Take(20).ToArray();
+        var dates = System.Text.RegularExpressions.Regex.Matches(text, @"\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}")
+            .Select(m => m.Value).Take(10).ToArray();
+        var docNumbers = System.Text.RegularExpressions.Regex.Matches(text,
+            @"(?:เลขที่|No\.?|INV|TAX|REF)\s*[:\#]?\s*([A-Z0-9\-/]{4,20})",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(m => m.Groups[1].Value).Take(5).ToArray();
+
+        return new
+        {
+            documentType = docType,
+            taxIds,
+            amounts,
+            dates,
+            documentNumbers = docNumbers,
+            textLength = text.Length
+        };
+    }
+
+    /// <summary>
     /// Status of the in-process embedded Tesseract OCR engine. Unlike the
     /// optional Python service, this engine ships with the .NET app — its
     /// only requirement is the tessdata language files in wwwroot/tessdata.
