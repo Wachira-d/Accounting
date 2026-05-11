@@ -7,8 +7,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <style>
-    /* Upload Zone */
+    /* Upload Zone — <label> wraps the hidden <input type="file"> so a single
+       native click opens the picker (no JS click handler / no double-click bug). */
     .upload-zone {
+      display: block;
       border: 2px dashed var(--gray-300);
       border-radius: var(--radius-xl);
       padding: 48px 24px;
@@ -340,8 +342,10 @@
       </button>
     </div>
 
-    <!-- Upload Zone -->
-    <div class="upload-zone" id="uploadZone">
+    <!-- Upload Zone — <label for="fileInput"> means clicking anywhere inside the
+         zone opens the file picker via the browser's native label-input link.
+         No JS click handler needed → no "must click twice" bug. -->
+    <label class="upload-zone" id="uploadZone" for="fileInput">
       <div class="upload-zone-icon">&#x1F4C4;</div>
       <h3>ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</h3>
       <p>รองรับหลายไฟล์พร้อมกัน</p>
@@ -352,7 +356,7 @@
         <span class="file-type-badge">PDF</span>
       </div>
       <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none">
-    </div>
+    </label>
     <div class="upload-queue" id="uploadQueue"></div>
 
     <!-- Auto-create threshold config -->
@@ -507,24 +511,40 @@
       },
 
       // ==================== Upload ====================
+      // Click-to-pick is handled NATIVELY by <label for="fileInput"> wrapping
+      // the input — no JS click handler. We only wire drag-drop here, plus the
+      // input's change event for users who pick via dialog.
+      //
+      // dragenter is preventDefault'd alongside dragover because Firefox needs
+      // BOTH to allow the drop event to fire reliably; without it, the first
+      // drag is sometimes swallowed and the page asks the user to pick the file
+      // manually (the "must click twice" bug previously reported).
       bindUpload() {
         const zone = document.getElementById('uploadZone');
         const input = document.getElementById('fileInput');
 
-        zone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); zone.classList.add('dragover'); });
-        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        ['dragenter', 'dragover'].forEach(ev => {
+          zone.addEventListener(ev, e => {
+            e.preventDefault();
+            e.stopPropagation();
+            zone.classList.add('dragover');
+          });
+        });
+        zone.addEventListener('dragleave', e => {
+          // Only un-highlight when leaving the zone itself, not when crossing
+          // an inner element (h3 / icon). dragleave fires on child element
+          // boundaries — relatedTarget tells us where we're going next.
+          if (!zone.contains(e.relatedTarget)) zone.classList.remove('dragover');
+        });
         zone.addEventListener('drop', e => {
           e.preventDefault();
           e.stopPropagation();
           zone.classList.remove('dragover');
-          input.value = '';
-          if (e.dataTransfer.files.length) this.handleFiles(e.dataTransfer.files);
+          if (e.dataTransfer && e.dataTransfer.files.length) {
+            this.handleFiles(e.dataTransfer.files);
+          }
         });
-        zone.addEventListener('click', (e) => {
-          if (e.target === input) return;
-          input.click();
-        });
-        input.addEventListener('click', e => e.stopPropagation());
+
         input.addEventListener('change', () => {
           if (input.files.length) this.handleFiles(input.files);
           input.value = '';

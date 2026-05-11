@@ -130,9 +130,20 @@ public class OcrService : IOcrService
             // recorded in ReasoningTrace so the user knows which engine produced
             // the result.
 
-            var azureEnabled = siteSettings?.AzureDiEnabled == true
-                && !string.IsNullOrEmpty(siteSettings.AzureDiEndpoint)
-                && !string.IsNullOrEmpty(siteSettings.AzureDiApiKey);
+            // Diagnose WHY Azure is or isn't usable — admin can see which field is missing
+            var azureToggleOn = siteSettings?.AzureDiEnabled == true;
+            var azureHasEndpoint = !string.IsNullOrEmpty(siteSettings?.AzureDiEndpoint);
+            var azureHasKey = !string.IsNullOrEmpty(siteSettings?.AzureDiApiKey);
+            var azureEnabled = azureToggleOn && azureHasEndpoint && azureHasKey;
+            string? azureSkipReason = null;
+            if (ocrProvider == "local")
+                azureSkipReason = "ตั้งค่า Provider = local (ข้าม Azure)";
+            else if (!azureToggleOn)
+                azureSkipReason = "AzureDiEnabled = false (ยังไม่เปิด toggle)";
+            else if (!azureHasEndpoint)
+                azureSkipReason = "Azure DI Endpoint ว่าง — กรุณากรอกใน admin/ocr-config";
+            else if (!azureHasKey)
+                azureSkipReason = "Azure DI API Key ว่าง — กรุณากรอกใน admin/ocr-config";
 
             extractedData = null;
             extractedText = "";
@@ -166,8 +177,8 @@ public class OcrService : IOcrService
                         extractedData = localResult.Data;
                         if (lastError != null)
                             extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {lastError} — used Python local pipeline");
-                        else if (!azureEnabled)
-                            extractedData.ReasoningTrace.Insert(0, "[Provider] Azure DI ไม่เปิดใช้ — ใช้ Local (PaddleOCR+EasyOCR)");
+                        else if (azureSkipReason != null)
+                            extractedData.ReasoningTrace.Insert(0, $"[Provider] ข้าม Azure DI — {azureSkipReason}; ใช้ Local (PaddleOCR+EasyOCR)");
                     }
                 }
                 catch (Exception ex)
@@ -187,6 +198,9 @@ public class OcrService : IOcrService
                     extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
                 else
                     extractedData.ReasoningTrace.Insert(0, "[Provider] ใช้ Embedded Tesseract (in-process fallback)");
+                // Always make the Azure-skip reason visible even when embedded ran cleanly
+                if (azureSkipReason != null)
+                    extractedData.ReasoningTrace.Add($"[Azure DI] {azureSkipReason}");
             }
 
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
@@ -829,9 +843,19 @@ public class OcrService : IOcrService
         var client = _httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(120);
 
+        // All failure paths in this method THROW (rather than return a stub) so the
+        // caller in ScanAsync triggers its try/catch and falls through to Tier 3
+        // (Embedded Tesseract). Returning a stub here would set extractedData to a
+        // non-null value, making the cascade skip the embedded fallback entirely
+        // and leave rawText = filename — which is exactly the production bug the
+        // user reported on 2026-05-11.
         byte[] fileData;
         try { fileData = await File.ReadAllBytesAsync(file.StoragePath); }
-        catch { return (ExtractFromFileName(file), new OcrExtractedData { Confidence = 0.3m }); }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Local OCR: ไม่สามารถอ่านไฟล์ต้นทาง ({ex.Message})", ex);
+        }
 
         using var form = new MultipartFormDataContent();
         var fileContent = new ByteArrayContent(fileData);
@@ -839,15 +863,29 @@ public class OcrService : IOcrService
             file.ContentType ?? "application/octet-stream");
         form.Add(fileContent, "file", file.OriginalFileName);
 
+        HttpResponseMessage response;
         try
         {
-            var response = await client.PostAsync($"{serviceUrl}/ocr/extract", form);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Local OCR service returned {Status}", response.StatusCode);
-                return (ExtractFromFileName(file), new OcrExtractedData { Confidence = 0.3m });
-            }
+            response = await client.PostAsync($"{serviceUrl}/ocr/extract", form);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "Local OCR service unreachable at {Url}: {Err} — will fall through to embedded Tesseract",
+                serviceUrl, ex.Message);
+            throw new InvalidOperationException(
+                $"Local OCR service ไม่ตอบสนอง ({serviceUrl}): {ex.Message}", ex);
+        }
 
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Local OCR service returned {Status}", response.StatusCode);
+            throw new InvalidOperationException(
+                $"Local OCR service ตอบกลับ HTTP {(int)response.StatusCode}");
+        }
+
+        try
+        {
             var json = await response.Content.ReadAsStringAsync();
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -936,19 +974,20 @@ public class OcrService : IOcrService
             }
 
             var rawText = root.TryGetProperty("raw_text", out var rt) ? rt.GetString() ?? "" : "";
+            // A successful HTTP 200 with empty raw_text is still a "service worked but
+            // couldn't read the document" — let the caller decide whether to fall
+            // through to embedded. We DON'T throw here; we return the empty result
+            // because some PDFs legitimately have no text and the gateway should
+            // still get a chance to mark it low-confidence.
             return (rawText, data);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not InvalidOperationException)
         {
-            // Local PaddleOCR+EasyOCR microservice unavailable. Without external providers
-            // (Google/Azure v3.x), the only thing we can return is the original filename so
-            // user can manually re-upload or fix infrastructure.
-            _logger.LogError(ex, "Local OCR service unreachable at {Url} — admin must verify the microservice is running",
-                _configuration["Ocr:LocalServiceUrl"] ?? "(unset)");
-            var fallbackText = ExtractFromFileName(file);
-            var stub = ParseThaiDocument(fallbackText);
-            stub.ReasoningTrace.Insert(0, "[Critical] Local OCR microservice ไม่ตอบสนอง — กรุณาตรวจสอบการตั้งค่า admin OR พิจารณาเปิด Azure DI");
-            return (fallbackText, stub);
+            // Malformed JSON or unexpected schema from the microservice — treat as
+            // service failure so cascade falls through to embedded.
+            _logger.LogError(ex, "Local OCR service returned unparseable response");
+            throw new InvalidOperationException(
+                $"Local OCR: response parse error ({ex.Message})", ex);
         }
     }
 
@@ -1088,11 +1127,6 @@ public class OcrService : IOcrService
         {
             _logger.LogWarning(ex, "Failed to learn patterns from correction");
         }
-    }
-
-    private static string ExtractFromFileName(FileAttachment file)
-    {
-        return file.OriginalFileName ?? "";
     }
 
     /// <summary>
