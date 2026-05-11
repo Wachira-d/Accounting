@@ -1374,16 +1374,29 @@
       },
 
       async _loadAccountDropdowns(scan) {
+        // Endpoint is AccountingController action "accounts" — full path
+        // /api/companies/{id}/accounting/accounts. The old URL with
+        // /chart-of-accounts?pageSize=500 doesn't exist and 404'd, leaving
+        // both dropdowns stuck on "โหลดผังบัญชีไม่สำเร็จ".
         try {
           const cid = Layout.getCompanyId();
-          const res = await API.get(`/api/companies/${cid}/accounting/chart-of-accounts?pageSize=500`);
+          const res = await API.get(`/api/companies/${cid}/accounting/accounts`);
           const accounts = (res.data?.items || res.data || []);
 
           const debitSel = document.getElementById('revDebitAccount');
           const creditSel = document.getElementById('revCreditAccount');
 
-          const suggestedDebit = scan.suggestedAccounts?.debitAccountCode || '';
-          const suggestedCredit = scan.suggestedAccounts?.creditAccountCode || '';
+          // Preferred starting point: whatever the OCR + Learner already
+          // suggested. The category-change handler below may override the
+          // debit selection when the user picks a different expense category.
+          const initialDebit = scan.suggestedAccounts?.debitAccountCode
+            || this._mapCategoryToAccountCode(scan.expenseCategory)
+            || '';
+          const initialCredit = scan.suggestedAccounts?.creditAccountCode || '';
+
+          // Cache the full list on the page object so the category-change
+          // handler can re-render without another HTTP roundtrip.
+          this._allAccounts = accounts;
 
           const buildOptions = (selected) => {
             let html = '<option value="">-- เลือกบัญชี --</option>';
@@ -1394,13 +1407,55 @@
             return html;
           };
 
-          if (debitSel) debitSel.innerHTML = buildOptions(suggestedDebit);
-          if (creditSel) creditSel.innerHTML = buildOptions(suggestedCredit);
+          if (debitSel) debitSel.innerHTML = buildOptions(initialDebit);
+          if (creditSel) creditSel.innerHTML = buildOptions(initialCredit);
+
+          // Wire the expense-category select so changing it auto-suggests the
+          // matching debit account from the category→code map. User can still
+          // override after the suggestion lands.
+          const catSel = document.getElementById('revExpenseCategory');
+          if (catSel && !catSel.dataset.wired) {
+            catSel.dataset.wired = '1';
+            catSel.addEventListener('change', () => {
+              const code = this._mapCategoryToAccountCode(catSel.value);
+              if (!code) return;
+              const debit = document.getElementById('revDebitAccount');
+              if (!debit) return;
+              // Only update if the target code actually exists in this
+              // company's CoA — never leave the user with an invalid value.
+              const exists = (this._allAccounts || []).some(a => a.accountCode === code);
+              if (exists) debit.value = code;
+            });
+          }
         } catch (err) {
+          console.warn('Failed to load chart of accounts:', err);
           const fallback = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
           const d = document.getElementById('revDebitAccount'); if (d) d.innerHTML = fallback;
           const c = document.getElementById('revCreditAccount'); if (c) c.innerHTML = fallback;
         }
+      },
+
+      // Map the Thai expense-category dropdown values to the most likely Thai
+      // CoA expense-account code. Used to keep "หมวดค่าใช้จ่าย" and "บัญชีเดบิต"
+      // in sync when the user picks a different category — eliminates the
+      // "category says โฆษณา but debit account is still ค่าใช้จ่ายบริหาร" mismatch.
+      _mapCategoryToAccountCode(category) {
+        if (!category) return null;
+        const map = {
+          'ค่าสินค้า': '5000',
+          'ค่าบริการ': '5300',
+          'ค่าเช่า': '5301',
+          'ค่าสาธารณูปโภค': '5303',
+          'ค่าขนส่ง': '5102',
+          'ค่าโฆษณา': '5101',
+          'ค่าซ่อมแซม': '5306',
+          'ค่าวัสดุสำนักงาน': '5305',
+          'ค่าเดินทาง': '5401',
+          'ค่าที่ปรึกษา': '5502',
+          'ค่าประกัน': '5800',
+          'อื่นๆ': '5901',
+        };
+        return map[category] || null;
       },
 
       _contactSearchTimer: null,
