@@ -285,120 +285,122 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             <div id="systemParsedFields" style="margin-top:8px;font-size:13px"></div>
           </div>
 
-          <!-- Train form — editable fields pre-filled from OCR result -->
-          <div style="background:#fef3c7;border:2px solid #fcd34d;border-radius:8px;padding:14px;margin-bottom:12px">
-            <strong style="font-size:14px;color:#78350f">🎓 Train ระบบเรียนรู้ (per-tenant)</strong>
-            <p style="font-size:12px;color:#78350f;margin:4px 0 12px;line-height:1.5">
-              ตรวจสอบ/แก้ไขข้อมูลที่ OCR อ่านได้ → เลือกบริษัทที่จะ train → กดปุ่ม "บันทึก Training"
-              ระบบจะอัพเดต <b>ExpenseCategoryLearner</b> (vendor + description → account)
-              และ <b>VendorIntelligence</b> (ประเภทเอกสาร, WHT, payment terms) ของบริษัทที่เลือก
-            </p>
-
-            <!-- Company selector — required -->
-            <div style="margin-bottom:12px">
-              <label style="display:block;font-size:13px;font-weight:600;color:#78350f;margin-bottom:4px">บริษัทที่จะ train *</label>
-              <select id="trainCompanyId" style="width:100%;padding:8px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:13px;background:white">
-                <option value="">— เลือกบริษัท —</option>
-              </select>
-              <div style="font-size:11px;color:#92400e;margin-top:2px">รายการบริษัทโหลดจาก customers — ค้นหาในช่องนี้ได้ (กดค้างคีย์)</div>
-            </div>
-
-            <!-- Vendor identity -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ชื่อผู้ขาย</label>
-                <input type="text" id="trainSysVendorName" placeholder="เช่น บริษัท ABC จำกัด" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
-                <input type="text" id="trainSysVendorTaxId" placeholder="0123456789012" maxlength="13" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
-              </div>
-            </div>
-
-            <!-- Document metadata -->
-            <div style="display:grid;grid-template-columns:1fr 140px 140px;gap:8px;margin-bottom:8px">
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">เลขที่เอกสาร</label>
-                <input type="text" id="trainSysDocNumber" placeholder="INV-2025-0001" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ประเภทเอกสาร</label>
-                <select id="trainSysDocType" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
-                  <option value="">— ไม่ระบุ —</option>
-                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
-                  <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
-                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
-                  <option value="PurchaseOrder">ใบสั่งซื้อ</option>
-                  <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
-                </select>
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">วันที่</label>
-                <input type="text" id="trainSysDocDate" placeholder="01/01/2025" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
-              </div>
-            </div>
-
-            <!-- Amounts -->
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">SubTotal</label>
-                <input type="number" id="trainSysSubTotal" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">VAT</label>
-                <input type="number" id="trainSysVat" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">WHT %</label>
-                <input type="number" id="trainSysWhtRate" step="1" min="0" max="15" placeholder="0" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Total</label>
-                <input type="number" id="trainSysTotal" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
-              </div>
-            </div>
-
-            <!-- Booking + account -->
-            <div style="display:grid;grid-template-columns:1fr 140px 100px 80px;gap:8px;margin-bottom:10px">
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">คำอธิบายหลัก (header)</label>
-                <input type="text" id="trainSysDescription" placeholder="เช่น ค่าน้ำมัน, ค่าโฆษณา" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">รหัสบัญชี Debit</label>
-                <input type="text" id="trainSysAccountCode" placeholder="5402" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Credit Days</label>
-                <input type="number" id="trainSysPaymentTerms" min="0" max="365" placeholder="30" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
-              </div>
-              <div>
-                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">น้ำหนัก</label>
-                <input type="number" id="trainSysWeight" min="1" max="50" value="1" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
-              </div>
-            </div>
-
-            <!-- Line items table -->
-            <div style="margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <label style="font-size:12px;font-weight:600;color:#78350f">รายการสินค้า/บริการ (line items)</label>
-                <button type="button" onclick="addTrainLine()" style="background:#fef3c7;color:#78350f;border:1px solid #fcd34d;padding:2px 10px;border-radius:4px;font-size:11px;cursor:pointer">+ เพิ่มรายการ</button>
-              </div>
-              <div id="trainSysLines" style="border:1px solid #fcd34d;border-radius:6px;background:white;padding:6px"></div>
-              <div style="font-size:11px;color:#92400e;margin-top:2px">ถ้ามีรายการย่อย — ระบบจะ train รหัสบัญชีแยกตามแต่ละ description</div>
-            </div>
-
-            <button type="button" onclick="submitSystemTraining()" id="btnTrainSystem" style="background:#d97706;color:white;border:none;padding:10px 24px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;width:100%">
-              ✓ บันทึก Training สำหรับบริษัทที่เลือก
-            </button>
-            <div id="trainSysResult" style="margin-top:8px;font-size:12px;text-align:center"></div>
-          </div>
-
           <details>
             <summary style="cursor:pointer;font-size:13px;font-weight:600">📜 Raw OCR Text</summary>
             <pre id="systemRawText" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;font-size:11px;line-height:1.6;margin-top:8px"></pre>
           </details>
         </div>
+      </div>
+
+      <!-- 🎓 SystemAdmin Training Form — always visible, independent of test scan -->
+      <div class="admin-card" style="border:2px solid #d97706;background:#fef3c7">
+        <div class="admin-card-header">
+          <div class="admin-card-title" style="color:#78350f">🎓 Train ระบบเรียนรู้ (per-tenant)</div>
+          <div style="font-size:13px;color:#92400e;margin-top:4px;line-height:1.5">
+            กรอกข้อมูล หรือ <b>อัปโหลดไฟล์ทดสอบด้านบนเพื่อ auto-fill</b> → เลือกบริษัทที่จะ train → กดปุ่ม "บันทึก Training"
+            ระบบจะอัพเดต <b>ExpenseCategoryLearner</b> (vendor + description → account)
+            และ <b>VendorIntelligence</b> (ประเภทเอกสาร, WHT, payment terms) ของบริษัทที่เลือก
+          </div>
+        </div>
+
+        <!-- Company selector — required -->
+        <div style="margin-bottom:12px">
+          <label style="display:block;font-size:13px;font-weight:600;color:#78350f;margin-bottom:4px">บริษัทที่จะ train *</label>
+          <select id="trainCompanyId" style="width:100%;padding:8px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:13px;background:white">
+            <option value="">— เลือกบริษัท —</option>
+          </select>
+          <div style="font-size:11px;color:#92400e;margin-top:2px">รายการบริษัทโหลดจาก customers (500 รายแรก)</div>
+        </div>
+
+        <!-- Vendor identity -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ชื่อผู้ขาย</label>
+            <input type="text" id="trainSysVendorName" placeholder="เช่น บริษัท ABC จำกัด" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+            <input type="text" id="trainSysVendorTaxId" placeholder="0123456789012" maxlength="13" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+          </div>
+        </div>
+
+        <!-- Document metadata -->
+        <div style="display:grid;grid-template-columns:1fr 140px 140px;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">เลขที่เอกสาร</label>
+            <input type="text" id="trainSysDocNumber" placeholder="INV-2025-0001" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ประเภทเอกสาร</label>
+            <select id="trainSysDocType" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+              <option value="">— ไม่ระบุ —</option>
+              <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+              <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
+              <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+              <option value="PurchaseOrder">ใบสั่งซื้อ</option>
+              <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">วันที่</label>
+            <input type="text" id="trainSysDocDate" placeholder="01/01/2025" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+          </div>
+        </div>
+
+        <!-- Amounts -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">SubTotal</label>
+            <input type="number" id="trainSysSubTotal" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">VAT</label>
+            <input type="number" id="trainSysVat" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">WHT %</label>
+            <input type="number" id="trainSysWhtRate" step="1" min="0" max="15" placeholder="0" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Total</label>
+            <input type="number" id="trainSysTotal" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+          </div>
+        </div>
+
+        <!-- Booking + account -->
+        <div style="display:grid;grid-template-columns:1fr 140px 100px 80px;gap:8px;margin-bottom:10px">
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">คำอธิบายหลัก (header)</label>
+            <input type="text" id="trainSysDescription" placeholder="เช่น ค่าน้ำมัน, ค่าโฆษณา" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">รหัสบัญชี Debit</label>
+            <input type="text" id="trainSysAccountCode" placeholder="5402" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Credit Days</label>
+            <input type="number" id="trainSysPaymentTerms" min="0" max="365" placeholder="30" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">น้ำหนัก</label>
+            <input type="number" id="trainSysWeight" min="1" max="50" value="1" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+          </div>
+        </div>
+
+        <!-- Line items table -->
+        <div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <label style="font-size:12px;font-weight:600;color:#78350f">รายการสินค้า/บริการ (line items)</label>
+            <button type="button" onclick="addTrainLine()" style="background:#fef3c7;color:#78350f;border:1px solid #fcd34d;padding:2px 10px;border-radius:4px;font-size:11px;cursor:pointer">+ เพิ่มรายการ</button>
+          </div>
+          <div id="trainSysLines" style="border:1px solid #fcd34d;border-radius:6px;background:white;padding:6px;min-height:40px"></div>
+          <div style="font-size:11px;color:#92400e;margin-top:2px">ถ้ามีรายการย่อย — ระบบจะ train รหัสบัญชีแยกตามแต่ละ description</div>
+        </div>
+
+        <button type="button" onclick="submitSystemTraining()" id="btnTrainSystem" style="background:#d97706;color:white;border:none;padding:10px 24px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;width:100%">
+          ✓ บันทึก Training สำหรับบริษัทที่เลือก
+        </button>
+        <div id="trainSysResult" style="margin-top:8px;font-size:12px;text-align:center"></div>
       </div>
 
       <!-- Confidence Gateway Tuning -->
@@ -946,18 +948,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       }
     }
 
-    // Wire drag-drop on the system test zone
-    document.addEventListener('DOMContentLoaded', () => {
-      const zone = document.getElementById('systemTestDropZone');
-      if (!zone) return;
-      zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = '#0d9488'; });
-      zone.addEventListener('dragleave', () => { zone.style.borderColor = '#cbd5e1'; });
-      zone.addEventListener('drop', e => {
-        e.preventDefault();
-        zone.style.borderColor = '#cbd5e1';
-        if (e.dataTransfer.files.length > 0) systemTestScan(e.dataTransfer.files[0]);
-      });
-    });
+    // (Drag-drop wiring moved into initOcrConfigPage() at the bottom of this script)
 
     async function checkEmbeddedStatus() {
       const badge = document.getElementById('embeddedStatusBadge');
@@ -1056,13 +1047,37 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       setTimeout(() => toast.remove(), 4000);
     }
 
-    loadConfig();
-    checkEmbeddedStatus();
-    loadTrainCompanies();
-    // Start with one empty line item row so admins see the table immediately
-    document.addEventListener('DOMContentLoaded', () => {
-      if (document.getElementById('trainSysLines')) addTrainLine();
-    });
+    // Single entrypoint — defer until DOM is ready so all elements exist.
+    // Calling AdminAPI.* methods directly (not through Layout.api) works
+    // because AdminLayout.init() at the top of this script already set
+    // AdminAPI.token from localStorage.
+    function initOcrConfigPage() {
+      loadConfig();
+      checkEmbeddedStatus();
+      loadTrainCompanies();
+      // Seed one empty line-item row so the table is visible immediately.
+      if (document.getElementById('trainSysLines') && document.getElementById('trainSysLines').children.length === 0) {
+        addTrainLine();
+      }
+      // Wire drag-drop on the system test zone (was a separate DOMContentLoaded —
+      // consolidated here to avoid handler ordering issues).
+      const zone = document.getElementById('systemTestDropZone');
+      if (zone) {
+        zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = '#0d9488'; });
+        zone.addEventListener('dragleave', () => { zone.style.borderColor = '#cbd5e1'; });
+        zone.addEventListener('drop', e => {
+          e.preventDefault();
+          zone.style.borderColor = '#cbd5e1';
+          if (e.dataTransfer.files.length > 0) systemTestScan(e.dataTransfer.files[0]);
+        });
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initOcrConfigPage);
+    } else {
+      initOcrConfigPage();
+    }
   </script>
 </body>
 </html>
