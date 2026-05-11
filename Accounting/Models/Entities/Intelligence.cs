@@ -108,6 +108,18 @@ public class OcrScanResult : TenantEntity
     public string? DocumentType { get; set; }              // Invoice, Receipt, TaxInvoice, WHT
     public decimal Confidence { get; set; }
 
+    // Number of times this scan has been retried by the user/admin.
+    // Increments on retry; bounded by SiteSettings.OcrMaxRetriesPerScan.
+    // Retries do NOT consume additional quota (quota was charged on initial scan).
+    public int RetryCount { get; set; } = 0;
+
+    // Content-based fingerprint for cross-format duplicate detection.
+    // Computed AFTER extraction as SHA256 of:
+    //   "{VendorTaxId}|{DocumentNumber}|{DocumentDate:yyyy-MM-dd}|{TotalAmount:0.00}"
+    // Catches the case where same invoice is uploaded as JPG one time and PDF another —
+    // file hash differs but the content fingerprint matches.
+    public string? ContentFingerprint { get; set; }
+
     // Extracted data
     public string? ExtractedVendorName { get; set; }
     public string? ExtractedVendorTaxId { get; set; }
@@ -157,6 +169,96 @@ public class OcrLearnedPattern : TenantEntity
     public bool IsNegativeExample { get; set; } = false;
     public string? NegativeValue { get; set; }              // The wrong value that was rejected
     public int FailureCount { get; set; } = 0;              // How many times this pattern was wrong
+}
+
+/// <summary>
+/// Learned mapping: vendor + line-item description keyword → chart-of-account code.
+/// Built incrementally from user corrections and from approved auto-created documents.
+/// On a new scan, OcrService queries this table to suggest expense categories that
+/// match the company's actual booking habits — far more accurate than generic rules.
+/// </summary>
+public class OcrCategoryMapping : TenantEntity
+{
+    /// <summary>Vendor TaxId (preferred) or normalized vendor name when TaxId missing.</summary>
+    public string VendorKey { get; set; } = "";
+    /// <summary>Lower-cased substring match key from line description / expense category text.</summary>
+    public string DescriptionKeyword { get; set; } = "";
+    /// <summary>Suggested debit account code from CoA (e.g. "5402" for fuel).</summary>
+    public string AccountCode { get; set; } = "";
+    public string? AccountName { get; set; }
+    /// <summary>How many times user confirmed/booked with this account for this vendor+keyword.</summary>
+    public int TimesUsed { get; set; } = 1;
+    public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>Optional: which user originally trained this mapping (for audit).</summary>
+    public Guid? TrainedByUserId { get; set; }
+}
+
+/// <summary>
+/// Per-vendor aggregated intelligence cache. Built from approved Documents history
+/// and refreshed on each new document approval. Drives auto-suggestion of:
+///   • DocumentType (most common type used with this vendor)
+///   • Debit account (most common booking)
+///   • WHT habits (does this vendor usually have WHT? what rate?)
+///   • Amount sanity range (flag scans with anomalous totals)
+///   • Payment terms
+/// One row per (CompanyId, VendorKey). Denormalized for sub-millisecond lookup
+/// during ScanAsync — full per-document scans on every OCR would be too slow.
+/// </summary>
+public class OcrVendorIntelligence : TenantEntity
+{
+    public string VendorKey { get; set; } = "";              // tax:1234567890123 or name:lower
+    public string? VendorName { get; set; }
+    public string? VendorTaxId { get; set; }
+
+    // ─── DocumentType prediction ───
+    public string? MostCommonDocumentType { get; set; }      // e.g. "PurchaseInvoice"
+    public int MostCommonDocumentTypeCount { get; set; }
+    public int TotalDocuments { get; set; }
+    public string? DocumentTypeBreakdownJson { get; set; }   // {"PurchaseInvoice":12,"Expense":3}
+
+    // ─── Debit account prediction ───
+    public string? MostCommonDebitAccountCode { get; set; }
+    public string? MostCommonDebitAccountName { get; set; }
+    public int MostCommonDebitAccountCount { get; set; }
+    public string? DebitAccountBreakdownJson { get; set; }   // {"5300":8,"5402":4}
+
+    // ─── WHT habits ───
+    public bool TypicallyHasWht { get; set; }                // >50% of past docs had WHT
+    public decimal? TypicalWhtRate { get; set; }             // mode of past WHT rates
+    public int WhtUsageCount { get; set; }
+
+    // ─── Amount sanity range ───
+    public decimal? AvgTotalAmount { get; set; }
+    public decimal? MinTotalAmount { get; set; }
+    public decimal? MaxTotalAmount { get; set; }
+    public decimal? MedianTotalAmount { get; set; }
+
+    // ─── Payment terms ───
+    public int? TypicalPaymentTermsDays { get; set; }
+
+    // Audit
+    public DateTime LastTrainedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastDocumentDate { get; set; }
+}
+
+/// <summary>
+/// การซื้อเครดิต OCR เพิ่มเติม (add-on pages)
+/// </summary>
+public class OcrCreditPurchase : TenantEntity
+{
+    public Guid SubscriptionId { get; set; }
+    public int PagesPurchased { get; set; }
+    public int PagesRemaining { get; set; }
+    public decimal AmountPaid { get; set; }
+    public string Currency { get; set; } = "THB";
+    public string Status { get; set; } = "Pending";
+    public string? PaymentReference { get; set; }
+    public string? SlipFileName { get; set; }
+    public string? SlipStoragePath { get; set; }
+    public Guid? ReviewedByUserId { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public string? ReviewNotes { get; set; }
+    public DateTime? ExpiresAt { get; set; }
 }
 
 // ===== Custom Report Builder =====

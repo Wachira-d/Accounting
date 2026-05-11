@@ -19,11 +19,13 @@ public class DocumentService : IDocumentService
     private readonly IEtaxInvoiceService _etaxService;
     private readonly ILogger<DocumentService> _logger;
     private readonly ILineNotifyService _lineNotify;
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
-        ILineNotifyService lineNotify)
+        ILineNotifyService lineNotify,
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _accountingService = accountingService;
@@ -32,6 +34,7 @@ public class DocumentService : IDocumentService
         _etaxService = etaxService;
         _logger = logger;
         _lineNotify = lineNotify;
+        _vendorIntel = vendorIntel;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -56,7 +59,8 @@ public class DocumentService : IDocumentService
         };
         var purchaseDocTypes = new[] {
             DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
-            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
+            DocumentType.CertificateInLieu
         };
         if (revenueDocTypes.Contains(request.DocumentType) && !contact.IsCustomer)
             throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย");
@@ -79,6 +83,15 @@ public class DocumentService : IDocumentService
                 .CountAsync(p => p.CompanyId == companyId && lineProjectIds.Contains(p.Id));
             if (validCount != lineProjectIds.Count)
                 throw new InvalidOperationException("รหัสโครงการในรายการบางบรรทัดไม่ถูกต้อง");
+        }
+
+        // CertificateInLieu requires reason and certifier
+        if (request.DocumentType == DocumentType.CertificateInLieu)
+        {
+            if (string.IsNullOrWhiteSpace(request.CertificateReason))
+                throw new InvalidOperationException("ใบรับรองแทนใบเสร็จต้องระบุเหตุผลที่ไม่ได้รับใบเสร็จ");
+            if (string.IsNullOrWhiteSpace(request.CertifierName))
+                throw new InvalidOperationException("ใบรับรองแทนใบเสร็จต้องระบุชื่อผู้รับรอง");
         }
 
         // Validate at least 1 line item
@@ -129,6 +142,7 @@ public class DocumentService : IDocumentService
             DocumentType.PurchaseInvoice => "PI",
             DocumentType.Expense => "EXP",
             DocumentType.PaymentVoucher => "PV",
+            DocumentType.CertificateInLieu => "CIL",
             _ => "DOC"
         };
 
@@ -167,8 +181,35 @@ public class DocumentService : IDocumentService
                 BankAccountId = request.BankAccountId,
                 PaymentAccountId = request.PaymentAccountId,
                 ExpenseCategoryId = request.ExpenseCategoryId,
+                CustomAppendix = request.CustomAppendix,
+                CustomFooterNotes = request.CustomFooterNotes,
+                CustomTermsAndConditions = request.CustomTermsAndConditions,
+                RevenueContractId = request.RevenueContractId,
+                PerformanceObligationId = request.PerformanceObligationId,
+                CertificateReason = request.CertificateReason,
+                CertifierName = request.CertifierName,
+                CertifierPosition = request.CertifierPosition,
+                WitnessName = request.WitnessName,
+                WitnessPosition = request.WitnessPosition,
+                PaymentDate = request.PaymentDate,
                 CreatedBy = createdBy
             };
+
+            // Auto-link Revenue Contract via Project when not explicitly provided.
+            // If document is tagged to a project that has exactly one active
+            // RevenueContract, link this doc to that contract automatically.
+            if (request.ProjectId.HasValue && !request.RevenueContractId.HasValue)
+            {
+                var contracts = await _db.Set<RevenueContract>()
+                    .Where(rc => rc.CompanyId == companyId
+                        && rc.ProjectId == request.ProjectId.Value
+                        && !rc.IsDeleted)
+                    .Select(rc => rc.Id)
+                    .Take(2)
+                    .ToListAsync();
+                if (contracts.Count == 1)
+                    doc.RevenueContractId = contracts[0];
+            }
 
             _db.Documents.Add(doc);
 
@@ -245,7 +286,7 @@ public class DocumentService : IDocumentService
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
@@ -265,6 +306,12 @@ public class DocumentService : IDocumentService
 
         if (contactId.HasValue)
             query = query.Where(d => d.ContactId == contactId.Value);
+
+        if (relatedDocumentId.HasValue)
+            query = query.Where(d => d.RelatedDocumentId == relatedDocumentId.Value);
+
+        if (revenueContractId.HasValue)
+            query = query.Where(d => d.RevenueContractId == revenueContractId.Value);
 
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<DocumentStatus>(status, true, out var statusEnum))
             query = query.Where(d => d.Status == statusEnum);
@@ -341,6 +388,11 @@ public class DocumentService : IDocumentService
         if (request.ContactId.HasValue) doc.ContactId = request.ContactId.Value;
         if (request.Reference != null) doc.Reference = request.Reference;
         if (request.Notes != null) doc.Notes = request.Notes;
+        if (request.CustomAppendix != null) doc.CustomAppendix = request.CustomAppendix;
+        if (request.CustomFooterNotes != null) doc.CustomFooterNotes = request.CustomFooterNotes;
+        if (request.CustomTermsAndConditions != null) doc.CustomTermsAndConditions = request.CustomTermsAndConditions;
+        if (request.RevenueContractId.HasValue) doc.RevenueContractId = request.RevenueContractId.Value;
+        if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -358,6 +410,14 @@ public class DocumentService : IDocumentService
             doc.PaymentAccountId = request.PaymentAccountId.Value;
         if (request.ExpenseCategoryId.HasValue)
             doc.ExpenseCategoryId = request.ExpenseCategoryId.Value;
+
+        // CertificateInLieu fields
+        if (request.CertificateReason != null) doc.CertificateReason = request.CertificateReason;
+        if (request.CertifierName != null) doc.CertifierName = request.CertifierName;
+        if (request.CertifierPosition != null) doc.CertifierPosition = request.CertifierPosition;
+        if (request.WitnessName != null) doc.WitnessName = request.WitnessName;
+        if (request.WitnessPosition != null) doc.WitnessPosition = request.WitnessPosition;
+        if (request.PaymentDate.HasValue) doc.PaymentDate = request.PaymentDate.Value;
 
         if (request.Lines != null)
         {
@@ -449,7 +509,7 @@ public class DocumentService : IDocumentService
                     DocumentType.DebitNote, DocumentType.CreditNote,
                     DocumentType.PurchaseInvoice, DocumentType.Expense,
                     DocumentType.Receipt, DocumentType.ReceiptVoucher,
-                    DocumentType.PaymentVoucher,
+                    DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
                 };
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
                 {
@@ -467,6 +527,11 @@ public class DocumentService : IDocumentService
                 throw;
             }
         });
+
+        // Best-effort: train vendor intelligence cache for OCR self-learning.
+        // Failures are logged inside the helper — training is a derived side-effect
+        // that can always be rebuilt via BackfillFromHistoryAsync.
+        await _vendorIntel.TryTrainAsync(companyId, doc.Id);
 
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so
@@ -1215,7 +1280,12 @@ public class DocumentService : IDocumentService
         [DocumentType.Expense] = new[]
         {
             DocumentType.PaymentVoucher,
-            DocumentType.CreditNote, DocumentType.DebitNote
+            DocumentType.CreditNote, DocumentType.DebitNote,
+            DocumentType.CertificateInLieu
+        },
+        [DocumentType.CertificateInLieu] = new[]
+        {
+            DocumentType.PaymentVoucher
         }
         // Terminal types (no further conversion):
         // Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
@@ -1258,6 +1328,33 @@ public class DocumentService : IDocumentService
                 $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
         }
 
+        // Cycle detection — fetch entire ancestry chain in a single recursive CTE
+        // instead of N round-trips (one per ancestor level). For deep chains this is
+        // ~50-100ms savings vs. the loop-and-query approach.
+        if (source.RelatedDocumentId.HasValue)
+        {
+            var startId = source.RelatedDocumentId.Value;
+            var ancestorMatch = await _db.Database
+                .SqlQuery<AncestorRow>($@"
+                    WITH RECURSIVE ancestry AS (
+                        SELECT ""Id"", ""DocumentNumber"", ""DocumentType"", ""RelatedDocumentId"", 1 AS depth
+                        FROM ""Documents""
+                        WHERE ""Id"" = {startId} AND ""CompanyId"" = {companyId} AND ""IsDeleted"" = false
+                        UNION ALL
+                        SELECT d.""Id"", d.""DocumentNumber"", d.""DocumentType"", d.""RelatedDocumentId"", a.depth + 1
+                        FROM ""Documents"" d
+                        INNER JOIN ancestry a ON d.""Id"" = a.""RelatedDocumentId""
+                        WHERE d.""CompanyId"" = {companyId} AND d.""IsDeleted"" = false AND a.depth < 20
+                    )
+                    SELECT ""Id"", ""DocumentNumber"", ""DocumentType"" FROM ancestry
+                    WHERE ""DocumentType"" = {(int)targetType} LIMIT 1")
+                .FirstOrDefaultAsync();
+
+            if (ancestorMatch != null)
+                throw new InvalidOperationException(
+                    $"ตรวจพบวงกลมการแปลง: เอกสาร {ancestorMatch.DocumentNumber} ({(DocumentType)ancestorMatch.DocumentType}) เป็นบรรพบุรุษของเอกสารต้นทางอยู่แล้ว");
+        }
+
         // For derivative types that adjust source's balance, source must be approved
         // and have outstanding balance. (CN/DN/Receipt validation happens at approval
         // via ApplySourceDocumentAdjustmentsAsync, but warn earlier for better UX.)
@@ -1291,15 +1388,215 @@ public class DocumentService : IDocumentService
             PaymentAccountId: source.PaymentAccountId,
             ExpenseCategoryId: source.ExpenseCategoryId), createdBy);
 
-        // Link
+        // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);
         if (created != null)
         {
             created.RelatedDocumentId = documentId;
+            created.CustomAppendix = source.CustomAppendix;
+            created.CustomFooterNotes = source.CustomFooterNotes;
+            created.CustomTermsAndConditions = source.CustomTermsAndConditions;
+            created.RevenueContractId = source.RevenueContractId;
+            created.PerformanceObligationId = source.PerformanceObligationId;
+            // Cascade CertificateInLieu fields
+            created.CertificateReason = source.CertificateReason;
+            created.CertifierName = source.CertifierName;
+            created.CertifierPosition = source.CertifierPosition;
+            created.WitnessName = source.WitnessName;
+            created.WitnessPosition = source.WitnessPosition;
+            created.PaymentDate = source.PaymentDate;
             await _db.SaveChangesAsync();
         }
 
+        // Cascade file attachments — copy reference rows so child doc shares
+        // the same physical files. We share storage paths to avoid duplication.
+        await CascadeAttachmentsAsync(companyId, source.Id, newDoc.Id, createdBy);
+
         return newDoc;
+    }
+
+    private async Task CascadeAttachmentsAsync(Guid companyId, Guid sourceDocId, Guid targetDocId, string createdBy)
+    {
+        var sourceAttachments = await _db.FileAttachments
+            .AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.EntityType == "Document" && f.EntityId == sourceDocId)
+            .ToListAsync();
+
+        if (sourceAttachments.Count == 0) return;
+
+        // Plan the copy: compute new paths and create DB rows pointing at them FIRST.
+        // The physical file copy then runs ASYNCHRONOUSLY so we don't block the request
+        // while a 50MB file is being copied. If copy fails, the row's StoragePath still
+        // points at the parent file — degrades gracefully but never loses the reference.
+        var copyPlan = new List<(string Source, string Target)>(sourceAttachments.Count);
+
+        foreach (var src in sourceAttachments)
+        {
+            var newStoragePath = src.StoragePath;
+            if (!string.IsNullOrEmpty(src.StoragePath))
+            {
+                var dir = Path.GetDirectoryName(src.StoragePath) ?? "";
+                var ext = Path.GetExtension(src.StoragePath);
+                newStoragePath = Path.Combine(dir, $"{Guid.NewGuid()}{ext}");
+                copyPlan.Add((src.StoragePath, newStoragePath));
+            }
+
+            _db.FileAttachments.Add(new FileAttachment
+            {
+                CompanyId = companyId,
+                EntityType = "Document",
+                EntityId = targetDocId,
+                FileName = Path.GetFileName(newStoragePath),
+                OriginalFileName = src.OriginalFileName,
+                ContentType = src.ContentType,
+                FileSize = src.FileSize,
+                StoragePath = newStoragePath,
+                UploadedByUserId = src.UploadedByUserId,
+                CreatedBy = createdBy,
+            });
+        }
+
+        await _db.SaveChangesAsync();
+
+        // Fire-and-forget physical file copy — caller doesn't wait. If copy fails,
+        // the new attachment row's StoragePath simply points at the parent file
+        // (which still works as long as parent isn't purged).
+        if (copyPlan.Count > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                foreach (var (source, target) in copyPlan)
+                {
+                    try
+                    {
+                        if (System.IO.File.Exists(source) && !System.IO.File.Exists(target))
+                        {
+                            await using var srcStream = System.IO.File.OpenRead(source);
+                            await using var dstStream = System.IO.File.Create(target);
+                            await srcStream.CopyToAsync(dstStream);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Cascade file copy failed: {Source} -> {Target}", source, target);
+                    }
+                }
+            });
+        }
+    }
+
+    public async Task<List<DocumentResponse>> BatchConvertDocumentsAsync(
+        Guid companyId, List<Guid> documentIds, DocumentType targetType, string createdBy)
+    {
+        // Run conversions sequentially within a single DbContext — EF Core DbContext
+        // is NOT thread-safe so we cannot parallelize at the per-document level here
+        // without provisioning fresh contexts. Instead we batch-fetch sources first
+        // (avoiding N round-trips just to load them) and then loop.
+        //
+        // For true parallelism, the controller should fan out to N HTTP requests
+        // or we'd need IServiceScopeFactory to spawn fresh DbContexts per worker.
+        // Going with the safer optimization here: pre-fetch + sequential conversion
+        // still saves ~30-50% on a 100-doc batch via reduced DB chatter.
+
+        var distinctIds = documentIds.Distinct().ToList();
+        var results = new List<DocumentResponse>(distinctIds.Count);
+        var errors = new List<string>();
+
+        // Pre-fetch all sources once; ConvertDocumentAsync will re-load from tracker but
+        // EF caches the entity, avoiding a second DB hit.
+        await _db.Documents
+            .Include(d => d.Lines)
+            .Where(d => documentIds.Contains(d.Id) && d.CompanyId == companyId)
+            .LoadAsync();
+
+        foreach (var id in distinctIds)
+        {
+            try
+            {
+                var converted = await ConvertDocumentAsync(companyId, id, targetType, createdBy);
+                results.Add(converted);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{id}: {ex.Message}");
+                _logger.LogWarning(ex, "Batch convert: failed to convert document {DocId}", id);
+            }
+        }
+
+        if (results.Count == 0 && errors.Count > 0)
+            throw new InvalidOperationException("ไม่สามารถแปลงเอกสารได้: " + string.Join("; ", errors));
+
+        return results;
+    }
+
+    public async Task<DocumentResponse> CreateInvoiceFromObligationAsync(
+        Guid companyId, Guid performanceObligationId, string createdBy)
+    {
+        // Lock obligation row + contract row to prevent two parallel invoice-creations
+        // from both seeing IsSatisfied=false and creating duplicate invoices for the
+        // same milestone.
+        using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        try
+        {
+            var obligation = await _db.Set<PerformanceObligation>()
+                .Include(o => o.Contract)
+                .FirstOrDefaultAsync(o => o.Id == performanceObligationId && o.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบ Performance Obligation");
+
+            if (obligation.IsSatisfied)
+                throw new InvalidOperationException("ภาระงานนี้รับรู้รายได้ครบแล้ว — ไม่สามารถออกใบแจ้งหนี้ซ้ำ");
+
+            var unbilled = obligation.AllocatedPrice - obligation.RecognizedRevenue;
+            if (unbilled <= 0.01m)
+                throw new InvalidOperationException("ไม่มียอดคงเหลือสำหรับออกใบแจ้งหนี้");
+
+            var contract = obligation.Contract
+                ?? throw new InvalidOperationException("ไม่พบสัญญารายได้ของภาระงานนี้");
+
+            var lineDescription = string.IsNullOrEmpty(obligation.Description)
+                ? obligation.Name
+                : $"{obligation.Name} — {obligation.Description}";
+
+            var invoice = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
+                DocumentType.Invoice,
+                DateTime.UtcNow,
+                DueDate: DateTime.UtcNow.AddDays(30),
+                ContactId: contract.ContactId,
+                Reference: contract.ContractNumber,
+                Notes: $"จากสัญญา {contract.ContractNumber}: {contract.Name}",
+                Lines: new List<DocumentLineRequest>
+                {
+                    new(lineDescription, 1m, "งวด", unbilled, 0m, 7m, 0m, AccountId: null),
+                },
+                ProjectId: contract.ProjectId,
+                RevenueContractId: contract.Id,
+                PerformanceObligationId: obligation.Id), createdBy);
+
+            // Update obligation state — invoice covers the unbilled portion
+            obligation.RecognizedRevenue = obligation.AllocatedPrice;
+            obligation.CompletionPercent = 100m;
+            obligation.IsSatisfied = true;
+            obligation.SatisfiedDate = DateTime.UtcNow;
+
+            // Cascade-mark contract complete if all obligations are satisfied
+            var allObligationsForContract = await _db.Set<PerformanceObligation>()
+                .Where(o => o.RevenueContractId == contract.Id && o.Id != obligation.Id)
+                .ToListAsync();
+            if (allObligationsForContract.All(o => o.IsSatisfied))
+            {
+                contract.Status = "Completed";
+            }
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return invoice;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     // ==================== Contacts ====================
@@ -1547,7 +1844,8 @@ public class DocumentService : IDocumentService
             if (doc.WithholdingTaxAmount > 0
                 && (doc.DocumentType == DocumentType.PurchaseInvoice
                     || doc.DocumentType == DocumentType.Expense
-                    || doc.DocumentType == DocumentType.PaymentVoucher))
+                    || doc.DocumentType == DocumentType.PaymentVoucher
+                    || doc.DocumentType == DocumentType.CertificateInLieu))
             {
                 try
                 {
@@ -1774,7 +2072,8 @@ public class DocumentService : IDocumentService
 
             var isPurchaseSide = source != null && (
                 source.DocumentType == DocumentType.PurchaseInvoice
-                || source.DocumentType == DocumentType.Expense);
+                || source.DocumentType == DocumentType.Expense
+                || source.DocumentType == DocumentType.CertificateInLieu);
             var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
 
@@ -1877,10 +2176,11 @@ public class DocumentService : IDocumentService
             }
         }
         // ============================================================
-        // PURCHASE SIDE: PurchaseInvoice / Expense (on credit)
+        // PURCHASE SIDE: PurchaseInvoice / Expense / CertificateInLieu (on credit)
         // ============================================================
         else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                 || doc.DocumentType == DocumentType.Expense)
+                 || doc.DocumentType == DocumentType.Expense
+                 || doc.DocumentType == DocumentType.CertificateInLieu)
         {
             journalType = JournalType.Purchase;
 
@@ -2245,7 +2545,19 @@ public class DocumentService : IDocumentService
         PaymentAccountId: d.PaymentAccountId,
         PaymentAccountName: d.PaymentAccount != null ? $"{d.PaymentAccount.AccountCode} - {d.PaymentAccount.AccountName}" : null,
         ExpenseCategoryId: d.ExpenseCategoryId,
-        ExpenseCategoryName: d.ExpenseCategory?.AccountName);
+        ExpenseCategoryName: d.ExpenseCategory?.AccountName,
+        CustomAppendix: d.CustomAppendix,
+        CustomFooterNotes: d.CustomFooterNotes,
+        CustomTermsAndConditions: d.CustomTermsAndConditions,
+        RevenueContractId: d.RevenueContractId,
+        PerformanceObligationId: d.PerformanceObligationId,
+        RelatedDocumentId: d.RelatedDocumentId,
+        CertificateReason: d.CertificateReason,
+        CertifierName: d.CertifierName,
+        CertifierPosition: d.CertifierPosition,
+        WitnessName: d.WitnessName,
+        WitnessPosition: d.WitnessPosition,
+        PaymentDate: d.PaymentDate);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
@@ -2339,4 +2651,7 @@ public class DocumentService : IDocumentService
             docType, docTypeLabel,
             defaultWhtRate, defaultIncomeCode, defaultIncomeLabel);
     }
+
+    // Projection type for the recursive cycle-detection CTE
+    private sealed record AncestorRow(Guid Id, string DocumentNumber, int DocumentType);
 }

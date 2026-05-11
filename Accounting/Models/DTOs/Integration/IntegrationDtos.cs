@@ -82,7 +82,26 @@ public record InboundInvoiceRequest(
     decimal? VatRate,
     string? Currency,          // default "THB"
     string? Notes,
-    bool IncludeVat = true);
+    bool IncludeVat = true,
+    /// <summary>Optional attachments embedded in the same request as base64.
+    /// Useful for POS systems that submit JSON-only and want to bundle the
+    /// receipt image with the invoice. Each attachment is decoded and saved
+    /// after the document is created — its FileAttachment row will be linked
+    /// to the new document automatically.</summary>
+    List<InboundAttachment>? Attachments = null);
+
+/// <summary>
+/// Base64-encoded file attachment for external integrations. Server enforces:
+///   - Maximum 25MB per file (post-decode)
+///   - Magic-byte validation against ContentType (rejects mislabeled files)
+///   - Allowed types: PDF, JPEG, PNG, BMP, TIFF, HEIF, WebP, Excel, Word
+/// External systems can also use the multipart endpoint when sending many
+/// large files — base64 has 33% overhead so isn't ideal beyond ~5MB.
+/// </summary>
+public record InboundAttachment(
+    string FileName,           // Original filename to preserve in audit trail
+    string ContentType,        // MIME type — verified against magic bytes
+    string Base64Content);     // Standard RFC 4648 base64 (with or without padding)
 
 public record InboundInvoiceLineRequest(
     string? ItemCode, string ItemName, decimal Quantity, decimal UnitPrice,
@@ -105,7 +124,8 @@ public record InboundCreditNoteRequest(
     DateTime DocumentDate,
     string Reason,
     List<InboundInvoiceLineRequest> Lines,
-    string? Notes);
+    string? Notes,
+    List<InboundAttachment>? Attachments = null);
 
 public record InboundDebitNoteRequest(
     string? ExternalId, string? ExternalRef,
@@ -114,7 +134,8 @@ public record InboundDebitNoteRequest(
     DateTime DocumentDate,
     string Reason,
     List<InboundInvoiceLineRequest> Lines,
-    string? Notes);
+    string? Notes,
+    List<InboundAttachment>? Attachments = null);
 
 /// <summary>ค่าใช้จ่ายจากระบบภายนอก</summary>
 public record InboundExpenseRequest(
@@ -124,7 +145,25 @@ public record InboundExpenseRequest(
     List<InboundInvoiceLineRequest> Lines,
     decimal? VatRate,
     string? Notes,
-    bool IncludeVat = true);
+    bool IncludeVat = true,
+    List<InboundAttachment>? Attachments = null);
+
+/// <summary>ใบรับรองแทนใบเสร็จจากระบบภายนอก</summary>
+public record InboundCertificateInLieuRequest(
+    string? ExternalId, string? ExternalRef,
+    string? SupplierExternalId, string? SupplierName, string? SupplierTaxId,
+    DateTime DocumentDate,
+    DateTime? PaymentDate,
+    string CertificateReason,
+    string CertifierName,
+    string? CertifierPosition,
+    string? WitnessName,
+    string? WitnessPosition,
+    List<InboundInvoiceLineRequest> Lines,
+    decimal? VatRate,
+    string? Notes,
+    bool IncludeVat = true,
+    List<InboundAttachment>? Attachments = null);
 
 /// <summary>สินค้า/บริการจากระบบภายนอก</summary>
 public record InboundProductRequest(
@@ -165,7 +204,8 @@ public record InboundBatchRequest(
     [property: MaxLength(500)] List<InboundPaymentRequest>? Payments,
     [property: MaxLength(500)] List<InboundExpenseRequest>? Expenses,
     [property: MaxLength(500)] List<InboundProductRequest>? Products,
-    [property: MaxLength(500)] List<InboundJournalRequest>? Journals);
+    [property: MaxLength(500)] List<InboundJournalRequest>? Journals,
+    [property: MaxLength(500)] List<InboundCertificateInLieuRequest>? CertificatesInLieu = null);
 
 public record InboundBatchResponse(
     int TotalProcessed, int SuccessCount, int ErrorCount,
@@ -191,7 +231,12 @@ public record DailySummaryLineRequest(
 public record InboundSyncResponse(
     bool Success, string? Message,
     Guid? DocumentId, Guid? ContactId, Guid? JournalEntryId, Guid? PaymentId,
-    string? DocumentNumber);
+    string? DocumentNumber,
+    /// <summary>IDs of FileAttachment rows created from Attachments[] in the request.
+    /// Empty when no attachments were sent or all failed validation. Order matches
+    /// the request's Attachments list — failed entries are reported via Warnings.</summary>
+    List<Guid>? AttachmentIds = null,
+    List<string>? Warnings = null);
 
 // ===== Outbound Data (external systems read FROM Next Acc) =====
 

@@ -94,6 +94,7 @@ public partial class ExecutiveReportService
         DocumentType.ReceiptVoucher => "ใบสำคัญรับ",
         DocumentType.PaymentVoucher => "ใบสำคัญจ่าย",
         DocumentType.PurchaseRequisition => "ใบขอซื้อ",
+        DocumentType.CertificateInLieu => "ใบรับรองแทนใบเสร็จ",
         _ => t.ToString()
     };
 }

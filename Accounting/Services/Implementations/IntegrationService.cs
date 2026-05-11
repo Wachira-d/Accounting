@@ -14,12 +14,15 @@ public class IntegrationService : IIntegrationService
     private readonly AccountingDbContext _db;
     private readonly ISettingsService _settingsService;
     private readonly ILogger<IntegrationService> _logger;
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
 
-    public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger)
+    public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _settingsService = settingsService;
         _logger = logger;
+        _vendorIntel = vendorIntel;
     }
 
     // ===== Helper: Atomic Journal Entry Number =====
@@ -511,6 +514,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             // Auto-create journal entry from category mappings
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "invoice");
@@ -656,6 +660,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             // Create journal entry for credit note
             // ใบลดหนี้ (ฝั่งรายรับ): Dr รายได้ + Dr ภาษีขาย, Cr ลูกหนี้การค้า
@@ -748,6 +753,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             // Create journal entry for debit note
             // ใบเพิ่มหนี้ (ฝั่งรายรับ): Dr ลูกหนี้การค้า, Cr รายได้ + Cr ภาษีขาย
@@ -1628,6 +1634,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
 
@@ -1639,6 +1646,86 @@ public class IntegrationService : IIntegrationService
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true, "Expense created", document.Id, supplier.Id, journalEntryId, null, docNumber);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    public async Task<InboundSyncResponse> ProcessCertificateInLieuAsync(Guid companyId, Guid integrationId, InboundCertificateInLieuRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "certificate_in_lieu.created", request.ExternalId, request.ExternalRef);
+
+        try
+        {
+            // Resolve supplier contact
+            Contact? supplier = null;
+            if (!string.IsNullOrEmpty(request.SupplierTaxId))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
+            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
+
+            if (supplier == null)
+            {
+                supplier = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
+                    TaxId = request.SupplierTaxId,
+                    IsCustomer = false,
+                    IsSupplier = true,
+                    IsActive = true
+                };
+                _db.Set<Contact>().Add(supplier);
+                await _db.SaveChangesAsync();
+            }
+
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu);
+            var vatRate = request.VatRate ?? 7m;
+            var lines = BuildDocumentLines(request.Lines, vatRate);
+            var subTotal = lines.Sum(l => l.Amount);
+            var totalVat = lines.Sum(l => l.VatAmount);
+            var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+
+            var document = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = DocumentType.CertificateInLieu,
+                Status = DocumentStatus.Approved,
+                DocumentDate = NormalizeDate(request.DocumentDate),
+                ContactId = supplier.Id,
+                Reference = request.ExternalRef,
+                SubTotal = subTotal,
+                VatAmount = totalVat,
+                TotalAmount = totalAmount,
+                BalanceDue = totalAmount,
+                Notes = request.Notes,
+                Lines = lines,
+                CertificateReason = request.CertificateReason,
+                CertifierName = request.CertifierName,
+                CertifierPosition = request.CertifierPosition,
+                WitnessName = request.WitnessName,
+                WitnessPosition = request.WitnessPosition,
+                PaymentDate = request.PaymentDate.HasValue ? NormalizeDate(request.PaymentDate.Value) : null
+            };
+
+            _db.Documents.Add(document);
+            await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
+
+            var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
+
+            log.Status = "Success";
+            log.CreatedDocumentId = document.Id;
+            log.CreatedContactId = supplier.Id;
+            log.CreatedJournalEntryId = journalEntryId;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+
+            return new InboundSyncResponse(true, "Certificate in lieu created", document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -1952,6 +2039,16 @@ public class IntegrationService : IIntegrationService
             {
                 var r = await ProcessJournalAsync(companyId, integrationId, j);
                 results.Add(new BatchResultItem("Journal", j.ExternalRef, r.Success, r.Message, r.JournalEntryId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        if (request.CertificatesInLieu != null)
+        {
+            foreach (var c in request.CertificatesInLieu)
+            {
+                var r = await ProcessCertificateInLieuAsync(companyId, integrationId, c);
+                results.Add(new BatchResultItem("CertificateInLieu", c.ExternalRef, r.Success, r.Message, r.DocumentId, r.DocumentNumber));
                 if (r.Success) success++; else errors++;
             }
         }

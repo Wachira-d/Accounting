@@ -208,12 +208,48 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         sb.AppendLine("</div>");
 
-        // Footer
+        // CertificateInLieu — reason, certifier, witness, payment date
+        if (doc.DocumentType == DocumentType.CertificateInLieu)
+        {
+            sb.AppendLine("<div class='cert-section' style='margin-top:16px;padding:12px;border:1px solid #333;'>");
+            sb.AppendLine($"<div style='font-weight:700;font-size:14px;margin-bottom:8px;'>ข้อมูลการรับรอง</div>");
+            if (!string.IsNullOrWhiteSpace(doc.CertificateReason))
+                sb.AppendLine($"<div><strong>เหตุผลที่ไม่ได้รับใบเสร็จ:</strong> {WebUtility.HtmlEncode(doc.CertificateReason)}</div>");
+            if (doc.PaymentDate.HasValue)
+                sb.AppendLine($"<div><strong>วันที่จ่ายเงิน:</strong> {doc.PaymentDate:dd/MM/yyyy}</div>");
+            sb.AppendLine("<div style='display:flex;gap:40px;margin-top:16px;'>");
+            sb.AppendLine("<div style='flex:1;'>");
+            sb.AppendLine($"<div><strong>ผู้รับรอง:</strong> {WebUtility.HtmlEncode(doc.CertifierName ?? "")}</div>");
+            if (!string.IsNullOrWhiteSpace(doc.CertifierPosition))
+                sb.AppendLine($"<div><strong>ตำแหน่ง:</strong> {WebUtility.HtmlEncode(doc.CertifierPosition)}</div>");
+            sb.AppendLine("</div>");
+            if (!string.IsNullOrWhiteSpace(doc.WitnessName))
+            {
+                sb.AppendLine("<div style='flex:1;'>");
+                sb.AppendLine($"<div><strong>พยาน:</strong> {WebUtility.HtmlEncode(doc.WitnessName)}</div>");
+                if (!string.IsNullOrWhiteSpace(doc.WitnessPosition))
+                    sb.AppendLine($"<div><strong>ตำแหน่ง:</strong> {WebUtility.HtmlEncode(doc.WitnessPosition)}</div>");
+                sb.AppendLine("</div>");
+            }
+            sb.AppendLine("</div></div>");
+        }
+
+        // Footer — per-document custom values override the template/global default.
+        // Order: Custom appendix → bank details → footer notes (custom or template) → T&C
+        if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
+            sb.AppendLine($"<div class='custom-appendix'>{doc.CustomAppendix}</div>");
+
         if (template.ShowBankDetails && template.BankDetailsText != null)
             sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
 
-        if (template.FooterNotes != null)
-            sb.AppendLine($"<div class='footer-notes'>{template.FooterNotes}</div>");
+        var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
+            ? doc.CustomFooterNotes
+            : template.FooterNotes;
+        if (!string.IsNullOrWhiteSpace(footerNotes))
+            sb.AppendLine($"<div class='footer-notes'>{footerNotes}</div>");
+
+        if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
+            sb.AppendLine($"<div class='terms-conditions'><strong>เงื่อนไข:</strong><br/>{doc.CustomTermsAndConditions}</div>");
 
         // Signatures
         if (template.ShowSignature)
@@ -1123,6 +1159,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType.PurchaseInvoice => "Purchase Invoice",
         DocumentType.Expense => "Expense",
         DocumentType.PaymentVoucher => "Payment Voucher",
+        DocumentType.CertificateInLieu => "Certificate in Lieu of Receipt",
         _ => "Document"
     } : type switch
     {
@@ -1140,6 +1177,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType.PurchaseInvoice => "ใบแจ้งหนี้ซื้อ",
         DocumentType.Expense => "ใบบันทึกค่าใช้จ่าย",
         DocumentType.PaymentVoucher => "ใบสำคัญจ่าย",
+        DocumentType.CertificateInLieu => "ใบรับรองแทนใบเสร็จรับเงิน",
         _ => "เอกสาร"
     };
 

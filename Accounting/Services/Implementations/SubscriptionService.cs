@@ -779,6 +779,18 @@ public class SubscriptionService : ISubscriptionService
         else if (daysLeft <= 7)
             alerts.Add(new UsageAlert("warning", "subscription", $"Subscription จะหมดอายุใน {daysLeft} วัน"));
 
+        var ocrPct = sub.MaxOcrPagesPerMonth > 0 ? (double)sub.CurrentMonthOcrPages / sub.MaxOcrPagesPerMonth * 100 : 0;
+        if (ocrPct >= 90)
+            alerts.Add(new UsageAlert("danger", "ocr", $"โควต้า OCR ใช้ไป {sub.CurrentMonthOcrPages}/{sub.MaxOcrPagesPerMonth} หน้า"));
+        else if (ocrPct >= 70)
+            alerts.Add(new UsageAlert("warning", "ocr", $"โควต้า OCR ใช้ไป {ocrPct:F0}%"));
+
+        var ocrCredits = await _db.OcrCreditPurchases
+            .Where(p => p.CompanyId == companyId && p.Status == "Approved"
+                && p.PagesRemaining > 0
+                && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
+            .SumAsync(p => p.PagesRemaining);
+
         return new UsageDetailResponse(
             sub.Plan, sub.Status, sub.EndDate,
             companyUsers.Count, sub.MaxUsers, companyUsers,
@@ -786,7 +798,11 @@ public class SubscriptionService : ISubscriptionService
             sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth,
             sub.CurrentMonthJournalEntries, sub.MaxJournalEntriesPerMonth,
             sub.UsageResetDate,
-            alerts);
+            OcrPagesThisMonth: sub.CurrentMonthOcrPages,
+            MaxOcrPagesPerMonth: sub.MaxOcrPagesPerMonth,
+            OcrBonusPages: sub.OcrBonusPages,
+            OcrCreditPagesRemaining: ocrCredits,
+            Alerts: alerts);
     }
 
     private static string GetCategoryLabel(string entityType)

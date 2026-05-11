@@ -192,6 +192,9 @@ public class AccountingDbContext : DbContext
     // OCR
     public DbSet<OcrScanResult> OcrScanResults => Set<OcrScanResult>();
     public DbSet<OcrLearnedPattern> OcrLearnedPatterns => Set<OcrLearnedPattern>();
+    public DbSet<OcrCreditPurchase> OcrCreditPurchases => Set<OcrCreditPurchase>();
+    public DbSet<OcrCategoryMapping> OcrCategoryMappings => Set<OcrCategoryMapping>();
+    public DbSet<OcrVendorIntelligence> OcrVendorIntelligence => Set<OcrVendorIntelligence>();
 
     // Custom Reports
     public DbSet<CustomReport> CustomReports => Set<CustomReport>();
@@ -1382,6 +1385,38 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.ContextKeyword).HasMaxLength(200);
             e.Property(p => p.VendorTaxId).HasMaxLength(13);
             e.HasIndex(p => new { p.CompanyId, p.VendorTaxId, p.FieldName });
+        });
+
+        // ===== OcrCreditPurchase =====
+        modelBuilder.Entity<OcrCreditPurchase>(e =>
+        {
+            e.Property(p => p.Status).HasMaxLength(20);
+            e.Property(p => p.Currency).HasMaxLength(3);
+            e.HasIndex(p => new { p.CompanyId, p.SubscriptionId });
+        });
+
+        // ===== OcrCategoryMapping =====
+        modelBuilder.Entity<OcrCategoryMapping>(e =>
+        {
+            e.Property(p => p.VendorKey).HasMaxLength(200);
+            e.Property(p => p.DescriptionKeyword).HasMaxLength(200);
+            e.Property(p => p.AccountCode).HasMaxLength(20);
+            // Composite lookup index: scan-time queries filter by (CompanyId, VendorKey)
+            e.HasIndex(p => new { p.CompanyId, p.VendorKey, p.DescriptionKeyword });
+        });
+
+        // ===== OcrVendorIntelligence =====
+        modelBuilder.Entity<OcrVendorIntelligence>(e =>
+        {
+            e.Property(p => p.VendorKey).HasMaxLength(200);
+            e.Property(p => p.VendorName).HasMaxLength(300);
+            e.Property(p => p.VendorTaxId).HasMaxLength(20);
+            e.Property(p => p.MostCommonDocumentType).HasMaxLength(50);
+            e.Property(p => p.MostCommonDebitAccountCode).HasMaxLength(20);
+            // One row per vendor — must be unique so training upsert is safe
+            e.HasIndex(p => new { p.CompanyId, p.VendorKey }).IsUnique();
+            // Soft delete — consistent with every other entity
+            e.HasQueryFilter(v => !v.IsDeleted);
         });
 
         // ===== CustomReport =====

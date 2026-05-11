@@ -63,4 +63,28 @@ public class FileAttachmentController : ControllerBase
         await _attachmentService.DeleteAsync(companyId, attachmentId);
         return NoContent();
     }
+
+    /// <summary>
+    /// Authenticated download — streams the physical file ONLY when the JWT belongs to
+    /// a user with access to the owning company. Static-file serving via /uploads/ is
+    /// kept for backward compat but UI should prefer this endpoint for sensitive
+    /// financial documents to prevent URL leaks (e.g. logged in browser history).
+    /// </summary>
+    [HttpGet("{attachmentId:guid}/download")]
+    public async Task<IActionResult> Download(Guid companyId, Guid attachmentId)
+    {
+        var attachment = await _attachmentService.GetByIdAsync(companyId, attachmentId);
+        if (attachment == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์"));
+
+        var fullPath = Path.IsPathRooted(attachment.StoragePath)
+            ? attachment.StoragePath
+            : Path.Combine(Directory.GetCurrentDirectory(), attachment.StoragePath);
+        if (!System.IO.File.Exists(fullPath))
+            return NotFound(new ApiResponse<object>(false, null, "ไฟล์ถูกลบหรือย้ายแล้ว"));
+
+        var contentType = string.IsNullOrEmpty(attachment.ContentType)
+            ? "application/octet-stream" : attachment.ContentType;
+        return PhysicalFile(fullPath, contentType, attachment.OriginalFileName);
+    }
 }

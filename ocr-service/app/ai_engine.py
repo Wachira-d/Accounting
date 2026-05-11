@@ -13,7 +13,7 @@ EXTRACTION_PROMPT = """คุณเป็น AI ผู้เชี่ยวช�
 กฎ:
 - ถ้าไม่แน่ใจว่าข้อมูลคืออะไร ให้ใส่ null
 - Tax ID ไทยมี 13 หลัก
-- ประเภทเอกสาร: Invoice, Receipt, TaxInvoice, CreditNote, DebitNote, PurchaseOrder, WHT, Other
+- ประเภทเอกสาร: Invoice, Receipt, TaxInvoice, CreditNote, DebitNote, PurchaseOrder, WHT, CertificateInLieu (ใบรับรองแทนใบเสร็จ), Other
 - วันที่ให้แปลงเป็น YYYY-MM-DD
 - จำนวนเงินเป็นตัวเลข (ไม่มี comma)
 - confidence เป็น 0.0-1.0 แสดงความมั่นใจในผลลัพธ์โดยรวม
@@ -170,6 +170,9 @@ def rule_based_extraction(text: str) -> dict:
     elif "ใบเพิ่มหนี้" in text or "DEBIT NOTE" in text.upper():
         result["document_type"] = "DebitNote"
         result["confidence"] = 0.7
+    elif "ใบรับรองแทนใบเสร็จ" in text or "CERTIFICATE IN LIEU" in text.upper():
+        result["document_type"] = "CertificateInLieu"
+        result["confidence"] = 0.7
 
     # Extract ALL tax IDs and company names to distinguish vendor from our company
     tax_id_pattern = r"(\d{1}\s*-?\s*\d{4}\s*-?\s*\d{5}\s*-?\s*\d{2}\s*-?\s*\d{1})"
@@ -283,6 +286,7 @@ def rule_based_extraction(text: str) -> dict:
         "WHT": {"debit": ("2170", "ภาษีหัก ณ ที่จ่าย"), "credit": ("1110", "เงินสด"), "category": "อื่นๆ"},
         "CreditNote": {"debit": ("2100", "เจ้าหนี้การค้า"), "credit": ("5100", "ต้นทุนขาย"), "category": "ค่าสินค้า"},
         "DebitNote": {"debit": ("5100", "ต้นทุนขาย"), "credit": ("2100", "เจ้าหนี้การค้า"), "category": "ค่าสินค้า"},
+        "CertificateInLieu": {"debit": ("5300", "ค่าใช้จ่ายบริหาร"), "credit": ("1110", "เงินสด"), "category": "ค่าบริการ"},
     }
 
     if doc_type and doc_type in account_map:

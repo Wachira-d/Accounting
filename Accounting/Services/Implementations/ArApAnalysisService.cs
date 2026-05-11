@@ -10,7 +10,7 @@ public class ArApAnalysisService : IArApAnalysisService
 {
     private readonly AccountingDbContext _db;
     private static readonly DocumentType[] ArTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote };
-    private static readonly DocumentType[] ApTypes = { DocumentType.PurchaseInvoice };
+    private static readonly DocumentType[] ApTypes = { DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu };
 
     public ArApAnalysisService(AccountingDbContext db) => _db = db;
 

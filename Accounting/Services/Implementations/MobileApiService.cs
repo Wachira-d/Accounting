@@ -13,9 +13,11 @@ public class MobileApiService : IMobileApiService
 {
     private readonly AccountingDbContext _db;
 
-    public MobileApiService(AccountingDbContext db)
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
+    public MobileApiService(AccountingDbContext db, Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
+        _vendorIntel = vendorIntel;
     }
 
     // ==================== Device Management ====================
@@ -365,6 +367,11 @@ public class MobileApiService : IMobileApiService
 
         _db.ApprovalActions.Add(approvalAction);
 
+        // Captured here (method scope) so the post-SaveChanges training call below
+        // can read them outside the `if (isApprove)` branch.
+        Guid? approvedDocumentCompanyId = null;
+        Guid? approvedDocumentId = null;
+
         if (isApprove)
         {
             // Check if there are more steps
@@ -384,6 +391,8 @@ public class MobileApiService : IMobileApiService
                     {
                         document.Status = DocumentStatus.Approved;
                         document.UpdatedAt = DateTime.UtcNow;
+                        approvedDocumentCompanyId = document.CompanyId;
+                        approvedDocumentId = document.Id;
                     }
                 }
             }
@@ -411,6 +420,10 @@ public class MobileApiService : IMobileApiService
 
         approvalRequest.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        // Train vendor intelligence if a document was approved this round
+        if (approvedDocumentCompanyId.HasValue && approvedDocumentId.HasValue)
+            await _vendorIntel.TryTrainAsync(approvedDocumentCompanyId.Value, approvedDocumentId.Value);
 
         // Enqueue the change to the sync queue so other mobile users receive it
         var syncEntry = new SyncQueue

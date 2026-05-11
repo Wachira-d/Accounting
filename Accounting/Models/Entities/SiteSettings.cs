@@ -76,4 +76,50 @@ public class SiteSettings : BaseEntity
 
     // Application base URL — used to build invitation/reset links in system emails
     public string? AppBaseUrl { get; set; }
+
+    // ===== Azure Document Intelligence (System-wide) =====
+    public string? AzureDiEndpoint { get; set; }
+    public string? AzureDiApiKey { get; set; }
+    public string? AzureDiModelId { get; set; } = "prebuilt-invoice";
+    public string? AzureDiApiVersion { get; set; } = "2024-11-30";
+    public bool AzureDiEnabled { get; set; } = false;
+    public DateTime? AzureDiLastTestedAt { get; set; }
+    public string? AzureDiLastTestStatus { get; set; }
+
+    // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
+    // Provider chain is strictly Azure DI v4 → Local (PaddleOCR + EasyOCR).
+    // Legacy provider keys (Google Vision, Tesseract) were removed when those
+    // engines were dropped — see OcrService.cs ScanAsync routing.
+    public string? OcrProvider { get; set; }
+    public string? OcrLocalServiceUrl { get; set; }
+    public decimal OcrAutoCreateThreshold { get; set; } = 0.85m;
+
+    // ===== OCR Quota Defaults =====
+    public int OcrFreePagesTrial { get; set; } = 10;
+    public int OcrFreePagesBasic { get; set; } = 50;
+    public int OcrFreePagesPro { get; set; } = 500;
+    public int OcrFreePagesEnterprise { get; set; } = 5000;
+    public decimal OcrCreditPricePerPage { get; set; } = 2.0m;
+    public int OcrCreditMinPurchase { get; set; } = 100;
+
+    // Idempotency marker for daily OCR maintenance — prevents double-runs
+    // when BackgroundJobService cycles multiple times during the maintenance window.
+    public DateTime? LastOcrMaintenanceAt { get; set; }
+
+    // ===== OCR Confidence Gateway Tuning =====
+    // Tune these per-business-context: e-commerce with foreign invoices may want
+    // higher math tolerance; B2B with strict TaxId requirements may want larger
+    // checksum penalty. All values clamped to safe ranges in code.
+    public decimal OcrGatewayMaxPenalty { get; set; } = 0.60m;
+    public decimal OcrGatewayMathTolerance { get; set; } = 2.0m;
+    public decimal OcrGatewayTaxIdPenalty { get; set; } = 0.15m;
+    public decimal OcrGatewayMathPenalty { get; set; } = 0.20m;
+    public decimal OcrGatewayDatePenalty { get; set; } = 0.15m;
+    public decimal OcrGatewayVatRatePenalty { get; set; } = 0.10m;
+    public decimal OcrGatewayLowConfidencePenalty { get; set; } = 0.05m;
+
+    // Maximum number of times OcrService.ScanAsync may retry a single file.
+    // Each retry consumes one quota page UNLESS Azure DI auto-falls-back to local
+    // (in which case the original quota debit covers both attempts).
+    public int OcrMaxRetriesPerScan { get; set; } = 1;
 }

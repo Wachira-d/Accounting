@@ -98,6 +98,14 @@ public class FileAttachmentService : IFileAttachmentService
         return attachments.Select(f => MapToResponse(f, f.UploadedByUser?.FullName ?? "")).ToList();
     }
 
+    public async Task<FileAttachmentResponse?> GetByIdAsync(Guid companyId, Guid attachmentId)
+    {
+        var attachment = await _db.FileAttachments
+            .Include(f => f.UploadedByUser)
+            .FirstOrDefaultAsync(f => f.Id == attachmentId && f.CompanyId == companyId);
+        return attachment == null ? null : MapToResponse(attachment, attachment.UploadedByUser?.FullName ?? "");
+    }
+
     public async Task DeleteAsync(Guid companyId, Guid attachmentId)
     {
         var attachment = await _db.FileAttachments

@@ -113,6 +113,28 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "ProductCode" varchar(50) NULL;
             """,
 
+            // ===== Documents: per-document appendix/notes overrides =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomAppendix" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomFooterNotes" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomTermsAndConditions" text NULL;
+            """,
+
+            // ===== Documents: Revenue Contract auto-link =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RevenueContractId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PerformanceObligationId" uuid NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_RevenueContractId" ON "Documents" ("RevenueContractId");
+            """,
+
             // ===== Documents: Project linking (header-level) =====
             // Tags an entire document to a project — propagates to JE.ProjectId
             // on auto-post so per-project P&L picks up revenue/cost automatically.
@@ -906,6 +928,46 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FileHash" varchar(64) NULL;
             """,
             """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "RetryCount" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ContentFingerprint" varchar(64) NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrScanResults_CompanyId_ContentFingerprint"
+            ON "OcrScanResults" ("CompanyId", "ContentFingerprint")
+            WHERE "ContentFingerprint" IS NOT NULL;
+            """,
+
+            // ===== Performance indexes — added after audit identified hot-path query slowdowns =====
+            // 60-second pre-upload duplicate check (OcrController.UploadAndScan):
+            // covers (CompanyId + FileHash + CreatedAt) for the most-recent-duplicate lookup.
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrScanResults_CompanyId_FileHash_CreatedAt"
+            ON "OcrScanResults" ("CompanyId", "FileHash", "CreatedAt");
+            """,
+            // Self-correction maintenance scans by IsNegativeExample + LastConfirmedAt:
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrLearnedPatterns_IsNegativeExample_LastConfirmedAt"
+            ON "OcrLearnedPatterns" ("IsNegativeExample", "LastConfirmedAt");
+            """,
+            // OcrCreditPurchases SUM aggregation in GetQuotaStatusAsync filters (Status, ExpiresAt, PagesRemaining):
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrCreditPurchases_Status_ExpiresAt"
+            ON "OcrCreditPurchases" ("Status", "ExpiresAt") WHERE "PagesRemaining" > 0;
+            """,
+            // Documents.RelatedDocumentId — used for cycle detection in ConvertDocumentAsync
+            // and for the "show child documents" UI in document chain rendering:
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_RelatedDocumentId"
+            ON "Documents" ("RelatedDocumentId") WHERE "RelatedDocumentId" IS NOT NULL;
+            """,
+            // Documents.RevenueContractId — used for "list invoices for contract" lookups:
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_RevenueContractId"
+            ON "Documents" ("RevenueContractId") WHERE "RevenueContractId" IS NOT NULL;
+            """,
+            """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "IsDuplicate" boolean NOT NULL DEFAULT false;
             """,
             """
@@ -1026,6 +1088,211 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "MetaKeywords" text NULL;
             """,
 
+            // ===== SiteSettings: Azure Document Intelligence + OCR config (system-wide) =====
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiEndpoint" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiApiKey" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiModelId" varchar(100) NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiApiVersion" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiEnabled" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiLastTestedAt" timestamp NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiLastTestStatus" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrProvider" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrLocalServiceUrl" text NULL;
+            """,
+            // OcrGoogleApiKey + OcrTesseractApiKey columns are intentionally not created
+            // for new installs — those providers were removed in favor of Azure DI v4 +
+            // Local (PaddleOCR+EasyOCR). Existing installs keep the columns harmlessly;
+            // a future cleanup migration can DROP them when no rows reference them.
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrAutoCreateThreshold" decimal(5,2) NOT NULL DEFAULT 0.85;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesTrial" integer NOT NULL DEFAULT 10;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesBasic" integer NOT NULL DEFAULT 50;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesPro" integer NOT NULL DEFAULT 500;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrFreePagesEnterprise" integer NOT NULL DEFAULT 5000;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrCreditPricePerPage" decimal(10,2) NOT NULL DEFAULT 2.00;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrCreditMinPurchase" integer NOT NULL DEFAULT 100;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LastOcrMaintenanceAt" timestamp NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayMaxPenalty" decimal(5,2) NOT NULL DEFAULT 0.60;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayMathTolerance" decimal(10,2) NOT NULL DEFAULT 2.0;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayTaxIdPenalty" decimal(5,2) NOT NULL DEFAULT 0.15;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayMathPenalty" decimal(5,2) NOT NULL DEFAULT 0.20;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayDatePenalty" decimal(5,2) NOT NULL DEFAULT 0.15;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayVatRatePenalty" decimal(5,2) NOT NULL DEFAULT 0.10;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrGatewayLowConfidencePenalty" decimal(5,2) NOT NULL DEFAULT 0.05;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrMaxRetriesPerScan" integer NOT NULL DEFAULT 1;
+            """,
+
+            // ===== Subscriptions: OCR quota fields =====
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "MaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CurrentMonthOcrPages" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "OcrBonusPages" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "OcrBonusExpiresAt" timestamp NULL;
+            """,
+
+            // ===== PlanTemplates: OCR quota fields =====
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "MaxOcrPagesPerMonth" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+
+            // ===== TrialConfigs: OCR quota fields =====
+            """
+            ALTER TABLE "TrialConfigs" ADD COLUMN IF NOT EXISTS "TrialMaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
+            """,
+
+            // ===== OcrCategoryMappings: learned vendor → expense-account mappings =====
+            """
+            CREATE TABLE IF NOT EXISTS "OcrCategoryMappings" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "VendorKey" varchar(200) NOT NULL DEFAULT '',
+                "DescriptionKeyword" varchar(200) NOT NULL DEFAULT '',
+                "AccountCode" varchar(20) NOT NULL DEFAULT '',
+                "AccountName" text NULL,
+                "TimesUsed" integer NOT NULL DEFAULT 1,
+                "LastUsedAt" timestamp NOT NULL DEFAULT now(),
+                "TrainedByUserId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrCategoryMappings" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrCategoryMappings_CompanyId_VendorKey_Description"
+            ON "OcrCategoryMappings" ("CompanyId", "VendorKey", "DescriptionKeyword");
+            """,
+
+            // ===== OcrVendorIntelligence: per-vendor aggregated stats for self-learning =====
+            // One row per vendor per company. Updated each time a Document is approved.
+            // Read on every OCR scan to suggest DocumentType / debit account / WHT rate.
+            """
+            CREATE TABLE IF NOT EXISTS "OcrVendorIntelligence" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "VendorKey" varchar(200) NOT NULL DEFAULT '',
+                "VendorName" varchar(300) NULL,
+                "VendorTaxId" varchar(20) NULL,
+                "MostCommonDocumentType" varchar(50) NULL,
+                "MostCommonDocumentTypeCount" integer NOT NULL DEFAULT 0,
+                "TotalDocuments" integer NOT NULL DEFAULT 0,
+                "DocumentTypeBreakdownJson" text NULL,
+                "MostCommonDebitAccountCode" varchar(20) NULL,
+                "MostCommonDebitAccountName" text NULL,
+                "MostCommonDebitAccountCount" integer NOT NULL DEFAULT 0,
+                "DebitAccountBreakdownJson" text NULL,
+                "TypicallyHasWht" boolean NOT NULL DEFAULT false,
+                "TypicalWhtRate" decimal(5,2) NULL,
+                "WhtUsageCount" integer NOT NULL DEFAULT 0,
+                "AvgTotalAmount" decimal(18,2) NULL,
+                "MinTotalAmount" decimal(18,2) NULL,
+                "MaxTotalAmount" decimal(18,2) NULL,
+                "MedianTotalAmount" decimal(18,2) NULL,
+                "TypicalPaymentTermsDays" integer NULL,
+                "LastTrainedAt" timestamp NOT NULL DEFAULT now(),
+                "LastDocumentDate" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrVendorIntelligence" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_OcrVendorIntelligence_CompanyId_VendorKey"
+            ON "OcrVendorIntelligence" ("CompanyId", "VendorKey");
+            """,
+
+            // ===== OcrCreditPurchases table =====
+            """
+            CREATE TABLE IF NOT EXISTS "OcrCreditPurchases" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "SubscriptionId" uuid NOT NULL,
+                "PagesPurchased" integer NOT NULL DEFAULT 0,
+                "PagesRemaining" integer NOT NULL DEFAULT 0,
+                "AmountPaid" decimal(18,2) NOT NULL DEFAULT 0,
+                "Currency" varchar(3) NOT NULL DEFAULT 'THB',
+                "Status" varchar(20) NOT NULL DEFAULT 'Pending',
+                "PaymentReference" text NULL,
+                "SlipFileName" text NULL,
+                "SlipStoragePath" text NULL,
+                "ReviewedByUserId" uuid NULL,
+                "ReviewedAt" timestamp NULL,
+                "ReviewNotes" text NULL,
+                "ExpiresAt" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrCreditPurchases" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrCreditPurchases_CompanyId_SubscriptionId"
+            ON "OcrCreditPurchases" ("CompanyId", "SubscriptionId");
+            """,
+
             // ===== Custom Roles & Per-Menu Permissions (per-company RBAC) =====
             // Each company can define its own roles and assign per-menu access.
             // CompanyUsers.CompanyRoleId is nullable so existing members default
@@ -1070,6 +1337,32 @@ public static class DatabaseMigrationHelper
             // Add CompanyRoleId to existing CompanyUsers — nullable so old rows stay valid.
             """
             ALTER TABLE "CompanyUsers" ADD COLUMN IF NOT EXISTS "CompanyRoleId" uuid NULL;
+            """,
+
+            // ===== Documents: CertificateInLieu (ใบรับรองแทนใบเสร็จ) fields =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CertificateReason" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CertifierName" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CertifierPosition" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WitnessName" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WitnessPosition" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentDate" timestamp NULL;
+            """,
+            // OCR self-learning idempotency watermark — set when VendorIntelligenceService
+            // counts this document into the per-vendor stats; prevents double-counting on
+            // re-approval (Draft → Approved → Rejected → Draft → Approved).
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OcrIntelTrainedAt" timestamp NULL;
             """,
         ];
     }

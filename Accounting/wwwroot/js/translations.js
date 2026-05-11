@@ -113,6 +113,7 @@ docType: {
   DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
   PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
   PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
+  CertificateInLieu: 'ใบรับรองแทนใบเสร็จ',
 },
 accountType: {
   Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ',

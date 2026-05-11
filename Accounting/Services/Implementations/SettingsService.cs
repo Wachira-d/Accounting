@@ -193,6 +193,7 @@ public class SettingsService : ISettingsService
                 DocumentType.PurchaseInvoice => "PI",
                 DocumentType.Expense => "EXP",
                 DocumentType.PaymentVoucher => "PV",
+                DocumentType.CertificateInLieu => "CIL",
                 _ => "DOC"
             };
             var yearMonth = DateTime.UtcNow.ToString("yyyyMM");

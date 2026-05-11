@@ -44,6 +44,7 @@
       <div class="tab tab-expense" data-type="PurchaseInvoice" onclick="Page.setType(this)">ใบแจ้งหนี้ซื้อ</div>
       <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ค่าใช้จ่าย</div>
       <div class="tab tab-expense" data-type="PaymentVoucher" onclick="Page.setType(this)">ใบสำคัญจ่าย</div>
+      <div class="tab tab-expense" data-type="CertificateInLieu" onclick="Page.setType(this)">ใบรับรองแทนใบเสร็จ</div>
     </div>
 
     <div class="toolbar">
@@ -65,9 +66,21 @@
       </select>
     </div>
 
-    <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
+    <div id="docSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px;flex-wrap:wrap">
       <span>เลือกแล้ว <b id="docSelCount">0</b> เอกสาร</span>
       <span id="docSelExportSlot"></span>
+      <select id="batchConvertTarget" class="form-input" style="height:32px;font-size:12px;width:auto">
+        <option value="">— แปลงเป็น —</option>
+        <option value="Invoice">ใบแจ้งหนี้</option>
+        <option value="TaxInvoice">ใบกำกับภาษี</option>
+        <option value="Receipt">ใบเสร็จรับเงิน</option>
+        <option value="DeliveryNote">ใบส่งของ</option>
+        <option value="BillingNote">ใบวางบิล</option>
+        <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+        <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+        <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="Page.batchConvert()">⚡ แปลงทั้งหมด</button>
       <button class="btn btn-secondary btn-sm" onclick="Page.clearDocSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
@@ -107,6 +120,7 @@
                   <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
                   <option value="Expense">ค่าใช้จ่าย</option>
                   <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
                 </optgroup>
               </select>
             </div>
@@ -137,6 +151,53 @@
           <div class="form-row">
             <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
+
+          <!-- CertificateInLieu-specific fields -->
+          <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
+            <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
+            <div class="form-row">
+              <div class="form-group" style="flex:2"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ *</label>
+                <input type="text" class="form-input" id="fCertReason" placeholder="เช่น ผู้ขายไม่สามารถออกใบเสร็จได้ / จ่ายค่าเดินทางให้บุคคลภายนอก">
+              </div>
+              <div class="form-group"><label class="form-label">วันที่จ่ายเงิน</label>
+                <input type="date" class="form-input" id="fPaymentDate">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง *</label>
+                <input type="text" class="form-input" id="fCertifierName" placeholder="ชื่อ-นามสกุล">
+              </div>
+              <div class="form-group"><label class="form-label">ตำแหน่งผู้รับรอง</label>
+                <input type="text" class="form-input" id="fCertifierPosition" placeholder="เช่น ผู้จัดการฝ่ายบัญชี">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชื่อพยาน</label>
+                <input type="text" class="form-input" id="fWitnessName" placeholder="ชื่อ-นามสกุล (ถ้ามี)">
+              </div>
+              <div class="form-group"><label class="form-label">ตำแหน่งพยาน</label>
+                <input type="text" class="form-input" id="fWitnessPosition" placeholder="เช่น พนักงานบัญชี">
+              </div>
+            </div>
+          </div>
+
+          <details style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+            <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">📝 หมายเหตุท้ายเอกสาร / เงื่อนไขเฉพาะฉบับนี้ (override ค่าเริ่มต้นจากบริษัท)</summary>
+            <div style="margin-top:12px;display:grid;gap:10px">
+              <div>
+                <label class="form-label" style="font-size:12px">ภาคผนวก/ข้อมูลเพิ่มเติม</label>
+                <textarea class="form-input" id="fCustomAppendix" rows="2" placeholder="ข้อมูลเพิ่มเติมที่จะแสดงเหนือ Footer (เช่น เงื่อนไขการรับประกัน)"></textarea>
+              </div>
+              <div>
+                <label class="form-label" style="font-size:12px">หมายเหตุท้ายเอกสาร (Footer)</label>
+                <textarea class="form-input" id="fCustomFooterNotes" rows="2" placeholder="ใช้แทน Footer Notes ของบริษัท เฉพาะเอกสารฉบับนี้"></textarea>
+              </div>
+              <div>
+                <label class="form-label" style="font-size:12px">เงื่อนไขข้อตกลง (Terms &amp; Conditions)</label>
+                <textarea class="form-input" id="fCustomTerms" rows="2" placeholder="เงื่อนไข/ข้อตกลงเฉพาะฉบับนี้"></textarea>
+              </div>
+            </div>
+          </details>
 
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
@@ -240,6 +301,7 @@
               <optgroup label="📤 ฝั่งรายจ่าย">
                 <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
                 <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
               </optgroup>
             </select>
           </div>
@@ -422,11 +484,14 @@
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
-        // Show/hide expense category based on document type
         const docType = document.getElementById('fDocType')?.value;
-        const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition'];
+        // Show/hide expense category based on document type
+        const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
         if (ecField) ecField.style.display = expenseTypes.includes(docType) ? '' : 'none';
+        // Show/hide CertificateInLieu section
+        const certSection = document.getElementById('certInLieuSection');
+        if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
       },
       /**
        * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
@@ -702,8 +767,20 @@
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
+        document.getElementById('fCustomAppendix').value = '';
+        document.getElementById('fCustomFooterNotes').value = '';
+        document.getElementById('fCustomTerms').value = '';
         if (this._contactAC) this._contactAC.clear();
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
+        // Clear CertificateInLieu fields
+        if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
+        if (document.getElementById('fCertifierName')) document.getElementById('fCertifierName').value = '';
+        if (document.getElementById('fCertifierPosition')) document.getElementById('fCertifierPosition').value = '';
+        if (document.getElementById('fWitnessName')) document.getElementById('fWitnessName').value = '';
+        if (document.getElementById('fWitnessPosition')) document.getElementById('fWitnessPosition').value = '';
+        if (document.getElementById('fPaymentDate')) document.getElementById('fPaymentDate').value = '';
+        const certSection = document.getElementById('certInLieuSection');
+        if (certSection) certSection.style.display = 'none';
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
         this.addLine();
@@ -735,6 +812,9 @@
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
+          document.getElementById('fCustomAppendix').value = d.customAppendix || '';
+          document.getElementById('fCustomFooterNotes').value = d.customFooterNotes || '';
+          document.getElementById('fCustomTerms').value = d.customTermsAndConditions || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
           const fpc = document.getElementById('fPaymentChannel');
@@ -745,6 +825,15 @@
           }
           const fec = document.getElementById('fExpenseCategory');
           if (fec) fec.value = d.expenseCategoryId || '';
+          // CertificateInLieu fields
+          if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = d.certificateReason || '';
+          if (document.getElementById('fCertifierName')) document.getElementById('fCertifierName').value = d.certifierName || '';
+          if (document.getElementById('fCertifierPosition')) document.getElementById('fCertifierPosition').value = d.certifierPosition || '';
+          if (document.getElementById('fWitnessName')) document.getElementById('fWitnessName').value = d.witnessName || '';
+          if (document.getElementById('fWitnessPosition')) document.getElementById('fWitnessPosition').value = d.witnessPosition || '';
+          if (document.getElementById('fPaymentDate')) document.getElementById('fPaymentDate').value = d.paymentDate ? Layout.dateInput(d.paymentDate) : '';
+          const certSection = document.getElementById('certInLieuSection');
+          if (certSection) certSection.style.display = d.documentType === 'CertificateInLieu' ? '' : 'none';
           document.getElementById('linesBody').innerHTML = '';
           this.lineCount = 0;
           (d.lines || []).forEach(l => {
@@ -796,11 +885,21 @@
           contactId,
           reference: document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
+          customAppendix: document.getElementById('fCustomAppendix').value || null,
+          customFooterNotes: document.getElementById('fCustomFooterNotes').value || null,
+          customTermsAndConditions: document.getElementById('fCustomTerms').value || null,
           projectId,
           bankAccountId,
           paymentAccountId,
           expenseCategoryId,
-          lines
+          lines,
+          // CertificateInLieu fields
+          certificateReason: document.getElementById('fCertReason')?.value || null,
+          certifierName: document.getElementById('fCertifierName')?.value || null,
+          certifierPosition: document.getElementById('fCertifierPosition')?.value || null,
+          witnessName: document.getElementById('fWitnessName')?.value || null,
+          witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
+          paymentDate: document.getElementById('fPaymentDate')?.value || null,
         };
         try {
           let savedDocId = this.editingId;
@@ -873,7 +972,10 @@
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
+              ${d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : ''}
+              ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
             </div>
+            <div id="docChain_${d.id}" style="margin-bottom:12px"></div>
             <div class="table-container">
               <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
@@ -885,7 +987,22 @@
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
-            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}`;
+            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}
+            ${d.documentType === 'CertificateInLieu' ? `
+            <div style="margin-top:12px;padding:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px">
+              <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:8px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
+              ${d.certificateReason ? `<div class="text-sm"><strong>เหตุผล:</strong> ${d.certificateReason}</div>` : ''}
+              ${d.paymentDate ? `<div class="text-sm"><strong>วันที่จ่ายเงิน:</strong> ${Layout.date(d.paymentDate)}</div>` : ''}
+              <div style="display:flex;gap:40px;margin-top:8px">
+                <div>${d.certifierName ? `<div class="text-sm"><strong>ผู้รับรอง:</strong> ${d.certifierName}</div>` : ''}${d.certifierPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${d.certifierPosition}</div>` : ''}</div>
+                <div>${d.witnessName ? `<div class="text-sm"><strong>พยาน:</strong> ${d.witnessName}</div>` : ''}${d.witnessPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${d.witnessPosition}</div>` : ''}</div>
+              </div>
+            </div>` : ''}
+            <!-- Attachments section — file upload/list/delete for this document -->
+            <div id="docAttachments_${d.id}" style="margin-top:20px"></div>`;
+
+          // Load attachments asynchronously (doesn't block other sections)
+          this.renderAttachmentSection(d.id);
 
           // Load related payments and journal entries
           try {
@@ -910,6 +1027,9 @@
               document.getElementById('detailContent').innerHTML += extraSections;
             }
           } catch(e) { /* non-critical */ }
+
+          // Document chain — render parent + siblings + children
+          this.loadDocumentChain(d.id, d.relatedDocumentId);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -1130,6 +1250,216 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },
+
+      async batchConvert() {
+        const target = document.getElementById('batchConvertTarget').value;
+        if (!target) { Layout.toast('กรุณาเลือกประเภทที่ต้องการแปลง', 'error'); return; }
+        const ids = [...this.selectedDocs];
+        if (!ids.length) { Layout.toast('กรุณาเลือกเอกสาร', 'error'); return; }
+        if (!confirm(`แปลง ${ids.length} เอกสารเป็น ${Layout.docTypeLabel(target)} หรือไม่?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.batchConvertDocuments(ids, target);
+          Layout.toast(res.message || `แปลงสำเร็จ ${res.data.length} ฉบับ`);
+          this.clearDocSelection();
+          await this.load();
+        } catch (e) {
+          Layout.toast(e.message || 'แปลงไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ───────── Attachments ─────────
+      // Renders the file-attachment block for a Document detail modal.
+      // Lists existing files (download/delete) + provides drag-drop upload.
+      // Re-rendered after every upload/delete for instant feedback.
+      async renderAttachmentSection(documentId) {
+        const api = Layout.api(); if (!api) return;
+        const container = document.getElementById('docAttachments_' + documentId);
+        if (!container) return;
+
+        let attachments = [];
+        try {
+          const res = await api.getAttachments('Document', documentId);
+          attachments = res?.data || [];
+        } catch (e) {
+          container.innerHTML = `<div class="text-xs text-danger">โหลดรายการไฟล์ไม่สำเร็จ: ${e.message || e}</div>`;
+          return;
+        }
+
+        const fmtSize = (bytes) => {
+          if (!bytes) return '0';
+          if (bytes < 1024) return `${bytes} B`;
+          if (bytes < 1024*1024) return `${(bytes/1024).toFixed(1)} KB`;
+          return `${(bytes/1024/1024).toFixed(2)} MB`;
+        };
+        const fileIcon = (contentType) => {
+          if (!contentType) return '📎';
+          if (contentType.startsWith('image/')) return '🖼️';
+          if (contentType === 'application/pdf') return '📄';
+          if (contentType.includes('spreadsheet') || contentType.includes('excel')) return '📊';
+          if (contentType.includes('word')) return '📝';
+          return '📎';
+        };
+        const list = attachments.length === 0
+          ? `<div style="padding:12px;text-align:center;color:var(--gray-400);font-size:13px;background:var(--gray-50);border-radius:8px;border:1px dashed var(--gray-200)">ยังไม่มีไฟล์แนบ</div>`
+          : attachments.map(a => `
+              <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:#fff;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px">
+                <span style="font-size:24px">${fileIcon(a.contentType)}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(a.originalFileName)}</div>
+                  <div style="font-size:11px;color:var(--gray-500)">
+                    ${fmtSize(a.fileSize)} • ${this.escapeHtml(a.uploadedByName || 'ไม่ระบุ')} • ${Layout.date(a.createdAt)}
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-outline" onclick="Page.downloadAttachment('${a.id}', '${this.escapeHtml(a.originalFileName).replace(/'/g, "\\'")}')" title="ดาวน์โหลด">⬇</button>
+                <button class="btn btn-sm btn-outline" onclick="Page.deleteAttachment('${a.id}', '${documentId}')" title="ลบ" style="color:var(--danger)">🗑</button>
+              </div>`).join('');
+
+        container.innerHTML = `
+          <h4 style="font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+            📎 ไฟล์แนบ
+            <span style="font-size:11px;font-weight:400;color:var(--gray-500)">(${attachments.length} ไฟล์)</span>
+          </h4>
+          <div>${list}</div>
+          <div id="dropZone_${documentId}"
+            style="margin-top:8px;padding:16px;border:2px dashed var(--gray-300);border-radius:8px;text-align:center;cursor:pointer;background:#fafbfc;transition:all .2s">
+            <input type="file" id="attachFile_${documentId}" multiple style="display:none">
+            <div style="font-size:13px;color:var(--gray-600)">
+              <span style="font-size:24px;display:block;margin-bottom:4px">📥</span>
+              คลิกหรือลากไฟล์มาวางที่นี่เพื่อแนบ
+              <div style="font-size:11px;color:var(--gray-400);margin-top:4px">
+                รองรับ: PDF, รูปภาพ, Excel, Word — สูงสุด 25MB
+              </div>
+            </div>
+          </div>`;
+
+        // Wire up drag-drop + click-to-pick
+        const dropZone = document.getElementById('dropZone_' + documentId);
+        const fileInput = document.getElementById('attachFile_' + documentId);
+        if (dropZone && fileInput) {
+          dropZone.addEventListener('click', () => fileInput.click());
+          dropZone.addEventListener('dragover', e => {
+            e.preventDefault(); e.stopPropagation();
+            dropZone.style.borderColor = 'var(--primary)';
+            dropZone.style.background = '#eff6ff';
+          });
+          dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'var(--gray-300)';
+            dropZone.style.background = '#fafbfc';
+          });
+          dropZone.addEventListener('drop', async e => {
+            e.preventDefault(); e.stopPropagation();
+            dropZone.style.borderColor = 'var(--gray-300)';
+            dropZone.style.background = '#fafbfc';
+            await this.uploadAttachments(documentId, e.dataTransfer.files);
+          });
+          fileInput.addEventListener('change', async e => {
+            await this.uploadAttachments(documentId, e.target.files);
+            e.target.value = ''; // reset so same file can be picked again
+          });
+        }
+      },
+
+      async uploadAttachments(documentId, files) {
+        const api = Layout.api(); if (!api) return;
+        if (!files || files.length === 0) return;
+
+        for (const file of files) {
+          if (file.size > 25 * 1024 * 1024) {
+            Layout.toast(`${file.name}: ใหญ่เกิน 25MB`, 'error');
+            continue;
+          }
+          try {
+            const fd = new FormData();
+            fd.append('file', file);
+            await api.uploadAttachment('Document', documentId, fd);
+            Layout.toast(`อัปโหลด ${file.name} สำเร็จ`);
+          } catch (e) {
+            Layout.toast(`อัปโหลด ${file.name} ล้มเหลว: ${e.message || e}`, 'error');
+          }
+        }
+        // Re-render list after all uploads finish
+        await this.renderAttachmentSection(documentId);
+      },
+
+      async downloadAttachment(attachmentId, originalFileName) {
+        // Authenticated fetch — pulls the file via the JWT-protected /download
+        // endpoint instead of exposing static URLs that could leak via browser
+        // history or server logs. Streams as blob and triggers a save dialog.
+        const api = Layout.api(); if (!api) return;
+        const url = api.downloadAttachmentUrl(attachmentId);
+        const token = localStorage.getItem('access_token');
+        try {
+          const res = await fetch(url, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = objUrl;
+          a.download = originalFileName || 'attachment';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          // Release blob memory after a short delay to let the download start
+          setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+        } catch (e) {
+          Layout.toast('ดาวน์โหลดไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
+      },
+
+      async deleteAttachment(attachmentId, documentId) {
+        if (!confirm('ลบไฟล์แนบนี้? การกระทำนี้ไม่สามารถย้อนกลับได้')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteAttachment(attachmentId);
+          Layout.toast('ลบไฟล์แนบสำเร็จ');
+          await this.renderAttachmentSection(documentId);
+        } catch (e) {
+          Layout.toast('ลบไฟล์แนบไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
+      },
+
+      async loadDocumentChain(currentId, parentId) {
+        const api = Layout.api(); if (!api) return;
+        const container = document.getElementById('docChain_' + currentId);
+        if (!container) return;
+        try {
+          // Find children: documents whose relatedDocumentId === currentId
+          const childrenRes = await api.getDocuments(`?relatedDocumentId=${currentId}&pageSize=20`);
+          const children = childrenRes?.data?.items || [];
+          let parentInfo = null;
+          if (parentId) {
+            try {
+              const parentRes = await api.getDocument(parentId);
+              parentInfo = parentRes?.data;
+            } catch { /* parent may have been deleted */ }
+          }
+          if (!parentInfo && children.length === 0) return;
+
+          const renderDoc = (doc, label) => `
+            <a href="#" onclick="Page.detail('${doc.id}');return false"
+              style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;color:#475569;text-decoration:none;margin:2px">
+              <span style="font-weight:600;color:#6366f1">${label}</span>
+              <span>${doc.documentNumber}</span>
+              <span>${Layout.statusBadge(doc.status)}</span>
+            </a>`;
+
+          container.innerHTML = `
+            <div style="background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px">
+              <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">🔗 ลำดับเอกสารที่เกี่ยวข้อง</div>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">
+                ${parentInfo ? renderDoc(parentInfo, '⬅ ต้นทาง') : ''}
+                ${parentInfo ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                <span style="padding:6px 12px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;font-size:12px;font-weight:600;color:#1e40af;margin:2px">
+                  📄 (เอกสารนี้)
+                </span>
+                ${children.length > 0 ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                ${children.map(c => renderDoc(c, '➡ ปลายทาง')).join('')}
+              </div>
+            </div>`;
+        } catch (e) { /* non-critical */ }
+      },
+
       // Mirror of server-side ValidConversions in DocumentService.cs.
       // Keep these in sync — server is source of truth and will reject invalid
       // conversions, but pre-filtering improves UX.

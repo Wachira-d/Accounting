@@ -64,6 +64,44 @@ public class BackgroundJobService : BackgroundService
 
         // 6. Auto-sync open banking transactions
         await ProcessOpenBankingAutoSync(scope, ct);
+
+        // 7. OCR self-correction loop: prune stale patterns, cap inflation, GC
+        await ProcessOcrSelfCorrection(scope, ct);
+    }
+
+    private async Task ProcessOcrSelfCorrection(IServiceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            // Idempotent daily run — checks SiteSettings.LastOcrMaintenanceAt to skip
+            // if already run today. Survives restarts and multiple cycles per hour.
+            var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var settings = await db.SiteSettings.FirstOrDefaultAsync(ct);
+            if (settings == null) return;
+            if (settings.LastOcrMaintenanceAt.HasValue
+                && settings.LastOcrMaintenanceAt.Value.Date == DateTime.UtcNow.Date)
+                return;
+
+            // Run daily after 02:00 UTC to avoid hot path
+            if (DateTime.UtcNow.Hour < 2) return;
+
+            var svc = scope.ServiceProvider.GetRequiredService<Ocr.OcrSelfCorrectionService>();
+            await svc.RunMaintenanceAsync(ct);
+
+            // Also run monthly OCR quota reset (idempotent — only resets subs whose UsageResetDate has passed)
+            var quotaSvc = scope.ServiceProvider.GetRequiredService<IOcrQuotaService>();
+            await quotaSvc.ResetMonthlyUsageAsync();
+
+            settings.LastOcrMaintenanceAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to run OCR self-correction");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.OcrSelfCorrection");
+        }
     }
 
     private async Task ProcessRecurringTransactions(IServiceScope scope, CancellationToken ct)

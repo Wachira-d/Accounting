@@ -11,7 +11,7 @@ public partial class ExecutiveReportService
         var docs = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
-            .Where(d => d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense)
+            .Where(d => d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new
@@ -58,7 +58,7 @@ public partial class ExecutiveReportService
         var docs = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
-            .Where(d => d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense)
+            .Where(d => d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.TotalAmount })

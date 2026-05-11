@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR / Azure DI - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .ocr-grid { display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 960px; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    .form-group .hint { font-size: 12px; color: #6b7280; margin-top: 4px; }
+    .form-group input, .form-group select {
+      width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px;
+      font-family: inherit; transition: border-color .2s;
+    }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.1); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .form-row-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }
+    .status-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 600;
+    }
+    .status-ok { background: #dcfce7; color: #16a34a; }
+    .status-pending { background: #fef3c7; color: #d97706; }
+    .status-error { background: #fee2e2; color: #dc2626; }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none;
+      padding: 12px 32px; border-radius: 10px; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: all .2s; font-family: inherit;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,.3); }
+    .btn-primary:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+    .btn-secondary {
+      background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;
+      padding: 10px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+      font-family: inherit; transition: all .2s;
+    }
+    .btn-secondary:hover { background: #16a34a; color: #fff; }
+    .btn-danger {
+      background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;
+      padding: 10px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+      font-family: inherit;
+    }
+    .info-box {
+      background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px;
+      border-radius: 8px; font-size: 13px; color: #1e40af; margin-bottom: 16px;
+    }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .stat-card {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; text-align: center;
+    }
+    .stat-card .value { font-size: 28px; font-weight: 700; color: #1e293b; }
+    .stat-card .label { font-size: 12px; color: #64748b; margin-top: 4px; }
+    .credit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .credit-table th { text-align: left; padding: 8px 12px; background: #f1f5f9; color: #475569; font-weight: 600; }
+    .credit-table td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }
+    .credit-table tr:hover td { background: #f8fafc; }
+    .badge-pending { background: #fef3c7; color: #d97706; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-approved { background: #dcfce7; color: #16a34a; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-rejected { background: #fee2e2; color: #dc2626; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; inset: 0; background: #cbd5e1; border-radius: 26px; transition: .3s;
+    }
+    .toggle-slider:before {
+      content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%; transition: .3s;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: #6366f1; }
+    .toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
+    .password-field { position: relative; }
+    .password-field input { padding-right: 100px; }
+    .password-field .keep-existing {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; color: #6b7280; padding: 4px 8px; background: #f3f4f6; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>OCR & Azure Document Intelligence</strong> ตั้งค่า Provider สำหรับสแกนเอกสาร (ระดับ System — ใช้ร่วมกันทุกบริษัท),
+      จัดการโควต้าหน้า OCR ตามแพ็กเกจ, และอนุมัติการซื้อเครดิตเพิ่ม
+    </div>
+
+    <div class="ocr-grid">
+      <!-- Usage Summary -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">สรุปการใช้งาน OCR (ทั้งระบบ)</div>
+        </div>
+        <div id="usageSummary" class="stat-grid">
+          <div class="stat-card"><div class="value" id="statTotalScans">-</div><div class="label">สแกนทั้งหมด</div></div>
+          <div class="stat-card"><div class="value" id="statMonthScans">-</div><div class="label">เดือนนี้</div></div>
+          <div class="stat-card"><div class="value" id="statActiveCredits">-</div><div class="label">เครดิตคงเหลือ</div></div>
+          <div class="stat-card"><div class="value" id="statPendingCredits">-</div><div class="label">รอนุมัติ</div></div>
+          <div class="stat-card"><div class="value" id="statCreditRevenue">-</div><div class="label">รายได้เครดิต (THB)</div></div>
+        </div>
+      </div>
+
+      <!-- OCR Provider Selection -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">OCR Provider</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">เลือก Provider หลักที่ใช้แปลงภาพเป็นข้อความ</div>
+        </div>
+        <div class="form-group">
+          <label>Provider หลัก</label>
+          <select id="ocrProvider">
+            <option value="">อัตโนมัติ (Azure DI ถ้าตั้งค่าแล้ว, มิฉะนั้นใช้ Local)</option>
+            <option value="azure-di">บังคับใช้ Azure Document Intelligence v4.0</option>
+            <option value="local">บังคับใช้ Local (PaddleOCR + EasyOCR)</option>
+          </select>
+          <div class="hint">โหมด <b>อัตโนมัติ</b> = Azure DI เป็นหลัก, fallback ไป Local ถ้า Azure ล่ม. <b>Local</b> รวม PaddleOCR + EasyOCR ในตัวเดียว</div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Local Service URL</label>
+            <input type="text" id="ocrLocalServiceUrl" placeholder="http://localhost:8501">
+          </div>
+          <div class="form-group">
+            <label>Auto-Create Threshold</label>
+            <input type="number" id="ocrAutoCreateThreshold" step="0.01" min="0" max="1" placeholder="0.85">
+            <div class="hint">ความมั่นใจขั้นต่ำที่จะสร้างเอกสารอัตโนมัติ</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Azure Document Intelligence -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">Azure Document Intelligence</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">Prebuilt Invoice/Receipt Model (v4.0)</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span id="azureStatusBadge" class="status-badge status-pending">ยังไม่ตั้งค่า</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="azureDiEnabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Endpoint URL</label>
+            <input type="text" id="azureDiEndpoint" placeholder="https://your-resource.cognitiveservices.azure.com">
+            <div class="hint">Azure portal > Document Intelligence > Keys and Endpoint</div>
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <div class="password-field">
+              <input type="password" id="azureDiApiKey" placeholder="ใส่ API Key ใหม่">
+              <span class="keep-existing" id="azureKeyHint" style="display:none">มี key อยู่แล้ว</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Model ID</label>
+            <select id="azureDiModelId">
+              <option value="prebuilt-invoice">prebuilt-invoice</option>
+              <option value="prebuilt-receipt">prebuilt-receipt</option>
+              <option value="prebuilt-document">prebuilt-document</option>
+              <option value="prebuilt-layout">prebuilt-layout</option>
+              <option value="prebuilt-read">prebuilt-read</option>
+            </select>
+            <div class="hint">prebuilt-invoice สำหรับใบแจ้งหนี้/ใบกำกับภาษี</div>
+          </div>
+          <div class="form-group">
+            <label>API Version</label>
+            <input type="text" id="azureDiApiVersion" placeholder="2024-11-30">
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button class="btn-secondary" onclick="testAzure()">ทดสอบการเชื่อมต่อ</button>
+          <span id="azureTestResult" style="font-size:13px;line-height:40px;color:#64748b"></span>
+        </div>
+      </div>
+
+      <!-- Local Service Health -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">🐍 Local OCR Service (PaddleOCR + EasyOCR)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">Microservice ที่รวม <b>PaddleOCR</b> (PP-OCRv4) + <b>EasyOCR</b> (CRNN) — สอง engine ต่างสถาปัตยกรรม รัน ensemble verification ทำให้แม่นกว่าใช้ตัวเดียว ทั้งสองเป็น pure-Python (ไม่ต้อง apt-get)</div>
+          </div>
+          <span id="localStatusBadge" class="status-badge status-pending">ยังไม่ทดสอบ</span>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
+          <button class="btn-secondary" onclick="testLocalService()">🧪 ทดสอบการเชื่อมต่อ</button>
+          <span id="localTestResult" style="font-size:13px;line-height:40px;color:#64748b"></span>
+        </div>
+        <details style="margin-top:12px;background:#f8fafc;padding:12px;border-radius:8px">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#475569">📋 วิธีตั้งค่า Local OCR Service</summary>
+          <div style="margin-top:12px;font-size:13px;color:#334155;line-height:1.6">
+            <p style="margin:0 0 8px"><b>1. รัน microservice (ทั้ง 2 engine ติดตั้งด้วย pip — ไม่ต้อง apt-get):</b></p>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px">cd ocr-service
+pip install -r requirements.txt   # ลง paddleocr + easyocr + ทั้งหมด
+uvicorn app.main:app --host 0.0.0.0 --port 8501
+
+# หรือใช้ Docker (พร้อม pre-pull models)
+docker compose up -d</pre>
+            <p style="margin:12px 0 8px"><b>2. ระบุ URL ที่ฟิลด์ "Local Service URL" ด้านบน</b> (ค่าเริ่มต้น: <code>http://localhost:8501</code>)</p>
+            <p style="margin:8px 0"><b>3. คลิกปุ่ม "ทดสอบการเชื่อมต่อ"</b> — ระบบจะส่ง health check ไปที่ <code>{url}/health</code></p>
+            <p style="margin:8px 0"><b>4. Endpoint ที่ใช้งาน:</b> <code>POST {url}/ocr/extract</code> (multipart/form-data)</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- Confidence Gateway Tuning -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">⚖️ Confidence Gateway Tuning</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">ปรับ penalty ของ business-rule checks (ค่าเริ่มต้น = ค่าแนะนำสำหรับธุรกิจไทยทั่วไป)</div>
+        </div>
+        <div class="form-row-4">
+          <div class="form-group">
+            <label>Max Penalty (cap)</label>
+            <input type="number" id="gwMaxPenalty" step="0.05" min="0.2" max="1" value="0.60">
+            <div class="hint">เพดาน penalty รวมสูงสุด</div>
+          </div>
+          <div class="form-group">
+            <label>Math Tolerance (THB)</label>
+            <input type="number" id="gwMathTolerance" step="0.5" min="0" value="2.0">
+            <div class="hint">ระดับ rounding ที่ยอมรับได้</div>
+          </div>
+          <div class="form-group">
+            <label>TaxId Penalty</label>
+            <input type="number" id="gwTaxIdPenalty" step="0.05" min="0" max="1" value="0.15">
+          </div>
+          <div class="form-group">
+            <label>Math Penalty</label>
+            <input type="number" id="gwMathPenalty" step="0.05" min="0" max="1" value="0.20">
+          </div>
+        </div>
+        <div class="form-row-4">
+          <div class="form-group">
+            <label>Date Penalty</label>
+            <input type="number" id="gwDatePenalty" step="0.05" min="0" max="1" value="0.15">
+          </div>
+          <div class="form-group">
+            <label>VAT Rate Penalty</label>
+            <input type="number" id="gwVatRatePenalty" step="0.05" min="0" max="1" value="0.10">
+          </div>
+          <div class="form-group">
+            <label>Low Confidence Penalty</label>
+            <input type="number" id="gwLowConfidencePenalty" step="0.05" min="0" max="1" value="0.05">
+          </div>
+          <div class="form-group">
+            <label>Max Retries / Scan</label>
+            <input type="number" id="gwMaxRetries" min="0" max="5" value="1">
+            <div class="hint">Retry ไม่นับ quota</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OCR Quota per Plan -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">โควต้า OCR ตามแพ็กเกจ</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">จำนวนหน้า OCR ฟรีต่อเดือน สำหรับแต่ละระดับแพ็กเกจ</div>
+        </div>
+        <div class="form-row-4">
+          <div class="form-group">
+            <label>Trial (ทดลอง)</label>
+            <input type="number" id="ocrFreePagesTrial" min="0">
+            <div class="hint">หน้า/เดือน</div>
+          </div>
+          <div class="form-group">
+            <label>Basic</label>
+            <input type="number" id="ocrFreePagesBasic" min="0">
+            <div class="hint">หน้า/เดือน</div>
+          </div>
+          <div class="form-group">
+            <label>Pro</label>
+            <input type="number" id="ocrFreePagesPro" min="0">
+            <div class="hint">หน้า/เดือน</div>
+          </div>
+          <div class="form-group">
+            <label>Enterprise</label>
+            <input type="number" id="ocrFreePagesEnterprise" min="0">
+            <div class="hint">หน้า/เดือน</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>ราคาเครดิตต่อหน้า (THB)</label>
+            <input type="number" id="ocrCreditPricePerPage" step="0.5" min="0">
+            <div class="hint">ราคาขายเครดิต OCR เพิ่มเติม</div>
+          </div>
+          <div class="form-group">
+            <label>จำนวนซื้อขั้นต่ำ (หน้า)</label>
+            <input type="number" id="ocrCreditMinPurchase" min="1">
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Button -->
+      <div style="display:flex;gap:16px">
+        <button class="btn-primary" onclick="saveConfig()" id="btnSave">บันทึกทั้งหมด</button>
+      </div>
+
+      <!-- Pending Credit Purchases -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">รายการซื้อเครดิต OCR (รออนุมัติ)</div>
+        </div>
+        <div id="pendingCredits">
+          <p style="color:#94a3b8;font-size:14px">กำลังโหลด...</p>
+        </div>
+      </div>
+
+      <!-- OCR Accuracy & Self-Correction -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">ความแม่นยำ OCR (30 วันล่าสุด)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">การ self-correction loop จะ prune patterns เก่าและ cap คะแนนทุก 02:00 UTC</div>
+          </div>
+          <button class="btn-secondary" onclick="runMaintenance()">รัน Maintenance ตอนนี้</button>
+        </div>
+        <div id="accuracyTable">
+          <p style="color:#94a3b8;font-size:14px">กำลังโหลด...</p>
+        </div>
+      </div>
+
+      <!-- Grant Bonus Section -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">ให้โบนัส OCR แก่บริษัท</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">เพิ่มหน้า OCR ฟรีให้บริษัทเฉพาะราย (default หมดอายุใน 12 เดือน)</div>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label>Company ID</label>
+            <input type="text" id="bonusCompanyId" placeholder="UUID ของบริษัท">
+          </div>
+          <div class="form-group">
+            <label>จำนวนหน้า</label>
+            <input type="number" id="bonusPages" min="1" value="100">
+          </div>
+          <div class="form-group">
+            <label>วันหมดอายุ (optional)</label>
+            <input type="date" id="bonusExpiresAt">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>เหตุผล (เก็บใน audit log)</label>
+          <input type="text" id="bonusReason" placeholder="เช่น ค่าชดเชยที่ระบบล่ม">
+        </div>
+        <button class="btn-secondary" onclick="grantBonus()">เพิ่มโบนัส</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('ocr-config');
+
+    let currentConfig = null;
+
+    async function loadConfig() {
+      try {
+        const [configRes, summaryRes, creditsRes, accuracyRes] = await Promise.all([
+          AdminAPI.get('/ocr-config'),
+          AdminAPI.get('/ocr-usage-summary'),
+          AdminAPI.get('/ocr-credits/pending'),
+          AdminAPI.get('/ocr-accuracy')
+        ]);
+
+        currentConfig = configRes.data;
+        populateForm(currentConfig);
+        populateSummary(summaryRes.data);
+        populatePendingCredits(creditsRes.data);
+        populateAccuracy(accuracyRes.data);
+      } catch (err) {
+        console.error('Error loading OCR config:', err);
+      }
+    }
+
+    function populateAccuracy(reports) {
+      const el = document.getElementById('accuracyTable');
+      if (!reports || reports.length === 0) {
+        el.innerHTML = '<p style="color:#94a3b8;font-size:14px">ยังไม่มีข้อมูลความแม่นยำในช่วง 30 วันที่ผ่านมา</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table class="credit-table">
+          <thead><tr><th>Company</th><th>สแกน</th><th>แก้ไข</th><th>%แก้ไข</th><th>Patterns</th><th>Negative</th><th>มั่นใจสูง</th></tr></thead>
+          <tbody>
+            ${reports.map(r => `
+              <tr>
+                <td style="font-size:11px;color:#64748b">${r.companyId.substring(0,8)}...</td>
+                <td>${r.totalScans}</td>
+                <td>${r.correctedScans}</td>
+                <td>${(r.correctionRate*100).toFixed(1)}%</td>
+                <td>${r.totalLearnedPatterns}</td>
+                <td>${r.negativeExamples}</td>
+                <td>${r.highConfidencePatterns}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    async function runMaintenance() {
+      if (!confirm('รัน OCR maintenance ตอนนี้? (จะ prune patterns เก่าและ cap คะแนน)')) return;
+      try {
+        await AdminAPI.post('/ocr-maintenance/run');
+        showToast('Maintenance เสร็จสิ้น', 'success');
+        await loadConfig();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function populateForm(c) {
+      document.getElementById('ocrProvider').value = c.ocrProvider || '';
+      document.getElementById('ocrLocalServiceUrl').value = c.ocrLocalServiceUrl || '';
+      document.getElementById('ocrAutoCreateThreshold').value = c.ocrAutoCreateThreshold;
+
+      document.getElementById('azureDiEndpoint').value = c.azureDiEndpoint || '';
+      document.getElementById('azureDiEnabled').checked = c.azureDiEnabled;
+      document.getElementById('azureDiModelId').value = c.azureDiModelId || 'prebuilt-invoice';
+      document.getElementById('azureDiApiVersion').value = c.azureDiApiVersion || '2024-11-30';
+
+      if (c.azureDiHasKey) document.getElementById('azureKeyHint').style.display = '';
+
+      // Azure status badge
+      const badge = document.getElementById('azureStatusBadge');
+      if (c.azureDiLastTestStatus === 'OK') {
+        badge.className = 'status-badge status-ok';
+        badge.textContent = 'เชื่อมต่อได้';
+      } else if (c.azureDiEndpoint) {
+        badge.className = 'status-badge status-error';
+        badge.textContent = c.azureDiLastTestStatus || 'ยังไม่ทดสอบ';
+      } else {
+        badge.className = 'status-badge status-pending';
+        badge.textContent = 'ยังไม่ตั้งค่า';
+      }
+
+      document.getElementById('ocrFreePagesTrial').value = c.ocrFreePagesTrial;
+      document.getElementById('ocrFreePagesBasic').value = c.ocrFreePagesBasic;
+      document.getElementById('ocrFreePagesPro').value = c.ocrFreePagesPro;
+      document.getElementById('ocrFreePagesEnterprise').value = c.ocrFreePagesEnterprise;
+      document.getElementById('ocrCreditPricePerPage').value = c.ocrCreditPricePerPage;
+      document.getElementById('ocrCreditMinPurchase').value = c.ocrCreditMinPurchase;
+
+      // Gateway tuning
+      if (c.ocrGatewayMaxPenalty != null) document.getElementById('gwMaxPenalty').value = c.ocrGatewayMaxPenalty;
+      if (c.ocrGatewayMathTolerance != null) document.getElementById('gwMathTolerance').value = c.ocrGatewayMathTolerance;
+      if (c.ocrGatewayTaxIdPenalty != null) document.getElementById('gwTaxIdPenalty').value = c.ocrGatewayTaxIdPenalty;
+      if (c.ocrGatewayMathPenalty != null) document.getElementById('gwMathPenalty').value = c.ocrGatewayMathPenalty;
+      if (c.ocrGatewayDatePenalty != null) document.getElementById('gwDatePenalty').value = c.ocrGatewayDatePenalty;
+      if (c.ocrGatewayVatRatePenalty != null) document.getElementById('gwVatRatePenalty').value = c.ocrGatewayVatRatePenalty;
+      if (c.ocrGatewayLowConfidencePenalty != null) document.getElementById('gwLowConfidencePenalty').value = c.ocrGatewayLowConfidencePenalty;
+      if (c.ocrMaxRetriesPerScan != null) document.getElementById('gwMaxRetries').value = c.ocrMaxRetriesPerScan;
+    }
+
+    function populateSummary(s) {
+      document.getElementById('statTotalScans').textContent = (s.totalScans || 0).toLocaleString();
+      document.getElementById('statMonthScans').textContent = (s.thisMonthScans || 0).toLocaleString();
+      document.getElementById('statActiveCredits').textContent = (s.activeCredits || 0).toLocaleString();
+      document.getElementById('statPendingCredits').textContent = s.pendingCredits || 0;
+      document.getElementById('statCreditRevenue').textContent = (s.totalCreditRevenue || 0).toLocaleString('th-TH', {minimumFractionDigits:2});
+    }
+
+    function populatePendingCredits(credits) {
+      const el = document.getElementById('pendingCredits');
+      if (!credits || credits.length === 0) {
+        el.innerHTML = '<p style="color:#94a3b8;font-size:14px">ไม่มีรายการรออนุมัติ</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table class="credit-table">
+          <thead><tr><th>วันที่</th><th>บริษัท</th><th>จำนวนหน้า</th><th>ยอดเงิน</th><th>สถานะ</th><th></th></tr></thead>
+          <tbody>
+            ${credits.map(c => `
+              <tr>
+                <td>${new Date(c.createdAt).toLocaleDateString('th-TH')}</td>
+                <td style="font-size:11px;color:#64748b">${c.companyId}</td>
+                <td>${c.pagesPurchased.toLocaleString()}</td>
+                <td>${c.amountPaid.toLocaleString('th-TH',{minimumFractionDigits:2})} THB</td>
+                <td><span class="badge-pending">รออนุมัติ</span></td>
+                <td>
+                  <button class="btn-secondary" style="padding:4px 12px;font-size:12px" onclick="reviewCredit('${c.id}',true)">อนุมัติ</button>
+                  <button class="btn-danger" style="padding:4px 12px;font-size:12px" onclick="reviewCredit('${c.id}',false)">ปฏิเสธ</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    async function saveConfig() {
+      const btn = document.getElementById('btnSave');
+      btn.disabled = true;
+      btn.textContent = 'กำลังบันทึก...';
+      try {
+        const body = {
+          ocrProvider: document.getElementById('ocrProvider').value || null,
+          ocrLocalServiceUrl: document.getElementById('ocrLocalServiceUrl').value || null,
+          ocrAutoCreateThreshold: parseFloat(document.getElementById('ocrAutoCreateThreshold').value),
+          azureDiEndpoint: document.getElementById('azureDiEndpoint').value || null,
+          azureDiEnabled: document.getElementById('azureDiEnabled').checked,
+          azureDiModelId: document.getElementById('azureDiModelId').value,
+          azureDiApiVersion: document.getElementById('azureDiApiVersion').value,
+          ocrFreePagesTrial: parseInt(document.getElementById('ocrFreePagesTrial').value),
+          ocrFreePagesBasic: parseInt(document.getElementById('ocrFreePagesBasic').value),
+          ocrFreePagesPro: parseInt(document.getElementById('ocrFreePagesPro').value),
+          ocrFreePagesEnterprise: parseInt(document.getElementById('ocrFreePagesEnterprise').value),
+          ocrCreditPricePerPage: parseFloat(document.getElementById('ocrCreditPricePerPage').value),
+          ocrCreditMinPurchase: parseInt(document.getElementById('ocrCreditMinPurchase').value),
+          ocrGatewayMaxPenalty: parseFloat(document.getElementById('gwMaxPenalty').value),
+          ocrGatewayMathTolerance: parseFloat(document.getElementById('gwMathTolerance').value),
+          ocrGatewayTaxIdPenalty: parseFloat(document.getElementById('gwTaxIdPenalty').value),
+          ocrGatewayMathPenalty: parseFloat(document.getElementById('gwMathPenalty').value),
+          ocrGatewayDatePenalty: parseFloat(document.getElementById('gwDatePenalty').value),
+          ocrGatewayVatRatePenalty: parseFloat(document.getElementById('gwVatRatePenalty').value),
+          ocrGatewayLowConfidencePenalty: parseFloat(document.getElementById('gwLowConfidencePenalty').value),
+          ocrMaxRetriesPerScan: parseInt(document.getElementById('gwMaxRetries').value),
+        };
+
+        const azureKey = document.getElementById('azureDiApiKey').value;
+        if (azureKey) body.azureDiApiKey = azureKey;
+
+        await AdminAPI.put('/ocr-config', body);
+        showToast('บันทึกการตั้งค่าสำเร็จ', 'success');
+        await loadConfig();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'บันทึกทั้งหมด';
+      }
+    }
+
+    async function testAzure() {
+      const el = document.getElementById('azureTestResult');
+      el.textContent = 'กำลังทดสอบ...';
+      el.style.color = '#64748b';
+      try {
+        const res = await AdminAPI.post('/ocr-config/test-azure');
+        el.textContent = res.message;
+        el.style.color = res.success ? '#16a34a' : '#dc2626';
+        await loadConfig();
+      } catch (err) {
+        el.textContent = err.message;
+        el.style.color = '#dc2626';
+      }
+    }
+
+    async function testLocalService() {
+      const el = document.getElementById('localTestResult');
+      const badge = document.getElementById('localStatusBadge');
+      el.textContent = 'กำลังทดสอบ...';
+      el.style.color = '#64748b';
+      badge.className = 'status-badge status-pending';
+      badge.textContent = 'กำลังทดสอบ...';
+      try {
+        const res = await AdminAPI.post('/ocr-config/test-local');
+        el.textContent = res.message;
+        el.style.color = res.success ? '#16a34a' : '#dc2626';
+        if (res.success) {
+          badge.className = 'status-badge status-ok';
+          badge.textContent = 'พร้อมใช้งาน';
+        } else {
+          badge.className = 'status-badge status-error';
+          badge.textContent = 'ใช้ไม่ได้';
+        }
+      } catch (err) {
+        el.textContent = err.message;
+        el.style.color = '#dc2626';
+        badge.className = 'status-badge status-error';
+        badge.textContent = 'ใช้ไม่ได้';
+      }
+    }
+
+    async function reviewCredit(id, approve) {
+      const notes = approve ? '' : prompt('เหตุผลที่ปฏิเสธ:');
+      if (!approve && notes === null) return;
+      try {
+        await AdminAPI.post(`/ocr-credits/${id}/review`, { approve, notes });
+        showToast(approve ? 'อนุมัติเครดิตสำเร็จ' : 'ปฏิเสธเครดิต', approve ? 'success' : 'warning');
+        await loadConfig();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function grantBonus() {
+      const companyId = document.getElementById('bonusCompanyId').value.trim();
+      const pages = parseInt(document.getElementById('bonusPages').value);
+      const expiresAt = document.getElementById('bonusExpiresAt').value || null;
+      const reason = document.getElementById('bonusReason').value.trim() || null;
+      if (!companyId || !pages) { showToast('กรุณาระบุ Company ID และจำนวนหน้า', 'error'); return; }
+      try {
+        const body = { pages, expiresAt, reason };
+        const res = await AdminAPI.post(`/ocr-credits/${companyId}/grant-bonus`, body);
+        showToast(res.message || `เพิ่มโบนัส ${pages} หน้าสำเร็จ`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function showToast(message, type = 'info') {
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706', info: '#3b82f6' };
+      toast.style.cssText = `
+        position: fixed; bottom: 24px; right: 24px; background: ${colors[type] || colors.info};
+        color: #fff; padding: 12px 24px; border-radius: 10px; font-size: 14px; font-weight: 500;
+        z-index: 9999; box-shadow: 0 4px 16px rgba(0,0,0,.15); animation: slideUp .3s ease-out;
+      `;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    }
+
+    loadConfig();
+  </script>
+</body>
+</html>

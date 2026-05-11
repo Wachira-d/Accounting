@@ -11,11 +11,14 @@ public class SignatureApprovalService : ISignatureApprovalService
 {
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _docService;
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
 
-    public SignatureApprovalService(AccountingDbContext db, IDocumentService docService)
+    public SignatureApprovalService(AccountingDbContext db, IDocumentService docService,
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _docService = docService;
+        _vendorIntel = vendorIntel;
     }
 
     // ==================== USER SIGNATURES ====================
@@ -357,6 +360,7 @@ public class SignatureApprovalService : ISignatureApprovalService
         // Update document
         doc.Status = DocumentStatus.Approved;
         await _db.SaveChangesAsync();
+        await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 
         // Auto-convert if requested
         Guid? convertedDocId = null;
@@ -421,6 +425,7 @@ public class SignatureApprovalService : ISignatureApprovalService
 
         doc.Status = DocumentStatus.Approved;
         await _db.SaveChangesAsync();
+        await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 
         // Run post-approval action from last step
         var lastAction = allApprovals

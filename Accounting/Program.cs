@@ -85,6 +85,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddMemoryCache();
 
 // ===== Services (DI) =====
 // Core
@@ -145,6 +146,14 @@ builder.Services.AddScoped<ICommissionService, CommissionService>();
 // Phase 4: Intelligence
 builder.Services.AddScoped<IAiService, AiService>();
 builder.Services.AddScoped<IOcrService, OcrService>();
+builder.Services.AddScoped<IOcrQuotaService, OcrQuotaService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDocumentIntelligenceService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.OcrSelfCorrectionService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ExpenseCategoryLearner>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorIntelligenceService>();
+// Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
+// and the service maintains a thread-local engine pool for thread safety.
+builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
 

@@ -56,6 +56,31 @@ public class Document : TenantEntity
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
 
+    // Per-document overrides for the company's global appendix/footer templates.
+    // When null, falls back to CompanySettings.{Type}Notes / {Type}Footer.
+    public string? CustomAppendix { get; set; }
+    public string? CustomFooterNotes { get; set; }
+    public string? CustomTermsAndConditions { get; set; }
+
+    // Optional link to a Revenue Contract — set when this document is invoicing
+    // against a recognized contract milestone. Used for ASC 606 / TFRS 15 tracking.
+    public Guid? RevenueContractId { get; set; }
+    public Guid? PerformanceObligationId { get; set; }
+
+    // ===== ใบรับรองแทนใบเสร็จ (CertificateInLieu) =====
+    public string? CertificateReason { get; set; }       // เหตุผลที่ไม่ได้รับใบเสร็จ
+    public string? CertifierName { get; set; }            // ชื่อผู้รับรอง
+    public string? CertifierPosition { get; set; }        // ตำแหน่งผู้รับรอง
+    public string? WitnessName { get; set; }              // ชื่อพยาน
+    public string? WitnessPosition { get; set; }          // ตำแหน่งพยาน
+    public DateTime? PaymentDate { get; set; }            // วันที่จ่ายเงินจริง
+
+    // ===== OCR Self-Learning =====
+    // Watermark set by VendorIntelligenceService.TrainFromDocumentAsync after this
+    // document's data has been counted into the per-vendor intelligence cache.
+    // Prevents double-counting on re-approval (Draft → Approved → Rejected → Draft → Approved).
+    public DateTime? OcrIntelTrainedAt { get; set; }
+
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();

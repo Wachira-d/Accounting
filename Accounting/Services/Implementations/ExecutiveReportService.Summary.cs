@@ -94,7 +94,7 @@ public partial class ExecutiveReportService
 
         var overduePay = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
-            .Where(d => d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense)
+            .Where(d => d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu)
             .Where(d => d.BalanceDue > 0 && d.DueDate.HasValue && d.DueDate.Value < DateTime.UtcNow)
             .SumAsync(d => (decimal?)d.BalanceDue) ?? 0;
 

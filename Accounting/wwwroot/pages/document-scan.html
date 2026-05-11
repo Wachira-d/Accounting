@@ -317,6 +317,29 @@
       <button class="btn btn-secondary" onclick="Page.refreshAll()">&#x21bb; รีเฟรช</button>
     </div>
 
+    <!-- OCR Quota Bar -->
+    <div id="ocrQuotaBar" style="display:none;background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:12px;padding:14px 20px;margin-bottom:16px;font-size:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:600;color:#0c4a6e">&#x1F4CA; โควต้า OCR</span>
+        <span id="quotaText" style="font-weight:600;color:#0369a1"></span>
+      </div>
+      <div style="height:8px;background:#e0f2fe;border-radius:4px;overflow:hidden">
+        <div id="quotaFill" style="height:100%;border-radius:4px;transition:width .5s"></div>
+      </div>
+      <div id="quotaExtra" style="font-size:12px;color:#0369a1;margin-top:6px"></div>
+    </div>
+
+    <!-- Self-Learning Intelligence Bar -->
+    <div style="background:linear-gradient(135deg,#f0fdfa,#ccfbf1);border:1px solid #5eead4;border-radius:12px;padding:14px 20px;margin-bottom:16px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-weight:600;color:#134e4a;margin-bottom:2px">🧠 ระบบเรียนรู้อัตโนมัติ</div>
+        <div style="font-size:12px;color:#0f766e">ระบบจะเรียนประเภทเอกสาร, รหัสบัญชี, WHT จากผู้ขายแต่ละรายโดยอัตโนมัติเมื่ออนุมัติเอกสาร</div>
+      </div>
+      <button type="button" onclick="Page.backfillIntelligence()" style="background:#0d9488;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">
+        เรียนรู้จากเอกสารเก่า
+      </button>
+    </div>
+
     <!-- Upload Zone -->
     <div class="upload-zone" id="uploadZone">
       <div class="upload-zone-icon">&#x1F4C4;</div>
@@ -438,6 +461,49 @@
         document.getElementById('thresholdInput').value = this.threshold;
         this.bindUpload();
         this.loadScans();
+        this.loadQuota();
+      },
+
+      async loadQuota() {
+        try {
+          const res = await Layout.api(`/api/companies/${Layout.companyId}/ocr/quota`);
+          if (!res.success || !res.data) return;
+          const q = res.data;
+          const bar = document.getElementById('ocrQuotaBar');
+          bar.style.display = '';
+          const used = q.usedThisMonth;
+          const max = q.maxPagesPerMonth;
+          const total = q.totalAvailable;
+          const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
+          document.getElementById('quotaText').textContent = `${used} / ${max} หน้า`;
+          const fill = document.getElementById('quotaFill');
+          fill.style.width = pct + '%';
+          fill.style.background = pct > 90 ? '#ef4444' : pct > 70 ? '#f59e0b' : '#22c55e';
+          const extras = [];
+          if (q.bonusPages > 0) extras.push(`โบนัส: ${q.bonusPages} หน้า`);
+          if (q.creditPagesRemaining > 0) extras.push(`เครดิต: ${q.creditPagesRemaining} หน้า`);
+          if (total <= 0) extras.push('โควต้าหมด — กรุณาซื้อเครดิตเพิ่ม');
+          document.getElementById('quotaExtra').textContent = extras.join(' | ');
+        } catch (e) { /* quota display is optional */ }
+      },
+
+      // ==================== Self-Learning Backfill ====================
+      async backfillIntelligence() {
+        if (!confirm('ระบบจะอ่านเอกสารย้อนหลัง 24 เดือน เพื่อเรียนรู้ประเภทเอกสาร, รหัสบัญชี, WHT ของผู้ขายแต่ละราย\n\nกระบวนการนี้อาจใช้เวลาหลายวินาที ดำเนินการต่อ?')) return;
+        const cid = Layout.getCompanyId();
+        if (!cid) { alert('ไม่พบ companyId'); return; }
+        try {
+          // Use API.post directly — Layout.api(url) is a no-arg helper that returns
+          // the company-scoped API client, NOT a fetch wrapper.
+          const res = await API.post(`/api/companies/${cid}/ocr/intelligence/backfill?sinceMonths=24`);
+          if (res?.success) {
+            alert(res.message || `เรียนรู้สำเร็จ ${res.data?.vendorsTrained || 0} ราย`);
+          } else {
+            alert('ไม่สำเร็จ: ' + (res?.message || 'unknown'));
+          }
+        } catch (e) {
+          alert('ไม่สำเร็จ: ' + (e?.message || e));
+        }
       },
 
       // ==================== Upload ====================
@@ -835,6 +901,7 @@
         if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สอนระบบ</button>`;
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; Debug</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${scan.id}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; Retry</button>`;
         }
         if (scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
@@ -949,6 +1016,26 @@
       },
 
       // ==================== Review Modal ====================
+      async retryScan(scanId) {
+        if (!confirm('แกะข้อมูล OCR ใหม่อีกครั้ง? (ไม่ใช้โควต้า, จำกัดตามค่าที่ Admin ตั้งไว้)')) return;
+        try {
+          const res = await fetch(`/api/companies/${Layout.companyId}/ocr/${scanId}/retry`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+          });
+          const data = await res.json();
+          if (!data.success) {
+            Layout.toast(data.message || 'Retry ล้มเหลว', 'error');
+            return;
+          }
+          Layout.toast(data.message || 'Retry สำเร็จ', 'success');
+          this.loadScans();
+          this.loadQuota();
+        } catch (err) {
+          Layout.toast('Retry ล้มเหลว: ' + err.message, 'error');
+        }
+      },
+
       async openReview(scanId, options = {}) {
         const api = Layout.api();
         if (!api) return;
@@ -1204,6 +1291,9 @@
                     .replace(/\[Zone Analysis\]/g,'<strong style="color:var(--primary)">[Zone Analysis]</strong>')
                     .replace(/\[Field Confidence\]/g,'<strong style="color:#059669">[Field Confidence]</strong>')
                     .replace(/\[Reasoning\]/g,'<strong style="color:#7c3aed">[Reasoning]</strong>')
+                    .replace(/\[VendorIntel\]/g,'<strong style="color:#0d9488;background:#ccfbf1;padding:1px 4px;border-radius:3px">🧠 VendorIntel</strong>')
+                    .replace(/\[Learner\]/g,'<strong style="color:#0891b2;background:#cffafe;padding:1px 4px;border-radius:3px">📚 Learner</strong>')
+                    .replace(/\[Gateway\]/g,'<strong style="color:#dc2626">[Gateway]</strong>')
                     .replace(/\[(Seller|Buyer|Header|Items|Summary|Payment)\]/g,'<span style="color:#2563eb;font-weight:600">[$1]</span>')
                     .replace(/\[Swap\]/g,'<strong style="color:#d97706">[Swap]</strong>')}</pre>
                 </div>` : ''}

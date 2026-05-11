@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Accounting.Services.Interfaces;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Accounting.Services.Implementations;
 
@@ -9,11 +10,20 @@ public class DbdLookupService : IDbdLookupService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<DbdLookupService> _logger;
+    private readonly IMemoryCache _cache;
 
-    public DbdLookupService(IHttpClientFactory httpClientFactory, ILogger<DbdLookupService> logger)
+    /// <summary>Cached DBD lookups for 24h. Government data changes slowly,
+    /// and even 1h cache transforms a 4-API-call hot path (~2-5s) into a memory hit (~10µs).
+    /// Negative results cached for 1h to throttle API hammering on bogus IDs.</summary>
+    private static readonly TimeSpan PositiveTtl = TimeSpan.FromHours(24);
+    private static readonly TimeSpan NegativeTtl = TimeSpan.FromHours(1);
+
+    public DbdLookupService(IHttpClientFactory httpClientFactory, ILogger<DbdLookupService> logger,
+        IMemoryCache cache)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task<List<DbdCompanyResult>> SearchByNameAsync(string query, int limit = 10)
@@ -63,6 +73,24 @@ public class DbdLookupService : IDbdLookupService
         if (string.IsNullOrWhiteSpace(juristicId) || juristicId.Length != 13)
             return null;
 
+        // Memory cache layer — DBD/RD APIs are slow (2-5s combined) and rate-limited.
+        // Repeat scans of same vendor return instantly.
+        var cacheKey = $"dbd:{juristicId}";
+        if (_cache.TryGetValue<DbdCompanyResult?>(cacheKey, out var cached))
+        {
+            _logger.LogDebug("DBD cache hit for {Id}", juristicId);
+            return cached;
+        }
+
+        var result = await LookupJuristicIdLiveAsync(juristicId);
+        // Positive hits cached longer than misses — TIN data changes rarely
+        var ttl = result != null && !string.IsNullOrWhiteSpace(result.NameTh) ? PositiveTtl : NegativeTtl;
+        _cache.Set(cacheKey, result, ttl);
+        return result;
+    }
+
+    private async Task<DbdCompanyResult?> LookupJuristicIdLiveAsync(string juristicId)
+    {
         try
         {
             var client = _httpClientFactory.CreateClient("Dbd");

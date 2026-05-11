@@ -171,6 +171,8 @@ const API = {
       purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
+      batchConvertDocuments: (ids, t) => API.post(`${base}/document/batch-convert/${t}`, { documentIds: ids }),
+      createInvoiceFromObligation: (obligationId) => API.post(`${base}/document/from-obligation/${obligationId}`),
       writeOffBadDebt: (id, reason) => API.post(`${base}/document/${id}/write-off-bad-debt`, { reason }),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
@@ -631,6 +633,10 @@ const API = {
       uploadAttachment: (entityType, entityId, formData) => API.upload(`${base}/attachments/${entityType}/${entityId}`, formData),
       getAttachments: (entityType, entityId) => API.get(`${base}/attachments/${entityType}/${entityId}`),
       deleteAttachment: (id) => API.del(`${base}/attachments/${id}`),
+      // Authenticated download — bypasses static-file URL leak risk by streaming
+      // through the API with JWT validation. Returns a blob URL caller can assign
+      // to <a href> or window.open() for download/preview.
+      downloadAttachmentUrl: (id) => `${base}/attachments/${id}/download`,
       // Approval
       getApprovalRules: () => API.get(`${base}/approval/rules`),
       createApprovalRule: (d) => API.post(`${base}/approval/rules`, d),

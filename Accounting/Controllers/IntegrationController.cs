@@ -1,5 +1,6 @@
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Integration;
+using Accounting.Services.Implementations.Ocr;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,10 +16,12 @@ namespace Accounting.Controllers;
 public class IntegrationController : ControllerBase
 {
     private readonly IIntegrationService _service;
+    private readonly IFileAttachmentService _attachmentService;
 
-    public IntegrationController(IIntegrationService service)
+    public IntegrationController(IIntegrationService service, IFileAttachmentService attachmentService)
     {
         _service = service;
+        _attachmentService = attachmentService;
     }
 
     // ===== Integration Config =====
@@ -174,6 +177,34 @@ public class ExternalIntegrationController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    /// <summary>
+    /// Create an invoice from an external system. Supports optional embedded
+    /// attachments (base64-encoded) in the same request — see Attachments field.
+    /// For files >5MB use the /invoices/multipart variant to avoid base64 overhead.
+    /// </summary>
+    /// <remarks>
+    /// Example payload with attachment:
+    /// <code>
+    /// {
+    ///   "ExternalRef": "POS-INV-2026-001",
+    ///   "CustomerTaxId": "0105561234567",
+    ///   "DocumentDate": "2026-05-07",
+    ///   "DocumentType": "TaxInvoice",
+    ///   "Lines": [
+    ///     { "ItemName": "เครื่องดื่ม", "Quantity": 2, "UnitPrice": 50 }
+    ///   ],
+    ///   "VatRate": 7,
+    ///   "Attachments": [
+    ///     {
+    ///       "FileName": "receipt.jpg",
+    ///       "ContentType": "image/jpeg",
+    ///       "Base64Content": "/9j/4AAQSkZJRgABAQ..."
+    ///     }
+    ///   ]
+    /// }
+    /// </code>
+    /// Headers: X-Integration-Key: {your-api-key}
+    /// </remarks>
     [HttpPost("invoices")]
     public async Task<ActionResult<InboundSyncResponse>> CreateInvoice([FromBody] InboundInvoiceRequest request)
     {
@@ -181,6 +212,64 @@ public class ExternalIntegrationController : ControllerBase
         if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
 
         var result = await _service.ProcessInvoiceAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    /// <summary>
+    /// Multipart variant for systems uploading invoices with large binary attachments
+    /// (>5MB where base64 encoding adds 33% overhead). Send the InboundInvoiceRequest
+    /// as a JSON string in the "invoice" field, plus IFormFile entries named "files".
+    ///
+    /// Example with curl:
+    ///   curl -X POST -H "X-Integration-Key: ..." \
+    ///        -F 'invoice={"DocumentDate":"2026-05-07",...}' \
+    ///        -F 'files=@receipt.pdf' \
+    ///        -F 'files=@photo.jpg' \
+    ///        https://api.example.com/api/companies/{cid}/integrations/invoices/multipart
+    /// </summary>
+    [HttpPost("invoices/multipart")]
+    [RequestSizeLimit(50 * 1024 * 1024)] // 50MB total payload
+    public async Task<ActionResult<InboundSyncResponse>> CreateInvoiceMultipart(
+        [FromForm] string invoice,
+        [FromForm(Name = "files")] List<IFormFile>? files)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        InboundInvoiceRequest? request;
+        try
+        {
+            request = System.Text.Json.JsonSerializer.Deserialize<InboundInvoiceRequest>(invoice,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new InboundSyncResponse(false,
+                $"Invalid JSON in 'invoice' field: {ex.Message}", null, null, null, null, null));
+        }
+        if (request == null)
+            return BadRequest(new InboundSyncResponse(false, "Empty invoice payload", null, null, null, null, null));
+
+        var result = await _service.ProcessInvoiceAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+
+        // Convert IFormFile list to InboundAttachment so the same validation pipeline
+        // (size cap, magic-byte check, MIME validation) runs uniformly.
+        if (files != null && files.Count > 0 && result.Success && result.DocumentId.HasValue)
+        {
+            var attachments = new List<InboundAttachment>();
+            foreach (var f in files)
+            {
+                if (f.Length == 0) continue;
+                using var ms = new MemoryStream();
+                await f.CopyToAsync(ms);
+                attachments.Add(new InboundAttachment(
+                    f.FileName, f.ContentType ?? "application/octet-stream",
+                    Convert.ToBase64String(ms.ToArray())));
+            }
+            result = await AttachFilesAsync(auth.Value.CompanyId, result, attachments);
+        }
+
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
@@ -201,6 +290,7 @@ public class ExternalIntegrationController : ControllerBase
         if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
 
         var result = await _service.ProcessCreditNoteAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
@@ -211,6 +301,7 @@ public class ExternalIntegrationController : ControllerBase
         if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
 
         var result = await _service.ProcessDebitNoteAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
@@ -221,6 +312,18 @@ public class ExternalIntegrationController : ControllerBase
         if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
 
         var result = await _service.ProcessExpenseAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("certificates-in-lieu")]
+    public async Task<ActionResult<InboundSyncResponse>> CreateCertificateInLieu([FromBody] InboundCertificateInLieuRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessCertificateInLieuAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
@@ -323,5 +426,80 @@ public class ExternalIntegrationController : ControllerBase
 
         if (string.IsNullOrEmpty(apiKey)) return null;
         return await _service.ValidateApiKeyAsync(apiKey);
+    }
+
+    /// <summary>
+    /// After a document is created from an inbound integration request, save any
+    /// attached files (base64-encoded) and link them to the new document. Failures
+    /// per-file are non-fatal — they're reported as warnings on the response so the
+    /// document still goes through even if one supporting image is malformed.
+    /// </summary>
+    private async Task<InboundSyncResponse> AttachFilesAsync(
+        Guid companyId, InboundSyncResponse result, List<InboundAttachment>? attachments)
+    {
+        if (!result.Success || result.DocumentId == null || attachments == null || attachments.Count == 0)
+            return result;
+
+        var attachmentIds = new List<Guid>();
+        var warnings = new List<string>();
+
+        foreach (var att in attachments)
+        {
+            if (string.IsNullOrEmpty(att.FileName) || string.IsNullOrEmpty(att.Base64Content))
+            {
+                warnings.Add($"Skipped: missing FileName or Base64Content");
+                continue;
+            }
+
+            byte[] fileBytes;
+            try
+            {
+                fileBytes = Convert.FromBase64String(att.Base64Content);
+            }
+            catch
+            {
+                warnings.Add($"{att.FileName}: invalid base64 — skipped");
+                continue;
+            }
+
+            // Reuse the same preflight that OCR uploads use: size cap, MIME validation,
+            // magic-byte check. Prevents external systems from uploading mislabeled or
+            // corrupt files that would later 404 in the UI.
+            var preflight = OcrPreprocessor.Check(fileBytes, att.ContentType ?? "", att.FileName);
+            if (!preflight.Ok)
+            {
+                warnings.Add($"{att.FileName}: {preflight.ErrorMessage} — skipped");
+                continue;
+            }
+
+            try
+            {
+                var shortGuid = Guid.NewGuid().ToString("N")[..8];
+                var fileName = $"Document_{result.DocumentId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{Path.GetExtension(att.FileName)}";
+                var storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
+                var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                await System.IO.File.WriteAllBytesAsync(fullPath, fileBytes);
+
+                // ApiKey-authenticated requests have no user identity — use a synthetic
+                // system user marker. Audit log will show "uploaded via integration".
+                var systemUserId = Guid.Empty;
+                var saved = await _attachmentService.UploadAsync(
+                    companyId, "Document", result.DocumentId.Value,
+                    fileName, att.FileName, att.ContentType ?? "application/octet-stream",
+                    fileBytes.Length, storagePath, systemUserId);
+                attachmentIds.Add(saved.Id);
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"{att.FileName}: save failed — {ex.Message}");
+            }
+        }
+
+        return result with
+        {
+            AttachmentIds = attachmentIds.Count > 0 ? attachmentIds : null,
+            Warnings = warnings.Count > 0 ? warnings : null,
+        };
     }
 }

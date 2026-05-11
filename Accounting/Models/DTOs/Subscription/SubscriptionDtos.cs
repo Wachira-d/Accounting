@@ -262,8 +262,13 @@ public record UsageDetailResponse(
     int JournalEntriesThisMonth,
     int MaxJournalEntriesPerMonth,
     DateTime UsageResetDate,
+    // OCR usage
+    int OcrPagesThisMonth = 0,
+    int MaxOcrPagesPerMonth = 0,
+    int OcrBonusPages = 0,
+    int OcrCreditPagesRemaining = 0,
     // Alerts
-    List<UsageAlert> Alerts);
+    List<UsageAlert>? Alerts = null);
 
 public record UsageUserInfo(
     Guid UserId,

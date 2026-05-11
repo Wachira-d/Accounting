@@ -23,11 +23,19 @@
     <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
     <PackageReference Include="QuestPDF" Version="2024.12.2" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
+    <!-- Embedded OCR — Tesseract via NuGet (cross-platform native libs included).
+         Used as the always-available local fallback when Azure DI is unavailable
+         or the optional Python ocr-service is not running. tessdata files for
+         Thai+English ship in wwwroot/tessdata. -->
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.5" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Thai administrative codes (TISI 1099) for ETDA e-Tax XML -->
     <EmbeddedResource Include="Resources\ThaiAdmin.csv" />
+    <!-- Tesseract language data files — copied to output so they ship with the app -->
+    <None Include="wwwroot\tessdata\*.traineddata" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

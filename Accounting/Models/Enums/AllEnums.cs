@@ -192,6 +192,7 @@ public enum DocumentType
     PurchaseInvoice = 8,      // ใบแจ้งหนี้ซื้อ
     Expense = 9,              // ใบบันทึกค่าใช้จ่าย
     PaymentVoucher = 13,      // ใบสำคัญจ่าย
+    CertificateInLieu = 15,   // ใบรับรองแทนใบเสร็จ
 }
 
 public enum DocumentStatus
