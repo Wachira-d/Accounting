@@ -14,6 +14,33 @@ public interface IOcrQuotaService
     /// <summary>Refunds a previously-consumed page when scan fails or is detected as duplicate.</summary>
     Task RefundAsync(Guid companyId);
     Task IncrementUsageAsync(Guid companyId);
+
+    /// <summary>
+    /// Checks whether the tenant's plan still has Azure DI budget left
+    /// this month. False means the cascade should skip Tier-1 Azure and
+    /// route directly to local OCR (when fallback is enabled).
+    /// Returns true when:
+    ///   • Plan has no Azure-specific quota (legacy single-budget mode), OR
+    ///   • Plan has Azure quota AND CurrentMonthAzureOcrPages &lt; budget.
+    /// </summary>
+    Task<bool> CanUseAzureAsync(Guid companyId);
+
+    /// <summary>
+    /// Atomically check + reserve one page from the engine-specific
+    /// counter. Returns false when the engine-specific quota is hit
+    /// (caller may then route to a different engine).
+    /// engineKind: "Azure" | "Local" | "TextLayer".
+    /// </summary>
+    Task<bool> TryConsumeForEngineAsync(Guid companyId, string engineKind);
+
+    /// <summary>
+    /// Post-hoc tracking — increment the engine-specific counter after
+    /// scan completes. Used when the cascade routed via TryConsumeAsync
+    /// (legacy total budget) and we need to record which engine the
+    /// page actually went to.
+    /// </summary>
+    Task RecordEngineUsageAsync(Guid companyId, string engineKind);
+
     Task<OcrCreditPurchaseResponse> PurchaseCreditsAsync(Guid companyId, int pages, string performedBy);
     Task<OcrCreditPurchaseResponse> ReviewCreditPurchaseAsync(Guid purchaseId, bool approve, string? notes, string performedBy);
     Task<List<OcrCreditPurchaseResponse>> GetPurchaseHistoryAsync(Guid companyId);

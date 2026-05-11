@@ -151,6 +151,99 @@ public class OcrQuotaService : IOcrQuotaService
     }
 
     // Kept for backward compat — delegates to atomic TryConsumeAsync
+    /// <summary>Engine-aware quota check. Returns true when Azure DI is
+    /// still allowed for this tenant this month.</summary>
+    public async Task<bool> CanUseAzureAsync(Guid companyId)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+            .Select(s => new { s.AzureOcrPagesPerMonth, s.CurrentMonthAzureOcrPages,
+                s.MaxOcrPagesPerMonth, s.CurrentMonthOcrPages })
+            .FirstOrDefaultAsync();
+        if (sub == null) return true;  // unknown plan — let the cascade decide
+        // Legacy single-budget mode: no Azure-specific cap → fall back to total budget
+        if (!sub.AzureOcrPagesPerMonth.HasValue)
+            return sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth;
+        // Engine-specific mode: 0 = no Azure at all (free plan)
+        return sub.CurrentMonthAzureOcrPages < sub.AzureOcrPagesPerMonth.Value;
+    }
+
+    public async Task<bool> TryConsumeForEngineAsync(Guid companyId, string engineKind)
+    {
+        var isAzure = string.Equals(engineKind, "Azure", StringComparison.OrdinalIgnoreCase)
+            || engineKind.StartsWith("Azure", StringComparison.OrdinalIgnoreCase);
+        using var tx = await _db.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.ReadCommitted);
+        try
+        {
+            var sub = await _db.Subscriptions
+                .FromSqlInterpolated($@"
+                    SELECT * FROM ""Subscriptions""
+                    WHERE ""CompanyId"" = {companyId}
+                      AND ""IsDeleted"" = false
+                    FOR UPDATE")
+                .FirstOrDefaultAsync();
+            if (sub == null) { await tx.RollbackAsync(); return false; }
+
+            // Lazy monthly reset
+            if (sub.UsageResetDate <= DateTime.UtcNow)
+            {
+                sub.CurrentMonthOcrPages = 0;
+                sub.CurrentMonthAzureOcrPages = 0;
+                sub.CurrentMonthLocalOcrPages = 0;
+                var now = DateTime.UtcNow;
+                sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
+            }
+
+            if (isAzure)
+            {
+                var azureBudget = sub.AzureOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth;
+                if (sub.CurrentMonthAzureOcrPages >= azureBudget)
+                {
+                    await tx.RollbackAsync();
+                    return false;
+                }
+                sub.CurrentMonthAzureOcrPages++;
+            }
+            else
+            {
+                var localBudget = sub.LocalOcrPagesPerMonth;
+                if (localBudget.HasValue && sub.CurrentMonthLocalOcrPages >= localBudget.Value)
+                {
+                    await tx.RollbackAsync();
+                    return false;
+                }
+                sub.CurrentMonthLocalOcrPages++;
+            }
+            sub.CurrentMonthOcrPages++;   // keep the legacy total in lockstep
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            _logger.LogInformation(
+                "OCR engine quota consumed CompanyId={C} Engine={E} AzureUsed={A} LocalUsed={L}",
+                companyId, engineKind, sub.CurrentMonthAzureOcrPages, sub.CurrentMonthLocalOcrPages);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            _logger.LogError(ex, "OCR engine quota consume failed");
+            throw;
+        }
+    }
+
+    public async Task RecordEngineUsageAsync(Guid companyId, string engineKind)
+    {
+        var isAzure = string.Equals(engineKind, "Azure", StringComparison.OrdinalIgnoreCase)
+            || engineKind.StartsWith("Azure", StringComparison.OrdinalIgnoreCase);
+        var sub = await _db.Subscriptions
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return;
+        if (isAzure) sub.CurrentMonthAzureOcrPages++;
+        else sub.CurrentMonthLocalOcrPages++;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task IncrementUsageAsync(Guid companyId)
     {
         await TryConsumeAsync(companyId);

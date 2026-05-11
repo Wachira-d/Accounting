@@ -25,6 +25,7 @@ public class OcrService : IOcrService
     private readonly AssociationRuleMiner _ruleMiner;
     private readonly TfIdfNaiveBayesClassifier _nbClassifier;
     private readonly RecurringExpenseDetector _recurringDetector;
+    private readonly Services.Interfaces.IOcrQuotaService _quota;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -35,7 +36,8 @@ public class OcrService : IOcrService
         EmbeddedTesseractOcrService embeddedOcr,
         AssociationRuleMiner ruleMiner,
         TfIdfNaiveBayesClassifier nbClassifier,
-        RecurringExpenseDetector recurringDetector)
+        RecurringExpenseDetector recurringDetector,
+        Services.Interfaces.IOcrQuotaService quota)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -49,6 +51,7 @@ public class OcrService : IOcrService
         _ruleMiner = ruleMiner;
         _nbClassifier = nbClassifier;
         _recurringDetector = recurringDetector;
+        _quota = quota;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -207,7 +210,19 @@ public class OcrService : IOcrService
             // Tier 1: Azure DI — runs whenever the admin has fully configured
             // it (toggle + endpoint + key), regardless of OcrProvider's value.
             // SKIPPED when Tier 0 (text-layer bypass) already succeeded.
-            if (extractedData == null && azureEnabled)
+            // Per-engine quota gate: even when Azure DI is enabled +
+            // configured, the tenant's subscription may have exhausted
+            // its Azure budget this month. When that happens, skip Tier 1
+            // and route directly to local OCR (when FallbackToLocal is on
+            // for this tenant). The legacy single-budget mode is unchanged.
+            bool azureQuotaAllowed = await _quota.CanUseAzureAsync(companyId);
+            if (!azureQuotaAllowed)
+            {
+                extractedData?.ReasoningTrace.Add("[Quota] Azure DI quota หมดสำหรับเดือนนี้ — fall back ไป local OCR");
+                _logger.LogInformation("Azure DI quota exhausted for {Cid} — routing to local cascade", companyId);
+            }
+
+            if (extractedData == null && azureEnabled && azureQuotaAllowed)
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)
@@ -215,6 +230,9 @@ public class OcrService : IOcrService
                     extractedText = azureResult.Text;
                     extractedData = azureResult.Data;
                     ocrEngineUsed = "AzureDI";
+                    // Engine-specific accounting: record the Azure page usage
+                    // so the next CanUseAzureAsync correctly reflects the new total.
+                    await _quota.RecordEngineUsageAsync(companyId, "Azure");
                 }
                 else
                 {
@@ -234,6 +252,7 @@ public class OcrService : IOcrService
                         extractedText = localResult.RawText;
                         extractedData = localResult.Data;
                         ocrEngineUsed = "LocalPython";
+                        await _quota.RecordEngineUsageAsync(companyId, "Local");
                         if (lastError != null)
                             extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {lastError} — used Python local pipeline");
                         else if (azureSkipReason != null)
@@ -254,6 +273,7 @@ public class OcrService : IOcrService
                 extractedText = embeddedResult.RawText;
                 extractedData = embeddedResult.Data;
                 ocrEngineUsed = "EmbeddedTesseract";
+                await _quota.RecordEngineUsageAsync(companyId, "Local");
                 if (lastError != null)
                     extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
                 else

@@ -43,7 +43,29 @@ public class Subscription : BaseEntity
     public long MaxStorageBytes { get; set; } = 100 * 1024 * 1024; // 100MB
     public int MaxOcrPagesPerMonth { get; set; } = 10;
 
-    // Usage Tracking
+    // ─── OCR engine-specific quotas ───
+    // Lets each subscription split its OCR budget between premium-tier
+    // Azure DI (which costs us per page) and free-tier local OCR (no
+    // marginal cost). MaxOcrPagesPerMonth above stays as the legacy
+    // total; the engine-specific fields below take effect when set.
+    //
+    // Common configurations:
+    //   • Free plan:    AzurePages=0, LocalPages=unlimited (null)
+    //                   → all scans use local OCR, no cloud cost.
+    //   • Basic:        AzurePages=50, LocalPages=unlimited
+    //                   → first 50 = Azure DI, then fall back to local.
+    //   • Enterprise:   AzurePages=5000, LocalPages=unlimited
+    //                   → primarily Azure DI, local for overflow.
+    // When AzurePages quota is hit AND FallbackToLocalWhenAzureExhausted
+    // is true, the cascade automatically routes to local engines instead
+    // of refusing the scan.
+    public int? AzureOcrPagesPerMonth { get; set; }        // null = use MaxOcrPagesPerMonth as Azure budget
+    public int? LocalOcrPagesPerMonth { get; set; }        // null = unlimited
+    public bool FallbackToLocalWhenAzureExhausted { get; set; } = true;
+    public int CurrentMonthAzureOcrPages { get; set; }
+    public int CurrentMonthLocalOcrPages { get; set; }
+
+    // Usage Tracking (legacy total — kept in sync with engine-specific counters)
     public int CurrentMonthDocuments { get; set; }
     public int CurrentMonthJournalEntries { get; set; }
     public long CurrentStorageUsed { get; set; }
@@ -171,6 +193,17 @@ public class PlanTemplate : BaseEntity
     public int MaxJournalEntriesPerMonth { get; set; }
     public long MaxStorageBytes { get; set; }
     public int MaxOcrPagesPerMonth { get; set; }
+
+    // ─── Per-engine OCR quotas (split Azure DI vs local) ───
+    // When set, override the single MaxOcrPagesPerMonth and let admins
+    // sell premium-OCR tiers without paying Azure costs for free users:
+    //   Free plan: AzurePages=0, LocalPages=null (unlimited)
+    //   Basic:     AzurePages=50,  LocalPages=null (50 Azure, then local)
+    //   Pro:       AzurePages=500, LocalPages=null
+    //   Enterprise:AzurePages=5000,LocalPages=null
+    public int? AzureOcrPagesPerMonth { get; set; }
+    public int? LocalOcrPagesPerMonth { get; set; }
+    public bool FallbackToLocalWhenAzureExhausted { get; set; } = true;
 
     // Features
     public FeatureFlags EnabledFeatures { get; set; }

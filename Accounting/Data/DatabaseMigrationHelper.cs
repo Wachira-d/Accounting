@@ -1220,6 +1220,31 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "OcrBonusPages" integer NOT NULL DEFAULT 0;
             """,
+            // Per-engine OCR quotas — split Azure DI vs local OCR
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "AzureOcrPagesPerMonth" integer NULL;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "LocalOcrPagesPerMonth" integer NULL;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "FallbackToLocalWhenAzureExhausted" boolean NOT NULL DEFAULT true;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CurrentMonthAzureOcrPages" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CurrentMonthLocalOcrPages" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "SubscriptionPlans" ADD COLUMN IF NOT EXISTS "AzureOcrPagesPerMonth" integer NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPlans" ADD COLUMN IF NOT EXISTS "LocalOcrPagesPerMonth" integer NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPlans" ADD COLUMN IF NOT EXISTS "FallbackToLocalWhenAzureExhausted" boolean NOT NULL DEFAULT true;
+            """,
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "OcrBonusExpiresAt" timestamp NULL;
             """,
