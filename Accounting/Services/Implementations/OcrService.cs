@@ -164,9 +164,50 @@ public class OcrService : IOcrService
             string? lastError = null;
             string? ocrEngineUsed = null;   // surfaced on scanResult.OcrEngine for the debug panel
 
+            // ─── Tier 0: text-born PDF bypass ───
+            // Before paying any OCR cost (Azure billable pages or local
+            // CPU), check whether the file is a digital PDF with an
+            // embedded text layer. Thai e-Tax e-Receipts, cloud-billing
+            // invoices, and any system-generated PDF have a usable text
+            // layer — extracting it directly is free, instant, and
+            // 100% accurate (no OCR errors at all). Image-only PDFs and
+            // sparsely-tagged scans fall through to the normal cascade.
+            if (file.ContentType?.Contains("pdf", StringComparison.OrdinalIgnoreCase) == true
+                || (file.OriginalFileName?.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ?? false))
+            {
+                try
+                {
+                    var pdfBytes = await File.ReadAllBytesAsync(file.StoragePath);
+                    var maxPages = siteSettings?.OcrMaxPagesPerScan ?? 10;
+                    var pdfResult = Ocr.PdfTextLayerExtractor.TryExtract(pdfBytes, maxPages);
+                    if (pdfResult.HasUsableText)
+                    {
+                        // Run the same rule-based ParseThaiDocument + SmartFieldExtractor
+                        // pipeline that the embedded Tesseract path uses, so all
+                        // downstream layers (gateway, role inferrer, category resolver,
+                        // ML stack) work identically on the bypassed text.
+                        var normalized = Ocr.ThaiTextNormalizer.Normalize(pdfResult.Text);
+                        extractedData = ParseThaiDocument(normalized);
+                        extractedText = pdfResult.Text;
+                        // Text-layer extraction is character-perfect — start
+                        // confidence high; gateway can knock it down if math doesn't add up.
+                        extractedData.Confidence = Math.Max(extractedData.Confidence, 0.95m);
+                        Ocr.SmartFieldExtractor.Enrich(extractedData, pdfResult.Text);
+                        ocrEngineUsed = "PdfTextLayer";
+                        extractedData.ReasoningTrace.Insert(0,
+                            $"[PdfTextLayer] bypass OCR — {pdfResult.Reason} ({pdfResult.CharsExtracted} chars)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "PdfTextLayer bypass failed — falling through to OCR cascade");
+                }
+            }
+
             // Tier 1: Azure DI — runs whenever the admin has fully configured
             // it (toggle + endpoint + key), regardless of OcrProvider's value.
-            if (azureEnabled)
+            // SKIPPED when Tier 0 (text-layer bypass) already succeeded.
+            if (extractedData == null && azureEnabled)
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)

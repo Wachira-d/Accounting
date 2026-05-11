@@ -35,6 +35,11 @@
          around SkiaSharp + PDFium; cross-platform native libs ship with NuGet.
          5.1.0 is the lowest version compatible with the API we use. -->
     <PackageReference Include="PDFtoImage" Version="5.1.0" />
+    <!-- Pure-C# PDF text-layer extractor. Used to bypass Azure DI / Tesseract
+         entirely for digital-born PDFs (Thai e-Tax invoices, system-generated
+         receipts) — extracting the embedded text layer directly is free,
+         instant, and 100% accurate. MIT-licensed, zero native deps. -->
+    <PackageReference Include="PdfPig" Version="0.1.9" />
   </ItemGroup>
 
   <ItemGroup>
