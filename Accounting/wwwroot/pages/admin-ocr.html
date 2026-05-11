@@ -91,8 +91,15 @@
             </div>
             <div style="margin-bottom:12px">
               <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">API Key</label>
-              <input type="password" id="azureApiKey" placeholder="ใส่ค่าใหม่เพื่อเปลี่ยน (ค่าเดิมถูกซ่อน)"
-                style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:monospace">
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="password" id="azureApiKey" placeholder="ใส่ค่าใหม่เพื่อเปลี่ยน (ค่าเดิมถูกซ่อน)"
+                  style="flex:1;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:monospace">
+                <button type="button" onclick="Page.clearAzureKey()" title="ลบ API Key ออกจากระบบ"
+                  style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;padding:8px 12px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px;white-space:nowrap">
+                  🗑️ ลบ Key
+                </button>
+              </div>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">เปลี่ยน Key: ใส่ค่าใหม่ + กดบันทึก / ลบทิ้ง: กดปุ่ม "ลบ Key"</div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
               <div>
@@ -133,8 +140,9 @@
           <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
             <label style="font-size:13px;font-weight:600">Provider:</label>
             <select id="testProvider" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
-              <option value="embedded">Embedded Tesseract</option>
-              <option value="azure">Azure DI</option>
+              <option value="embedded">Embedded Tesseract (in-process)</option>
+              <option value="azure">Azure DI (cloud)</option>
+              <option value="python">Python service (PaddleOCR+EasyOCR)</option>
             </select>
           </div>
 
@@ -161,7 +169,7 @@
             <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px;margin-bottom:12px">
               <strong style="font-size:13px;color:#78350f">🎓 สอนระบบ (Self-Learning)</strong>
               <p style="font-size:12px;color:#78350f;margin:4px 0 10px">
-                กรอกข้อมูลด้านล่างเพื่อสอน VendorIntel + ExpenseCategoryLearner สำหรับการสแกนครั้งถัดไป
+                สอนทั้ง <strong>ExpenseCategoryLearner</strong> (vendor + description → account) <strong>และ VendorIntelligence</strong> (ประเภทเอกสาร, WHT, payment terms) พร้อมกัน
               </p>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
                 <input type="text" id="trainVendorName" placeholder="ชื่อผู้ขาย" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
@@ -169,10 +177,23 @@
               </div>
               <div style="display:grid;grid-template-columns:1fr 140px;gap:8px;margin-bottom:8px">
                 <input type="text" id="trainDescription" placeholder="คำอธิบายรายการ (เช่น ค่าน้ำมัน)" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
-                <input type="text" id="trainAccountCode" placeholder="รหัสบัญชี" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+                <input type="text" id="trainAccountCode" placeholder="รหัสบัญชี (เช่น 5402)" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 100px 100px 80px;gap:8px;margin-bottom:8px">
+                <select id="trainDocType" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+                  <option value="">— ประเภทเอกสาร (ไม่ระบุ) —</option>
+                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+                  <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
+                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                  <option value="PurchaseOrder">ใบสั่งซื้อ</option>
+                  <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                </select>
+                <input type="number" id="trainWhtRate" placeholder="WHT %" min="0" max="15" step="1" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+                <input type="number" id="trainPaymentTerms" placeholder="วันเครดิต" min="0" max="365" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+                <input type="number" id="trainWeight" placeholder="น้ำหนัก" value="1" min="1" max="50" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
               </div>
               <button onclick="Page.train()" style="background:#d97706;color:white;border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px">
-                ✓ สอนระบบ
+                ✓ สอนระบบ (ทั้ง 2 learner)
               </button>
             </div>
 
@@ -263,6 +284,22 @@
         }
       },
 
+      async clearAzureKey() {
+        if (!confirm('ลบ Azure DI API Key ที่บันทึกไว้? — Azure DI จะใช้ไม่ได้จนกว่าจะใส่ Key ใหม่')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.put(`/api/companies/${cid}/ocr/admin/config`, {
+            azureDiApiKey: '',  // empty string explicitly clears
+            azureDiEnabled: false,  // also disable since Azure can't work without a key
+          });
+          if (!res?.success) throw new Error(res?.message);
+          alert('ลบ Key เรียบร้อย');
+          await this.loadConfig();
+        } catch (e) {
+          alert('ลบไม่สำเร็จ: ' + e.message);
+        }
+      },
+
       async saveConfig() {
         const cid = Layout.getCompanyId();
         const body = {
@@ -350,11 +387,18 @@
 
       async train() {
         const cid = Layout.getCompanyId();
+        const whtRate = parseFloat(document.getElementById('trainWhtRate').value);
+        const paymentTerms = parseInt(document.getElementById('trainPaymentTerms').value);
+        const weight = parseInt(document.getElementById('trainWeight').value) || 1;
         const body = {
           vendorName: document.getElementById('trainVendorName').value.trim() || null,
           vendorTaxId: document.getElementById('trainVendorTaxId').value.trim() || null,
           description: document.getElementById('trainDescription').value.trim() || null,
           accountCode: document.getElementById('trainAccountCode').value.trim(),
+          documentType: document.getElementById('trainDocType').value || null,
+          whtRate: isNaN(whtRate) ? null : whtRate,
+          paymentTermsDays: isNaN(paymentTerms) ? null : paymentTerms,
+          weight,
         };
         if (!body.accountCode) { alert('กรุณากรอกรหัสบัญชี'); return; }
         if (!body.vendorName && !body.vendorTaxId) { alert('กรุณากรอกชื่อหรือเลขประจำตัวผู้ขาย'); return; }

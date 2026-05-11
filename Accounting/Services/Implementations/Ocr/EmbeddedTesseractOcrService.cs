@@ -109,6 +109,19 @@ public class EmbeddedTesseractOcrService : IDisposable
         if (imageBytes.Length == 0)
             return new EmbeddedOcrResult(false, "", 0m, "Empty file");
 
+        // Tesseract + ImageSharp do NOT read PDFs natively. Reject upfront with a
+        // clear, actionable message — silent garbage output would be far worse
+        // than telling the user to use Azure DI or the Python service for PDFs.
+        // Detection: content-type + magic bytes (%PDF- at offset 0).
+        var isPdf = (contentType ?? "").Equals("application/pdf", StringComparison.OrdinalIgnoreCase)
+            || (fileName ?? "").EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+            || (imageBytes.Length >= 4 && imageBytes[0] == 0x25 && imageBytes[1] == 0x50 && imageBytes[2] == 0x44 && imageBytes[3] == 0x46);
+        if (isPdf)
+        {
+            return new EmbeddedOcrResult(false, "", 0m,
+                "Embedded Tesseract รองรับเฉพาะรูปภาพ (JPG/PNG/BMP/TIFF/WebP) — สำหรับ PDF กรุณาเปิดใช้ Azure DI หรือ Python ocr-service");
+        }
+
         // Preprocess: convert to grayscale + upscale small images. Tesseract LSTM
         // is sensitive to resolution — at <300 DPI it loses accuracy. We upscale
         // anything narrower than 1500px to give the model more pixels to work with.

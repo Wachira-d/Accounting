@@ -136,6 +136,98 @@ public class VendorIntelligenceService
     // ─────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Direct training from admin UI — seed/update the per-vendor cache without
+    /// requiring an approved Document. Used by the admin OCR console to teach
+    /// "vendor X usually issues PurchaseInvoice with WHT 3% booked to 5402"
+    /// before any real documents exist.
+    ///
+    /// Differs from TrainFromDocumentAsync:
+    ///   • No document watermark (admin can re-call to update; not idempotent
+    ///     per-document — it's per-vendor)
+    ///   • Increments counts by the supplied weight so admin can express
+    ///     confidence (default 1 = "I've seen this once")
+    ///   • Bypasses Status/PurchaseSideType filters — admin knows what they
+    ///     want to teach
+    /// </summary>
+    public async Task TrainFromAdminAsync(
+        Guid companyId,
+        string? vendorTaxId,
+        string? vendorName,
+        Models.Enums.DocumentType? documentType,
+        string? debitAccountCode,
+        string? debitAccountName,
+        decimal? whtRate,
+        int? paymentTermsDays,
+        int weight = 1)
+    {
+        var key = NormalizeVendorKey(vendorTaxId, vendorName);
+        if (string.IsNullOrEmpty(key) || weight < 1) return;
+
+        var intel = await _db.OcrVendorIntelligence
+            .FirstOrDefaultAsync(v => v.CompanyId == companyId && v.VendorKey == key && !v.IsDeleted);
+
+        if (intel == null)
+        {
+            intel = new OcrVendorIntelligence
+            {
+                CompanyId = companyId,
+                VendorKey = key,
+                VendorName = vendorName,
+                VendorTaxId = vendorTaxId,
+                CreatedBy = "admin-training",
+            };
+            _db.OcrVendorIntelligence.Add(intel);
+        }
+
+        // ─── DocumentType ───
+        if (documentType.HasValue)
+        {
+            var dtBreakdown = ParseBreakdown(intel.DocumentTypeBreakdownJson);
+            var dtKey = documentType.Value.ToString();
+            dtBreakdown[dtKey] = dtBreakdown.GetValueOrDefault(dtKey) + weight;
+            intel.DocumentTypeBreakdownJson = JsonSerializer.Serialize(dtBreakdown);
+            var topDt = dtBreakdown.OrderByDescending(kv => kv.Value).First();
+            intel.MostCommonDocumentType = topDt.Key;
+            intel.MostCommonDocumentTypeCount = topDt.Value;
+        }
+
+        // ─── Debit account ───
+        if (!string.IsNullOrEmpty(debitAccountCode))
+        {
+            var debitBreakdown = ParseBreakdown(intel.DebitAccountBreakdownJson);
+            debitBreakdown[debitAccountCode] = debitBreakdown.GetValueOrDefault(debitAccountCode) + weight;
+            intel.DebitAccountBreakdownJson = JsonSerializer.Serialize(debitBreakdown);
+            var topAcc = debitBreakdown.OrderByDescending(kv => kv.Value).First();
+            intel.MostCommonDebitAccountCode = topAcc.Key;
+            intel.MostCommonDebitAccountCount = topAcc.Value;
+            if (topAcc.Key == debitAccountCode && !string.IsNullOrEmpty(debitAccountName))
+                intel.MostCommonDebitAccountName = debitAccountName;
+        }
+
+        // ─── WHT ───
+        if (whtRate.HasValue && whtRate.Value > 0)
+        {
+            intel.WhtUsageCount += weight;
+            if (whtRate.Value is 1m or 2m or 3m or 5m or 10m or 15m)
+                intel.TypicalWhtRate = whtRate;
+        }
+
+        intel.TotalDocuments += weight;
+        intel.TypicallyHasWht = intel.TotalDocuments > 0 && (decimal)intel.WhtUsageCount / intel.TotalDocuments >= 0.5m;
+
+        if (paymentTermsDays.HasValue && paymentTermsDays.Value > 0)
+            intel.TypicalPaymentTermsDays = paymentTermsDays;
+
+        intel.LastTrainedAt = DateTime.UtcNow;
+        intel.UpdatedAt = DateTime.UtcNow;
+        intel.UpdatedBy = "admin-training";
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Admin trained vendor intelligence: company={C} vendor={V} weight={W}",
+            companyId, key, weight);
+    }
+
+    /// <summary>
     /// Best-effort training wrapper used by all approval paths (DocumentService,
     /// SignatureApprovalService, IntegrationService, ECommerceService, MobileApi).
     /// Catches and logs any exception — vendor intelligence is a derived cache

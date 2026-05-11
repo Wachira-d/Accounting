@@ -213,6 +213,7 @@ public class OcrController : ControllerBase
     /// Ready (eng+tha)" etc.
     /// </summary>
     [HttpGet("admin/config")]
+    [Authorize(Roles = "SystemAdmin,Admin")]
     public async Task<ActionResult<ApiResponse<object>>> GetOcrConfig(
         Guid companyId,
         [FromServices] Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService embeddedOcr)
@@ -250,6 +251,7 @@ public class OcrController : ControllerBase
     /// changed — null/missing fields are left as-is.
     /// </summary>
     [HttpPut("admin/config")]
+    [Authorize(Roles = "SystemAdmin,Admin")]
     public async Task<ActionResult<ApiResponse<object>>> UpdateOcrConfig(
         Guid companyId,
         [FromBody] UpdateOcrConfigRequest request)
@@ -287,10 +289,12 @@ public class OcrController : ControllerBase
     /// they're testing a sample file that wasn't saved as a real scan.
     /// </summary>
     [HttpPost("admin/train-from-sample")]
+    [Authorize(Roles = "SystemAdmin,Admin")]
     public async Task<ActionResult<ApiResponse<object>>> TrainFromSample(
         Guid companyId,
         [FromBody] AdminTrainRequest request,
-        [FromServices] Accounting.Services.Implementations.Ocr.ExpenseCategoryLearner learner)
+        [FromServices] Accounting.Services.Implementations.Ocr.ExpenseCategoryLearner learner,
+        [FromServices] Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         if (string.IsNullOrWhiteSpace(request.VendorName) && string.IsNullOrWhiteSpace(request.VendorTaxId))
             return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุชื่อหรือเลขประจำตัวผู้ขาย"));
@@ -302,6 +306,7 @@ public class OcrController : ControllerBase
             .Select(a => a.AccountName)
             .FirstOrDefaultAsync();
 
+        // 1. Train ExpenseCategoryLearner (per vendor + description → account)
         await learner.RecordAsync(
             companyId,
             request.VendorTaxId,
@@ -310,14 +315,44 @@ public class OcrController : ControllerBase
             request.AccountCode,
             accountName);
 
-        return Ok(new ApiResponse<object>(true, new { accountName }, $"สอนระบบเรียบร้อย: ผู้ขาย '{request.VendorName ?? request.VendorTaxId}' + '{request.Description}' → {request.AccountCode}"));
+        // 2. Train VendorIntelligence (per-vendor habits — DocumentType, WHT, etc.)
+        // Parse DocumentType if supplied; fall back to no-op if invalid.
+        Models.Enums.DocumentType? docType = null;
+        if (!string.IsNullOrEmpty(request.DocumentType)
+            && Enum.TryParse<Models.Enums.DocumentType>(request.DocumentType, ignoreCase: true, out var dt))
+            docType = dt;
+
+        await vendorIntel.TrainFromAdminAsync(
+            companyId,
+            request.VendorTaxId,
+            request.VendorName,
+            docType,
+            request.AccountCode,
+            accountName,
+            request.WhtRate,
+            request.PaymentTermsDays,
+            weight: Math.Max(1, request.Weight ?? 1));
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            accountName,
+            trainedDocumentType = docType?.ToString(),
+            whtRate = request.WhtRate,
+            paymentTermsDays = request.PaymentTermsDays
+        }, $"สอนระบบเรียบร้อย: ผู้ขาย '{request.VendorName ?? request.VendorTaxId}' → {request.AccountCode}{(docType.HasValue ? $" + {docType.Value}" : "")}{(request.WhtRate.HasValue ? $" + WHT {request.WhtRate}%" : "")}"));
     }
 
     public record AdminTrainRequest(
         string? VendorName,
         string? VendorTaxId,
         string? Description,
-        string AccountCode);
+        string AccountCode,
+        // Extended fields — let admin teach VendorIntelligence habits, not just
+        // the per-line account mapping. All optional.
+        string? DocumentType,        // "PurchaseInvoice" | "Expense" | "CertificateInLieu" | ...
+        decimal? WhtRate,            // 1, 2, 3, 5, 10, 15
+        int? PaymentTermsDays,       // typical credit period
+        int? Weight);                // confidence — admin can say "I've seen this 5 times"
 
     /// <summary>
     /// Admin test-scan endpoint — runs the full OCR pipeline on an uploaded file
@@ -327,6 +362,7 @@ public class OcrController : ControllerBase
     /// </summary>
     [HttpPost("admin/test-scan")]
     [RequestSizeLimit(10 * 1024 * 1024)]
+    [Authorize(Roles = "SystemAdmin,Admin")]
     public async Task<ActionResult<ApiResponse<object>>> AdminTestScan(
         Guid companyId,
         IFormFile file,
@@ -384,9 +420,50 @@ public class OcrController : ControllerBase
                     break;
 
                 case "python":
+                {
                     providerUsed = "Python local service";
-                    error = "Python test mode — please use the existing OCR upload flow (uses Ocr:LocalServiceUrl)";
+                    var pyUrl = HttpContext.RequestServices.GetService<IConfiguration>()?["Ocr:LocalServiceUrl"];
+                    if (string.IsNullOrEmpty(pyUrl))
+                    {
+                        error = "Ocr:LocalServiceUrl ไม่ได้ตั้งค่าใน appsettings.json — Python service ใช้งานไม่ได้";
+                        break;
+                    }
+                    try
+                    {
+                        var client = HttpContext.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient();
+                        client.Timeout = TimeSpan.FromSeconds(60);
+                        using var content = new MultipartFormDataContent();
+                        var byteContent = new ByteArrayContent(fileBytes);
+                        byteContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
+                        content.Add(byteContent, "file", file.FileName ?? "upload");
+                        var resp = await client.PostAsync($"{pyUrl.TrimEnd('/')}/ocr", content);
+                        var body = await resp.Content.ReadAsStringAsync();
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            error = $"Python service HTTP {(int)resp.StatusCode}: {body.Substring(0, Math.Min(body.Length, 200))}";
+                            break;
+                        }
+                        using var doc = System.Text.Json.JsonDocument.Parse(body);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("text", out var t)) rawText = t.GetString() ?? "";
+                        else if (root.TryGetProperty("raw_text", out var rt)) rawText = rt.GetString() ?? "";
+                        if (root.TryGetProperty("confidence", out var c) && c.ValueKind == System.Text.Json.JsonValueKind.Number)
+                            confidence = (decimal)c.GetDouble();
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        error = $"เชื่อมต่อ Python service ไม่ได้ ({pyUrl}): {ex.Message}";
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        error = $"Python service timeout (URL: {pyUrl})";
+                    }
+                    catch (Exception ex)
+                    {
+                        error = $"Python service error: {ex.Message}";
+                    }
                     break;
+                }
 
                 default:
                     error = $"Unknown provider: {forceProvider}";
@@ -478,6 +555,7 @@ public class OcrController : ControllerBase
     /// vendors that already have history. Idempotent — safe to re-run.
     /// </summary>
     [HttpPost("intelligence/backfill")]
+    [Authorize(Roles = "SystemAdmin,Admin")]
     public async Task<ActionResult<ApiResponse<object>>> BackfillVendorIntelligence(
         Guid companyId,
         [FromServices] Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
@@ -493,6 +571,7 @@ public class OcrController : ControllerBase
     /// debugging "why did OCR pre-fill account X for this vendor?"
     /// </summary>
     [HttpGet("intelligence/vendor")]
+    [Authorize(Roles = "SystemAdmin,Admin")]
     public async Task<ActionResult<ApiResponse<object>>> GetVendorIntelligence(
         Guid companyId, [FromQuery] string? taxId, [FromQuery] string? name)
     {

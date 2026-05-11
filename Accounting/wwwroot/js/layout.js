@@ -179,8 +179,13 @@ const Layout = {
     const nav = document.querySelector('.sidebar-nav');
     if (!nav) return;
     const hidden = this.getHiddenMenuItems();
+    const isAdminUser = this.myPermissions?.isOwnerOrAdmin === true;
     const items = this.navItems.filter(item =>
-      (!item.id || !hidden.includes(item.id)) && (!item.id || this.hasMenuAccess(item.id))
+      (!item.id || !hidden.includes(item.id))
+      && (!item.id || this.hasMenuAccess(item.id))
+      // adminOnly items are hidden from non-admin users in the sidebar.
+      // The API itself enforces role authorization (defense in depth).
+      && (!item.adminOnly || isAdminUser)
     );
     const visible = [];
     for (let i = 0; i < items.length; i++) {
@@ -411,7 +416,7 @@ const Layout = {
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools' },
     { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan' },
-    { id: 'admin-ocr', label: 'OCR Admin', icon: '⚙️', href: '/pages/admin-ocr.html', feature: 'AI_Features', _i18nKey: 'nav.adminOcr' },
+    { id: 'admin-ocr', label: 'OCR Admin', icon: '⚙️', href: '/pages/admin-ocr.html', feature: 'AI_Features', adminOnly: true, _i18nKey: 'nav.adminOcr' },
 
     { section: 'ตั้งค่า' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team' },
@@ -444,7 +449,7 @@ const Layout = {
         </select>
       </div>
       <nav class="sidebar-nav">
-        ${this.navItems.filter(item => !item.id || this.hasMenuAccess(item.id)).map(item => this._renderNavItem(item)).join('')}
+        ${this.navItems.filter(item => (!item.id || this.hasMenuAccess(item.id)) && (!item.adminOnly || this.myPermissions?.isOwnerOrAdmin === true)).map(item => this._renderNavItem(item)).join('')}
       </nav>
       <div class="sidebar-footer">
         <a href="#" class="nav-item" onclick="Layout.logout();return false"><span class="icon">🚪</span>${this.esc(tLogout)}</a>
