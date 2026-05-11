@@ -1386,6 +1386,17 @@ public static class DatabaseMigrationHelper
             ON "SystemOcrVendorIntelligence" ("VendorKey");
             """,
 
+            // Industry-similarity weighting: track which industries
+            // contributed to each cross-tenant aggregate so predict-time
+            // consumers can boost rows whose contributing tenants share
+            // their IndustryType.
+            """
+            ALTER TABLE "SystemOcrCategoryMappings" ADD COLUMN IF NOT EXISTS "IndustryBreakdownJson" text NULL;
+            """,
+            """
+            ALTER TABLE "SystemOcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "IndustryBreakdownJson" text NULL;
+            """,
+
             // ===== SystemOcrAssociationRules: basket-analysis output =====
             // Discovered association rules from system-wide Apriori mining over
             // approved-document transactions. Refreshed by an admin-triggered

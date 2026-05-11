@@ -324,6 +324,13 @@ public class SystemOcrCategoryMapping : BaseEntity
     public int TimesUsed { get; set; } = 1;
     public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;
     public Guid? TrainedByUserId { get; set; }
+
+    // Industry breakdown of contributing tenants: e.g.
+    //   {"Manufacturing": 5, "Trading": 3, "Service": 2}
+    // Used at predict time to weight this row higher when the consuming
+    // tenant's IndustryType matches the dominant industry of contributors.
+    // Null / empty = universal (seeded data or industry-mixed sources).
+    public string? IndustryBreakdownJson { get; set; }
 }
 
 /// <summary>
@@ -363,6 +370,11 @@ public class SystemOcrVendorIntelligence : BaseEntity
 
     public DateTime LastTrainedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastDocumentDate { get; set; }
+
+    // Industry breakdown of contributing tenants — same semantics as
+    // SystemOcrCategoryMapping.IndustryBreakdownJson. Lets the query-
+    // time consumer weight this row toward same-industry similarity.
+    public string? IndustryBreakdownJson { get; set; }
 }
 
 /// <summary>

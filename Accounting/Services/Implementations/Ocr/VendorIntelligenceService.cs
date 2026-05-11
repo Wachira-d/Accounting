@@ -64,11 +64,23 @@ public class VendorIntelligenceService
         // No tenant row → fall back to the SystemAdmin-trained knowledge base
         // (system-wide row, no CompanyId). Tenant data always wins when present.
         var isSystemFallback = false;
+        decimal industryWeight = 1.0m;  // 1.0 = neutral; <1 = cross-industry; >1 = same-industry
         if (intel == null || intel.TotalDocuments == 0)
         {
             var sysIntel = await _db.SystemOcrVendorIntelligence
                 .FirstOrDefaultAsync(v => v.VendorKey == key && !v.IsDeleted);
             if (sysIntel == null || sysIntel.TotalDocuments == 0) return prediction;
+
+            // Industry-similarity weighting: when the contributing tenants'
+            // IndustryType breakdown matches the consuming tenant's
+            // industry, we trust the aggregate more. Cross-industry data
+            // gets dampened — manufacturing vendor patterns don't
+            // necessarily apply to a hotel, and vice versa.
+            var ourIndustry = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId && !c.IsDeleted)
+                .Select(c => c.IndustryType.ToString())
+                .FirstOrDefaultAsync() ?? "";
+            industryWeight = ComputeIndustryWeight(sysIntel.IndustryBreakdownJson, ourIndustry);
 
             intel = new OcrVendorIntelligence
             {
@@ -102,10 +114,11 @@ public class VendorIntelligenceService
         if (!string.IsNullOrEmpty(intel.MostCommonDocumentType) && intel.TotalDocuments > 0)
         {
             var pct = (decimal)intel.MostCommonDocumentTypeCount / intel.TotalDocuments;
-            // Confidence = dominance × sample-size factor
-            // 1 sample → max 0.5; 5 samples → max 0.83; 20 samples → max 0.95
+            // Confidence = dominance × sample-size factor × industry weight
+            // industry weight only applies when we fell back to the system
+            // table; for direct tenant intel it stays at 1.0 (own data).
             var sizeFactor = 1m - (1m / (1m + 0.4m * intel.TotalDocuments));
-            prediction.DocumentTypeConfidence = pct * sizeFactor;
+            prediction.DocumentTypeConfidence = pct * sizeFactor * industryWeight;
             if (Enum.TryParse<DocumentType>(intel.MostCommonDocumentType, out var dt))
             {
                 prediction.DocumentType = dt;
@@ -119,7 +132,7 @@ public class VendorIntelligenceService
         {
             var pct = (decimal)intel.MostCommonDebitAccountCount / intel.TotalDocuments;
             var sizeFactor = 1m - (1m / (1m + 0.4m * intel.TotalDocuments));
-            prediction.DebitAccountConfidence = pct * sizeFactor;
+            prediction.DebitAccountConfidence = pct * sizeFactor * industryWeight;
             prediction.DebitAccountCode = intel.MostCommonDebitAccountCode;
             prediction.DebitAccountName = intel.MostCommonDebitAccountName;
             prediction.Reasons.Add(
@@ -182,7 +195,15 @@ public class VendorIntelligenceService
 
         if (isSystemFallback)
         {
-            prediction.Reasons.Add("ℹ️ ข้อมูลจากระบบกลาง — บริษัทยังไม่มีประวัติกับผู้ขายรายนี้");
+            var weightNote = industryWeight switch
+            {
+                >= 1.4m => " — contributors ส่วนใหญ่ industry เดียวกับเรา (×{weight:F2})",
+                >= 1.1m => " — มี contributors industry เดียวกับเราบางส่วน (×{weight:F2})",
+                >= 0.9m => " — neutral industry weighting",
+                _ => " — contributors industry ต่างจากเรา (dampened ×{weight:F2})"
+            };
+            prediction.Reasons.Add($"ℹ️ ข้อมูลจากระบบกลาง — บริษัทยังไม่มีประวัติกับผู้ขายรายนี้" +
+                weightNote.Replace("{weight:F2}", industryWeight.ToString("F2")));
         }
 
         // Surface learned patterns so OcrService can use them downstream
@@ -801,6 +822,24 @@ public class VendorIntelligenceService
         if (!string.IsNullOrEmpty(name))
             return $"name:{name.Trim().ToLowerInvariant()}";
         return "";
+    }
+
+    /// <summary>Industry-similarity weighting for system-fallback rows.
+    /// Returns 0.5 (cross-industry) to 1.5 (all same-industry); 1.0 = neutral
+    /// when no breakdown is present (seeded / universal data).</summary>
+    private static decimal ComputeIndustryWeight(string? breakdownJson, string ourIndustryName)
+    {
+        if (string.IsNullOrEmpty(breakdownJson)) return 1.0m;
+        try
+        {
+            var breakdown = JsonSerializer.Deserialize<Dictionary<string, int>>(breakdownJson);
+            if (breakdown == null || breakdown.Count == 0) return 1.0m;
+            int total = breakdown.Values.Sum();
+            if (total <= 0) return 1.0m;
+            int sameCount = breakdown.GetValueOrDefault(ourIndustryName, 0);
+            return 0.5m + (decimal)sameCount / total;
+        }
+        catch { return 1.0m; }
     }
 
     private static Dictionary<string, int> ParseBreakdown(string? json)

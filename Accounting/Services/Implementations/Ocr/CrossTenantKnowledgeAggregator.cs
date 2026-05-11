@@ -107,6 +107,14 @@ public class CrossTenantKnowledgeAggregator
     private async Task<int> AggregateCategoryMappingsAsync(
         HashSet<Guid> companyIds, int minTenants, CancellationToken ct)
     {
+        // Pre-load each participating company's IndustryType so the
+        // aggregate can carry an industry breakdown — consumers use this
+        // to weight rows toward same-industry similarity at predict time.
+        var companyIndustry = await _db.Companies.AsNoTracking()
+            .Where(c => companyIds.Contains(c.Id) && !c.IsDeleted)
+            .Select(c => new { c.Id, c.IndustryType })
+            .ToDictionaryAsync(c => c.Id, c => c.IndustryType, ct);
+
         // Pull every per-tenant mapping in one go. Bounded by the size of
         // the per-tenant table per company — typically a few thousand
         // even for big companies. The aggregation happens in memory.
@@ -119,7 +127,7 @@ public class CrossTenantKnowledgeAggregator
             .ToListAsync(ct);
 
         // Group by the universal triple (vendor, keyword, account); count
-        // distinct tenants per group; sum TimesUsed.
+        // distinct tenants per group; sum TimesUsed; build industry breakdown.
         var grouped = rows
             .GroupBy(r => new { r.VendorKey, r.DescriptionKeyword, r.AccountCode })
             .Where(g => g.Select(r => r.CompanyId).Distinct().Count() >= minTenants)
@@ -127,13 +135,14 @@ public class CrossTenantKnowledgeAggregator
                 g.Key.VendorKey, g.Key.DescriptionKeyword, g.Key.AccountCode,
                 TenantCount = g.Select(r => r.CompanyId).Distinct().Count(),
                 TotalUsed = g.Sum(r => r.TimesUsed),
-                // Pick the most-frequently-supplied account name across the
-                // contributing tenants — preserves the most "popular" label.
                 AccountName = g.Where(r => !string.IsNullOrEmpty(r.AccountName))
                     .GroupBy(r => r.AccountName!)
                     .OrderByDescending(x => x.Sum(y => y.TimesUsed))
-                    .Select(x => x.Key)
-                    .FirstOrDefault(),
+                    .Select(x => x.Key).FirstOrDefault(),
+                IndustryBreakdown = g.Select(r => r.CompanyId).Distinct()
+                    .Where(id => companyIndustry.ContainsKey(id))
+                    .GroupBy(id => companyIndustry[id].ToString())
+                    .ToDictionary(x => x.Key, x => x.Count()),
             })
             .ToList();
 
@@ -141,6 +150,8 @@ public class CrossTenantKnowledgeAggregator
         foreach (var g in grouped)
         {
             if (ct.IsCancellationRequested) break;
+            var industryJson = g.IndustryBreakdown.Count > 0
+                ? JsonSerializer.Serialize(g.IndustryBreakdown) : null;
             var existing = await _db.SystemOcrCategoryMappings.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(s => s.VendorKey == g.VendorKey
                     && s.DescriptionKeyword == g.DescriptionKeyword
@@ -155,19 +166,18 @@ public class CrossTenantKnowledgeAggregator
                     AccountName = g.AccountName,
                     TimesUsed = g.TotalUsed,
                     LastUsedAt = DateTime.UtcNow,
+                    IndustryBreakdownJson = industryJson,
                     CreatedBy = "cross-tenant-aggregator",
                 });
                 promoted++;
             }
             else if (!existing.IsDeleted)
             {
-                // Refresh TimesUsed with the latest aggregate sum. Use the
-                // MAX of (existing, new) to avoid regressing when one tenant
-                // soft-deletes their row between runs.
                 if (g.TotalUsed > existing.TimesUsed)
                 {
                     existing.TimesUsed = g.TotalUsed;
                     existing.LastUsedAt = DateTime.UtcNow;
+                    existing.IndustryBreakdownJson = industryJson;
                     existing.UpdatedAt = DateTime.UtcNow;
                     existing.UpdatedBy = "cross-tenant-aggregator";
                     promoted++;
@@ -184,6 +194,11 @@ public class CrossTenantKnowledgeAggregator
     private async Task<int> AggregateVendorIntelligenceAsync(
         HashSet<Guid> companyIds, int minTenants, CancellationToken ct)
     {
+        var companyIndustry = await _db.Companies.AsNoTracking()
+            .Where(c => companyIds.Contains(c.Id) && !c.IsDeleted)
+            .Select(c => new { c.Id, c.IndustryType })
+            .ToDictionaryAsync(c => c.Id, c => c.IndustryType, ct);
+
         var rows = await _db.OcrVendorIntelligence.AsNoTracking()
             .Where(v => !v.IsDeleted && companyIds.Contains(v.CompanyId)
                 && v.TotalDocuments > 0)
@@ -235,6 +250,14 @@ public class CrossTenantKnowledgeAggregator
             var topDt = combinedDocType.OrderByDescending(kv => kv.Value).FirstOrDefault();
             var topDebit = combinedDebit.OrderByDescending(kv => kv.Value).FirstOrDefault();
 
+            // Build industry breakdown from the distinct CompanyIds in this group
+            var industryBreakdown = g.Select(v => v.CompanyId).Distinct()
+                .Where(id => companyIndustry.ContainsKey(id))
+                .GroupBy(id => companyIndustry[id].ToString())
+                .ToDictionary(x => x.Key, x => x.Count());
+            var industryJson = industryBreakdown.Count > 0
+                ? JsonSerializer.Serialize(industryBreakdown) : null;
+
             var first = g.First();
             var existing = await _db.SystemOcrVendorIntelligence.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(s => s.VendorKey == g.Key, ct);
@@ -257,6 +280,7 @@ public class CrossTenantKnowledgeAggregator
                     TypicalWhtRate = wAvgWhtRate.HasValue ? Math.Round(wAvgWhtRate.Value, 0) : (decimal?)null,
                     WhtUsageCount = whtCount,
                     TypicalPaymentTermsDays = paymentTermsCount > 0 ? paymentTermsSum / paymentTermsCount : null,
+                    IndustryBreakdownJson = industryJson,
                     LastTrainedAt = DateTime.UtcNow,
                     CreatedBy = "cross-tenant-aggregator",
                 });
@@ -280,6 +304,7 @@ public class CrossTenantKnowledgeAggregator
                     existing.WhtUsageCount = whtCount;
                     existing.TypicalPaymentTermsDays = paymentTermsCount > 0
                         ? paymentTermsSum / paymentTermsCount : existing.TypicalPaymentTermsDays;
+                    existing.IndustryBreakdownJson = industryJson;
                     existing.LastTrainedAt = DateTime.UtcNow;
                     existing.UpdatedAt = DateTime.UtcNow;
                     existing.UpdatedBy = "cross-tenant-aggregator";

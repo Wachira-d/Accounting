@@ -115,6 +115,18 @@ public class ExpenseCategoryLearner
         // mappings (trained by SystemAdmin in /admin/ocr-config). Confidence is
         // halved relative to per-tenant signals because the system data reflects
         // generic best-practice, not this company's actual booking habits.
+        // System-tier rows carry an IndustryBreakdownJson that records
+        // which industries the contributing tenants belonged to. We
+        // weight each row by how strongly its contributors share OUR
+        // tenant's industry — same-industry data is trusted more,
+        // cross-industry data dampened further. Seeded rows with no
+        // breakdown stay at the neutral factor (1.0).
+        var ourIndustry = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId && !c.IsDeleted)
+            .Select(c => c.IndustryType)
+            .FirstOrDefaultAsync();
+        var ourIndustryName = ourIndustry.ToString();
+
         if (!string.IsNullOrEmpty(keyword))
         {
             var sysExact = await _db.SystemOcrCategoryMappings
@@ -122,19 +134,74 @@ public class ExpenseCategoryLearner
                 .OrderByDescending(m => m.TimesUsed)
                 .FirstOrDefaultAsync();
             if (sysExact != null)
-                return (sysExact.AccountCode, sysExact.AccountName, ScoreConfidence(sysExact.TimesUsed) * 0.5m);
+            {
+                var indFactor = ComputeIndustryWeight(sysExact.IndustryBreakdownJson, ourIndustryName);
+                return (sysExact.AccountCode, sysExact.AccountName,
+                    ScoreConfidence(sysExact.TimesUsed) * 0.5m * indFactor);
+            }
         }
 
-        var sysVendor = await _db.SystemOcrCategoryMappings
+        // Vendor-only fallback — same industry weighting, lower base
+        var sysVendorRows = await _db.SystemOcrCategoryMappings
             .Where(m => m.VendorKey == vendorKey && !m.IsDeleted)
-            .GroupBy(m => new { m.AccountCode, m.AccountName })
-            .Select(g => new { g.Key.AccountCode, g.Key.AccountName, Sum = g.Sum(x => x.TimesUsed) })
-            .OrderByDescending(g => g.Sum)
-            .FirstOrDefaultAsync();
-        if (sysVendor != null)
-            return (sysVendor.AccountCode, sysVendor.AccountName, ScoreConfidence(sysVendor.Sum) * 0.35m);
+            .ToListAsync();
+        if (sysVendorRows.Count > 0)
+        {
+            // Aggregate by account, summing TimesUsed weighted by industry
+            // factor PER ROW so accounts trained by same-industry tenants
+            // win even when total raw counts are smaller.
+            var best = sysVendorRows
+                .Select(r => new
+                {
+                    r.AccountCode, r.AccountName,
+                    WeightedScore = r.TimesUsed
+                        * (double)ComputeIndustryWeight(r.IndustryBreakdownJson, ourIndustryName),
+                })
+                .GroupBy(x => new { x.AccountCode, x.AccountName })
+                .Select(g => new
+                {
+                    g.Key.AccountCode, g.Key.AccountName,
+                    Score = g.Sum(x => x.WeightedScore),
+                })
+                .OrderByDescending(x => x.Score)
+                .First();
+            // Convert weighted score back to a confidence-like value
+            var confidence = ScoreConfidence((int)Math.Round(best.Score)) * 0.35m;
+            return (best.AccountCode, best.AccountName, confidence);
+        }
 
         return (null, null, 0m);
+    }
+
+    /// <summary>
+    /// Compute the industry-similarity multiplier (0.5 – 1.5) for a
+    /// system-tier row given the consuming tenant's IndustryType.
+    ///   100% same-industry contributors → 1.5 (trust strongly)
+    ///   ~50% same-industry              → 1.0
+    ///   0% same-industry                → 0.5 (cross-industry, dampened)
+    ///   no breakdown (seeded/universal) → 1.0 (neutral default)
+    /// Multiplied with the existing base dampening (0.5 exact, 0.35
+    /// vendor-only) at the call site so cross-industry data falls below
+    /// half-weight while same-industry data approaches full weight.
+    /// </summary>
+    private static decimal ComputeIndustryWeight(string? breakdownJson, string ourIndustryName)
+    {
+        if (string.IsNullOrEmpty(breakdownJson)) return 1.0m;
+        try
+        {
+            var breakdown = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int>>(breakdownJson);
+            if (breakdown == null || breakdown.Count == 0) return 1.0m;
+            int total = breakdown.Values.Sum();
+            if (total <= 0) return 1.0m;
+            int sameCount = breakdown.GetValueOrDefault(ourIndustryName, 0);
+            var fraction = (decimal)sameCount / total;
+            // Linear blend from 0.5 (no overlap) to 1.5 (all same industry)
+            return 0.5m + fraction;
+        }
+        catch
+        {
+            return 1.0m;
+        }
     }
 
     /// <summary>
