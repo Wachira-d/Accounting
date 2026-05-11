@@ -80,29 +80,46 @@
   </style>
 </head>
 <body>
-  <!-- ─── DIAGNOSTIC: visible viewport info + build marker (top-left fixed) ─── -->
-  <!-- Helps debug "sidebar missing" symptoms — user can read this badge even when
-       the rest of the page is broken. Auto-hides on JS errors. -->
-  <div id="diagBadge" style="position:fixed;top:8px;right:8px;z-index:99999;background:#1e293b;color:#94a3b8;font-family:monospace;font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #334155;line-height:1.4;pointer-events:none">
-    build: 7de140e<br>
-    <span id="diagViewport">viewport: ?</span><br>
-    <span id="diagAuth">auth: ?</span><br>
-    <span id="diagSidebar" style="color:#94a3b8">sidebar: ?</span>
+  <!-- ─── DIAGNOSTIC: visible viewport info + build marker (top-right fixed) ─── -->
+  <div id="diagBadge" style="position:fixed;top:8px;right:8px;z-index:99999;background:#1e293b;color:#94a3b8;font-family:monospace;font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #334155;line-height:1.5;pointer-events:none;max-width:340px">
+    <div id="diagBuild">build: ba87760+steps</div>
+    <div id="diagViewport">viewport: ?</div>
+    <div id="diagAuth">auth: ?</div>
+    <div id="diagStep1" style="color:#94a3b8">step 1: ?</div>
+    <div id="diagStep2" style="color:#94a3b8">step 2: ?</div>
+    <div id="diagStep3" style="color:#94a3b8">step 3: ?</div>
+    <div id="diagStep4" style="color:#94a3b8">step 4: ?</div>
+    <div id="diagStep5" style="color:#94a3b8">step 5: ?</div>
+    <div id="diagError" style="color:#ef4444;display:none;border-top:1px solid #ef4444;margin-top:4px;padding-top:4px;word-break:break-all"></div>
   </div>
   <script>
-    // Populate diagnostic immediately (before any other script runs)
+    // Helper to update badge from anywhere — never throws
+    function __diagStep(stepId, text, color) {
+      try {
+        var el = document.getElementById(stepId);
+        if (!el) return;
+        el.textContent = text;
+        if (color) el.style.color = color;
+      } catch (e) {}
+    }
+    function __diagError(msg) {
+      try {
+        var el = document.getElementById('diagError');
+        if (!el) return;
+        el.style.display = 'block';
+        el.textContent = '❌ ' + msg;
+      } catch (e) {}
+    }
+    // Populate initial diagnostic
     (function() {
       try {
-        var vp = document.getElementById('diagViewport');
-        if (vp) vp.textContent = 'viewport: ' + window.innerWidth + '×' + window.innerHeight + (window.innerWidth <= 900 ? ' (≤900 — sidebar collapsed)' : ' (>900 — sidebar should show)');
-        var auth = document.getElementById('diagAuth');
-        if (auth) {
-          var token = localStorage.getItem('admin_token');
-          var user = localStorage.getItem('admin_user');
-          auth.textContent = 'auth: ' + (token ? 'token✓' : 'NO_TOKEN') + (user ? ' user✓' : ' NO_USER');
-          if (!token || !user) auth.style.color = '#ef4444';
-        }
-      } catch (e) { /* swallow */ }
+        var w = window.innerWidth, h = window.innerHeight;
+        __diagStep('diagViewport', 'viewport: ' + w + '×' + h + (w <= 900 ? ' (≤900)' : ' (OK)'));
+        var token = localStorage.getItem('admin_token');
+        var user = localStorage.getItem('admin_user');
+        __diagStep('diagAuth', 'auth: ' + (token ? 'token✓' : 'NO_TOKEN') + (user ? ' user✓' : ' NO_USER'),
+          token && user ? '#22c55e' : '#ef4444');
+      } catch (e) { __diagError('init diag: ' + e.message); }
     })();
   </script>
 
@@ -583,37 +600,54 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     // Visible stamp so admins can confirm which build is deployed; also wraps
     // AdminLayout.init in try/catch so script execution continues to define
     // all functions (systemTestScan etc.) even if sidebar rendering fails.
-    const __PAGE_VERSION = '7de140e+diag';
+    const __PAGE_VERSION = 'ba87760+steps';
     console.log('[ocr-config.html] version:', __PAGE_VERSION);
-    try {
-      AdminLayout.init('ocr-config');
-      console.log('[ocr-config.html] AdminLayout.init succeeded');
-      // Update diagnostic badge — confirm sidebar element exists after init
-      setTimeout(function() {
-        var d = document.getElementById('diagSidebar');
-        if (!d) return;
-        var s = document.querySelector('.admin-sidebar');
-        if (!s) { d.textContent = 'sidebar: NOT RENDERED'; d.style.color = '#ef4444'; return; }
+    __diagStep('diagStep1', 'step 1: script start ✓', '#22c55e');
+
+    // Step 2: Check AdminLayout / AdminAPI globals
+    if (typeof AdminLayout === 'undefined') {
+      __diagStep('diagStep2', 'step 2: AdminLayout UNDEFINED', '#ef4444');
+      __diagError('admin-layout.js failed to load — check Network tab');
+    } else if (typeof AdminAPI === 'undefined') {
+      __diagStep('diagStep2', 'step 2: AdminAPI UNDEFINED', '#ef4444');
+      __diagError('admin-api.js failed to load — check Network tab');
+    } else {
+      __diagStep('diagStep2', 'step 2: globals ✓', '#22c55e');
+
+      // Step 3: Call AdminLayout.init
+      try {
+        AdminLayout.init('ocr-config');
+        __diagStep('diagStep3', 'step 3: init() returned ✓', '#22c55e');
+      } catch (err) {
+        __diagStep('diagStep3', 'step 3: init() THREW', '#ef4444');
+        __diagError(String(err && err.message || err));
+      }
+
+      // Step 4: Check sidebar element exists (synchronous, not setTimeout)
+      var s = document.querySelector('.admin-sidebar');
+      if (!s) {
+        __diagStep('diagStep4', 'step 4: .admin-sidebar element MISSING', '#ef4444');
+        __diagError('AdminLayout.render did not create the sidebar — user.isSystemAdmin may be false');
+      } else {
         var rect = s.getBoundingClientRect();
         var styles = window.getComputedStyle(s);
-        var visible = rect.width > 0 && rect.height > 0 && styles.display !== 'none' && styles.visibility !== 'hidden';
-        var translated = styles.transform && styles.transform !== 'none';
-        d.textContent = 'sidebar: ' + (visible ? '✓ rendered' : '✗ hidden') +
-          ' (w=' + Math.round(rect.width) + ' x=' + Math.round(rect.left) + (translated ? ' transformed' : '') + ')';
-        d.style.color = visible && rect.left >= 0 ? '#22c55e' : '#ef4444';
-      }, 50);
-    } catch (err) {
-      console.error('[ocr-config.html] AdminLayout.init FAILED:', err);
-      // Show a visible diagnostic banner so the user can see what failed
-      const pc = document.getElementById('pageContent');
-      if (pc) {
-        const banner = document.createElement('div');
-        banner.style.cssText = 'background:#fee2e2;border:2px solid #fca5a5;color:#991b1b;padding:14px 18px;border-radius:8px;margin:12px;font-size:13px';
-        banner.innerHTML = `
-          <strong>⚠️ Sidebar render failed</strong><br>
-          ${err && err.message ? String(err.message).replace(/[<>]/g, '') : String(err)}<br>
-          <small>Version: ${__PAGE_VERSION} — copy this message to dev support</small>`;
-        pc.prepend(banner);
+        var visible = rect.width > 0 && styles.display !== 'none' && styles.visibility !== 'hidden';
+        var info = 'w=' + Math.round(rect.width) + ' x=' + Math.round(rect.left) +
+          ' disp=' + styles.display + ' tr=' + (styles.transform === 'none' ? 'none' : 'has');
+        if (visible && rect.left >= 0) {
+          __diagStep('diagStep4', 'step 4: sidebar ✓ visible (' + info + ')', '#22c55e');
+        } else {
+          __diagStep('diagStep4', 'step 4: sidebar HIDDEN (' + info + ')', '#ef4444');
+        }
+      }
+
+      // Step 5: Check .admin-right margin-left (should be 260px on desktop)
+      var r = document.querySelector('.admin-right');
+      if (!r) {
+        __diagStep('diagStep5', 'step 5: .admin-right MISSING', '#ef4444');
+      } else {
+        var ml = window.getComputedStyle(r).marginLeft;
+        __diagStep('diagStep5', 'step 5: .admin-right margin-left=' + ml, ml === '260px' ? '#22c55e' : '#f59e0b');
       }
     }
 
