@@ -169,6 +169,44 @@ public class OcrController : ControllerBase
     }
 
     /// <summary>
+    /// Register a line item from this OCR scan as a Fixed Asset. The body
+    /// carries the line index + any user-edited fields. Server:
+    ///   1. Pulls the OCR'd line item (Description, UnitPrice, Quantity).
+    ///   2. Calls the EXISTING FixedAssetService.CreateAsync — reuses all
+    ///      lifecycle / depreciation-calculation logic (StraightLine /
+    ///      DecliningBalance / DoubleDecliningBalance) verbatim.
+    ///   3. Initial Journal Entry (Dr: AssetAccount / Cr: AccruedAP) is
+    ///      generated atomically inside a DB transaction.
+    /// Returns the newly-created FixedAsset id so the UI can deep-link to
+    /// the asset register.
+    /// </summary>
+    public record RegisterAssetFromScanRequest(
+        int LineIndex,
+        string AssetCode,
+        string Name,
+        string? Description,
+        string? Category,
+        string? SerialNumber,
+        DateTime? PurchaseDate,
+        decimal? PurchaseCost,
+        decimal SalvageValue,
+        int UsefulLifeMonths,
+        Models.Enums.DepreciationMethod DepreciationMethod = Models.Enums.DepreciationMethod.StraightLine,
+        Guid? AssetAccountId = null,
+        Guid? DepreciationExpenseAccountId = null,
+        Guid? AccumulatedDepreciationAccountId = null);
+
+    [HttpPost("{scanId:guid}/register-asset")]
+    public async Task<ActionResult<ApiResponse<object>>> RegisterAsset(
+        Guid companyId, Guid scanId, [FromBody] RegisterAssetFromScanRequest req,
+        [FromServices] Services.Interfaces.IFixedAssetService assetService)
+    {
+        var result = await _service.RegisterAssetFromScanAsync(companyId, scanId, req,
+            assetService, User.Identity?.Name ?? "ocr-asset-register");
+        return Ok(new ApiResponse<object>(true, result, "ลงทะเบียนสินทรัพย์ถาวรเรียบร้อย"));
+    }
+
+    /// <summary>
     /// Delete an OCR scan result. When the scan auto-created a draft
     /// document, pass cascade=true to delete the document too — the
     /// service will refuse if that document has already been approved

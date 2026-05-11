@@ -287,14 +287,17 @@ public class OcrService : IOcrService
             // VendorIntel below may then refine the TargetDocumentType using
             // learned per-vendor history; placing the inferrer before VendorIntel
             // keeps the scanned-vs-target separation clean.
+            // Company context — used by the role inferrer (tax-id match) AND
+            // the category resolver (industry-bias weighting). Single query
+            // serves both.
+            var companyContext = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId && !c.IsDeleted)
+                .Select(c => new { c.TaxId, c.Name, c.BusinessType, c.IndustryType })
+                .FirstOrDefaultAsync();
             {
                 DocumentType? prevScanned = null;
                 if (Enum.TryParse<DocumentType>(extractedData.DocumentType, ignoreCase: true, out var prevDt))
                     prevScanned = prevDt;
-                var company = await _db.Companies.AsNoTracking()
-                    .Where(c => c.Id == companyId && !c.IsDeleted)
-                    .Select(c => new { c.TaxId, c.Name })
-                    .FirstOrDefaultAsync();
                 // Normalize once: collapse Tesseract's inter-character Thai
                 // spacing so every keyword scan (role inferrer, category
                 // resolver, basket-rule lookup) sees readable Thai.
@@ -306,8 +309,8 @@ public class OcrService : IOcrService
                     buyerTaxId: extractedData.BuyerTaxId,
                     vendorName: extractedData.VendorName,
                     buyerName: extractedData.BuyerName,
-                    companyTaxId: company?.TaxId,
-                    companyName: company?.Name,
+                    companyTaxId: companyContext?.TaxId,
+                    companyName: companyContext?.Name,
                     previousScannedType: prevScanned);
                 if (role.ScannedDocType.HasValue)
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
@@ -343,7 +346,9 @@ public class OcrService : IOcrService
                 vendorName: extractedData.VendorName,
                 headerDescription: extractedData.ExpenseCategory,
                 lineDescriptions: extractedData.Items.Select(i => i.Description),
-                rawText: categoryResolverText);
+                rawText: categoryResolverText,
+                industry: companyContext?.IndustryType,
+                businessType: companyContext?.BusinessType);
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult);
 
@@ -797,12 +802,64 @@ public class OcrService : IOcrService
                 }
             }
 
+            // ─── Potential Fixed Asset detection (Phase 4) ───
+            // Inspect line items for capital-asset signals BEFORE the auto-
+            // create gate. When at least one line crosses the threshold, the
+            // document is flagged for manual review — the UI surfaces a
+            // "Potential Asset" alert with a Register button. Auto-create is
+            // suppressed in that case so we don't pre-book the spend as
+            // expense and then have to reverse it.
+            try
+            {
+                var assetInput = extractedData.Items
+                    .Select(i => (i.Description, i.Quantity, i.UnitPrice, i.Amount))
+                    .ToList();
+                var allDecisions = Ocr.FixedAssetDetector.Analyze(assetInput);
+                var assetCandidates = Ocr.FixedAssetDetector.PotentialAssetsOnly(allDecisions);
+                if (assetCandidates.Count > 0)
+                {
+                    scanResult.HasPotentialFixedAsset = true;
+                    // Persist a serialized snapshot so the UI can render
+                    // the alert without re-running the detector on every fetch.
+                    scanResult.PotentialAssetLinesJson = System.Text.Json.JsonSerializer.Serialize(
+                        assetCandidates.Select(d => new
+                        {
+                            lineIndex = d.LineIndex,
+                            description = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.Description,
+                            unitPrice = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.UnitPrice,
+                            amount = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.Amount,
+                            quantity = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.Quantity,
+                            suggestedCategory = d.SuggestedCategory,
+                            suggestedUsefulLifeMonths = d.SuggestedUsefulLifeMonths,
+                            confidenceScore = d.ConfidenceScore,
+                            reasons = d.Reasons,
+                        }));
+                    extractedData.ReasoningTrace.Add(
+                        $"[FixedAsset] พบ {assetCandidates.Count} รายการที่อาจเป็นสินทรัพย์ถาวร — รอ user ยืนยัน (Register Asset)");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Fixed-asset detection failed (non-fatal)");
+            }
+
             // Auto-create document if confidence >= threshold (85%).
             // Recurring vendors get a lower threshold (75%) — we already know
             // what their docs look like and the user has approved enough of
             // them historically that a "looks right" scan is safe to commit
             // without staging in Draft.
+            // SUPPRESS auto-create when a potential asset was detected — the
+            // user must register the asset(s) first (Dr: Asset / Cr: AP-or-Cash)
+            // before the scan should produce an Expense document. Otherwise
+            // the books would double-count: expense from auto-create + asset
+            // capitalization from manual register.
             var autoCreateThreshold = decimal.TryParse(_configuration["Ocr:AutoCreateThreshold"], out var t) ? t : 0.85m;
+            if (scanResult.HasPotentialFixedAsset)
+            {
+                autoCreateThreshold = decimal.MaxValue;  // effectively disable auto-create
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + "\n[FixedAsset] auto-create suppressed — โปรดกด Register Asset ก่อนสร้างเอกสาร";
+            }
             try
             {
                 var recurring = await _recurringDetector.DetectAsync(companyId, scanResult.MatchedContactId);
@@ -2143,6 +2200,224 @@ public class OcrService : IOcrService
         _logger.LogInformation("Re-linked scan file {FileId} to Document {DocId}", attachment.Id, documentId);
     }
 
+    /// <summary>
+    /// Register one OCR'd line item as a FixedAsset, delegating to the
+    /// existing FixedAssetService.CreateAsync (no duplication of asset
+    /// lifecycle logic) AND posting the initial capitalization Journal
+    /// Entry inside a DB transaction so the books stay balanced even if
+    /// any step fails.
+    ///
+    /// Journal entry shape:
+    ///   Dr: AssetAccount         <PurchaseCost>
+    ///   Cr: AccruedPayables /    <PurchaseCost>     (default credit account)
+    ///       Cash
+    ///
+    /// When the scan's MatchedContact exists, the JE Description records
+    /// the vendor. After registration:
+    ///   • The scan's HasPotentialFixedAsset flag is cleared and the
+    ///     line is removed from PotentialAssetLinesJson — so the UI
+    ///     stops alerting on the same scan.
+    ///   • Auto-create remains suppressed until the user explicitly
+    ///     dismisses (or until all asset candidates have been registered).
+    /// </summary>
+    public async Task<object> RegisterAssetFromScanAsync(
+        Guid companyId, Guid scanResultId,
+        Controllers.OcrController.RegisterAssetFromScanRequest req,
+        Services.Interfaces.IFixedAssetService assetService,
+        string createdBy)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.Id == scanResultId && r.CompanyId == companyId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (scan.ScanStatus != "Completed")
+            throw new InvalidOperationException("Scan ยังไม่เสร็จ — ไม่สามารถลงทะเบียนสินทรัพย์");
+
+        // Resolve the line item from the stored ExtractedItemsJson so we
+        // can prefill PurchaseCost / Description when the request omits
+        // them. The user may also edit any field via the request body.
+        OcrLineItemDto? line = null;
+        if (!string.IsNullOrEmpty(scan.ExtractedItemsJson))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(scan.ExtractedItemsJson);
+                var arr = doc.RootElement;
+                if (arr.ValueKind == System.Text.Json.JsonValueKind.Array
+                    && req.LineIndex >= 0 && req.LineIndex < arr.GetArrayLength())
+                {
+                    var el = arr[req.LineIndex];
+                    line = new OcrLineItemDto(
+                        el.TryGetProperty("Description", out var d) ? d.GetString() : null,
+                        el.TryGetProperty("Quantity", out var q) && q.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)q.GetDouble() : null,
+                        el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)u.GetDouble() : null,
+                        el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)a.GetDouble() : null,
+                        el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not parse ExtractedItemsJson on scan {Id}", scanResultId);
+            }
+        }
+
+        var purchaseCost = req.PurchaseCost ?? line?.Amount ?? line?.UnitPrice ?? 0m;
+        if (purchaseCost <= 0)
+            throw new InvalidOperationException("ราคาซื้อต้องมากกว่า 0");
+        var purchaseDate = req.PurchaseDate ?? scan.ExtractedDate ?? DateTime.UtcNow.Date;
+
+        // Single DB transaction so the asset row + journal entry stay
+        // mutually-consistent. FixedAssetService.CreateAsync uses the
+        // shared DbContext, so its SaveChanges happens INSIDE this txn.
+        var strategy = _db.Database.CreateExecutionStrategy();
+        Models.DTOs.FixedAsset.FixedAssetResponse? created = null;
+        Guid? journalEntryId = null;
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                created = await assetService.CreateAsync(companyId,
+                    new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
+                        AssetCode: req.AssetCode,
+                        Name: req.Name,
+                        Description: req.Description ?? line?.Description,
+                        Category: req.Category,
+                        Location: null,
+                        SerialNumber: req.SerialNumber,
+                        PurchaseDate: purchaseDate,
+                        PurchaseCost: purchaseCost,
+                        SalvageValue: req.SalvageValue,
+                        UsefulLifeMonths: req.UsefulLifeMonths,
+                        DepreciationMethod: req.DepreciationMethod,
+                        AssetAccountId: req.AssetAccountId,
+                        DepreciationExpenseAccountId: req.DepreciationExpenseAccountId,
+                        AccumulatedDepreciationAccountId: req.AccumulatedDepreciationAccountId),
+                    createdBy);
+
+                // Initial capitalization journal entry — Dr: Asset / Cr: AP-or-Cash.
+                // We only post when both account IDs are known (asset
+                // accounts are required for the FixedAsset to depreciate
+                // correctly anyway, so the user must supply them).
+                if (req.AssetAccountId.HasValue)
+                {
+                    // Find a default credit account: scan's suggested CreditAccount,
+                    // else the first Liability/Equity account configured as "AP"/"Cash"
+                    Guid? creditAccountId = null;
+                    if (!string.IsNullOrEmpty(scan.SuggestedAccountsJson))
+                    {
+                        try
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(scan.SuggestedAccountsJson);
+                            if (doc.RootElement.TryGetProperty("CreditAccountCode", out var cc) && cc.GetString() is string code)
+                            {
+                                creditAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                                    .Where(a => a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted)
+                                    .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+                            }
+                        }
+                        catch { }
+                    }
+                    if (!creditAccountId.HasValue)
+                    {
+                        // Fallback: first AP-style account (code starts with 21)
+                        creditAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                            .Where(a => a.CompanyId == companyId && !a.IsDeleted
+                                && a.AccountType == AccountType.Liability
+                                && a.AccountCode.StartsWith("21"))
+                            .OrderBy(a => a.AccountCode)
+                            .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+                    }
+
+                    if (creditAccountId.HasValue)
+                    {
+                        var entryNumber = $"JV-AST-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
+                        var je = new JournalEntry
+                        {
+                            CompanyId = companyId,
+                            EntryNumber = entryNumber,
+                            EntryDate = purchaseDate,
+                            JournalType = JournalType.General,
+                            Description = $"ลงทะเบียนสินทรัพย์ {req.AssetCode} {req.Name} (OCR scan {scanResultId})",
+                            Status = JournalEntryStatus.Posted,
+                            IsAutoGenerated = true,
+                            TotalDebit = purchaseCost,
+                            TotalCredit = purchaseCost,
+                            CreatedBy = createdBy,
+                        };
+                        je.Lines.Add(new JournalEntryLine
+                        {
+                            AccountId = req.AssetAccountId.Value,
+                            DebitAmount = purchaseCost,
+                            CreditAmount = 0,
+                            Description = $"ลงทะเบียนสินทรัพย์ {req.Name}",
+                        });
+                        je.Lines.Add(new JournalEntryLine
+                        {
+                            AccountId = creditAccountId.Value,
+                            DebitAmount = 0,
+                            CreditAmount = purchaseCost,
+                            Description = $"เจ้าหนี้ค่าสินทรัพย์ {req.Name}",
+                        });
+                        // Mandatory double-entry balance check — same
+                        // pattern as the depreciation entry in
+                        // FixedAssetService.CalculateDepreciationAsync.
+                        if (Math.Abs(je.TotalDebit - je.TotalCredit) > 0.01m)
+                            throw new InvalidOperationException(
+                                $"Journal ไม่สมดุล: Dr={je.TotalDebit:N2} Cr={je.TotalCredit:N2}");
+                        _db.JournalEntries.Add(je);
+                        journalEntryId = je.Id;
+                    }
+                }
+
+                // Remove this line from the asset-candidates list. When
+                // none remain, clear the alert flag entirely.
+                RemoveAssetCandidate(scan, req.LineIndex);
+                scan.ProcessingNotes = (scan.ProcessingNotes ?? "")
+                    + $"\n[FixedAsset] ลงทะเบียน asset {req.AssetCode} '{req.Name}' จาก line {req.LineIndex} (cost {purchaseCost:N2})";
+
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+
+        return new
+        {
+            assetId = created?.Id,
+            assetCode = created?.AssetCode,
+            journalEntryId,
+            purchaseCost,
+            remainingCandidates = scan.HasPotentialFixedAsset,
+        };
+    }
+
+    /// <summary>Drop a registered line from the JSON candidate list so
+    /// the UI alert hides itself once every asset has been registered.</summary>
+    private static void RemoveAssetCandidate(OcrScanResult scan, int lineIndex)
+    {
+        if (string.IsNullOrEmpty(scan.PotentialAssetLinesJson)) return;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(scan.PotentialAssetLinesJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+            var remaining = doc.RootElement.EnumerateArray()
+                .Where(el => !(el.TryGetProperty("lineIndex", out var idx)
+                    && idx.ValueKind == System.Text.Json.JsonValueKind.Number
+                    && idx.GetInt32() == lineIndex))
+                .Select(el => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(el.GetRawText()))
+                .ToList();
+            scan.PotentialAssetLinesJson = remaining.Count > 0
+                ? System.Text.Json.JsonSerializer.Serialize(remaining)
+                : null;
+            scan.HasPotentialFixedAsset = remaining.Count > 0;
+        }
+        catch { /* malformed JSON — leave as-is */ }
+    }
+
     public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false)
     {
         var result = await _db.Set<OcrScanResult>()
@@ -2294,7 +2569,9 @@ public class OcrService : IOcrService
             r.ScannedDocumentType,
             r.OurRole,
             r.TargetDocumentType,
-            r.OcrEngine);
+            r.OcrEngine,
+            r.HasPotentialFixedAsset,
+            r.PotentialAssetLinesJson);
     }
 }
 

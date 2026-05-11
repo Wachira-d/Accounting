@@ -1070,6 +1070,63 @@
         }
       },
 
+      // ============= Fixed Asset registration =============
+      // Lightweight dialog implementation using prompt(). A fuller modal
+      // form (with CoA picker for AssetAccount / DepExp / AccDep) is the
+      // natural next step but this MVP path lets users register the asset
+      // immediately with sensible defaults — the FixedAsset record is then
+      // fully editable in /pages/fixed-assets.html if they need to refine.
+      async openAssetRegisterDialog(candidate) {
+        if (!this._reviewScan) return;
+        const scanId = this._reviewScan.id;
+        const defaultCode = `AST-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+        const code = prompt('รหัสสินทรัพย์ (Asset Code):', defaultCode);
+        if (!code) return;
+        const name = prompt('ชื่อสินทรัพย์:', candidate.description || '');
+        if (!name) return;
+        const months = parseInt(prompt('อายุการใช้งาน (เดือน):', String(candidate.suggestedUsefulLifeMonths || 60))) || 60;
+        const salvageStr = prompt('มูลค่าซาก (Salvage Value) — กรอก 0 ถ้าไม่มี:', '0');
+        const salvage = parseFloat(salvageStr) || 0;
+        const cost = candidate.amount || candidate.unitPrice || 0;
+        if (cost <= 0) { Layout.toast('ราคาซื้อต้อง > 0', 'error'); return; }
+
+        if (!confirm(
+          `ลงทะเบียนสินทรัพย์:\n` +
+          `  รหัส: ${code}\n  ชื่อ: ${name}\n  ราคาซื้อ: ฿${cost.toLocaleString()}\n` +
+          `  มูลค่าซาก: ฿${salvage.toLocaleString()}\n  อายุใช้งาน: ${months} เดือน\n  วิธี: StraightLine\n\n` +
+          `ระบบจะสร้าง FixedAsset + Journal Entry (Dr: สินทรัพย์ / Cr: เจ้าหนี้) — ตกลง?`)) return;
+
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await fetch(`/api/companies/${cid}/ocr/${scanId}/register-asset`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+            },
+            body: JSON.stringify({
+              lineIndex: candidate.lineIndex,
+              assetCode: code,
+              name,
+              description: candidate.description,
+              category: candidate.suggestedCategory,
+              purchaseCost: cost,
+              salvageValue: salvage,
+              usefulLifeMonths: months,
+              depreciationMethod: 1,  // 1 = StraightLine (enum DepreciationMethod)
+            }),
+          });
+          const data = await res.json();
+          if (!data.success) { Layout.toast(data.message || 'ลงทะเบียนล้มเหลว', 'error'); return; }
+          Layout.toast(data.message || 'ลงทะเบียนเรียบร้อย — JE balanced', 'success');
+          // Refresh the review modal so the candidate disappears from the list
+          await this.openReview(scanId);
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('ลงทะเบียนล้มเหลว: ' + err.message, 'error');
+        }
+      },
+
       async openReview(scanId, options = {}) {
         const api = Layout.api();
         if (!api) return;
@@ -1147,6 +1204,52 @@
               <strong>&#x1F4A1; การสอนระบบ:</strong> หากมีข้อมูลที่ระบบแกะไม่ถูกต้อง แก้ไขในช่องด้านล่างแล้วกดปุ่ม "บันทึก &amp; สอนระบบ"
               ระบบจะจดจำตำแหน่งและคำใกล้เคียงในเอกสาร ครั้งต่อไปจาก vendor นี้จะแกะข้อมูลถูกต้องอัตโนมัติ
             </div>
+
+            ${(() => {
+              // Fixed Asset alert — appears when at least one line item
+              // looked like a capital asset. Renders one card per candidate
+              // with a Register button calling Page.registerAsset(scanId, line).
+              if (!scan.hasPotentialFixedAsset || !scan.potentialAssetLinesJson) return '';
+              let lines = [];
+              try { lines = JSON.parse(scan.potentialAssetLinesJson); } catch (e) { return ''; }
+              if (!lines.length) return '';
+              return `
+              <div class="review-section" style="border:2px solid #f59e0b;background:#fffbeb">
+                <div class="review-section-title" style="color:#92400e">⚠️ Needs Review — Potential Fixed Asset (${lines.length} รายการ)</div>
+                <p style="font-size:12px;color:#92400e;margin:0 0 12px;line-height:1.5">
+                  รายการต่อไปนี้เข้าเกณฑ์สินทรัพย์ถาวร (ราคา ≥ 5,000 บาท + keyword match) —
+                  <b>ระงับ auto-create</b> จนกว่าจะกดลงทะเบียนสินทรัพย์ หรือยืนยันว่าเป็นค่าใช้จ่ายปกติ
+                </p>
+                ${lines.map((l, i) => `
+                <div style="background:white;border:1px solid #fcd34d;border-radius:8px;padding:12px;margin-bottom:8px">
+                  <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">
+                    <div>
+                      <div style="font-weight:600;color:#78350f">${Layout.esc(l.description || '(ไม่มีคำอธิบาย)')}</div>
+                      <div style="font-size:12px;color:#92400e;margin-top:4px">
+                        ราคาต่อหน่วย: <b>฿${(l.unitPrice || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</b>
+                        • รวม: ฿${(l.amount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}
+                      </div>
+                      <div style="font-size:11px;color:#78350f;margin-top:2px">
+                        หมวด: <b>${Layout.esc(l.suggestedCategory || '—')}</b>
+                        • อายุการใช้: ~${Math.round((l.suggestedUsefulLifeMonths || 60) / 12)} ปี (${l.suggestedUsefulLifeMonths || 60} เดือน)
+                        • confidence: ${Math.round((l.confidenceScore || 0) * 100)}%
+                      </div>
+                      ${(l.reasons || []).length ? `<details style="font-size:11px;color:#92400e;margin-top:4px">
+                        <summary style="cursor:pointer">เหตุผล</summary>
+                        <ul style="margin:4px 0 0 18px;padding:0">
+                          ${l.reasons.map(r => `<li>${Layout.esc(r)}</li>`).join('')}
+                        </ul>
+                      </details>` : ''}
+                    </div>
+                    <button class="btn btn-sm" style="background:#d97706;color:white;white-space:nowrap"
+                            onclick='Page.openAssetRegisterDialog(${JSON.stringify(l).replace(/'/g, "&#39;")})'>
+                      ลงทะเบียนสินทรัพย์
+                    </button>
+                  </div>
+                </div>`).join('')}
+              </div>`;
+            })()}
+
             <div class="review-section">
               <div class="review-section-title">ข้อมูลที่สกัดได้ ${confPercent !== null ? `<span style="float:right;font-size:12px;font-weight:400;color:var(--gray-500)">ความเชื่อมั่นรวม: <strong class="confidence-label ${confLevel}">${confPercent}%</strong></span>` : ''}</div>
               <div class="review-field">

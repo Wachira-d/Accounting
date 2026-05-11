@@ -29,7 +29,16 @@ public record OcrResultResponse(
     /// "LocalPython", "EmbeddedTesseract", or "Cached" (duplicate-detection
     /// short-circuit). Useful in the debug panel for accuracy
     /// troubleshooting.</summary>
-    string? OcrEngine = null);
+    string? OcrEngine = null,
+    /// <summary>True when at least one line item looks like a Fixed
+    /// Asset. UI shows a "Needs Review — Potential Asset" alert; auto-
+    /// create is suppressed until the user registers the asset(s) or
+    /// dismisses the flag.</summary>
+    bool HasPotentialFixedAsset = false,
+    /// <summary>JSON array of asset candidate line decisions — schema:
+    /// [{lineIndex, description, unitPrice, amount, suggestedCategory,
+    /// suggestedUsefulLifeMonths, confidenceScore, reasons}].</summary>
+    string? PotentialAssetLinesJson = null);
 
 public record OcrDbdInfo(
     bool LookupAttempted,

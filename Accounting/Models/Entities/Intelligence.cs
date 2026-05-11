@@ -176,6 +176,22 @@ public class OcrScanResult : TenantEntity
     // handled their document — useful when troubleshooting accuracy regressions
     // ("the embedded fallback ran because the Python service was down").
     public string? OcrEngine { get; set; }
+
+    // ─── Potential Fixed Asset detection (Phase 4) ───
+    // True when at least one line item crossed the asset detection
+    // threshold (unit price + keyword). The UI uses this flag to surface
+    // a "Needs Review — Potential Asset" alert in the review modal so
+    // the user can register the asset(s) before the scan auto-creates
+    // an expense document.
+    public bool HasPotentialFixedAsset { get; set; }
+
+    // JSON-serialized list of FixedAssetDetector.LineDecision rows for
+    // each line flagged as a potential asset. Schema:
+    //   [{ "lineIndex":0, "suggestedCategory":"คอมพิวเตอร์...",
+    //      "suggestedUsefulLifeMonths":36, "confidenceScore":0.85,
+    //      "description":"...", "unitPrice":29900, "amount":29900,
+    //      "reasons":["..."] }]
+    public string? PotentialAssetLinesJson { get; set; }
 }
 
 /// <summary>

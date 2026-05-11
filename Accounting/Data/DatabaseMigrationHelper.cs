@@ -979,6 +979,14 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OcrEngine" varchar(40) NULL;
             """,
 
+            // OcrScanResults: potential fixed asset detection flags (Phase 4)
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "HasPotentialFixedAsset" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PotentialAssetLinesJson" text NULL;
+            """,
+
             // ===== OcrScanResults: document role inference fields =====
             // Thai-accounting workflow: a scanned receipt from a supplier should
             // create a PaymentVoucher in our books — not a "Receipt" document.

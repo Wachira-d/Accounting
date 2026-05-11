@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
 
 namespace Accounting.Services.Implementations.Ocr;
@@ -15,6 +16,14 @@ namespace Accounting.Services.Implementations.Ocr;
 ///   encode Thailand-wide DEFAULT classification — "any vendor whose name
 ///   contains 'PTT' is most likely fuel" — that bootstraps brand-new tenants
 ///   before they have any history of their own.
+///
+/// Per-industry weighting: the company's Industry context (Trading /
+/// Service / Manufacturing / Restaurant / ...) biases which categories
+/// score higher. A manufacturing company's invoice for "วัสดุ" should
+/// resolve to raw-material expense; a service company's same description
+/// should lean to office supplies. The boost is multiplicative on top of
+/// the keyword score, so industry context only nudges — it never flips a
+/// strong keyword match.
 ///
 /// The resolver returns a confidence score so the caller can decide whether
 /// to overwrite an already-extracted category or only fill in gaps.
@@ -34,36 +43,125 @@ internal static class ExpenseCategoryResolver
         string? vendorName,
         string? headerDescription,
         IEnumerable<string?>? lineDescriptions,
-        string? rawText)
+        string? rawText,
+        IndustryType? industry = null,
+        BusinessType? businessType = null)
     {
         var reasons = new List<string>();
         var corpus = BuildCorpus(vendorName, headerDescription, lineDescriptions, rawText).ToLowerInvariant();
 
         // Score every rule against the corpus; highest wins.
         CategoryRule? best = null;
-        int bestScore = 0;
+        decimal bestScore = 0m;
         foreach (var rule in Rules)
         {
-            int score = 0;
+            int kwScore = 0;
             foreach (var kw in rule.Keywords)
-                if (corpus.Contains(kw.ToLowerInvariant())) score += kw.Length >= 6 ? 2 : 1;
+                if (corpus.Contains(kw.ToLowerInvariant())) kwScore += kw.Length >= 6 ? 2 : 1;
             // Vendor-brand matches outweigh single keyword hits because they're
             // far more discriminating ("ปตท." in a vendor name strongly
             // implies fuel; "ปตท." in a random product description doesn't).
             foreach (var brand in rule.VendorBrands)
                 if (!string.IsNullOrEmpty(vendorName)
                     && vendorName.ToLowerInvariant().Contains(brand.ToLowerInvariant()))
-                    score += 4;
+                    kwScore += 4;
+            if (kwScore == 0) continue;
+
+            // Industry bias: multiply the raw keyword score by the
+            // per-industry weight. Default weight is 1.0 (no change).
+            var industryWeight = IndustryWeight(rule.Category, industry);
+            decimal score = kwScore * industryWeight;
             if (score > bestScore) { bestScore = score; best = rule; }
         }
 
-        if (best == null || bestScore == 0) return null;
+        if (best == null || bestScore <= 0) return null;
 
-        // Confidence: 0.5 for 1 keyword, ramping to 0.95 at score≥6
+        // Confidence: 0.5 for ~1 keyword, ramping to 0.95 at score≥6
         var conf = Math.Min(0.95m, 0.4m + 0.1m * bestScore);
-        reasons.Add($"จับคู่ '{best.Category}' จาก {bestScore} keyword(s)/brand match");
+        var reasonText = industry.HasValue && industry != IndustryType.General
+            ? $"จับคู่ '{best.Category}' จาก score {bestScore:F1} (industry={industry.Value})"
+            : $"จับคู่ '{best.Category}' จาก score {bestScore:F1}";
+        reasons.Add(reasonText);
         return new CategoryResult(best.Category, best.AccountCode, best.AccountName,
             best.StatutoryWhtRate, conf, reasons);
+    }
+
+    /// <summary>Per-industry weighting factor for a category. Returns 1.0
+    /// when the industry is unknown / General. Values > 1.0 boost
+    /// categories that are typical for that industry; values < 1.0
+    /// dampen ones that are atypical.</summary>
+    private static decimal IndustryWeight(string category, IndustryType? industry)
+    {
+        if (!industry.HasValue || industry.Value == IndustryType.General) return 1.0m;
+        // Bias matrix — keys are subsets of the rule's Category Thai labels.
+        // Values are multiplicative factors applied to the raw keyword score.
+        var weights = (industry.Value, category) switch
+        {
+            // Manufacturing — material + repair + utility lean
+            (IndustryType.Manufacturing, "ค่าน้ำมันเชื้อเพลิง") => 1.4m,
+            (IndustryType.Manufacturing, "ค่าซ่อมแซมและบำรุงรักษา") => 1.5m,
+            (IndustryType.Manufacturing, "ค่าไฟฟ้า") => 1.4m,
+            (IndustryType.Manufacturing, "ค่าน้ำประปา") => 1.3m,
+            (IndustryType.Manufacturing, "ค่าขนส่ง / ค่าจัดส่ง") => 1.4m,
+            (IndustryType.Manufacturing, "ค่ารับรอง") => 0.7m,
+
+            // Service — consulting + telephony + travel lean
+            (IndustryType.Service, "ค่าที่ปรึกษากฎหมาย / บัญชี") => 1.4m,
+            (IndustryType.Service, "ค่าบริการ") => 1.3m,
+            (IndustryType.Service, "ค่าโทรศัพท์ / อินเทอร์เน็ต") => 1.3m,
+            (IndustryType.Service, "ค่าเดินทาง") => 1.3m,
+            (IndustryType.Service, "ค่าซ่อมแซมและบำรุงรักษา") => 0.8m,
+
+            // Restaurant / Cafe — supplies + utilities + rent lean
+            (IndustryType.Restaurant, "ค่าวัสดุสำนักงาน") => 1.3m,
+            (IndustryType.Restaurant, "ค่าไฟฟ้า") => 1.5m,
+            (IndustryType.Restaurant, "ค่าน้ำประปา") => 1.5m,
+            (IndustryType.Restaurant, "ค่าทำความสะอาด") => 1.5m,
+            (IndustryType.Restaurant, "ค่าเช่า") => 1.4m,
+            (IndustryType.Cafe, "ค่าไฟฟ้า") => 1.5m,
+            (IndustryType.Cafe, "ค่าน้ำประปา") => 1.4m,
+            (IndustryType.Cafe, "ค่าเช่า") => 1.5m,
+            (IndustryType.Cafe, "ค่าทำความสะอาด") => 1.4m,
+
+            // Trading / Retail / Ecommerce — transport + advertising lean
+            (IndustryType.Trading, "ค่าขนส่ง / ค่าจัดส่ง") => 1.5m,
+            (IndustryType.Trading, "ค่าโฆษณาและส่งเสริมการขาย") => 1.4m,
+            (IndustryType.Retail, "ค่าโฆษณาและส่งเสริมการขาย") => 1.4m,
+            (IndustryType.Retail, "ค่าเช่า") => 1.4m,
+            (IndustryType.Retail, "ค่าทำความสะอาด") => 1.3m,
+            (IndustryType.Ecommerce, "ค่าขนส่ง / ค่าจัดส่ง") => 1.6m,
+            (IndustryType.Ecommerce, "ค่าโฆษณาและส่งเสริมการขาย") => 1.5m,
+
+            // Construction — fuel + repair + transport lean
+            (IndustryType.Construction, "ค่าน้ำมันเชื้อเพลิง") => 1.5m,
+            (IndustryType.Construction, "ค่าซ่อมแซมและบำรุงรักษา") => 1.4m,
+            (IndustryType.Construction, "ค่าขนส่ง / ค่าจัดส่ง") => 1.4m,
+            (IndustryType.Construction, "ค่าวัสดุสำนักงาน") => 0.8m,
+
+            // Transportation — heavy fuel + repair + insurance
+            (IndustryType.Transportation, "ค่าน้ำมันเชื้อเพลิง") => 1.7m,
+            (IndustryType.Transportation, "ค่าซ่อมแซมและบำรุงรักษา") => 1.5m,
+            (IndustryType.Transportation, "ค่าประกัน") => 1.4m,
+
+            // Technology — internet + consulting lean
+            (IndustryType.Technology, "ค่าโทรศัพท์ / อินเทอร์เน็ต") => 1.5m,
+            (IndustryType.Technology, "ค่าที่ปรึกษากฎหมาย / บัญชี") => 1.3m,
+            (IndustryType.Technology, "ค่าโฆษณาและส่งเสริมการขาย") => 1.3m,
+
+            // Healthcare — utilities + cleaning + insurance lean
+            (IndustryType.Healthcare, "ค่าทำความสะอาด") => 1.5m,
+            (IndustryType.Healthcare, "ค่าไฟฟ้า") => 1.3m,
+            (IndustryType.Healthcare, "ค่าประกัน") => 1.3m,
+
+            // Hotel — utilities + cleaning + maintenance lean
+            (IndustryType.Hotel, "ค่าไฟฟ้า") => 1.5m,
+            (IndustryType.Hotel, "ค่าน้ำประปา") => 1.5m,
+            (IndustryType.Hotel, "ค่าทำความสะอาด") => 1.6m,
+            (IndustryType.Hotel, "ค่าซ่อมแซมและบำรุงรักษา") => 1.3m,
+
+            _ => 1.0m
+        };
+        return weights;
     }
 
     private static string BuildCorpus(string? v, string? h, IEnumerable<string?>? lines, string? raw)
