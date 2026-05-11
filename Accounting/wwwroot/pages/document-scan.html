@@ -953,6 +953,7 @@
                   <span class="doc-type-badge ${typeInfo.cls}">${typeInfo.label}</span>
                   ${statusBadge}
                   ${scan.quality ? `<span class="doc-type-badge" style="background:${scan.quality.color}22;color:${scan.quality.color};font-weight:700" title="Quality grade — Score ${scan.quality.score}/100">${scan.quality.letter}</span>` : ''}
+                  ${scan.hasHandwriting ? `<span class="doc-type-badge" style="background:#fef3c7;color:#92400e;font-weight:700" title="ตรวจพบลายมือ — โปรดตรวจสอบยอดเงิน">✋ ลายมือ</span>` : ''}
                 </div>
               </div>
             </div>

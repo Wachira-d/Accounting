@@ -192,6 +192,14 @@ public class OcrScanResult : TenantEntity
     //      "description":"...", "unitPrice":29900, "amount":29900,
     //      "reasons":["..."] }]
     public string? PotentialAssetLinesJson { get; set; }
+
+    // ─── Handwriting flag (from Azure DI styleFont feature) ───
+    // True when at least one field on the document appears to be
+    // hand-written on a printed form. Triggers a "✋ ตรวจสอบยอดเงิน
+    // ด้วยตา" alert in the UI, suppresses auto-create, and docks the
+    // scan quality grade so the review queue surfaces it first.
+    public bool HasHandwriting { get; set; }
+    public decimal? HandwritingConfidence { get; set; }
 }
 
 /// <summary>

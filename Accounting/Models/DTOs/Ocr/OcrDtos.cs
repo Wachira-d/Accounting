@@ -43,7 +43,12 @@ public record OcrResultResponse(
     /// computed by ScanQualityGrader. Lets the UI render a single
     /// at-a-glance badge instead of forcing the user to interpret six
     /// separate confidence numbers.</summary>
-    OcrQualityGradeDto? Quality = null);
+    OcrQualityGradeDto? Quality = null,
+    /// <summary>True when Azure DI's styleFont feature flagged
+    /// hand-written content on the document. Auto-create is suppressed
+    /// when this is true; UI shows a "✋ ตรวจสอบยอดเงิน" alert.</summary>
+    bool HasHandwriting = false,
+    decimal? HandwritingConfidence = null);
 
 public record OcrQualityGradeDto(string Letter, int Score, string Color);
 

@@ -994,6 +994,13 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PotentialAssetLinesJson" text NULL;
             """,
+            // OcrScanResults: handwriting detection
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "HasHandwriting" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "HandwritingConfidence" decimal(4,2) NULL;
+            """,
 
             // ===== OcrScanResults: document role inference fields =====
             // Thai-accounting workflow: a scanned receipt from a supplier should

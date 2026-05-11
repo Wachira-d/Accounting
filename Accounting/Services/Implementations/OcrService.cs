@@ -921,6 +921,19 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                     + "\n[FixedAsset] auto-create suppressed — โปรดกด Register Asset ก่อนสร้างเอกสาร";
             }
+            // Handwriting detection: if Azure's styleFont reported
+            // hand-written spans on this doc, capture the flag onto the
+            // scan record and suppress auto-create so the user verifies
+            // amounts manually. Handwritten amounts on a printed form
+            // are a common source of OCR errors AND fraud.
+            if (extractedData.FieldConfidence.TryGetValue("Handwriting", out var handConf))
+            {
+                scanResult.HasHandwriting = true;
+                scanResult.HandwritingConfidence = (decimal)handConf;
+                autoCreateThreshold = decimal.MaxValue;
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + $"\n[Handwriting] ✋ ตรวจพบลายมือ (conf {handConf:P0}) — auto-create suppressed, โปรดตรวจสอบยอดเงิน";
+            }
             try
             {
                 var recurring = await _recurringDetector.DetectAsync(companyId, scanResult.MatchedContactId);
@@ -2770,7 +2783,9 @@ public class OcrService : IOcrService
             r.OcrEngine,
             r.HasPotentialFixedAsset,
             r.PotentialAssetLinesJson,
-            Quality: BuildQualityDto(r));
+            Quality: BuildQualityDto(r),
+            HasHandwriting: r.HasHandwriting,
+            HandwritingConfidence: r.HandwritingConfidence);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)

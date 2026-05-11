@@ -74,7 +74,22 @@ public static class ScanQualityGrader
         if (!string.IsNullOrEmpty(r.ExtractedItemsJson) && r.ExtractedItemsJson.Length > 30)
         { score += 10; reasons.Add("line items → +10"); }
 
-        score = Math.Min(100, score);
+        // Handwriting penalty — manual verification required, so deduct
+        // 20 points to ensure the scan can't reach grade A. The exact
+        // penalty depends on handwriting confidence: high-confidence
+        // handwriting on a scanned form is a strong "needs human review"
+        // signal; low-confidence might just be a noisy character that
+        // styleFont misflagged.
+        if (r.HasHandwriting)
+        {
+            var penalty = r.HandwritingConfidence.HasValue
+                ? (int)Math.Round(r.HandwritingConfidence.Value * 20m)
+                : 15;
+            score -= penalty;
+            reasons.Add($"✋ handwriting detected → −{penalty}");
+        }
+
+        score = Math.Max(0, Math.Min(100, score));
 
         // Letter grade
         string letter, color;
