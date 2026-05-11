@@ -854,7 +854,7 @@ public class OcrService : IOcrService
 
             var data = new OcrExtractedData
             {
-                DocumentType = root.TryGetProperty("document_type", out var dt) ? dt.GetString() : null,
+                DocumentType = root.TryGetProperty("document_type", out var dt) ? (dt.GetString() ?? "Receipt") : "Receipt",
                 Confidence = root.TryGetProperty("confidence", out var cf) ? (decimal)cf.GetDouble() : 0.5m,
                 VendorName = root.TryGetProperty("vendor_name", out var vn) ? vn.GetString() : null,
                 VendorTaxId = root.TryGetProperty("vendor_tax_id", out var vt) ? vt.GetString() : null,

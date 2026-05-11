@@ -82,7 +82,7 @@ public class OcrController : ControllerBase
             CompanyId = companyId,
             FileName = fileName,
             OriginalFileName = file.FileName,
-            ContentType = file.ContentType,
+            ContentType = file.ContentType ?? "application/octet-stream",
             FileSize = file.Length,
             StoragePath = filePath,
             EntityType = "OcrScan",
