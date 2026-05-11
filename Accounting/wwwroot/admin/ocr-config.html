@@ -252,6 +252,45 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         </details>
       </div>
 
+      <!-- 🧪 System-level OCR Test Playground -->
+      <div class="admin-card" style="border:2px solid #d97706">
+        <div class="admin-card-header">
+          <div class="admin-card-title">🧪 ทดสอบ OCR (System-level)</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">
+            อัปโหลดไฟล์เพื่อตรวจสอบว่า OCR engine ทำงานถูกต้องที่ระดับระบบ — <b>ไม่กิน quota, ไม่บันทึก DB, ไม่ฝึก learner</b>
+            สำหรับ training + per-tenant learning ใช้หน้า <a href="/pages/admin-ocr.html" style="color:#0d9488">OCR Admin Console</a> (ต้อง login เป็น Admin ของบริษัท)
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:13px;font-weight:600">Provider ที่จะทดสอบ:</label>
+          <select id="systemTestProvider" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+            <option value="embedded">Embedded Tesseract (in-process)</option>
+            <option value="azure">Azure DI (cloud)</option>
+            <option value="python">Python service (PaddleOCR+EasyOCR)</option>
+          </select>
+        </div>
+        <div id="systemTestDropZone" style="border:2px dashed #cbd5e1;border-radius:12px;padding:32px 20px;text-align:center;cursor:pointer;background:#fef3c7;transition:all .2s" onclick="document.getElementById('systemTestFileInput').click()">
+          <div style="font-size:40px">📄</div>
+          <div style="margin-top:6px;font-weight:600;color:#78350f">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</div>
+          <div style="font-size:12px;color:#92400e;margin-top:4px">JPG, PNG, BMP, TIFF (≤10MB) — PDF ใช้ได้เฉพาะ Azure/Python tier</div>
+        </div>
+        <input type="file" id="systemTestFileInput" style="display:none" accept="image/*,application/pdf" onchange="systemTestScan(this.files[0])">
+        <div id="systemTestResult" style="margin-top:14px;display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong style="font-size:14px">ผลลัพธ์:</strong>
+            <span id="systemTestProviderLabel" style="font-size:12px;color:#64748b"></span>
+          </div>
+          <div style="background:#f0fdfa;border:1px solid #5eead4;border-radius:8px;padding:12px;margin-bottom:12px">
+            <strong style="font-size:13px;color:#134e4a">📊 ข้อมูลที่ระบบแยกได้</strong>
+            <div id="systemParsedFields" style="margin-top:8px;font-size:13px"></div>
+          </div>
+          <details>
+            <summary style="cursor:pointer;font-size:13px;font-weight:600">📜 Raw OCR Text</summary>
+            <pre id="systemRawText" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;font-size:11px;line-height:1.6;margin-top:8px"></pre>
+          </details>
+        </div>
+      </div>
+
       <!-- Confidence Gateway Tuning -->
       <div class="admin-card">
         <div class="admin-card-header">
@@ -595,6 +634,76 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         el.style.color = '#dc2626';
       }
     }
+
+    async function systemTestScan(file) {
+      if (!file) return;
+      const provider = document.getElementById('systemTestProvider').value;
+      const resultBox = document.getElementById('systemTestResult');
+      resultBox.style.display = 'block';
+      document.getElementById('systemParsedFields').innerHTML = '<em style="color:#64748b">กำลังประมวลผล...</em>';
+      document.getElementById('systemRawText').textContent = '';
+      document.getElementById('systemTestProviderLabel').textContent = '';
+
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const token = localStorage.getItem('admin_token');
+        const r = await fetch(`/api/admin/ocr-config/test-scan?provider=${provider}`, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token },
+          body: fd
+        });
+        const res = await r.json();
+        if (!r.ok || !res?.success) {
+          document.getElementById('systemParsedFields').innerHTML =
+            `<span style="color:#dc2626">❌ ${res?.message || res?.data?.error || 'ผิดพลาด'}</span>`;
+          return;
+        }
+        const d = res.data || {};
+        document.getElementById('systemTestProviderLabel').textContent =
+          `${d.provider} • confidence ${(d.confidence * 100).toFixed(0)}%`;
+
+        const p = d.parsedFields;
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const tag = (v) => `<span style="display:inline-block;background:#e0f2fe;color:#075985;padding:2px 8px;border-radius:4px;font-size:11px;margin:2px 2px 0 0;font-family:monospace">${esc(v)}</span>`;
+        if (!p) {
+          document.getElementById('systemParsedFields').innerHTML = '<em style="color:#64748b">ไม่มีข้อมูลที่แยกได้</em>';
+        } else {
+          document.getElementById('systemParsedFields').innerHTML = `
+            <div style="display:grid;grid-template-columns:160px 1fr;gap:6px">
+              <div style="color:#64748b;font-weight:600">ประเภทเอกสาร:</div>
+              <div>${p.documentType ? esc(p.documentType) : '—'}</div>
+              <div style="color:#64748b;font-weight:600">เลขประจำตัวผู้เสียภาษี:</div>
+              <div>${(p.taxIds || []).map(tag).join('') || '—'}</div>
+              <div style="color:#64748b;font-weight:600">เลขที่เอกสาร:</div>
+              <div>${(p.documentNumbers || []).map(tag).join('') || '—'}</div>
+              <div style="color:#64748b;font-weight:600">วันที่:</div>
+              <div>${(p.dates || []).map(tag).join('') || '—'}</div>
+              <div style="color:#64748b;font-weight:600">ยอดเงิน:</div>
+              <div>${(p.amounts || []).slice(0, 10).map(tag).join('') || '—'}</div>
+              <div style="color:#64748b;font-weight:600">ความยาวข้อความ:</div>
+              <div>${p.textLength} ตัวอักษร</div>
+            </div>`;
+        }
+        document.getElementById('systemRawText').textContent = d.rawText || '(ไม่มีข้อความ)';
+      } catch (e) {
+        document.getElementById('systemParsedFields').innerHTML =
+          `<span style="color:#dc2626">❌ ${e.message}</span>`;
+      }
+    }
+
+    // Wire drag-drop on the system test zone
+    document.addEventListener('DOMContentLoaded', () => {
+      const zone = document.getElementById('systemTestDropZone');
+      if (!zone) return;
+      zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = '#0d9488'; });
+      zone.addEventListener('dragleave', () => { zone.style.borderColor = '#cbd5e1'; });
+      zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.style.borderColor = '#cbd5e1';
+        if (e.dataTransfer.files.length > 0) systemTestScan(e.dataTransfer.files[0]);
+      });
+    });
 
     async function checkEmbeddedStatus() {
       const badge = document.getElementById('embeddedStatusBadge');
