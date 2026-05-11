@@ -45,33 +45,50 @@ public class CmsSiteRoutingMiddleware
             return;
         }
 
-        // --- Path-based routing: /site/{subdomain} or /site/{subdomain}/{slug} ---
+        // --- Path-based routing: /site/{subdomain-or-slug} or /site/{key}/{slug} ---
         // Works without wildcard cert. When wildcard cert is added later, the
         // host-based matching below takes over automatically.
         if (path.StartsWith("/site/", StringComparison.OrdinalIgnoreCase) && path.Length > 6)
         {
             var remainder = path[6..]; // after "/site/"
             var slashIdx = remainder.IndexOf('/');
-            var subdomain = (slashIdx >= 0 ? remainder[..slashIdx] : remainder).ToLowerInvariant().TrimEnd('/');
+            var key = (slashIdx >= 0 ? remainder[..slashIdx] : remainder).ToLowerInvariant().TrimEnd('/');
 
-            if (!string.IsNullOrEmpty(subdomain))
+            if (!string.IsNullOrEmpty(key))
             {
+                // Match by Subdomain OR Slug — the create-site UI may
+                // populate either depending on the workflow, so we accept
+                // both. Subdomain takes precedence when both match different
+                // sites (it's the canonical URL identifier).
                 var site = await db.Sites
                     .AsNoTracking()
-                    .Where(s => s.Subdomain == subdomain)
-                    .Select(s => new { s.Id, s.CompanyId, s.Subdomain, s.Status })
+                    .Where(s => s.Subdomain == key || s.Slug == key)
+                    .OrderByDescending(s => s.Subdomain == key)  // exact subdomain match first
+                    .Select(s => new { s.Id, s.CompanyId, s.Subdomain, s.Slug, s.Status })
                     .FirstOrDefaultAsync();
 
                 if (site != null)
                 {
                     context.Items["CmsSiteId"] = site.Id;
                     context.Items["CmsCompanyId"] = site.CompanyId;
-                    context.Items["CmsSiteSubdomain"] = site.Subdomain;
+                    context.Items["CmsSiteSubdomain"] = string.IsNullOrEmpty(site.Subdomain) ? site.Slug : site.Subdomain;
                     context.Items["CmsPathBased"] = true;
                     context.Request.Path = "/storefront.html";
                     await _next(context);
                     return;
                 }
+
+                // No site matched — STILL rewrite to /storefront.html so the
+                // viewer can render its own "Site Not Found" page. Without
+                // this, the SPA fallback at the end of the pipeline would
+                // serve the main marketing index.html, which is confusing
+                // (user sees the main nextacc.net homepage instead of a
+                // proper "no such site" message).
+                context.Items["CmsPathBased"] = true;
+                context.Items["CmsRequestedKey"] = key;
+                context.Request.Path = "/storefront.html";
+                await _next(context);
+                return;
             }
         }
 

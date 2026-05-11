@@ -524,8 +524,22 @@ public class CmsSiteService : ICmsSiteService
 
     public async Task<SiteResponse?> ResolveSiteBySubdomainAsync(string subdomain)
     {
+        if (string.IsNullOrWhiteSpace(subdomain)) return null;
+        var key = subdomain.ToLowerInvariant().Trim();
+
+        // Match by Subdomain OR Slug. The CreateSiteAsync flow populates
+        // both fields, but older sites or admin-edited rows may carry just
+        // one. Subdomain wins when both differ (it's the canonical URL
+        // identifier exposed to visitors).
+        //
+        // Status filter: Suspended sites stay hidden (operator killed them);
+        // Draft / Maintenance / Published all resolve so the owner can
+        // preview before flipping to Published.
         var site = await _db.Sites.AsNoTracking()
-            .Where(s => s.Subdomain == subdomain && s.Status == SiteStatus.Published)
+            .Where(s => (s.Subdomain == key || s.Slug == key)
+                && s.Status != SiteStatus.Suspended
+                && !s.IsDeleted)
+            .OrderByDescending(s => s.Subdomain == key)
             .Select(s => new { s.CompanyId, s.Id })
             .FirstOrDefaultAsync();
 
