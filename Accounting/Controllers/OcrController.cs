@@ -168,11 +168,18 @@ public class OcrController : ControllerBase
         return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
     }
 
+    /// <summary>
+    /// Delete an OCR scan result. When the scan auto-created a draft
+    /// document, pass cascade=true to delete the document too — the
+    /// service will refuse if that document has already been approved
+    /// or paid (those need to be voided via the normal Documents flow).
+    /// </summary>
     [HttpDelete("{scanId:guid}")]
-    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId)
+    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId, [FromQuery] bool cascade = false)
     {
-        await _service.DeleteScanAsync(companyId, scanId);
-        return Ok(new ApiResponse<object>(true, null, "ลบสำเร็จ"));
+        await _service.DeleteScanAsync(companyId, scanId, cascade);
+        return Ok(new ApiResponse<object>(true, null,
+            cascade ? "ลบ scan และเอกสารที่สร้างอัตโนมัติเรียบร้อย" : "ลบสำเร็จ"));
     }
 
     [HttpGet("quota")]

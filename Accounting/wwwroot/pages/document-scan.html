@@ -926,8 +926,14 @@
         if (scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
         }
-        if (!scan.createdDocumentId) {
-          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${scan.id}')" title="ลบ">&#x1F5D1;</button>`;
+        // Delete button — always available. When the scan auto-created a
+        // document, the click handler asks the user to confirm a cascade
+        // delete and the backend will refuse if that document has been
+        // approved/paid (financial records can't be deleted from here).
+        if (scan.createdDocumentId) {
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${scan.id}', true)" title="ลบ scan + เอกสารที่สร้างอัตโนมัติ">&#x1F5D1; ลบทั้งคู่</button>`;
+        } else {
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${scan.id}', false)" title="ลบ">&#x1F5D1;</button>`;
         }
 
         return `
@@ -1022,13 +1028,21 @@
         }
       },
 
-      async deleteScan(scanId) {
-        if (!confirm('ลบเอกสารสแกนนี้?')) return;
+      async deleteScan(scanId, cascade = false) {
+        // When cascading, the user is also deleting the auto-created draft
+        // document — surface that fact in the confirm prompt so they're
+        // not surprised when the document disappears from the Documents
+        // list too. Backend refuses cascade for Approved/Paid docs.
+        const msg = cascade
+          ? 'ลบ scan นี้ + เอกสารที่สร้างอัตโนมัติ (Draft) ทั้งคู่?\n\n' +
+            '⚠️ ถ้าเอกสารถูกอนุมัติแล้ว ระบบจะปฏิเสธ — ต้อง void จากหน้าเอกสารแทน'
+          : 'ลบเอกสารสแกนนี้?';
+        if (!confirm(msg)) return;
         const api = Layout.api();
         if (!api) return;
         try {
-          await api.ocrDelete(scanId);
-          Layout.toast('ลบสำเร็จ');
+          await api.ocrDelete(scanId, cascade);
+          Layout.toast(cascade ? 'ลบ scan + เอกสารสำเร็จ' : 'ลบสำเร็จ');
           this.loadScans();
         } catch (err) {
           Layout.toast('ลบไม่สำเร็จ: ' + err.message, 'error');

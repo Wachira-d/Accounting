@@ -2115,14 +2115,53 @@ public class OcrService : IOcrService
         _logger.LogInformation("Re-linked scan file {FileId} to Document {DocId}", attachment.Id, documentId);
     }
 
-    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId)
+    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
 
+        // Handle the auto-created document case. Two flows:
+        //   • cascadeCreatedDocument = false → bail out (old behavior) so the
+        //     user can't accidentally orphan or delete a document they
+        //     intend to keep.
+        //   • cascadeCreatedDocument = true → delete the document too, but
+        //     ONLY while it's still Draft. Approved/Paid documents are
+        //     financial records and must not be deleted via the OCR UI —
+        //     the user has to void/reverse them through the normal docs UI.
         if (result.CreatedDocumentId.HasValue)
-            throw new InvalidOperationException("Cannot delete: a document has already been created from this scan.");
+        {
+            if (!cascadeCreatedDocument)
+                throw new InvalidOperationException(
+                    "เอกสารถูกสร้างจาก scan นี้แล้ว — ส่ง cascade=true เพื่อลบทั้งคู่ (เฉพาะกรณี Draft)");
+
+            var doc = await _db.Documents
+                .Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == result.CreatedDocumentId.Value
+                    && d.CompanyId == companyId && !d.IsDeleted);
+            if (doc != null)
+            {
+                if (doc.Status != Models.Enums.DocumentStatus.Draft
+                    && doc.Status != Models.Enums.DocumentStatus.WaitingApproval
+                    && doc.Status != Models.Enums.DocumentStatus.Rejected)
+                {
+                    throw new InvalidOperationException(
+                        $"เอกสารที่สร้างจาก scan นี้อยู่ในสถานะ {doc.Status} — ต้อง void/reverse จากหน้าเอกสารแทน");
+                }
+                // Soft-delete to preserve audit trail (consistent with how
+                // documents are deleted elsewhere). Lines cascade via the
+                // entity's IsDeleted filter; FK rows like attachments are
+                // re-pointed below.
+                doc.IsDeleted = true;
+                doc.UpdatedAt = DateTime.UtcNow;
+                doc.UpdatedBy = "OCR-DeleteCascade";
+                foreach (var line in doc.Lines)
+                {
+                    line.IsDeleted = true;
+                    line.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+        }
 
         if (result.FileAttachmentId.HasValue)
         {

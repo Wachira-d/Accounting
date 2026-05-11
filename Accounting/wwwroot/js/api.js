@@ -615,7 +615,7 @@ const API = {
       ocrCreateDocument: (id) => API.post(`${base}/ocr/${id}/create-document`),
       ocrCorrect: (id, data) => API.post(`${base}/ocr/${id}/correct`, data),
       ocrMatchContact: (scanId, contactId) => API.post(`${base}/ocr/${scanId}/match-contact/${contactId}`),
-      ocrDelete: (scanId) => API.del(`${base}/ocr/${scanId}`),
+      ocrDelete: (scanId, cascade = false) => API.del(`${base}/ocr/${scanId}${cascade ? '?cascade=true' : ''}`),
       // Webhooks
       getWebhooks: () => API.get(`${base}/webhooks`),
       createWebhook: (d) => API.post(`${base}/webhooks`, d),
