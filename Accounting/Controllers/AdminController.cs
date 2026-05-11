@@ -1274,6 +1274,40 @@ public class AdminController : ControllerBase
     public record TrainLineItem(string Description, string? AccountCode, decimal? Amount);
 
     /// <summary>
+    /// Run the system-wide Apriori-style basket-analysis miner. Scans every
+    /// approved/paid Document in the last `sinceMonths` months across all
+    /// tenants, discovers (vendor + keyword) → account association rules,
+    /// and persists the top 2000 by lift to SystemOcrAssociationRules.
+    ///
+    /// Intended to be run on a schedule (e.g. nightly) or after a bulk
+    /// approval — not per scan. The scan-time consumer pulls the cached
+    /// rules from the DB and uses them as one signal in the category
+    /// resolver fusion.
+    /// </summary>
+    [HttpPost("ocr-config/mine-association-rules")]
+    public async Task<ActionResult<ApiResponse<object>>> MineAssociationRules(
+        [FromServices] Services.Implementations.Ocr.AssociationRuleMiner miner,
+        [FromQuery] decimal minSupport = 0.005m,
+        [FromQuery] decimal minConfidence = 0.5m,
+        [FromQuery] int sinceMonths = 24)
+    {
+        var result = await miner.MineSystemWideAsync(minSupport, minConfidence, sinceMonths);
+        await LogAuditAsync(null, "OcrAssociationRulesMined",
+            $"Scanned {result.TransactionsScanned} docs → {result.RulesDiscovered} rules " +
+            $"(persisted {result.RulesPersisted}) in {result.Duration.TotalSeconds:F1}s");
+        return Ok(new ApiResponse<object>(true, new
+        {
+            transactionsScanned = result.TransactionsScanned,
+            rulesDiscovered = result.RulesDiscovered,
+            rulesPersisted = result.RulesPersisted,
+            durationSeconds = result.Duration.TotalSeconds,
+            minSupport,
+            minConfidence,
+            sinceMonths,
+        }, $"ขุดกฎเสร็จ: {result.RulesPersisted} กฎจาก {result.TransactionsScanned} เอกสาร"));
+    }
+
+    /// <summary>
     /// System-level OCR test — SystemAdmin uploads a file from the /admin
     /// shell, runs it through the requested provider (no quota, no tenant
     /// context, no training), and gets back raw text + parsed fields for

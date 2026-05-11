@@ -334,6 +334,43 @@ public class SystemOcrVendorIntelligence : BaseEntity
 }
 
 /// <summary>
+/// Discovered association rule from system-wide basket analysis. Each row
+/// represents "when antecedent tokens are present in a document, the
+/// consequent account is likely the right debit". Refreshed by the
+/// AssociationRuleMiner background job. No CompanyId — these are
+/// system-wide patterns shared across every tenant.
+/// </summary>
+public class SystemOcrAssociationRule : BaseEntity
+{
+    /// <summary>JSON array of antecedent tokens, e.g. ["brand:ptt","kw:น้ำมัน"].</summary>
+    public string AntecedentJson { get; set; } = "[]";
+
+    /// <summary>The consequent token: typically "acct:5402" (a debit account
+    /// code) but the format is intentionally generic so we can mine other
+    /// consequents (doc type, WHT rate) in the future.</summary>
+    public string Consequent { get; set; } = "";
+
+    /// <summary>Fraction of all transactions that contain the antecedent AND
+    /// consequent — measures how OFTEN the pattern occurs.</summary>
+    public decimal Support { get; set; }
+
+    /// <summary>P(consequent | antecedent) — measures how RELIABLE the rule
+    /// is. ≥ 0.5 typically required for usable rules.</summary>
+    public decimal Confidence { get; set; }
+
+    /// <summary>Confidence / P(consequent). Lift > 1 means the antecedent
+    /// actually moves the needle (vs. choosing the consequent at random).
+    /// Used as the primary ranking metric.</summary>
+    public decimal Lift { get; set; }
+
+    /// <summary>Raw count of training transactions supporting this rule —
+    /// used to weight lift (a lift of 10 from 3 docs is weaker than 5 from 300).</summary>
+    public int TransactionCount { get; set; }
+
+    public DateTime MinedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
 /// การซื้อเครดิต OCR เพิ่มเติม (add-on pages)
 /// </summary>
 public class OcrCreditPurchase : TenantEntity

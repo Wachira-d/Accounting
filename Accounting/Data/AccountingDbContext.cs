@@ -197,6 +197,7 @@ public class AccountingDbContext : DbContext
     public DbSet<OcrVendorIntelligence> OcrVendorIntelligence => Set<OcrVendorIntelligence>();
     public DbSet<SystemOcrCategoryMapping> SystemOcrCategoryMappings => Set<SystemOcrCategoryMapping>();
     public DbSet<SystemOcrVendorIntelligence> SystemOcrVendorIntelligence => Set<SystemOcrVendorIntelligence>();
+    public DbSet<SystemOcrAssociationRule> SystemOcrAssociationRules => Set<SystemOcrAssociationRule>();
 
     // Custom Reports
     public DbSet<CustomReport> CustomReports => Set<CustomReport>();
@@ -1442,6 +1443,18 @@ public class AccountingDbContext : DbContext
             // One row per vendor across the entire system
             e.HasIndex(p => p.VendorKey).IsUnique();
             e.HasQueryFilter(v => !v.IsDeleted);
+        });
+
+        // ===== SystemOcrAssociationRule (basket-analysis output) =====
+        modelBuilder.Entity<SystemOcrAssociationRule>(e =>
+        {
+            e.Property(p => p.Consequent).HasMaxLength(100);
+            e.Property(p => p.Support).HasPrecision(8, 6);
+            e.Property(p => p.Confidence).HasPrecision(8, 6);
+            e.Property(p => p.Lift).HasPrecision(10, 4);
+            // Index by consequent so "show me all rules → 5402" is fast
+            e.HasIndex(p => p.Consequent);
+            e.HasQueryFilter(r => !r.IsDeleted);
         });
 
         // ===== CustomReport =====

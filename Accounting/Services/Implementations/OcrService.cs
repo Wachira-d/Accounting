@@ -22,6 +22,7 @@ public class OcrService : IOcrService
     private readonly ExpenseCategoryLearner _categoryLearner;
     private readonly VendorIntelligenceService _vendorIntel;
     private readonly EmbeddedTesseractOcrService _embeddedOcr;
+    private readonly AssociationRuleMiner _ruleMiner;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -29,7 +30,8 @@ public class OcrService : IOcrService
         AzureDocumentIntelligenceService azureDi,
         ExpenseCategoryLearner categoryLearner,
         VendorIntelligenceService vendorIntel,
-        EmbeddedTesseractOcrService embeddedOcr)
+        EmbeddedTesseractOcrService embeddedOcr,
+        AssociationRuleMiner ruleMiner)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -40,6 +42,7 @@ public class OcrService : IOcrService
         _categoryLearner = categoryLearner;
         _vendorIntel = vendorIntel;
         _embeddedOcr = embeddedOcr;
+        _ruleMiner = ruleMiner;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -315,6 +318,48 @@ public class OcrService : IOcrService
                 rawText: extractedText);
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult);
+
+            // ───── Basket-analysis association rule lookup ─────
+            // Apriori-mined rules from approved-doc history across all
+            // tenants. A high-lift rule "brand:HomePro + kw:วัสดุ → acct:5305"
+            // beats the static keyword resolver because it reflects what
+            // real Thai businesses actually book.
+            try
+            {
+                var rule = await _ruleMiner.FindBestMatchAsync(
+                    extractedData.VendorName,
+                    extractedData.Items.Select(i => i.Description));
+                if (rule != null && rule.Confidence >= 0.7m && rule.Lift >= 2m
+                    && rule.Consequent.StartsWith("acct:")
+                    && (string.IsNullOrEmpty(extractedData.DebitAccountCode)
+                        || extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0) < 0.85))
+                {
+                    var code = rule.Consequent.Substring("acct:".Length);
+                    extractedData.DebitAccountCode = code;
+                    var acctName = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted)
+                        .Select(a => a.AccountName)
+                        .FirstOrDefaultAsync();
+                    if (!string.IsNullOrEmpty(acctName)) extractedData.DebitAccountName = acctName;
+                    extractedData.FieldConfidence["DebitAccount"] = (double)Math.Min(0.95m, rule.Confidence);
+                    extractedData.ReasoningTrace.Add(
+                        $"[BasketRule] {string.Join("+", rule.Antecedent)} → {rule.Consequent} " +
+                        $"(conf {rule.Confidence:P0}, lift {rule.Lift:F1}, จาก {rule.TransactionCount} เอกสาร)");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Association rule lookup failed (non-fatal)");
+            }
+
+            // ───── Product cross-reference ─────
+            // When a line-item description matches an existing Product (by
+            // exact name or barcode/SKU substring), prefer the product's
+            // configured PurchaseAccount over any inferred account — the
+            // product master is the strongest signal: a human set this up
+            // intentionally and Thai products almost always have one
+            // canonical expense bucket.
+            await ApplyProductCrossReferenceAsync(companyId, extractedData);
 
             // ───── Learned category prediction (per line description) ─────
             // If we have a learned mapping for this vendor, prefer it over generic
@@ -788,6 +833,73 @@ public class OcrService : IOcrService
         => (siteSettings?.OcrProvider ?? _configuration["Ocr:Provider"] ?? "").ToLowerInvariant();
 
     private record AzureExtractionResult(bool Success, string Text, OcrExtractedData Data, string? Error);
+
+    /// <summary>
+    /// Match each OCR'd line-item description against the company's Products
+    /// table. When a strong match is found, override the line's suggested
+    /// account with the product's PurchaseAccount — the product master is
+    /// authoritative because a human configured it deliberately.
+    ///
+    /// Match strategy (in order of strength):
+    ///   1. Exact code/SKU/barcode hit anywhere in the description
+    ///   2. Exact product name substring (≥3 chars)
+    ///   3. Loose Thai name match — first 6 Thai chars of the name appear
+    ///
+    /// Header-level DebitAccount is updated when ≥2 line items resolve to
+    /// the same product account, or when there's only one line.
+    /// </summary>
+    private async Task ApplyProductCrossReferenceAsync(Guid companyId, OcrExtractedData data)
+    {
+        if (data.Items == null || data.Items.Count == 0) return;
+
+        // Pull only products that have a PurchaseAccount configured — without
+        // an account these rows can't influence the decision and just bloat
+        // the in-memory scan.
+        var products = await _db.Products.AsNoTracking()
+            .Include(p => p.PurchaseAccount)
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.PurchaseAccountId != null
+                && p.PurchaseAccount != null)
+            .Select(p => new {
+                p.Code, p.Name, p.SKU, p.Barcode,
+                AccountCode = p.PurchaseAccount!.AccountCode,
+                AccountName = p.PurchaseAccount.AccountName,
+            })
+            .ToListAsync();
+        if (products.Count == 0) return;
+
+        var accountHits = new Dictionary<string, (string Name, int Count)>();
+        foreach (var line in data.Items)
+        {
+            var desc = (line.Description ?? "").ToLowerInvariant();
+            if (string.IsNullOrEmpty(desc)) continue;
+
+            var match = products.FirstOrDefault(p =>
+                (!string.IsNullOrEmpty(p.Code) && desc.Contains(p.Code.ToLowerInvariant()))
+                || (!string.IsNullOrEmpty(p.Barcode) && desc.Contains(p.Barcode.ToLowerInvariant()))
+                || (!string.IsNullOrEmpty(p.SKU) && desc.Contains(p.SKU.ToLowerInvariant()))
+                || (!string.IsNullOrEmpty(p.Name) && p.Name.Length >= 3 && desc.Contains(p.Name.ToLowerInvariant())));
+
+            if (match == null) continue;
+            line.SuggestedAccountCode = match.AccountCode;
+            var entry = accountHits.GetValueOrDefault(match.AccountCode);
+            accountHits[match.AccountCode] = (match.AccountName, entry.Count + 1);
+            data.ReasoningTrace.Add(
+                $"[Product] รายการ '{line.Description}' ตรงกับสินค้า master '{match.Name}' → บัญชี {match.AccountCode}");
+        }
+
+        if (accountHits.Count == 0) return;
+        // Dominant account across the lines becomes the header-level Debit
+        var dominant = accountHits.OrderByDescending(kv => kv.Value.Count).First();
+        if (dominant.Value.Count >= Math.Max(2, data.Items.Count / 2))
+        {
+            data.DebitAccountCode = dominant.Key;
+            data.DebitAccountName = dominant.Value.Name;
+            data.FieldConfidence["DebitAccount"] = 0.95;
+            data.ReasoningTrace.Add(
+                $"[Product] บัญชี header → {dominant.Key} ({dominant.Value.Count}/{data.Items.Count} รายการตรงสินค้า master)");
+        }
+    }
 
     private async Task<AzureExtractionResult> ExtractWithAzureDiAsync(Guid companyId, FileAttachment file, SiteSettings? siteSettings)
     {

@@ -1355,6 +1355,33 @@ public static class DatabaseMigrationHelper
             ON "SystemOcrVendorIntelligence" ("VendorKey");
             """,
 
+            // ===== SystemOcrAssociationRules: basket-analysis output =====
+            // Discovered association rules from system-wide Apriori mining over
+            // approved-document transactions. Refreshed by an admin-triggered
+            // background job, not per-scan.
+            """
+            CREATE TABLE IF NOT EXISTS "SystemOcrAssociationRules" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "AntecedentJson" text NOT NULL DEFAULT '[]',
+                "Consequent" varchar(100) NOT NULL DEFAULT '',
+                "Support" decimal(8,6) NOT NULL DEFAULT 0,
+                "Confidence" decimal(8,6) NOT NULL DEFAULT 0,
+                "Lift" decimal(10,4) NOT NULL DEFAULT 0,
+                "TransactionCount" integer NOT NULL DEFAULT 0,
+                "MinedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SystemOcrAssociationRules" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_SystemOcrAssociationRules_Consequent"
+            ON "SystemOcrAssociationRules" ("Consequent");
+            """,
+
             // ===== OcrCreditPurchases table =====
             """
             CREATE TABLE IF NOT EXISTS "OcrCreditPurchases" (
