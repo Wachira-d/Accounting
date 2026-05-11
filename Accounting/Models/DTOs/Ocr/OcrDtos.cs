@@ -15,7 +15,16 @@ public record OcrResultResponse(
     Dictionary<string, double>? FieldConfidence = null,
     string? BuyerName = null,
     string? BuyerTaxId = null,
-    OcrDbdInfo? DbdInfo = null);
+    OcrDbdInfo? DbdInfo = null,
+    // ─── Role inference (Phase 1) ───
+    // ScannedDocumentType is the paper that the user actually scanned.
+    // TargetDocumentType is what we should create in our books — these differ
+    // for the common case of a supplier receipt (scanned=Receipt,
+    // target=PaymentVoucher). OurRole is "Buyer" or "Seller". The legacy
+    // DocumentType field mirrors ScannedDocumentType for back-compat.
+    string? ScannedDocumentType = null,
+    string? OurRole = null,
+    string? TargetDocumentType = null);
 
 public record OcrDbdInfo(
     bool LookupAttempted,
@@ -49,4 +58,9 @@ public record OcrCorrectionRequest(
     string? DebitAccountCode = null,
     string? CreditAccountCode = null,
     bool? HasWht = null,
-    decimal? WhtRate = null);
+    decimal? WhtRate = null,
+    // Phase-1 role-inference correction: when user changes the inferred
+    // "เอกสารที่จะสร้าง" dropdown, this string carries the new value so the
+    // backend can both update the scan record AND train VendorIntelligence
+    // to suggest the same target for this vendor next time.
+    string? TargetDocumentType = null);

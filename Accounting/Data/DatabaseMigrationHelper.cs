@@ -974,6 +974,23 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "DuplicateOfScanId" uuid NULL;
             """,
 
+            // ===== OcrScanResults: document role inference fields =====
+            // Thai-accounting workflow: a scanned receipt from a supplier should
+            // create a PaymentVoucher in our books — not a "Receipt" document.
+            // These three columns let OcrDocumentRoleInferrer record the
+            // separation between the paper (ScannedDocumentType), our role
+            // (OurRole: Buyer/Seller), and the target doc to create
+            // (TargetDocumentType).
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ScannedDocumentType" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRole" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocumentType" varchar(50) NULL;
+            """,
+
             // ===== OcrScanResults: expense/account suggestion fields =====
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExpenseCategory" text NULL;

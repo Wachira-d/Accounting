@@ -1136,17 +1136,37 @@
             <div class="review-section">
               <div class="review-section-title">ข้อมูลที่สกัดได้ ${confPercent !== null ? `<span style="float:right;font-size:12px;font-weight:400;color:var(--gray-500)">ความเชื่อมั่นรวม: <strong class="confidence-label ${confLevel}">${confPercent}%</strong></span>` : ''}</div>
               <div class="review-field">
-                <label>ประเภทเอกสาร</label>
+                <label>กระดาษที่สแกน</label>
                 <select class="form-input" id="revDocType" style="flex:1">
-                  <option value="TaxInvoice" ${scan.documentType === 'TaxInvoice' ? 'selected' : ''}>ใบกำกับภาษี</option>
-                  <option value="Invoice" ${scan.documentType === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้</option>
-                  <option value="Receipt" ${scan.documentType === 'Receipt' ? 'selected' : ''}>ใบเสร็จ</option>
-                  <option value="CreditNote" ${scan.documentType === 'CreditNote' ? 'selected' : ''}>ใบลดหนี้</option>
-                  <option value="DebitNote" ${scan.documentType === 'DebitNote' ? 'selected' : ''}>ใบเพิ่มหนี้</option>
-                  <option value="PurchaseOrder" ${scan.documentType === 'PurchaseOrder' ? 'selected' : ''}>ใบสั่งซื้อ</option>
-                  <option value="WHT" ${scan.documentType === 'WHT' ? 'selected' : ''}>หนังสือรับรอง 50 ทวิ</option>
-                  <option value="Other" ${scan.documentType === 'Other' ? 'selected' : ''}>อื่นๆ</option>
+                  <option value="TaxInvoice" ${(scan.scannedDocumentType || scan.documentType) === 'TaxInvoice' ? 'selected' : ''}>ใบกำกับภาษี</option>
+                  <option value="Invoice" ${(scan.scannedDocumentType || scan.documentType) === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้</option>
+                  <option value="Receipt" ${(scan.scannedDocumentType || scan.documentType) === 'Receipt' ? 'selected' : ''}>ใบเสร็จ</option>
+                  <option value="CreditNote" ${(scan.scannedDocumentType || scan.documentType) === 'CreditNote' ? 'selected' : ''}>ใบลดหนี้</option>
+                  <option value="DebitNote" ${(scan.scannedDocumentType || scan.documentType) === 'DebitNote' ? 'selected' : ''}>ใบเพิ่มหนี้</option>
+                  <option value="PurchaseOrder" ${(scan.scannedDocumentType || scan.documentType) === 'PurchaseOrder' ? 'selected' : ''}>ใบสั่งซื้อ</option>
+                  <option value="CertificateInLieu" ${(scan.scannedDocumentType || scan.documentType) === 'CertificateInLieu' ? 'selected' : ''}>ใบรับรองแทนใบเสร็จ</option>
+                  <option value="WHT" ${(scan.scannedDocumentType || scan.documentType) === 'WHT' ? 'selected' : ''}>หนังสือรับรอง 50 ทวิ</option>
+                  <option value="Other" ${(scan.scannedDocumentType || scan.documentType) === 'Other' ? 'selected' : ''}>อื่นๆ</option>
                 </select>
+              </div>
+              <div class="review-field" style="background:#fef3c7;border:1px solid #fcd34d;padding:8px 10px;border-radius:6px">
+                <label style="color:#78350f;font-weight:600">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">🤖 AI แนะนำ</span></label>
+                <select class="form-input" id="revTargetDocType" style="flex:1;background:white">
+                  <option value="">— เลือก —</option>
+                  <option value="PurchaseInvoice" ${scan.targetDocumentType === 'PurchaseInvoice' ? 'selected' : ''}>ใบแจ้งหนี้ซื้อ (AP)</option>
+                  <option value="Expense" ${scan.targetDocumentType === 'Expense' ? 'selected' : ''}>ใบบันทึกค่าใช้จ่าย</option>
+                  <option value="PaymentVoucher" ${scan.targetDocumentType === 'PaymentVoucher' ? 'selected' : ''}>ใบสำคัญจ่าย (จ่ายแล้ว)</option>
+                  <option value="PurchaseOrder" ${scan.targetDocumentType === 'PurchaseOrder' ? 'selected' : ''}>ใบสั่งซื้อ</option>
+                  <option value="CertificateInLieu" ${scan.targetDocumentType === 'CertificateInLieu' ? 'selected' : ''}>ใบรับรองแทนใบเสร็จ</option>
+                  <option value="CreditNote" ${scan.targetDocumentType === 'CreditNote' ? 'selected' : ''}>ใบลดหนี้</option>
+                  <option value="DebitNote" ${scan.targetDocumentType === 'DebitNote' ? 'selected' : ''}>ใบเพิ่มหนี้</option>
+                  <option value="TaxInvoice" ${scan.targetDocumentType === 'TaxInvoice' ? 'selected' : ''}>ใบกำกับภาษี (ขาย)</option>
+                  <option value="Receipt" ${scan.targetDocumentType === 'Receipt' ? 'selected' : ''}>ใบเสร็จ (ขาย)</option>
+                  <option value="ReceiptVoucher" ${scan.targetDocumentType === 'ReceiptVoucher' ? 'selected' : ''}>ใบสำคัญรับ (รับเงิน)</option>
+                  <option value="Invoice" ${scan.targetDocumentType === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้ (ขาย)</option>
+                  <option value="Quotation" ${scan.targetDocumentType === 'Quotation' ? 'selected' : ''}>ใบเสนอราคา</option>
+                </select>
+                <span style="font-size:11px;color:#92400e">บทบาทของเรา: <strong>${scan.ourRole === 'Seller' ? 'ผู้ขาย' : 'ผู้ซื้อ'}</strong></span>
               </div>
               <div class="review-field">
                 <label>ชื่อผู้ขาย</label>
@@ -1516,6 +1536,7 @@
 
         const correction = {
           documentType: document.getElementById('revDocType').value || null,
+          targetDocumentType: document.getElementById('revTargetDocType')?.value || null,
           vendorName: document.getElementById('revVendorName').value || null,
           vendorTaxId: document.getElementById('revVendorTaxId').value || null,
           documentNumber: document.getElementById('revDocNumber').value || null,

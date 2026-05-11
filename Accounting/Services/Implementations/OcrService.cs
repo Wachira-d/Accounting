@@ -260,6 +260,37 @@ public class OcrService : IOcrService
             // NOTE: HasWht/WhtRate/PaymentTermsDays/DocumentType/Confidence are re-synced
             // AFTER the vendorPred block below — vendor intelligence may override them.
 
+            // ───── Document role inference (run BEFORE VendorIntel) ─────
+            // Determine who we are in this paper (Buyer/Seller) and what doc
+            // we should CREATE — independent of what the paper itself shows.
+            // VendorIntel below may then refine the TargetDocumentType using
+            // learned per-vendor history; placing the inferrer before VendorIntel
+            // keeps the scanned-vs-target separation clean.
+            {
+                DocumentType? prevScanned = null;
+                if (Enum.TryParse<DocumentType>(extractedData.DocumentType, ignoreCase: true, out var prevDt))
+                    prevScanned = prevDt;
+                var company = await _db.Companies.AsNoTracking()
+                    .Where(c => c.Id == companyId && !c.IsDeleted)
+                    .Select(c => new { c.TaxId, c.Name })
+                    .FirstOrDefaultAsync();
+                var role = OcrDocumentRoleInferrer.Infer(
+                    rawText: extractedText,
+                    vendorTaxId: extractedData.VendorTaxId,
+                    buyerTaxId: extractedData.BuyerTaxId,
+                    vendorName: extractedData.VendorName,
+                    buyerName: extractedData.BuyerName,
+                    companyTaxId: company?.TaxId,
+                    companyName: company?.Name,
+                    previousScannedType: prevScanned);
+                if (role.ScannedDocType.HasValue)
+                    extractedData.DocumentType = role.ScannedDocType.Value.ToString();
+                extractedData.OurRole = role.OurRole;
+                extractedData.TargetDocumentType = role.TargetDocType.ToString();
+                foreach (var r in role.Reasons)
+                    extractedData.ReasoningTrace.Add("[Role] " + r);
+            }
+
             // Store zone analysis info for debugging — these never change after this point
             if (!string.IsNullOrEmpty(extractedData.ZoneSummary))
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Zone Analysis]\n" + extractedData.ZoneSummary;
@@ -312,23 +343,26 @@ public class OcrService : IOcrService
                 foreach (var reason in vendorPred.Reasons)
                     extractedData.ReasoningTrace.Add("[VendorIntel] " + reason);
 
-                // Auto-apply DocumentType when high confidence
+                // Auto-apply TargetDocumentType when high confidence.
+                // VendorIntel learns from previously-CREATED documents, so its
+                // prediction is the doc-type to create — not the paper that was
+                // scanned. Override TargetDocumentType (set earlier by the role
+                // inferrer); never touch DocumentType (the scanned paper type).
                 if (vendorPred.DocumentType.HasValue && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.HighConfidence)
                 {
-                    var newType = vendorPred.DocumentType.Value.ToString();
-                    if (extractedData.DocumentType != newType)
+                    var newTarget = vendorPred.DocumentType.Value.ToString();
+                    if (extractedData.TargetDocumentType != newTarget)
                     {
                         extractedData.ReasoningTrace.Add(
-                            $"[VendorIntel] เปลี่ยนประเภทเอกสารจาก {extractedData.DocumentType} → {newType} (confidence {vendorPred.DocumentTypeConfidence:P0})");
-                        extractedData.DocumentType = newType;
+                            $"[VendorIntel] เปลี่ยนเอกสารที่จะสร้างจาก {extractedData.TargetDocumentType} → {newTarget} (confidence {vendorPred.DocumentTypeConfidence:P0})");
+                        extractedData.TargetDocumentType = newTarget;
                     }
-                    // Confidence boost when vendor history confirms
                     extractedData.Confidence = Math.Max(extractedData.Confidence, vendorPred.DocumentTypeConfidence);
                 }
                 else if (vendorPred.DocumentType.HasValue && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.MediumConfidence)
                 {
                     extractedData.ReasoningTrace.Add(
-                        $"[VendorIntel] แนะนำประเภท {vendorPred.DocumentType.Value} (confidence {vendorPred.DocumentTypeConfidence:P0}) — รอผู้ใช้ยืนยัน");
+                        $"[VendorIntel] แนะนำสร้าง {vendorPred.DocumentType.Value} (confidence {vendorPred.DocumentTypeConfidence:P0}) — รอผู้ใช้ยืนยัน");
                 }
 
                 // Auto-fill debit account when per-line learner had no result
@@ -362,11 +396,16 @@ public class OcrService : IOcrService
             }
 
             // ───── Re-sync mutable fields (extractedData → scanResult) ─────
-            // VendorIntel / Learner blocks above mutate extractedData. These assignments
-            // make sure the mutations are persisted to OcrScanResult so they reach
-            // MapToResponse() (the API response), AutoCreateDocumentAsync() (which
-            // reads scan.DocumentType), and the UI's processingNotes display.
+            // Persist mutations from VendorIntel / Learner / role inferrer
+            // back to OcrScanResult so they reach MapToResponse() and
+            // AutoCreateDocumentAsync(). DocumentType holds the SCANNED paper
+            // type (back-compat); the new TargetDocumentType / OurRole columns
+            // carry the role-inferrer's decision and are what AutoCreate
+            // consumes when picking a document type to build.
             scanResult.DocumentType = extractedData.DocumentType;
+            scanResult.ScannedDocumentType = extractedData.DocumentType;
+            scanResult.OurRole = extractedData.OurRole;
+            scanResult.TargetDocumentType = extractedData.TargetDocumentType;
             scanResult.HasWht = extractedData.HasWht;
             scanResult.WhtRate = extractedData.WhtRate;
             scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
@@ -1003,7 +1042,15 @@ public class OcrService : IOcrService
         var prevDocNumber = result.ExtractedDocumentNumber;
 
         // Update the scan result with corrected data
-        if (correction.DocumentType != null) result.DocumentType = correction.DocumentType;
+        if (correction.DocumentType != null)
+        {
+            // DocumentType corrections target the SCANNED paper type — keep the
+            // ScannedDocumentType column in lockstep so the two fields don't
+            // diverge after user edits.
+            result.DocumentType = correction.DocumentType;
+            result.ScannedDocumentType = correction.DocumentType;
+        }
+        if (correction.TargetDocumentType != null) result.TargetDocumentType = correction.TargetDocumentType;
         if (correction.VendorName != null) result.ExtractedVendorName = correction.VendorName;
         if (correction.VendorTaxId != null) result.ExtractedVendorTaxId = correction.VendorTaxId;
         if (correction.DocumentNumber != null) result.ExtractedDocumentNumber = correction.DocumentNumber;
@@ -1013,6 +1060,33 @@ public class OcrService : IOcrService
         if (correction.TotalAmount.HasValue) result.ExtractedTotalAmount = correction.TotalAmount;
 
         await _db.SaveChangesAsync();
+
+        // ───── Train VendorIntelligence with the corrected target type ─────
+        // When the user changes "เอกสารที่จะสร้าง" we want next scan of the
+        // same vendor to predict the same target — that's exactly what
+        // TrainFromAdminAsync does (per-tenant, weight 1). Without this the
+        // correction would update only the current row, not future scans.
+        if (!string.IsNullOrEmpty(correction.TargetDocumentType)
+            && Enum.TryParse<DocumentType>(correction.TargetDocumentType, ignoreCase: true, out var corrTarget))
+        {
+            try
+            {
+                await _vendorIntel.TrainFromAdminAsync(
+                    companyId,
+                    correction.VendorTaxId ?? result.ExtractedVendorTaxId,
+                    correction.VendorName ?? result.ExtractedVendorName,
+                    corrTarget,
+                    debitAccountCode: correction.DebitAccountCode,
+                    debitAccountName: null,
+                    whtRate: correction.WhtRate,
+                    paymentTermsDays: null,
+                    weight: 1);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to train VendorIntel from correction");
+            }
+        }
 
         // ───── Train the category learner from this correction ─────
         // When user manually picks a debit account (the expense category) for a vendor,
@@ -1559,14 +1633,24 @@ public class OcrService : IOcrService
         if (result.CreatedDocumentId.HasValue)
             throw new InvalidOperationException("A document has already been created from this scan.");
 
-        // Determine the document type from OCR result
-        var docType = result.DocumentType switch
+        // Prefer the inferred TargetDocumentType (what the role inferrer
+        // decided we should book) over the scanned paper type.
+        DocumentType docType;
+        if (!string.IsNullOrEmpty(result.TargetDocumentType)
+            && Enum.TryParse<DocumentType>(result.TargetDocumentType, ignoreCase: true, out var inferredTarget))
         {
-            "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
-            "Receipt" => DocumentType.Expense,
-            "CertificateInLieu" => DocumentType.CertificateInLieu,
-            _ => DocumentType.Expense
-        };
+            docType = inferredTarget;
+        }
+        else
+        {
+            docType = result.DocumentType switch
+            {
+                "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
+                "Receipt" => DocumentType.PaymentVoucher,
+                "CertificateInLieu" => DocumentType.CertificateInLieu,
+                _ => DocumentType.Expense
+            };
+        }
 
         // Resolve contact if matched
         Guid? contactId = result.MatchedContactId;
@@ -1644,15 +1728,27 @@ public class OcrService : IOcrService
 
     private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan, OcrExtractedData? extractedData = null)
     {
-        var docType = scan.DocumentType switch
+        // Prefer the inferred TargetDocumentType (set by OcrDocumentRoleInferrer).
+        // Fall back to the legacy scanned-type-based mapping for older rows that
+        // pre-date the inference step.
+        DocumentType docType;
+        if (!string.IsNullOrEmpty(scan.TargetDocumentType)
+            && Enum.TryParse<DocumentType>(scan.TargetDocumentType, ignoreCase: true, out var inferredTarget))
         {
-            "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
-            "Receipt" => DocumentType.Expense,
-            "CreditNote" => DocumentType.CreditNote,
-            "DebitNote" => DocumentType.DebitNote,
-            "CertificateInLieu" => DocumentType.CertificateInLieu,
-            _ => DocumentType.Expense
-        };
+            docType = inferredTarget;
+        }
+        else
+        {
+            docType = scan.DocumentType switch
+            {
+                "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
+                "Receipt" => DocumentType.PaymentVoucher,   // paid receipt → payment voucher
+                "CreditNote" => DocumentType.CreditNote,
+                "DebitNote" => DocumentType.DebitNote,
+                "CertificateInLieu" => DocumentType.CertificateInLieu,
+                _ => DocumentType.Expense
+            };
+        }
 
         // Resolve expense account from suggestions
         Guid? expenseAccountId = null;
@@ -1858,13 +1954,27 @@ public class OcrService : IOcrService
             data?.FieldConfidence,
             data?.BuyerName,
             data?.BuyerTaxId,
-            dbdInfo);
+            dbdInfo,
+            r.ScannedDocumentType,
+            r.OurRole,
+            r.TargetDocumentType);
     }
 }
 
 internal class OcrExtractedData
 {
+    /// <summary>The kind of paper that was scanned (e.g. "Receipt", "TaxInvoice").
+    /// This stays close to what's printed on the page — feed for downstream
+    /// rendering and traceability.</summary>
     public string DocumentType { get; set; } = "Receipt";
+
+    /// <summary>The doc type we should CREATE in our books — different from
+    /// DocumentType when the workflow shifts perspective (e.g. a supplier's
+    /// receipt → we book a PaymentVoucher). Set by OcrDocumentRoleInferrer
+    /// and refined by VendorIntelligenceService's high-confidence override.
+    /// </summary>
+    public string? TargetDocumentType { get; set; }
+    public string? OurRole { get; set; }
     public decimal Confidence { get; set; }
     public string? DocumentNumber { get; set; }
     public DateTime? DocumentDate { get; set; }

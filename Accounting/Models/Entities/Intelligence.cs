@@ -130,6 +130,23 @@ public class OcrScanResult : TenantEntity
     public decimal? ExtractedTotalAmount { get; set; }
     public string? ExtractedItemsJson { get; set; }       // JSON of line items
 
+    // ─── Document role inference ──────────────────────────────────────
+    // Thai-accounting workflow separates THREE distinct concepts:
+    //   • ScannedDocumentType — the physical paper we OCR'd (e.g. "Receipt")
+    //   • OurRole              — "Buyer" or "Seller" depending on whose tax-id
+    //                            matches the company doing the scanning
+    //   • TargetDocumentType   — what to CREATE in our books (e.g.
+    //                            "PaymentVoucher" when we scanned a supplier
+    //                            receipt — we paid them, so we book a payment
+    //                            voucher, NOT a "Receipt" document)
+    //
+    // The legacy DocumentType field (above) is kept for backwards-compat and
+    // mirrors ScannedDocumentType for now; downstream AutoCreate logic and
+    // VendorIntel learning consume TargetDocumentType instead.
+    public string? ScannedDocumentType { get; set; }
+    public string? OurRole { get; set; }                  // "Buyer" | "Seller"
+    public string? TargetDocumentType { get; set; }       // enum-string from DocumentType
+
     // Matching
     public Guid? MatchedContactId { get; set; }
     public Guid? CreatedDocumentId { get; set; }           // Document created from OCR
