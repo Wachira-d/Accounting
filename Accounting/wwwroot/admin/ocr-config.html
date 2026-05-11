@@ -1024,7 +1024,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         document.getElementById('systemRawText').textContent = d.rawText || '(ไม่มีข้อความ)';
 
         // ─── Prefill the train form with extracted values (admin will edit/confirm) ───
-        const p = d.parsedFields;
         if (p) {
           if (p.taxIds && p.taxIds.length > 0) {
             document.getElementById('trainSysVendorTaxId').value = p.taxIds[0];
