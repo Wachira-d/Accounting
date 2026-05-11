@@ -466,6 +466,13 @@
         this.bindUpload();
         this.loadScans();
         this.loadQuota();
+        // Deep-link from /review-queue → ?reviewScan=<id> opens that
+        // scan's review modal automatically once the list loads.
+        const params = new URLSearchParams(window.location.search);
+        const reviewScanId = params.get('reviewScan');
+        if (reviewScanId) {
+          setTimeout(() => this.openReview(reviewScanId), 400);
+        }
       },
 
       async loadQuota() {
@@ -945,6 +952,7 @@
                 <div class="scan-card-badges">
                   <span class="doc-type-badge ${typeInfo.cls}">${typeInfo.label}</span>
                   ${statusBadge}
+                  ${scan.quality ? `<span class="doc-type-badge" style="background:${scan.quality.color}22;color:${scan.quality.color};font-weight:700" title="Quality grade — Score ${scan.quality.score}/100">${scan.quality.letter}</span>` : ''}
                 </div>
               </div>
             </div>

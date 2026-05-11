@@ -1127,6 +1127,11 @@ public class OcrService : IOcrService
 
         var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType, siteSettings,
             fileName: file.OriginalFileName);
+        // Surface preprocessing trace alongside Azure's own warnings so the
+        // debug panel shows the full processing chain. Insert first so it
+        // appears at the top of the trace.
+        if (azureResult != null && prep.StepsApplied.Count > 0)
+            azureResult.Warnings.Insert(0, $"[ImagePrep] {string.Join(", ", prep.StepsApplied)}");
         if (azureResult == null)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), "Azure DI not enabled or not configured");
         if (!azureResult.Success)
@@ -2728,7 +2733,15 @@ public class OcrService : IOcrService
             r.TargetDocumentType,
             r.OcrEngine,
             r.HasPotentialFixedAsset,
-            r.PotentialAssetLinesJson);
+            r.PotentialAssetLinesJson,
+            Quality: BuildQualityDto(r));
+    }
+
+    private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
+    {
+        if (r.ScanStatus != "Completed") return null;
+        var grade = Ocr.ScanQualityGrader.Compute(r);
+        return new OcrQualityGradeDto(grade.Letter, grade.Score, grade.Color);
     }
 }
 

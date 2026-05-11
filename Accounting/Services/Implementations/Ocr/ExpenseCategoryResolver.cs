@@ -53,6 +53,7 @@ internal static class ExpenseCategoryResolver
         // Score every rule against the corpus; highest wins.
         CategoryRule? best = null;
         decimal bestScore = 0m;
+        bool bestUsedFuzzy = false;
         foreach (var rule in Rules)
         {
             int kwScore = 0;
@@ -61,10 +62,29 @@ internal static class ExpenseCategoryResolver
             // Vendor-brand matches outweigh single keyword hits because they're
             // far more discriminating ("ปตท." in a vendor name strongly
             // implies fuel; "ปตท." in a random product description doesn't).
+            bool brandExactHit = false;
             foreach (var brand in rule.VendorBrands)
                 if (!string.IsNullOrEmpty(vendorName)
                     && vendorName.ToLowerInvariant().Contains(brand.ToLowerInvariant()))
-                    kwScore += 4;
+                { kwScore += 4; brandExactHit = true; }
+
+            // Fuzzy brand fallback: when exact substring missed, use char
+            // n-gram cosine to catch OCR variants of brand names ("ปตท."
+            // misread as "ปตธ.", "บริษัท ปตท จำกัด" vs short "ปตท") —
+            // half-weight because fuzzy is less reliable than exact.
+            if (!brandExactHit && !string.IsNullOrEmpty(vendorName))
+            {
+                foreach (var brand in rule.VendorBrands)
+                {
+                    var sim = CharNgramSimilarity.Similarity(vendorName, brand);
+                    if (sim >= 0.65)
+                    {
+                        kwScore += 2;     // half of exact match's +4
+                        bestUsedFuzzy = true;
+                        break;
+                    }
+                }
+            }
             if (kwScore == 0) continue;
 
             // Industry bias: multiply the raw keyword score by the

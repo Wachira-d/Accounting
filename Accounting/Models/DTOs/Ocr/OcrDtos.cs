@@ -38,7 +38,14 @@ public record OcrResultResponse(
     /// <summary>JSON array of asset candidate line decisions — schema:
     /// [{lineIndex, description, unitPrice, amount, suggestedCategory,
     /// suggestedUsefulLifeMonths, confidenceScore, reasons}].</summary>
-    string? PotentialAssetLinesJson = null);
+    string? PotentialAssetLinesJson = null,
+    /// <summary>Letter grade A/B/C/D plus 0–100 score + color hex —
+    /// computed by ScanQualityGrader. Lets the UI render a single
+    /// at-a-glance badge instead of forcing the user to interpret six
+    /// separate confidence numbers.</summary>
+    OcrQualityGradeDto? Quality = null);
+
+public record OcrQualityGradeDto(string Letter, int Score, string Color);
 
 public record OcrDbdInfo(
     bool LookupAttempted,
