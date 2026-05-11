@@ -28,7 +28,8 @@ public static class AzureDiRequestPlanner
         string Locale,
         string StringIndexType,
         string[] Features,
-        string? Pages,        // e.g. "1-5" or null to send the whole file
+        string? Pages,            // e.g. "1-5" or null to send the whole file
+        string[]? QueryFields,    // Thai-specific NL field queries when features includes queryFields
         List<string> Reasons);
 
     public static AnalysisPlan Build(
@@ -93,11 +94,21 @@ public static class AzureDiRequestPlanner
         //    Always on (low / no cost):
         //      • keyValuePairs — Thai-anchored fallback fields
         //      • barcodes      — RD QR receipts
+        //      • styleFont     — handwriting detection. Flags scans where
+        //                        amounts / dates were hand-written on a
+        //                        printed form, so the review UI can mark
+        //                        them "manual verification recommended".
+        //                        Negligible additional cost.
         //    Conditional:
         //      • ocrHighResolution — premium tier, only worth it for low-
         //        quality images. Clean PDFs and high-res photos get nothing
         //        better from it; small mobile snapshots improve substantially.
-        var features = new List<string> { "keyValuePairs", "barcodes" };
+        //      • queryFields — natural-language extraction for Thai fields
+        //        the standard Invoice schema mis-anchors. Adds a comma-
+        //        separated list of field-name queries; Azure tries to find
+        //        each one. Limited to docs not in receipt model (receipts
+        //        already have direct fields).
+        var features = new List<string> { "keyValuePairs", "barcodes", "styleFont" };
         if (ShouldUseHighResolution(fileBytes, contentType, out var hiResReason))
         {
             features.Add("ocrHighResolution");
@@ -106,6 +117,17 @@ public static class AzureDiRequestPlanner
         else
         {
             reasons.Add($"skip ocrHighResolution ({hiResReason})");
+        }
+        // queryFields supported on prebuilt-invoice / prebuilt-document / layout
+        // — NOT on receipt (which has its own schema). Append our Thai-
+        // problematic fields when the model accepts queries.
+        bool supportsQueries = modelId.Equals("prebuilt-invoice", StringComparison.OrdinalIgnoreCase)
+            || modelId.Equals("prebuilt-document", StringComparison.OrdinalIgnoreCase)
+            || modelId.Equals("prebuilt-layout", StringComparison.OrdinalIgnoreCase);
+        if (supportsQueries)
+        {
+            features.Add("queryFields");
+            reasons.Add("+queryFields (Thai-specific fields)");
         }
 
         // 5. Pages range (PDF only)
@@ -124,7 +146,26 @@ public static class AzureDiRequestPlanner
             }
         }
 
-        return new AnalysisPlan(modelId, locale, stringIndexType, features.ToArray(), pages, reasons);
+        // queryFields — Thai-specific fields that the standard Invoice
+        // schema mis-anchors or misses entirely. Azure runs each as a
+        // natural-language question against the document text.
+        string[]? queries = null;
+        if (supportsQueries)
+        {
+            queries = new[]
+            {
+                "BranchNumber",          // เลขสาขา
+                "BuyerBranchNumber",     // เลขสาขาผู้ซื้อ
+                "WithholdingTaxAmount",  // ยอด WHT
+                "WithholdingTaxRate",    // อัตรา WHT %
+                "PaymentMethod",         // วิธีชำระเงิน (เงินสด/โอน/บัตร)
+                "BankAccountNumber",     // เลขบัญชีธนาคารที่จ่าย
+                "ReferenceNumber",       // เลขอ้างอิง / PO
+                "ContractAccount",       // เลขที่บัญชี (PEA/MEA bills)
+            };
+        }
+
+        return new AnalysisPlan(modelId, locale, stringIndexType, features.ToArray(), pages, queries, reasons);
     }
 
     /// <summary>Build the URL query string from the plan + api-version.</summary>
@@ -136,6 +177,8 @@ public static class AzureDiRequestPlanner
                 $"&features={string.Join(",", plan.Features)}";
         if (!string.IsNullOrEmpty(plan.Pages))
             q += $"&pages={plan.Pages}";
+        if (plan.QueryFields != null && plan.QueryFields.Length > 0)
+            q += $"&queryFields={string.Join(",", plan.QueryFields)}";
         return q;
     }
 

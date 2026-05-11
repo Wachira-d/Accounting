@@ -1178,6 +1178,22 @@ public class OcrService : IOcrService
             data.ReasoningTrace.Add($"[Azure DI Warning] {w}");
         if (azure.InvoiceTotal.HasValue)
             data.ReasoningTrace.Add($"[Azure DI] Total: {azure.InvoiceTotal.Value:N2}");
+        // Handwriting detection — flag scan for manual amount verification
+        // when any field appears to be hand-written on a printed form.
+        if (azure.HandwrittenSpanCount > 0)
+        {
+            data.ReasoningTrace.Add(
+                $"[Azure DI] ⚠️ ตรวจพบลายมือ {azure.HandwrittenSpanCount} จุด (conf {azure.HandwrittenConfidence:P0}) — กรุณาตรวจสอบยอดเงิน");
+            // Dock confidence slightly so the gateway flags it
+            data.FieldConfidence["Handwriting"] = (double)azure.HandwrittenConfidence;
+        }
+        // Selection-mark count surfaced for tax forms
+        if (azure.SelectionMarks.Count > 0)
+        {
+            var selected = azure.SelectionMarks.Count(m => m.State == "selected");
+            data.ReasoningTrace.Add(
+                $"[Azure DI] Selection marks: {selected} เลือก / {azure.SelectionMarks.Count} ทั้งหมด");
+        }
 
         // Map line items
         foreach (var item in azure.Items)

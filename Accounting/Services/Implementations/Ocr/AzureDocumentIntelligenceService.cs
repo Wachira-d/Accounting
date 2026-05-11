@@ -117,12 +117,37 @@ public class AzureDocumentIntelligenceService
 
             var status = root.TryGetProperty("status", out var s) ? s.GetString() : null;
             if (status == "succeeded")
+            {
                 var parsed = ParseResult(root, modelId);
                 // Surface the request-planner reasons so the debug panel
                 // shows exactly which params we chose for this file.
                 if (parsed.Success)
                     parsed.Warnings.Insert(0, $"[RequestPlan] {string.Join(" | ", plan.Reasons)}");
+
+                // ─── Layout fallback ───
+                // When prebuilt-invoice returns an empty `documents` array
+                // (no fields extracted at all — happens for non-standard
+                // receipt layouts, multi-language docs, or scanned forms),
+                // retry with prebuilt-layout to at least get the tables +
+                // raw content for the SmartFieldExtractor to work on.
+                // Single retry only — additional billable page, but the
+                // alternative is a useless result.
+                if (parsed.Success
+                    && modelId.Equals("prebuilt-invoice", StringComparison.OrdinalIgnoreCase)
+                    && string.IsNullOrEmpty(parsed.VendorName)
+                    && !parsed.InvoiceTotal.HasValue
+                    && parsed.Items.Count == 0)
+                {
+                    _logger.LogInformation("Azure DI invoice model returned empty result — retrying with prebuilt-layout for {File}", fileName);
+                    var layoutResult = await RetryWithLayoutAsync(endpoint, apiKey, apiVersion, fileBytes, contentType, plan, ct);
+                    if (layoutResult != null && layoutResult.Success)
+                    {
+                        layoutResult.Warnings.Insert(0, "[Fallback] prebuilt-invoice returned empty → retried with prebuilt-layout");
+                        return layoutResult;
+                    }
+                }
                 return parsed;
+            }
             if (status == "failed")
             {
                 var err = root.TryGetProperty("error", out var e) ? e.ToString() : "unknown";
@@ -131,6 +156,51 @@ public class AzureDocumentIntelligenceService
         }
 
         return new AzureDiResult { Success = false, ErrorMessage = "Polling timed out after 2 minutes" };
+    }
+
+    /// <summary>Retry the analyze call with prebuilt-layout when
+    /// prebuilt-invoice returned an empty document. Layout always returns
+    /// the raw content + tables even when no schema fields apply, so the
+    /// SmartFieldExtractor at least has text to work with. Single retry,
+    /// no further fallback — if layout also fails the caller falls down
+    /// to the next cascade tier (Python / Tesseract).</summary>
+    private async Task<AzureDiResult?> RetryWithLayoutAsync(
+        string endpoint, string apiKey, string apiVersion, byte[] fileBytes,
+        string contentType, AzureDiRequestPlanner.AnalysisPlan plan, CancellationToken ct)
+    {
+        var layoutPlan = plan with { ModelId = "prebuilt-layout", QueryFields = null };
+        var query = AzureDiRequestPlanner.BuildQueryString(layoutPlan, apiVersion);
+        var url = $"{endpoint}/documentintelligence/documentModels/prebuilt-layout:analyze{query}";
+
+        var retryClient = _httpClientFactory.CreateClient();
+        retryClient.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", apiKey);
+        retryClient.Timeout = TimeSpan.FromMinutes(2);
+        using var content = new ByteArrayContent(fileBytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
+        try
+        {
+            var submitResp = await retryClient.PostAsync(url, content, ct);
+            if (submitResp.StatusCode != System.Net.HttpStatusCode.Accepted) return null;
+            var opLoc = submitResp.Headers.GetValues("Operation-Location").FirstOrDefault();
+            if (string.IsNullOrEmpty(opLoc)) return null;
+            for (var i = 0; i < 30 && !ct.IsCancellationRequested; i++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(i < 3 ? 1.5 : 3), ct);
+                var pollResp = await retryClient.GetAsync(opLoc, ct);
+                if (!pollResp.IsSuccessStatusCode) return null;
+                var json = await pollResp.Content.ReadAsStringAsync(ct);
+                using var docPolled = JsonDocument.Parse(json);
+                var st = docPolled.RootElement.TryGetProperty("status", out var s) ? s.GetString() : null;
+                if (st == "succeeded") return ParseResult(docPolled.RootElement, "prebuilt-layout");
+                if (st == "failed") return null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Azure DI layout retry failed");
+        }
+        return null;
     }
 
     private AzureDiResult ParseResult(JsonElement root, string modelId)
@@ -196,6 +266,57 @@ public class AzureDocumentIntelligenceService
             {
                 var code = lang.TryGetProperty("locale", out var lc) ? lc.GetString() : null;
                 if (!string.IsNullOrEmpty(code)) result.DetectedLanguages.Add(code);
+            }
+        }
+
+        // ─── Handwriting detection from features=styleFont ───
+        // analyzeResult.styles[] carries an "isHandwritten" boolean per
+        // detected style range with a confidence. Aggregate count + max
+        // confidence so downstream can flag amount fields for review.
+        if (analyze.TryGetProperty("styles", out var stylesArr)
+            && stylesArr.ValueKind == JsonValueKind.Array)
+        {
+            decimal maxConf = 0;
+            int count = 0;
+            foreach (var style in stylesArr.EnumerateArray())
+            {
+                var isHand = style.TryGetProperty("isHandwritten", out var ih) && ih.ValueKind == JsonValueKind.True;
+                if (!isHand) continue;
+                count++;
+                if (style.TryGetProperty("confidence", out var cf) && cf.GetDecimal() > maxConf)
+                    maxConf = cf.GetDecimal();
+            }
+            if (count > 0)
+            {
+                result.HandwrittenSpanCount = count;
+                result.HandwrittenConfidence = maxConf;
+                result.Warnings.Add($"[Handwriting] พบ {count} จุดที่เป็นลายมือ (conf {maxConf:P0}) — กรุณาตรวจสอบยอดเงิน");
+            }
+        }
+
+        // ─── Selection marks (checkboxes / option marks) ───
+        // Found per-page; we don't keep their position, just label+state.
+        // Useful for RD tax forms (ภงด.1, 3, 53, ภพ.30) where the
+        // checkbox state distinguishes filer types.
+        if (analyze.TryGetProperty("pages", out var pagesArr2)
+            && pagesArr2.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var page in pagesArr2.EnumerateArray())
+            {
+                if (!page.TryGetProperty("selectionMarks", out var smArr)
+                    || smArr.ValueKind != JsonValueKind.Array) continue;
+                foreach (var mark in smArr.EnumerateArray())
+                {
+                    var state = mark.TryGetProperty("state", out var st) ? st.GetString() : null;
+                    if (string.IsNullOrEmpty(state)) continue;
+                    var conf = mark.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0m;
+                    result.SelectionMarks.Add(new AzureDiSelectionMark
+                    {
+                        State = state,
+                        Confidence = conf,
+                        NearbyLabel = null,  // would require bounding-box pairing; skip for MVP
+                    });
+                }
             }
         }
 
@@ -465,6 +586,18 @@ public class AzureDiResult
     public int PageCount { get; set; } = 0;
     public List<string> Warnings { get; set; } = new();
 
+    // ─── features=styleFont output ───
+    // Number of handwritten spans detected. >0 → flag the scan for
+    // manual amount verification because handwritten amounts on a
+    // printed form are a common source of fraud / typos.
+    public int HandwrittenSpanCount { get; set; } = 0;
+    public decimal HandwrittenConfidence { get; set; } = 0m;
+
+    // ─── pages[].selectionMarks output ───
+    // Checkboxes / option marks. RD tax forms (ภงด.1, 3, 53, ภพ.30)
+    // use them to indicate filer status. Stored as label→state pairs.
+    public List<AzureDiSelectionMark> SelectionMarks { get; set; } = new();
+
     // ─── features=keyValuePairs output ───
     // Generic free-text Key→Value pairs that Azure extracted from anchor
     // patterns. Used as a Thai-aware fallback when the standard Invoice
@@ -490,6 +623,16 @@ public class AzureDiBarcode
     /// <summary>QRCode, Code128, EAN13, PDF417, ...</summary>
     public string? Kind { get; set; }
     public string? Value { get; set; }
+}
+
+public class AzureDiSelectionMark
+{
+    /// <summary>"selected" | "unselected"</summary>
+    public string? State { get; set; }
+    /// <summary>Confidence the state is correct (0–1).</summary>
+    public decimal Confidence { get; set; }
+    /// <summary>Nearby text label — best guess at what this checkbox is for.</summary>
+    public string? NearbyLabel { get; set; }
 }
 
 public class AzureDiLineItem
