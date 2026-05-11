@@ -146,19 +146,38 @@ public class VendorIntelligenceService
         if (intel.TypicalPaymentTermsDays.HasValue)
             prediction.TypicalPaymentTermsDays = intel.TypicalPaymentTermsDays;
 
-        // ─── Amount sanity check ───
+        // ─── Amount sanity check (z-score on log-amount) ───
+        // Robust to heavy-tailed amount distributions: a vendor that mostly
+        // bills ฿2,000 but occasionally ฿20,000 has a wide raw-amount range
+        // but a tight log-amount distribution → z-score flags ฿200,000
+        // correctly while the old min/max ±50% rule would miss it.
         if (scannedTotalAmount.HasValue && scannedTotalAmount.Value > 0
-            && intel.MinTotalAmount.HasValue && intel.MaxTotalAmount.HasValue && intel.AvgTotalAmount.HasValue)
+            && intel.LogAmountMean.HasValue && intel.LogAmountVariance.HasValue
+            && intel.LogAmountVariance.Value > 0)
         {
-            // Allow ±50% of the historical range as "typical"
+            var stddev = (decimal)Math.Sqrt((double)intel.LogAmountVariance.Value);
+            var anomaly = AmountAnomalyDetector.CheckZScore(
+                scannedTotalAmount.Value,
+                mean: intel.AvgTotalAmount,
+                stddev: stddev,
+                threshold: 3m);
+            if (anomaly != null)
+            {
+                prediction.AmountWithinTypicalRange = !anomaly.IsAnomaly;
+                if (anomaly.IsAnomaly)
+                    prediction.Reasons.Add($"⚠️ {anomaly.Reason}");
+            }
+        }
+        else if (scannedTotalAmount.HasValue && scannedTotalAmount.Value > 0
+            && intel.MinTotalAmount.HasValue && intel.MaxTotalAmount.HasValue)
+        {
+            // Fallback for vendors with too few samples for z-score
             var lower = intel.MinTotalAmount.Value * 0.5m;
             var upper = intel.MaxTotalAmount.Value * 1.5m;
             prediction.AmountWithinTypicalRange = scannedTotalAmount.Value >= lower && scannedTotalAmount.Value <= upper;
             if (!prediction.AmountWithinTypicalRange.Value)
-            {
                 prediction.Reasons.Add(
-                    $"⚠️ ยอดเงิน {scannedTotalAmount.Value:N2} ผิดปกติ (ปกติอยู่ระหว่าง {intel.MinTotalAmount:N2}–{intel.MaxTotalAmount:N2}, เฉลี่ย {intel.AvgTotalAmount:N2}) — โปรดตรวจสอบ");
-            }
+                    $"⚠️ ยอด {scannedTotalAmount.Value:N2} นอกช่วง {intel.MinTotalAmount:N2}–{intel.MaxTotalAmount:N2}");
         }
 
         if (isSystemFallback)
@@ -490,6 +509,22 @@ public class VendorIntelligenceService
             ? Math.Min(intel.MinTotalAmount.Value, doc.TotalAmount) : doc.TotalAmount;
         intel.MaxTotalAmount = intel.MaxTotalAmount.HasValue
             ? Math.Max(intel.MaxTotalAmount.Value, doc.TotalAmount) : doc.TotalAmount;
+
+        // ─── Log-amount running mean/variance via Welford's algorithm ───
+        // Used by AmountAnomalyDetector.CheckZScore — the log transform
+        // turns the heavy-tailed amount distribution into something close
+        // to Gaussian where z-scores are meaningful.
+        if (doc.TotalAmount > 0)
+        {
+            var logAmt = (decimal)Math.Log((double)doc.TotalAmount);
+            var (newMean, newVar) = AmountAnomalyDetector.UpdateWelford(
+                intel.LogAmountMean ?? 0,
+                intel.LogAmountVariance ?? 0,
+                n - 1,
+                logAmt);
+            intel.LogAmountMean = newMean;
+            intel.LogAmountVariance = newVar;
+        }
 
         intel.TypicallyHasWht = (decimal)intel.WhtUsageCount / n >= 0.5m;
         intel.LastTrainedAt = DateTime.UtcNow;

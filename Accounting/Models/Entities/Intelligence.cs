@@ -249,6 +249,11 @@ public class OcrVendorIntelligence : TenantEntity
     public decimal? MinTotalAmount { get; set; }
     public decimal? MaxTotalAmount { get; set; }
     public decimal? MedianTotalAmount { get; set; }
+    // Running log-amount stats — feeds AmountAnomalyDetector.CheckZScore
+    // for robust anomaly detection that handles heavy-tailed amount
+    // distributions far better than raw min/max.
+    public decimal? LogAmountMean { get; set; }
+    public decimal? LogAmountVariance { get; set; }
 
     // ─── Payment terms ───
     public int? TypicalPaymentTermsDays { get; set; }

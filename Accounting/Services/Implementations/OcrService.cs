@@ -23,6 +23,8 @@ public class OcrService : IOcrService
     private readonly VendorIntelligenceService _vendorIntel;
     private readonly EmbeddedTesseractOcrService _embeddedOcr;
     private readonly AssociationRuleMiner _ruleMiner;
+    private readonly TfIdfNaiveBayesClassifier _nbClassifier;
+    private readonly RecurringExpenseDetector _recurringDetector;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -31,7 +33,9 @@ public class OcrService : IOcrService
         ExpenseCategoryLearner categoryLearner,
         VendorIntelligenceService vendorIntel,
         EmbeddedTesseractOcrService embeddedOcr,
-        AssociationRuleMiner ruleMiner)
+        AssociationRuleMiner ruleMiner,
+        TfIdfNaiveBayesClassifier nbClassifier,
+        RecurringExpenseDetector recurringDetector)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -43,6 +47,8 @@ public class OcrService : IOcrService
         _vendorIntel = vendorIntel;
         _embeddedOcr = embeddedOcr;
         _ruleMiner = ruleMiner;
+        _nbClassifier = nbClassifier;
+        _recurringDetector = recurringDetector;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -352,6 +358,34 @@ public class OcrService : IOcrService
                 _logger.LogWarning(ex, "Association rule lookup failed (non-fatal)");
             }
 
+            // ───── Naive Bayes + TF-IDF classifier ─────
+            // Probabilistic blend of per-tenant historical (vendor +
+            // description → account) data. Wins over the keyword learner
+            // when there are many low-frequency overlapping tokens that
+            // a count-based approach would dilute. Only commits when the
+            // log-margin over the runner-up class exceeds 1 nat.
+            try
+            {
+                var nbDesc = extractedData.Items.FirstOrDefault()?.Description
+                    ?? extractedData.ExpenseCategory ?? "";
+                var nbPred = await _nbClassifier.PredictAsync(
+                    companyId, extractedData.VendorTaxId, extractedData.VendorName, nbDesc);
+                if (nbPred != null && nbPred.Confidence > 0.7m
+                    && extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0) < (double)nbPred.Confidence)
+                {
+                    extractedData.DebitAccountCode = nbPred.AccountCode;
+                    if (!string.IsNullOrEmpty(nbPred.AccountName))
+                        extractedData.DebitAccountName = nbPred.AccountName;
+                    extractedData.FieldConfidence["DebitAccount"] = (double)nbPred.Confidence;
+                    extractedData.ReasoningTrace.Add(
+                        $"[NaiveBayes] รหัส {nbPred.AccountCode} confidence {nbPred.Confidence:P0} ({nbPred.Reason})");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "NB classifier failed (non-fatal)");
+            }
+
             // ───── Product cross-reference ─────
             // When a line-item description matches an existing Product (by
             // exact name or barcode/SKU substring), prefer the product's
@@ -639,10 +673,35 @@ public class OcrService : IOcrService
 
             if (!scanResult.MatchedContactId.HasValue && !string.IsNullOrEmpty(extractedData.VendorName))
             {
+                // First try the cheap substring match
                 var matchedContact = await _db.Contacts
                     .FirstOrDefaultAsync(c => c.CompanyId == companyId
                         && c.Name.Contains(extractedData.VendorName) && !c.IsDeleted);
                 scanResult.MatchedContactId = matchedContact?.Id;
+
+                // When substring misses, fall back to Levenshtein-based fuzzy
+                // match against every supplier contact. This catches the
+                // common case where OCR returns "บริษัท เอบีซี เซอร์วิส จํากัด"
+                // but the existing contact is "เอบีซี เซอร์วิส" — normalize
+                // both, compute similarity, accept the best ≥0.85.
+                if (!scanResult.MatchedContactId.HasValue)
+                {
+                    var allSuppliers = await _db.Contacts.AsNoTracking()
+                        .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                            && (c.IsSupplier || !c.IsCustomer))
+                        .Select(c => new { c.Id, c.Name })
+                        .ToListAsync();
+                    var best = allSuppliers
+                        .Select(c => new { c.Id, c.Name, Sim = Ocr.FuzzyMatcher.Similarity(c.Name, extractedData.VendorName) })
+                        .OrderByDescending(x => x.Sim)
+                        .FirstOrDefault();
+                    if (best != null && best.Sim >= 0.85)
+                    {
+                        scanResult.MatchedContactId = best.Id;
+                        extractedData.ReasoningTrace.Add(
+                            $"[Fuzzy] จับคู่ผู้ติดต่อ '{best.Name}' similarity {best.Sim:P0}");
+                    }
+                }
             }
 
             // ═══════ DBD-GATED CONTACT AUTO-CREATION ═══════
@@ -716,8 +775,27 @@ public class OcrService : IOcrService
                 }
             }
 
-            // Auto-create document if confidence >= threshold (85%)
+            // Auto-create document if confidence >= threshold (85%).
+            // Recurring vendors get a lower threshold (75%) — we already know
+            // what their docs look like and the user has approved enough of
+            // them historically that a "looks right" scan is safe to commit
+            // without staging in Draft.
             var autoCreateThreshold = decimal.TryParse(_configuration["Ocr:AutoCreateThreshold"], out var t) ? t : 0.85m;
+            try
+            {
+                var recurring = await _recurringDetector.DetectAsync(companyId, scanResult.MatchedContactId);
+                if (recurring != null && recurring.Confidence >= 0.7m)
+                {
+                    autoCreateThreshold = Math.Max(0.75m, autoCreateThreshold - 0.10m);
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Recurring] {recurring.Cadence} pattern ({recurring.SampleSize} docs, ~฿{recurring.TypicalAmount:N0}) — auto-create threshold ลดเป็น {autoCreateThreshold:P0}";
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Recurring detection failed (non-fatal)");
+            }
+
             if (scanResult.Confidence >= autoCreateThreshold
                 && scanResult.MatchedContactId.HasValue
                 && !scanResult.IsDuplicate

@@ -152,6 +152,10 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.OcrSelfCorrec
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ExpenseCategoryLearner>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorIntelligenceService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AssociationRuleMiner>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.TfIdfNaiveBayesClassifier>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RecurringExpenseDetector>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.DocumentWorkflowPredictor>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorClusteringService>();
 // Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
 // and the service maintains a thread-local engine pool for thread safety.
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();

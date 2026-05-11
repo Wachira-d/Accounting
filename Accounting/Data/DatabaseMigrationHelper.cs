@@ -1288,6 +1288,13 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "TopLineKeywordsJson" text NULL;
             """,
+            // z-score anomaly detection needs running log-amount mean/variance
+            """
+            ALTER TABLE "OcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "LogAmountMean" decimal(10,4) NULL;
+            """,
+            """
+            ALTER TABLE "OcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "LogAmountVariance" decimal(10,4) NULL;
+            """,
 
             // ===== SystemOcrCategoryMappings: system-wide vendor → account knowledge =====
             // Mirrors OcrCategoryMappings but without CompanyId. Trained by SystemAdmin

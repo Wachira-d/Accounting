@@ -1308,6 +1308,53 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// Run K-means vendor clustering across the entire system. Each
+    /// vendor's debit-account distribution becomes a feature vector;
+    /// vendors that cluster together share spend patterns. Useful for
+    /// "similar vendor" suggestions and cold-start predictions on new
+    /// suppliers.
+    /// </summary>
+    [HttpPost("ocr-config/cluster-vendors")]
+    public async Task<ActionResult<ApiResponse<object>>> ClusterVendors(
+        [FromServices] Services.Implementations.Ocr.VendorClusteringService clustering,
+        [FromQuery] int k = 8,
+        [FromQuery] int maxIterations = 50)
+    {
+        var result = await clustering.ClusterAsync(k, maxIterations);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            k = result.K,
+            vendorsClustered = result.VendorsClustered,
+            iterations = result.Iterations,
+            durationSeconds = result.Duration.TotalSeconds,
+        }, $"จัดกลุ่ม vendor ด้วย K-means สำเร็จ ({result.VendorsClustered} vendors → {result.K} กลุ่ม)"));
+    }
+
+    /// <summary>
+    /// Benford's Law fraud / data-quality check across all approved
+    /// document totals for a company. Reports the χ² statistic against
+    /// the expected logarithmic distribution of leading digits — high
+    /// χ² values warrant investigation for data fabrication or systemic
+    /// rounding.
+    /// </summary>
+    [HttpGet("ocr-config/benford/{companyId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> RunBenford(Guid companyId)
+    {
+        var amounts = await _db.Documents.AsNoTracking()
+            .Where(d => !d.IsDeleted && d.CompanyId == companyId
+                && (d.Status == Models.Enums.DocumentStatus.Approved
+                    || d.Status == Models.Enums.DocumentStatus.Paid)
+                && d.TotalAmount > 0)
+            .Select(d => d.TotalAmount)
+            .ToListAsync();
+        var result = Services.Implementations.Ocr.BenfordsLawAnalyzer.Analyze(amounts);
+        if (result == null)
+            return Ok(new ApiResponse<object>(true, new { sampleSize = amounts.Count },
+                $"ตัวอย่างน้อยเกินไป (n={amounts.Count}, ต้อง ≥30)"));
+        return Ok(new ApiResponse<object>(true, result, result.Interpretation));
+    }
+
+    /// <summary>
     /// System-level OCR test — SystemAdmin uploads a file from the /admin
     /// shell, runs it through the requested provider (no quota, no tenant
     /// context, no training), and gets back raw text + parsed fields for
