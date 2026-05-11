@@ -109,17 +109,18 @@ public class EmbeddedTesseractOcrService : IDisposable
         if (imageBytes.Length == 0)
             return new EmbeddedOcrResult(false, "", 0m, "Empty file");
 
-        // Tesseract + ImageSharp do NOT read PDFs natively. Reject upfront with a
-        // clear, actionable message — silent garbage output would be far worse
-        // than telling the user to use Azure DI or the Python service for PDFs.
-        // Detection: content-type + magic bytes (%PDF- at offset 0).
+        // PDF detection: content-type OR .pdf suffix OR %PDF- magic bytes
         var isPdf = (contentType ?? "").Equals("application/pdf", StringComparison.OrdinalIgnoreCase)
             || (fileName ?? "").EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
             || (imageBytes.Length >= 4 && imageBytes[0] == 0x25 && imageBytes[1] == 0x50 && imageBytes[2] == 0x44 && imageBytes[3] == 0x46);
+
+        // PDFs are auto-rasterized to PNG pages in-process via PDFtoImage (PDFium).
+        // Each page is OCR'd separately and the text is concatenated. This keeps
+        // the Embedded tier usable for the most common scanned-receipt format
+        // (PDF) without requiring external services.
         if (isPdf)
         {
-            return new EmbeddedOcrResult(false, "", 0m,
-                "Embedded Tesseract รองรับเฉพาะรูปภาพ (JPG/PNG/BMP/TIFF/WebP) — สำหรับ PDF กรุณาเปิดใช้ Azure DI หรือ Python ocr-service");
+            return await ExtractTextFromPdfAsync(imageBytes, fileName);
         }
 
         // Preprocess: convert to grayscale + upscale small images. Tesseract LSTM
@@ -166,6 +167,119 @@ public class EmbeddedTesseractOcrService : IDisposable
     ///   3. Upscale if too small (LSTM needs ≥30px character height)
     ///   4. Re-encode as PNG (lossless) to feed back to Tesseract
     /// </summary>
+    /// <summary>
+    /// Rasterize a PDF to PNG pages (via PDFtoImage + PDFium native libs that
+    /// ship with the NuGet) and OCR each page with Tesseract. Multi-page output
+    /// is concatenated with form-feed separators so downstream rule-based
+    /// parsing still treats the document as a single OCR result. Mean confidence
+    /// is averaged across pages.
+    ///
+    /// Why 200 DPI: balances accuracy (Tesseract needs ≥150 DPI for reliable
+    /// LSTM recognition) against memory + speed. 200 DPI on A4 ≈ 1654×2339 px.
+    /// </summary>
+    private async Task<EmbeddedOcrResult> ExtractTextFromPdfAsync(byte[] pdfBytes, string? fileName)
+    {
+        const int RenderDpi = 200;
+        const int MaxPagesPerScan = 10;   // safety cap — refuses humongous PDFs
+
+        List<byte[]> pageImages;
+        try
+        {
+            pageImages = await Task.Run(() => RasterizePdfToPngPages(pdfBytes, RenderDpi, MaxPagesPerScan));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "PDF rasterization failed for {File}", fileName ?? "(unnamed)");
+            return new EmbeddedOcrResult(false, "", 0m,
+                $"แปลง PDF เป็นรูปภาพไม่สำเร็จ: {ex.Message}");
+        }
+
+        if (pageImages.Count == 0)
+            return new EmbeddedOcrResult(false, "", 0m, "PDF ว่าง — ไม่มีหน้าให้ OCR");
+
+        var engine = _engine.Value;
+        if (engine == null)
+            return new EmbeddedOcrResult(false, "", 0m, "Tesseract engine unavailable on this thread");
+
+        var combinedText = new System.Text.StringBuilder();
+        decimal totalConfidence = 0m;
+        int successfulPages = 0;
+
+        for (int i = 0; i < pageImages.Count; i++)
+        {
+            try
+            {
+                // Each page goes through the same preprocessing (upscale + grayscale)
+                // as a standalone image upload. Lets the Tesseract LSTM see a
+                // consistent input distribution regardless of source format.
+                var processed = await PreprocessAsync(pageImages[i]);
+                var (pageText, pageConfidence) = await Task.Run(() =>
+                {
+                    using var pix = Pix.LoadFromMemory(processed);
+                    using var page = engine.Process(pix);
+                    return (page.GetText() ?? "", (decimal)page.GetMeanConfidence());
+                });
+
+                if (pageImages.Count > 1)
+                    combinedText.AppendLine($"=== หน้า {i + 1} / {pageImages.Count} ===");
+                combinedText.AppendLine(pageText.Trim());
+                if (i < pageImages.Count - 1) combinedText.AppendLine();
+
+                totalConfidence += pageConfidence;
+                successfulPages++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "OCR failed on PDF page {Page} of {File}", i + 1, fileName ?? "(unnamed)");
+                combinedText.AppendLine($"[หน้า {i + 1}: OCR ล้มเหลว — {ex.Message}]");
+            }
+        }
+
+        var avgConfidence = successfulPages > 0 ? totalConfidence / successfulPages : 0m;
+        var skippedNote = pageImages.Count >= MaxPagesPerScan
+            ? $" (เกินขีดจำกัด — สแกนเฉพาะ {MaxPagesPerScan} หน้าแรก)" : "";
+
+        _logger.LogInformation("OCR'd PDF {File}: {Pages} page(s), confidence {Conf:P0}{Skipped}",
+            fileName ?? "(unnamed)", successfulPages, avgConfidence, skippedNote);
+
+        return new EmbeddedOcrResult(
+            Success: successfulPages > 0,
+            Text: combinedText.ToString().Trim(),
+            Confidence: avgConfidence,
+            Error: successfulPages == 0 ? "ไม่มีหน้าใดผ่าน OCR สำเร็จ" : null);
+    }
+
+    /// <summary>
+    /// Render PDF pages to PNG byte arrays. Synchronous (CPU-bound) — caller
+    /// wraps in Task.Run. Bounded by maxPages to prevent OOM on absurdly large
+    /// PDFs (the OCR microservice has the same cap upstream).
+    /// </summary>
+    private static List<byte[]> RasterizePdfToPngPages(byte[] pdfBytes, int dpi, int maxPages)
+    {
+        var pages = new List<byte[]>();
+        // PDFtoImage.Conversion.ToImages enumerates SKBitmap per page. Each is
+        // disposed after encoding to PNG so memory pressure stays bounded by
+        // single-page size, not full-doc size. We render with Grayscale=true
+        // because Tesseract's LSTM works internally on grayscale anyway — saves
+        // a redundant ImageSharp pass downstream and reduces PNG size ~3x.
+        var renderOptions = new PDFtoImage.RenderOptions(
+            Dpi: dpi,
+            WithAnnotations: true,      // include form-field text in extraction
+            Grayscale: true);
+        int pageIndex = 0;
+        foreach (var bitmap in PDFtoImage.Conversion.ToImages(pdfBytes, options: renderOptions))
+        {
+            using (bitmap)
+            {
+                using var data = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Png, quality: 100);
+                pages.Add(data.ToArray());
+            }
+            pageIndex++;
+            if (pageIndex >= maxPages) break;
+        }
+        return pages;
+    }
+
     private static async Task<byte[]> PreprocessAsync(byte[] input)
     {
         using var image = await Task.Run(() => Image.Load<Rgba32>(input));
