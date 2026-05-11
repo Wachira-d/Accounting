@@ -82,7 +82,7 @@
 <body>
   <!-- ─── DIAGNOSTIC: visible viewport info + build marker (top-right fixed) ─── -->
   <div id="diagBadge" style="position:fixed;top:8px;right:8px;z-index:99999;background:#1e293b;color:#94a3b8;font-family:monospace;font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #334155;line-height:1.5;pointer-events:none;max-width:340px">
-    <div id="diagBuild">build: system-train</div>
+    <div id="diagBuild">build: train-selects</div>
     <div id="diagViewport">viewport: ?</div>
     <div id="diagAuth">auth: ?</div>
     <div id="diagStep1" style="color:#94a3b8">step 1: ?</div>
@@ -361,6 +361,64 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           </div>
         </div>
 
+        <!-- Datalists feeding all "select-or-type" inputs below.
+             Source of truth = window.COMMON_ACCOUNTS / .COMMON_DESCRIPTIONS in the JS
+             section; the <option> rows are duplicated here so the dropdown shows
+             instantly even before the script registers extra suggestions. -->
+        <datalist id="commonAccountCodesDL">
+          <option value="5101">ค่าโฆษณาและส่งเสริมการขาย</option>
+          <option value="5102">ค่าขนส่ง / ค่าจัดส่ง</option>
+          <option value="5103">ค่านายหน้า</option>
+          <option value="5201">เงินเดือนและค่าจ้าง</option>
+          <option value="5202">สวัสดิการพนักงาน</option>
+          <option value="5203">ประกันสังคม</option>
+          <option value="5301">ค่าเช่า / ค่าเช่าสำนักงาน</option>
+          <option value="5302">ค่าน้ำประปา</option>
+          <option value="5303">ค่าไฟฟ้า</option>
+          <option value="5304">ค่าโทรศัพท์ / อินเทอร์เน็ต</option>
+          <option value="5305">ค่าวัสดุสำนักงาน</option>
+          <option value="5306">ค่าซ่อมแซมและบำรุงรักษา</option>
+          <option value="5307">ค่าทำความสะอาด</option>
+          <option value="5401">ค่าเดินทาง</option>
+          <option value="5402">ค่าน้ำมันเชื้อเพลิง</option>
+          <option value="5403">ค่ารับรอง</option>
+          <option value="5404">ค่าเดินทางต่างประเทศ</option>
+          <option value="5501">ค่าธรรมเนียมวิชาชีพ</option>
+          <option value="5502">ค่าที่ปรึกษากฎหมาย / บัญชี</option>
+          <option value="5503">ค่าธรรมเนียมธนาคาร</option>
+          <option value="5504">ค่าตรวจสอบ / Audit</option>
+          <option value="5601">ค่าเสื่อมราคา</option>
+          <option value="5602">ค่าตัดจำหน่าย</option>
+          <option value="5701">ดอกเบี้ยจ่าย</option>
+          <option value="5801">ภาษีต่างๆ</option>
+          <option value="5901">ค่าใช้จ่ายเบ็ดเตล็ด</option>
+        </datalist>
+        <datalist id="commonDescriptionsDL">
+          <option value="ค่าโฆษณา"></option>
+          <option value="ค่าน้ำมัน"></option>
+          <option value="ค่าน้ำมันเชื้อเพลิง"></option>
+          <option value="ค่าเช่าสำนักงาน"></option>
+          <option value="ค่าไฟฟ้า"></option>
+          <option value="ค่าน้ำประปา"></option>
+          <option value="ค่าโทรศัพท์"></option>
+          <option value="ค่าอินเทอร์เน็ต"></option>
+          <option value="ค่าวัสดุสำนักงาน"></option>
+          <option value="ค่าซ่อมแซม"></option>
+          <option value="ค่าบำรุงรักษา"></option>
+          <option value="ค่าทำความสะอาด"></option>
+          <option value="ค่าเดินทาง"></option>
+          <option value="ค่ารับรอง"></option>
+          <option value="ค่าที่ปรึกษากฎหมาย"></option>
+          <option value="ค่าที่ปรึกษาบัญชี"></option>
+          <option value="ค่าธรรมเนียมธนาคาร"></option>
+          <option value="ค่าตรวจสอบบัญชี"></option>
+          <option value="ค่านายหน้า"></option>
+          <option value="ค่าขนส่ง"></option>
+          <option value="ค่าจัดส่ง"></option>
+          <option value="ค่าบริการ"></option>
+          <option value="ค่าใช้จ่ายเบ็ดเตล็ด"></option>
+        </datalist>
+
         <!-- Document metadata -->
         <div style="display:grid;grid-template-columns:1fr 140px 140px;gap:8px;margin-bottom:8px">
           <div>
@@ -380,7 +438,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           </div>
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">วันที่</label>
-            <input type="text" id="trainSysDocDate" placeholder="01/01/2025" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+            <input type="date" id="trainSysDocDate" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
           </div>
         </div>
 
@@ -396,7 +454,16 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           </div>
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">WHT %</label>
-            <input type="number" id="trainSysWhtRate" step="1" min="0" max="15" placeholder="0" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+            <select id="trainSysWhtRate" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+              <option value="">— ไม่ระบุ —</option>
+              <option value="0">0% (ไม่หัก)</option>
+              <option value="1">1% (ขนส่ง / ค่าขนถ่าย)</option>
+              <option value="2">2% (โฆษณา)</option>
+              <option value="3">3% (บริการทั่วไป / รับเหมา)</option>
+              <option value="5">5% (ค่าเช่า)</option>
+              <option value="10">10% (วิชาชีพอิสระ)</option>
+              <option value="15">15% (ดอกเบี้ย / ค่าสิทธิ)</option>
+            </select>
           </div>
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Total</label>
@@ -405,28 +472,44 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         </div>
 
         <!-- Booking + account -->
-        <div style="display:grid;grid-template-columns:1fr 120px 1fr;gap:8px;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr 140px 1fr;gap:8px;margin-bottom:8px">
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">คำอธิบายหลัก (header)</label>
-            <input type="text" id="trainSysDescription" placeholder="เช่น ค่าน้ำมัน, ค่าโฆษณา" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">คำอธิบายหลัก (header) <span style="color:#94a3b8;font-weight:400">— เลือก/พิมพ์</span></label>
+            <input type="text" id="trainSysDescription" list="commonDescriptionsDL" placeholder="เช่น ค่าน้ำมัน, ค่าโฆษณา" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
           </div>
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">รหัสบัญชี Debit</label>
-            <input type="text" id="trainSysAccountCode" placeholder="5402" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">รหัสบัญชี Debit <span style="color:#94a3b8;font-weight:400">— เลือก/พิมพ์</span></label>
+            <input type="text" id="trainSysAccountCode" list="commonAccountCodesDL" placeholder="5402" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
           </div>
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ชื่อบัญชี (optional)</label>
-            <input type="text" id="trainSysAccountName" placeholder="เช่น ค่าน้ำมันเชื้อเพลิง" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ชื่อบัญชี <span style="color:#94a3b8;font-weight:400">— auto-fill</span></label>
+            <input type="text" id="trainSysAccountName" placeholder="auto-fill เมื่อเลือกรหัสบัญชี" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:140px 140px;gap:8px;margin-bottom:10px">
+        <div style="display:grid;grid-template-columns:160px 140px;gap:8px;margin-bottom:10px">
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Credit Days</label>
-            <input type="number" id="trainSysPaymentTerms" min="0" max="365" placeholder="30" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Credit Days (เครดิตเทอม)</label>
+            <select id="trainSysPaymentTerms" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+              <option value="">— ไม่ระบุ —</option>
+              <option value="0">เงินสด / 0 วัน</option>
+              <option value="7">7 วัน</option>
+              <option value="15">15 วัน</option>
+              <option value="30">30 วัน</option>
+              <option value="45">45 วัน</option>
+              <option value="60">60 วัน</option>
+              <option value="90">90 วัน</option>
+              <option value="120">120 วัน</option>
+            </select>
           </div>
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">น้ำหนัก</label>
-            <input type="number" id="trainSysWeight" min="1" max="50" value="1" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+            <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">น้ำหนัก (ความมั่นใจ)</label>
+            <select id="trainSysWeight" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+              <option value="1">1 — เคยเห็นครั้งเดียว</option>
+              <option value="3">3 — เห็นบ่อย</option>
+              <option value="5" selected>5 — แน่ใจปานกลาง</option>
+              <option value="10">10 — แน่ใจมาก</option>
+              <option value="20">20 — มั่นใจสูง (override)</option>
+            </select>
           </div>
         </div>
 
@@ -437,7 +520,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             <button type="button" onclick="addTrainLine()" style="background:#fef3c7;color:#78350f;border:1px solid #fcd34d;padding:2px 10px;border-radius:4px;font-size:11px;cursor:pointer">+ เพิ่มรายการ</button>
           </div>
           <div id="trainSysLines" style="border:1px solid #fcd34d;border-radius:6px;background:white;padding:6px;min-height:40px"></div>
-          <div style="font-size:11px;color:#92400e;margin-top:2px">ถ้ามีรายการย่อย — ระบบจะ train รหัสบัญชีแยกตามแต่ละ description</div>
+          <div style="font-size:11px;color:#92400e;margin-top:2px">ถ้ามีรายการย่อย — ระบบจะ train รหัสบัญชีแยกตามแต่ละ description (ช่องคำอธิบาย + รหัสบัญชี เป็น select/พิมพ์เองได้)</div>
         </div>
 
         <button type="button" onclick="submitSystemTraining()" id="btnTrainSystem" style="background:#d97706;color:white;border:none;padding:10px 24px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;width:100%">
@@ -599,7 +682,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     // Visible stamp so admins can confirm which build is deployed; also wraps
     // AdminLayout.init in try/catch so script execution continues to define
     // all functions (systemTestScan etc.) even if sidebar rendering fails.
-    const __PAGE_VERSION = 'system-train';
+    const __PAGE_VERSION = 'train-selects';
     console.log('[ocr-config.html] version:', __PAGE_VERSION);
     __diagStep('diagStep1', 'step 1: script start ✓', '#22c55e');
 
@@ -847,14 +930,70 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
+    // ─── Common Thai expense Chart-of-Account codes ──────────────────────
+    // Single source of truth shared by:
+    //   • the <datalist id="commonAccountCodesDL"> dropdown in the HTML
+    //   • the trainSysAccountName auto-fill on AccountCode change
+    //   • the per-line account picker (train-line-account)
+    // The HTML datalist is duplicated for instant dropdown display before this
+    // script runs; this map drives the auto-fill behaviour.
+    const ACCOUNT_CODE_NAME = {
+      '5101': 'ค่าโฆษณาและส่งเสริมการขาย',
+      '5102': 'ค่าขนส่ง / ค่าจัดส่ง',
+      '5103': 'ค่านายหน้า',
+      '5201': 'เงินเดือนและค่าจ้าง',
+      '5202': 'สวัสดิการพนักงาน',
+      '5203': 'ประกันสังคม',
+      '5301': 'ค่าเช่า / ค่าเช่าสำนักงาน',
+      '5302': 'ค่าน้ำประปา',
+      '5303': 'ค่าไฟฟ้า',
+      '5304': 'ค่าโทรศัพท์ / อินเทอร์เน็ต',
+      '5305': 'ค่าวัสดุสำนักงาน',
+      '5306': 'ค่าซ่อมแซมและบำรุงรักษา',
+      '5307': 'ค่าทำความสะอาด',
+      '5401': 'ค่าเดินทาง',
+      '5402': 'ค่าน้ำมันเชื้อเพลิง',
+      '5403': 'ค่ารับรอง',
+      '5404': 'ค่าเดินทางต่างประเทศ',
+      '5501': 'ค่าธรรมเนียมวิชาชีพ',
+      '5502': 'ค่าที่ปรึกษากฎหมาย / บัญชี',
+      '5503': 'ค่าธรรมเนียมธนาคาร',
+      '5504': 'ค่าตรวจสอบ / Audit',
+      '5601': 'ค่าเสื่อมราคา',
+      '5602': 'ค่าตัดจำหน่าย',
+      '5701': 'ดอกเบี้ยจ่าย',
+      '5801': 'ภาษีต่างๆ',
+      '5901': 'ค่าใช้จ่ายเบ็ดเตล็ด',
+    };
+
+    // Wire up auto-fill on the main account-code input. Listener is attached
+    // once on init (see initOcrConfigPage) — uses 'input' so picking from the
+    // datalist OR free-typing both trigger it.
+    function _wireAccountCodeAutofill() {
+      const code = document.getElementById('trainSysAccountCode');
+      const name = document.getElementById('trainSysAccountName');
+      if (!code || !name) return;
+      code.addEventListener('input', () => {
+        const c = code.value.trim();
+        const mapped = ACCOUNT_CODE_NAME[c];
+        // Only overwrite if name field is empty or contained a previous auto-fill
+        // (so the admin can still type a custom name after picking a code).
+        if (mapped && (!name.value || name.dataset.autofilled === '1')) {
+          name.value = mapped;
+          name.dataset.autofilled = '1';
+        }
+      });
+      name.addEventListener('input', () => { name.dataset.autofilled = '0'; });
+    }
+
     function addTrainLine(description = '', accountCode = '', amount = '') {
       const container = document.getElementById('trainSysLines');
       const row = document.createElement('div');
       row.className = 'train-line-row';
-      row.style = 'display:grid;grid-template-columns:1fr 120px 100px 30px;gap:6px;margin-bottom:4px;align-items:center';
+      row.style = 'display:grid;grid-template-columns:1fr 140px 100px 30px;gap:6px;margin-bottom:4px;align-items:center';
       row.innerHTML = `
-        <input type="text" class="train-line-desc" placeholder="คำอธิบายรายการ" value="${escapeHtml(description)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
-        <input type="text" class="train-line-account" placeholder="รหัสบัญชี" value="${escapeHtml(accountCode)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;font-family:monospace">
+        <input type="text" class="train-line-desc" list="commonDescriptionsDL" placeholder="คำอธิบาย (เลือก/พิมพ์)" value="${escapeHtml(description)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+        <input type="text" class="train-line-account" list="commonAccountCodesDL" placeholder="รหัสบัญชี" value="${escapeHtml(accountCode)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;font-family:monospace">
         <input type="number" class="train-line-amount" placeholder="0.00" step="0.01" value="${escapeHtml(amount)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;font-family:monospace;text-align:right">
         <button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#991b1b;border:none;border-radius:4px;cursor:pointer;height:28px">×</button>`;
       container.appendChild(row);
@@ -1008,7 +1147,23 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             document.getElementById('trainSysDocNumber').value = p.documentNumbers[0];
           }
           if (p.dates && p.dates.length > 0) {
-            document.getElementById('trainSysDocDate').value = p.dates[0];
+            // <input type="date"> requires YYYY-MM-DD. Parser may emit
+            // dd/mm/yyyy or dd-mm-yyyy (Thai) or already-ISO. Normalize.
+            const raw = String(p.dates[0]).trim();
+            let iso = '';
+            const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            const dmyMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+            if (isoMatch) {
+              iso = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+            } else if (dmyMatch) {
+              let yy = dmyMatch[3];
+              if (yy.length === 2) yy = '20' + yy;
+              // If year > current+10, assume Thai Buddhist year and convert
+              const yNum = parseInt(yy, 10);
+              if (yNum > new Date().getFullYear() + 10) yy = String(yNum - 543);
+              iso = `${yy}-${dmyMatch[2].padStart(2,'0')}-${dmyMatch[1].padStart(2,'0')}`;
+            }
+            if (iso) document.getElementById('trainSysDocDate').value = iso;
           }
           if (p.documentType) {
             const sel = document.getElementById('trainSysDocType');
@@ -1155,6 +1310,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       if (v) v.textContent = 'build: ' + __PAGE_VERSION;
       loadConfig();
       checkEmbeddedStatus();
+      _wireAccountCodeAutofill();
       // Seed one empty line-item row so the table is visible immediately.
       if (document.getElementById('trainSysLines') && document.getElementById('trainSysLines').children.length === 0) {
         addTrainLine();
