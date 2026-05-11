@@ -84,6 +84,7 @@
     <div class="info-box">
       <strong>OCR & Azure Document Intelligence</strong> ตั้งค่า Provider สำหรับสแกนเอกสาร (ระดับ System — ใช้ร่วมกันทุกบริษัท),
       จัดการโควต้าหน้า OCR ตามแพ็กเกจ, และอนุมัติการซื้อเครดิตเพิ่ม
+      <span style="float:right;font-size:11px;font-family:monospace;color:#64748b" id="deployVersion">build: loading...</span>
     </div>
     <div style="background:#f0fdfa;border:1px solid #5eead4;color:#134e4a;padding:12px 18px;border-radius:8px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
       <div>
@@ -549,10 +550,32 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     </div>
   </div>
 
-  <script src="/admin/admin-api.js"></script>
-  <script src="/admin/admin-layout.js"></script>
+  <script src="/admin/admin-api.js?v=20260114"></script>
+  <script src="/admin/admin-layout.js?v=20260114"></script>
   <script>
-    AdminLayout.init('ocr-config');
+    // ─── DEPLOYMENT VERSION + DIAGNOSTIC ───────────────────────────────────
+    // Visible stamp so admins can confirm which build is deployed; also wraps
+    // AdminLayout.init in try/catch so script execution continues to define
+    // all functions (systemTestScan etc.) even if sidebar rendering fails.
+    const __PAGE_VERSION = 'd085ce5-2026-01-14';
+    console.log('[ocr-config.html] version:', __PAGE_VERSION);
+    try {
+      AdminLayout.init('ocr-config');
+      console.log('[ocr-config.html] AdminLayout.init succeeded');
+    } catch (err) {
+      console.error('[ocr-config.html] AdminLayout.init FAILED:', err);
+      // Show a visible diagnostic banner so the user can see what failed
+      const pc = document.getElementById('pageContent');
+      if (pc) {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'background:#fee2e2;border:2px solid #fca5a5;color:#991b1b;padding:14px 18px;border-radius:8px;margin:12px;font-size:13px';
+        banner.innerHTML = `
+          <strong>⚠️ Sidebar render failed</strong><br>
+          ${err && err.message ? String(err.message).replace(/[<>]/g, '') : String(err)}<br>
+          <small>Version: ${__PAGE_VERSION} — copy this message to dev support</small>`;
+        pc.prepend(banner);
+      }
+    }
 
     let currentConfig = null;
 
@@ -847,9 +870,18 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     }
 
     async function systemTestScan(file) {
-      if (!file) return;
+      console.log('[ocr-config.html] systemTestScan called with file:', file?.name, file?.size, 'bytes');
+      if (!file) {
+        console.warn('[ocr-config.html] systemTestScan: no file provided — aborting');
+        return;
+      }
       const provider = document.getElementById('systemTestProvider').value;
       const resultBox = document.getElementById('systemTestResult');
+      if (!resultBox) {
+        console.error('[ocr-config.html] systemTestScan: #systemTestResult element NOT FOUND in DOM');
+        alert('Error: #systemTestResult element not found. Sidebar render may have wiped it.');
+        return;
+      }
       resultBox.style.display = 'block';
       document.getElementById('systemParsedFields').innerHTML = '<em style="color:#64748b">กำลังประมวลผล...</em>';
       document.getElementById('systemRawText').textContent = '';
@@ -861,12 +893,29 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       fd.append('file', file);
       try {
         const token = localStorage.getItem('admin_token');
+        if (!token) {
+          console.error('[ocr-config.html] No admin_token in localStorage — user must re-login');
+          document.getElementById('systemParsedFields').innerHTML =
+            '<span style="color:#dc2626">❌ No admin_token — กรุณา <a href="/admin/login.html">login ใหม่</a></span>';
+          return;
+        }
+        console.log('[ocr-config.html] POST /api/admin/ocr-config/test-scan?provider=' + provider);
         const r = await fetch(`/api/admin/ocr-config/test-scan?provider=${provider}`, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + token },
           body: fd
         });
-        const res = await r.json();
+        console.log('[ocr-config.html] response status:', r.status);
+        const res = await r.json().catch(e => {
+          console.error('[ocr-config.html] JSON parse failed:', e);
+          return null;
+        });
+        console.log('[ocr-config.html] response body:', res);
+        if (!r.ok) {
+          document.getElementById('systemParsedFields').innerHTML =
+            `<span style="color:#dc2626">❌ HTTP ${r.status}: ${res?.message || res?.title || 'Server error'} — endpoint อาจยังไม่ deploy</span>`;
+          return;
+        }
         if (!r.ok || !res?.success) {
           document.getElementById('systemParsedFields').innerHTML =
             `<span style="color:#dc2626">❌ ${res?.message || res?.data?.error || 'ผิดพลาด'}</span>`;
@@ -1052,6 +1101,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     // because AdminLayout.init() at the top of this script already set
     // AdminAPI.token from localStorage.
     function initOcrConfigPage() {
+      console.log('[ocr-config.html] initOcrConfigPage starting...');
+      const v = document.getElementById('deployVersion');
+      if (v) v.textContent = 'build: ' + __PAGE_VERSION;
       loadConfig();
       checkEmbeddedStatus();
       loadTrainCompanies();
