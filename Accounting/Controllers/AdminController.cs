@@ -1114,7 +1114,8 @@ public class AdminController : ControllerBase
             OcrGatewayDatePenalty: s.OcrGatewayDatePenalty,
             OcrGatewayVatRatePenalty: s.OcrGatewayVatRatePenalty,
             OcrGatewayLowConfidencePenalty: s.OcrGatewayLowConfidencePenalty,
-            OcrMaxRetriesPerScan: s.OcrMaxRetriesPerScan)));
+            OcrMaxRetriesPerScan: s.OcrMaxRetriesPerScan,
+            OcrMaxPagesPerScan: s.OcrMaxPagesPerScan)));
     }
 
     [HttpPut("ocr-config")]
@@ -1149,6 +1150,7 @@ public class AdminController : ControllerBase
         if (req.OcrGatewayVatRatePenalty.HasValue) s.OcrGatewayVatRatePenalty = req.OcrGatewayVatRatePenalty.Value;
         if (req.OcrGatewayLowConfidencePenalty.HasValue) s.OcrGatewayLowConfidencePenalty = req.OcrGatewayLowConfidencePenalty.Value;
         if (req.OcrMaxRetriesPerScan.HasValue) s.OcrMaxRetriesPerScan = req.OcrMaxRetriesPerScan.Value;
+        if (req.OcrMaxPagesPerScan.HasValue) s.OcrMaxPagesPerScan = req.OcrMaxPagesPerScan.Value;
 
         // Track which fields changed (omit secrets — audit log shouldn't contain raw keys)
         var changedFields = new List<string>();
@@ -1784,7 +1786,8 @@ public record OcrConfigResponse(
     decimal OcrGatewayMaxPenalty, decimal OcrGatewayMathTolerance,
     decimal OcrGatewayTaxIdPenalty, decimal OcrGatewayMathPenalty,
     decimal OcrGatewayDatePenalty, decimal OcrGatewayVatRatePenalty,
-    decimal OcrGatewayLowConfidencePenalty, int OcrMaxRetriesPerScan);
+    decimal OcrGatewayLowConfidencePenalty, int OcrMaxRetriesPerScan,
+    int? OcrMaxPagesPerScan = null);
 
 public record UpdateOcrConfigRequest(
     string? AzureDiEndpoint = null, string? AzureDiApiKey = null,
@@ -1798,7 +1801,8 @@ public record UpdateOcrConfigRequest(
     decimal? OcrGatewayMaxPenalty = null, decimal? OcrGatewayMathTolerance = null,
     decimal? OcrGatewayTaxIdPenalty = null, decimal? OcrGatewayMathPenalty = null,
     decimal? OcrGatewayDatePenalty = null, decimal? OcrGatewayVatRatePenalty = null,
-    decimal? OcrGatewayLowConfidencePenalty = null, int? OcrMaxRetriesPerScan = null);
+    decimal? OcrGatewayLowConfidencePenalty = null, int? OcrMaxRetriesPerScan = null,
+    int? OcrMaxPagesPerScan = null);
 
 public record ReviewOcrCreditRequest(bool Approve, string? Notes = null);
 public record GrantOcrBonusRequest(int Pages, DateTime? ExpiresAt = null, string? Reason = null);

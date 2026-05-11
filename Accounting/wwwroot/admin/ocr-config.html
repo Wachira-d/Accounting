@@ -660,6 +660,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             <input type="number" id="gwMaxRetries" min="0" max="5" value="1">
             <div class="hint">Retry ไม่นับ quota</div>
           </div>
+          <div class="form-group">
+            <label>Max Pages / PDF Scan</label>
+            <input type="number" id="ocrMaxPagesPerScan" min="1" max="100" value="10">
+            <div class="hint">PDF เกินจำนวนหน้านี้จะถูก trim (cost control)</div>
+          </div>
         </div>
       </div>
 
@@ -918,6 +923,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       if (c.ocrGatewayVatRatePenalty != null) document.getElementById('gwVatRatePenalty').value = c.ocrGatewayVatRatePenalty;
       if (c.ocrGatewayLowConfidencePenalty != null) document.getElementById('gwLowConfidencePenalty').value = c.ocrGatewayLowConfidencePenalty;
       if (c.ocrMaxRetriesPerScan != null) document.getElementById('gwMaxRetries').value = c.ocrMaxRetriesPerScan;
+      if (c.ocrMaxPagesPerScan != null) document.getElementById('ocrMaxPagesPerScan').value = c.ocrMaxPagesPerScan;
     }
 
     function populateSummary(s) {
@@ -982,6 +988,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           ocrGatewayVatRatePenalty: parseFloat(document.getElementById('gwVatRatePenalty').value),
           ocrGatewayLowConfidencePenalty: parseFloat(document.getElementById('gwLowConfidencePenalty').value),
           ocrMaxRetriesPerScan: parseInt(document.getElementById('gwMaxRetries').value),
+          ocrMaxPagesPerScan: parseInt(document.getElementById('ocrMaxPagesPerScan').value) || null,
         };
 
         const azureKey = document.getElementById('azureDiApiKey').value;
