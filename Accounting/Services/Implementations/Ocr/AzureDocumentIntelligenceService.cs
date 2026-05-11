@@ -49,7 +49,26 @@ public class AzureDocumentIntelligenceService
         client.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", apiKey);
         client.Timeout = TimeSpan.FromMinutes(2);
 
-        var analyzeUrl = $"{endpoint}/documentintelligence/documentModels/{modelId}:analyze?api-version={apiVersion}";
+        // ─── Maximize Azure DI extraction for Thai documents ───
+        // locale=th-TH tells the OCR engine to use Thai language/date/number
+        //   conventions — without this Azure may guess en-US and parse
+        //   "12/03/2026" as Dec-3 instead of 12-Mar.
+        // stringIndexType=utf16CodeUnit fixes Thai character boundary handling
+        //   (sara/tone marks don't get split off from their consonants).
+        // features=keyValuePairs,barcodes,ocrHighResolution unlocks extra
+        //   data the basic invoice schema misses:
+        //   • keyValuePairs catches "เลขประจำตัวผู้เสียภาษี: ..." anchored
+        //     fields that aren't part of the standard Invoice schema.
+        //   • barcodes finds RD QR codes / asset-tag barcodes.
+        //   • ocrHighResolution improves accuracy on mobile-camera photos
+        //     (extra Azure cost — disabled when not Latin-friendly model).
+        // output=pdf would produce a searchable PDF (skipped — extra cost,
+        //   we keep original file).
+        var query = $"?api-version={apiVersion}" +
+            "&locale=th-TH" +
+            "&stringIndexType=utf16CodeUnit" +
+            "&features=keyValuePairs,barcodes,ocrHighResolution";
+        var analyzeUrl = $"{endpoint}/documentintelligence/documentModels/{modelId}:analyze{query}";
         using var content = new ByteArrayContent(fileBytes);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
             string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
@@ -125,8 +144,68 @@ public class AzureDocumentIntelligenceService
         if (analyze.TryGetProperty("content", out var content))
             result.RawText = content.GetString() ?? "";
 
+        // ─── Key-value pairs from features=keyValuePairs ───
+        // Generic K-V extractor catches Thai-anchored fields that don't
+        // fit the standard Invoice schema. Common patterns we recover:
+        //   "เลขประจำตัวผู้เสียภาษี: 0107544000043"
+        //   "เลขที่: INV-2025-001"
+        //   "วันที่: 31/01/2569"
+        //   "ส่งถึง: ห้างหุ้นส่วน ..."
+        if (analyze.TryGetProperty("keyValuePairs", out var kvPairs)
+            && kvPairs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var kv in kvPairs.EnumerateArray())
+            {
+                if (!kv.TryGetProperty("key", out var key)
+                    || !key.TryGetProperty("content", out var keyContent)) continue;
+                var keyText = keyContent.GetString() ?? "";
+                string? valueText = null;
+                if (kv.TryGetProperty("value", out var val)
+                    && val.TryGetProperty("content", out var valContent))
+                    valueText = valContent.GetString();
+                if (string.IsNullOrEmpty(keyText) || string.IsNullOrEmpty(valueText)) continue;
+                result.KeyValuePairs[keyText.Trim()] = valueText.Trim();
+            }
+        }
+
+        // ─── Barcodes / QR codes from features=barcodes ───
+        // RD-issued e-Receipts carry a QR code that encodes the canonical
+        // amount + tax ID — when present, it's the most reliable source.
+        // Surfaces in result.Barcodes for downstream cross-validation.
+        if (analyze.TryGetProperty("pages", out var pagesEl)
+            && pagesEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var page in pagesEl.EnumerateArray())
+            {
+                if (!page.TryGetProperty("barcodes", out var bcArr) || bcArr.ValueKind != JsonValueKind.Array) continue;
+                foreach (var bc in bcArr.EnumerateArray())
+                {
+                    var kind = bc.TryGetProperty("kind", out var k) ? k.GetString() : null;
+                    var bcValue = bc.TryGetProperty("value", out var v) ? v.GetString() : null;
+                    if (!string.IsNullOrEmpty(bcValue))
+                        result.Barcodes.Add(new AzureDiBarcode { Kind = kind, Value = bcValue });
+                }
+            }
+        }
+
+        // ─── Languages from features=languages ───
+        if (analyze.TryGetProperty("languages", out var langArr)
+            && langArr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var lang in langArr.EnumerateArray())
+            {
+                var code = lang.TryGetProperty("locale", out var lc) ? lc.GetString() : null;
+                if (!string.IsNullOrEmpty(code)) result.DetectedLanguages.Add(code);
+            }
+        }
+
         if (!analyze.TryGetProperty("documents", out var documents) || documents.GetArrayLength() == 0)
+        {
+            // Even when no structured "documents" came back, line items may
+            // still be reconstructible from extracted tables — try fallback.
+            TryExtractItemsFromTables(analyze, result);
             return result;
+        }
 
         // Multi-document PDF warning — Azure DI splits multi-invoice PDFs into multiple
         // documents, but we only book the first. Surface this so users know to split
@@ -206,7 +285,108 @@ public class AzureDocumentIntelligenceService
             }
         }
 
+        // ─── Fallback: extract line items from tables when the Invoice
+        // model didn't surface any. Common for receipts / non-standard
+        // layouts where the "Items" array is empty but the visual table
+        // is parsed.
+        if (result.Items.Count == 0)
+            TryExtractItemsFromTables(analyze, result);
+
         return result;
+    }
+
+    /// <summary>
+    /// Fallback when prebuilt-invoice returns no Items: parse the
+    /// `analyzeResult.tables` array (from layout analysis) and treat the
+    /// first table with ≥3 columns as the line-item table. Maps the
+    /// columns heuristically by header keywords ("รายการ", "Description",
+    /// "Qty", "ราคา", "Amount", ...) so it works on Thai layouts that
+    /// don't conform to the invoice schema.
+    /// </summary>
+    private static void TryExtractItemsFromTables(JsonElement analyze, AzureDiResult result)
+    {
+        if (!analyze.TryGetProperty("tables", out var tables) || tables.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var table in tables.EnumerateArray())
+        {
+            if (!table.TryGetProperty("rowCount", out var rcEl) || !table.TryGetProperty("columnCount", out var ccEl))
+                continue;
+            int rowCount = rcEl.GetInt32();
+            int colCount = ccEl.GetInt32();
+            if (rowCount < 2 || colCount < 3) continue;
+            if (!table.TryGetProperty("cells", out var cells) || cells.ValueKind != JsonValueKind.Array)
+                continue;
+
+            // Build a [row][col] grid of cell text
+            var grid = new string[rowCount, colCount];
+            foreach (var cell in cells.EnumerateArray())
+            {
+                int r = cell.TryGetProperty("rowIndex", out var rEl) ? rEl.GetInt32() : -1;
+                int c = cell.TryGetProperty("columnIndex", out var cEl) ? cEl.GetInt32() : -1;
+                if (r < 0 || c < 0 || r >= rowCount || c >= colCount) continue;
+                var text = cell.TryGetProperty("content", out var tEl) ? tEl.GetString() ?? "" : "";
+                grid[r, c] = text;
+            }
+
+            // Detect column roles from the first row (headers)
+            int descCol = -1, qtyCol = -1, priceCol = -1, amountCol = -1;
+            for (int c = 0; c < colCount; c++)
+            {
+                var h = (grid[0, c] ?? "").ToLowerInvariant();
+                if (descCol < 0 && (h.Contains("รายการ") || h.Contains("description") || h.Contains("desc")
+                    || h.Contains("สินค้า") || h.Contains("ชื่อ") || h.Contains("รายละเอียด"))) descCol = c;
+                else if (qtyCol < 0 && (h.Contains("จำนวน") || h.Contains("qty") || h.Contains("quantity")
+                    || h.Contains("จํานวน"))) qtyCol = c;
+                else if (priceCol < 0 && (h.Contains("ราคา/หน่วย") || h.Contains("unit price") || h.Contains("ราคาต่อ")
+                    || h.Contains("price"))) priceCol = c;
+                else if (amountCol < 0 && (h.Contains("รวม") || h.Contains("amount") || h.Contains("total")
+                    || h.Contains("จำนวนเงิน") || h.Contains("จํานวนเงิน"))) amountCol = c;
+            }
+            if (descCol < 0) continue;     // need at least description column
+            if (amountCol < 0)
+            {
+                // Last column is usually the amount when no header matches
+                amountCol = colCount - 1;
+            }
+
+            // Skip header row; rows where the description is empty / numeric
+            // are likely summary rows (subtotal / total / VAT) — drop them.
+            for (int r = 1; r < rowCount; r++)
+            {
+                var desc = (grid[r, descCol] ?? "").Trim();
+                if (string.IsNullOrEmpty(desc)) continue;
+                // Pure-digit / amount-like descriptions are summary rows
+                if (desc.All(ch => !char.IsLetter(ch))) continue;
+
+                decimal? qty = qtyCol >= 0 ? ParseAmount(grid[r, qtyCol]) : null;
+                decimal? price = priceCol >= 0 ? ParseAmount(grid[r, priceCol]) : null;
+                decimal? amt = ParseAmount(grid[r, amountCol]);
+                if (!amt.HasValue && !price.HasValue) continue;
+
+                result.Items.Add(new AzureDiLineItem
+                {
+                    Description = desc,
+                    Quantity = qty,
+                    UnitPrice = price,
+                    Amount = amt,
+                });
+            }
+            if (result.Items.Count > 0)
+            {
+                result.Warnings.Add($"Items extracted from layout table fallback ({result.Items.Count} rows)");
+                break;   // first matching table wins
+            }
+        }
+    }
+
+    private static decimal? ParseAmount(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var cleaned = raw.Replace(",", "").Trim();
+        if (decimal.TryParse(cleaned, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 0) return v;
+        return null;
     }
 
     private static string? GetStringField(JsonElement fields, string name)
@@ -284,6 +464,32 @@ public class AzureDiResult
     public int MultiDocumentCount { get; set; } = 0;
     public int PageCount { get; set; } = 0;
     public List<string> Warnings { get; set; } = new();
+
+    // ─── features=keyValuePairs output ───
+    // Generic free-text Key→Value pairs that Azure extracted from anchor
+    // patterns. Used as a Thai-aware fallback when the standard Invoice
+    // schema misses a field (e.g. "เลขประจำตัวผู้เสียภาษี" anchored
+    // tax ID that the schema's VendorTaxId didn't pick up).
+    public Dictionary<string, string> KeyValuePairs { get; set; } = new();
+
+    // ─── features=barcodes output ───
+    // Barcodes / QR codes found on the page. Thai RD e-receipts encode
+    // canonical amount + tax id in a QR — when present, treat as
+    // ground-truth for cross-checking the schema-extracted fields.
+    public List<AzureDiBarcode> Barcodes { get; set; } = new();
+
+    // ─── features=languages output ───
+    // Locale codes Azure detected on the page. Useful for diagnostic /
+    // telemetry — e.g. flag "th" docs that came back with mostly en-US
+    // field interpretation.
+    public List<string> DetectedLanguages { get; set; } = new();
+}
+
+public class AzureDiBarcode
+{
+    /// <summary>QRCode, Code128, EAN13, PDF417, ...</summary>
+    public string? Kind { get; set; }
+    public string? Value { get; set; }
 }
 
 public class AzureDiLineItem

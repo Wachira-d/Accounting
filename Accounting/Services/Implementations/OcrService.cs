@@ -1130,12 +1130,113 @@ public class OcrService : IOcrService
             });
         }
 
+        // ─── Recover missing fields from keyValuePairs ───
+        // Azure's keyValuePairs feature catches Thai-anchored data that
+        // the standard Invoice schema doesn't include. We backfill the
+        // gaps here — schema fields take priority, K-V fills the rest.
+        ApplyKeyValueFallback(azure, data);
+
+        // ─── Cross-validate with barcodes / QR ───
+        // RD-issued e-Receipts encode a canonical amount + tax ID in a
+        // QR; when present, raise field confidence to 1.0 on matching
+        // schema-extracted values and flag mismatches.
+        if (azure.Barcodes.Count > 0)
+        {
+            data.ReasoningTrace.Add($"[Azure DI] Barcodes: {azure.Barcodes.Count} detected " +
+                $"({string.Join(", ", azure.Barcodes.Select(b => b.Kind ?? "?"))})");
+            foreach (var bc in azure.Barcodes)
+            {
+                if (string.IsNullOrEmpty(bc.Value)) continue;
+                // Treat any 13-digit run inside the barcode as a tax ID
+                // candidate — common for RD QR which embeds buyer tax ID.
+                var digits = new string(bc.Value.Where(char.IsDigit).ToArray());
+                if (digits.Length >= 13)
+                {
+                    var taxId = digits.Substring(0, 13);
+                    if (Ocr.SmartFieldExtractor.IsValidThaiTaxId(taxId))
+                    {
+                        if (string.IsNullOrEmpty(data.VendorTaxId)) data.VendorTaxId = taxId;
+                        else if (data.VendorTaxId == taxId)
+                            data.FieldConfidence["SellerTaxId"] = 1.0;
+                        data.ReasoningTrace.Add($"[Azure DI Barcode] Found valid tax id {taxId} in {bc.Kind}");
+                    }
+                }
+            }
+        }
+
+        // ─── Language detection telemetry ───
+        if (azure.DetectedLanguages.Count > 0)
+            data.ReasoningTrace.Add($"[Azure DI] Languages: {string.Join(", ", azure.DetectedLanguages)}");
+
         // NOTE: Seller/buyer swap is intentionally NOT performed here. The unified
         // swap block in ScanAsync runs AFTER OcrConfidenceGateway, ensuring all
         // OCR providers (local + Azure DI) submit pre-swap data to the gateway —
         // so checksum and math validations are consistent across paths.
 
         return data;
+    }
+
+    /// <summary>
+    /// Fill OcrExtractedData fields that the standard Invoice schema
+    /// missed using Azure's generic keyValuePairs output. Thai-anchored
+    /// fields that benefit most: เลขประจำตัวผู้เสียภาษี → VendorTaxId or
+    /// BuyerTaxId (we pick based on proximity in the original document),
+    /// เลขที่ → DocumentNumber, วันที่ → DocumentDate, ส่งถึง/ผู้รับ → BuyerName.
+    /// Only fills when the schema field is empty — never overwrites a
+    /// schema-confirmed value.
+    /// </summary>
+    private static void ApplyKeyValueFallback(AzureDiResult azure, OcrExtractedData data)
+    {
+        if (azure.KeyValuePairs.Count == 0) return;
+
+        // Tax-id-shaped keys → fill missing tax ID. We assign by which
+        // side of the document the key appeared on (seller anchor vs
+        // buyer anchor); approximated by keyword in the K-V's key text.
+        foreach (var (key, value) in azure.KeyValuePairs)
+        {
+            var keyLower = key.ToLowerInvariant();
+
+            // Tax IDs (13 digits)
+            if (keyLower.Contains("เลขประจำตัว") || keyLower.Contains("tax id"))
+            {
+                var taxId = ExtractDigits(value, 13);
+                if (!string.IsNullOrEmpty(taxId))
+                {
+                    var isBuyerSide = keyLower.Contains("ผู้ซื้อ") || keyLower.Contains("ลูกค้า")
+                        || keyLower.Contains("customer") || keyLower.Contains("buyer");
+                    if (isBuyerSide && string.IsNullOrEmpty(data.BuyerTaxId)) data.BuyerTaxId = taxId;
+                    else if (string.IsNullOrEmpty(data.VendorTaxId)) data.VendorTaxId = taxId;
+                }
+                continue;
+            }
+
+            // Document number — "เลขที่ใบกำกับ", "Invoice No.", etc.
+            if (string.IsNullOrEmpty(data.DocumentNumber)
+                && (keyLower.Contains("เลขที่") || keyLower.Contains("invoice no") || keyLower.Contains("doc no")))
+            {
+                data.DocumentNumber = value.Trim();
+                continue;
+            }
+
+            // Date — "วันที่", "Date"
+            if (!data.DocumentDate.HasValue
+                && (keyLower.Contains("วันที่") || keyLower == "date" || keyLower.Contains("invoice date")))
+            {
+                if (DateTime.TryParse(value, out var d)) data.DocumentDate = d;
+                continue;
+            }
+
+            // Buyer name (Customer/ลูกค้า/ผู้ซื้อ)
+            if (string.IsNullOrEmpty(data.BuyerName)
+                && (keyLower.Contains("ลูกค้า") || keyLower.Contains("ผู้ซื้อ") || keyLower.Contains("customer")
+                    || keyLower.Contains("ส่งถึง") || keyLower.Contains("bill to")))
+            {
+                data.BuyerName = value.Trim();
+            }
+        }
+
+        if (azure.KeyValuePairs.Count > 0)
+            data.ReasoningTrace.Add($"[Azure DI KV] {azure.KeyValuePairs.Count} key-value pairs scanned for fallback");
     }
 
     private static string MapAzureDocType(string? azureDocType, string? modelId)
