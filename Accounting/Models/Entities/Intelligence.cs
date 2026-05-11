@@ -253,6 +253,20 @@ public class OcrVendorIntelligence : TenantEntity
     // ─── Payment terms ───
     public int? TypicalPaymentTermsDays { get; set; }
 
+    // ─── Learned patterns for OCR boosting ───
+    // TypicalDocNumberPrefix: when this vendor's document numbers always
+    // start with the same prefix (e.g. HomePro "612XXX", PTT "TAX-"), the
+    // OCR can use that as a high-confidence anchor to disambiguate
+    // candidate numbers. Empty when no consistent pattern detected.
+    public string? TypicalDocNumberPrefix { get; set; }
+
+    // TopLineKeywordsJson: frequency map of words seen in line-item
+    // descriptions from prior approved docs, e.g. {"น้ำมัน":12, "Diesel":5}.
+    // Lets the category resolver boost confidence on a new scan whose
+    // descriptions match the vendor's historical pattern, even when the
+    // global rule library would only score weakly.
+    public string? TopLineKeywordsJson { get; set; }
+
     // Audit
     public DateTime LastTrainedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastDocumentDate { get; set; }

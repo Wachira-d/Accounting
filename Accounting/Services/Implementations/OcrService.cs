@@ -301,6 +301,21 @@ public class OcrService : IOcrService
                     string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
             // [Reasoning] section is built AFTER vendorPred so VendorIntel/Learner traces are included.
 
+            // ───── Default category resolution (Thai expense classifier) ─────
+            // Before consulting per-tenant learned data, run the global
+            // Thai-aware classifier to bootstrap fresh tenants. The resolver
+            // only fills EMPTY fields, so anything the OCR provider already
+            // surfaced (or the user's prior corrections produced) is kept.
+            // ExpenseCategoryLearner below may then override with company-
+            // specific habits when they exist.
+            var categoryResult = Ocr.ExpenseCategoryResolver.Resolve(
+                vendorName: extractedData.VendorName,
+                headerDescription: extractedData.ExpenseCategory,
+                lineDescriptions: extractedData.Items.Select(i => i.Description),
+                rawText: extractedText);
+            if (categoryResult != null)
+                Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult);
+
             // ───── Learned category prediction (per line description) ─────
             // If we have a learned mapping for this vendor, prefer it over generic
             // industry-based defaults. Per-line predictions also override individual
@@ -392,6 +407,57 @@ public class OcrService : IOcrService
                     extractedData.PaymentTermsDays = vendorPred.TypicalPaymentTermsDays;
                     extractedData.ReasoningTrace.Add(
                         $"[VendorIntel] ตั้ง payment terms = {vendorPred.TypicalPaymentTermsDays} วัน จากประวัติผู้ขาย");
+                }
+
+                // ─── Pattern-based confidence boost ───
+                // If this vendor's history shows a consistent document-number
+                // prefix and the current scan's number also starts with that
+                // prefix, raise the DocumentNumber confidence. When extraction
+                // produced a number that DOESN'T match the historic prefix it's
+                // likely an OCR misread — drop confidence to flag for review.
+                if (!string.IsNullOrEmpty(vendorPred.TypicalDocNumberPrefix)
+                    && !string.IsNullOrEmpty(extractedData.DocumentNumber)
+                    && vendorPred.TypicalDocNumberPrefix.Length >= 2)
+                {
+                    if (extractedData.DocumentNumber.StartsWith(vendorPred.TypicalDocNumberPrefix,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        extractedData.FieldConfidence["DocumentNumber"] = Math.Max(
+                            extractedData.FieldConfidence.GetValueOrDefault("DocumentNumber", 0), 0.95);
+                        extractedData.ReasoningTrace.Add(
+                            $"[VendorIntel] เลขเอกสาร '{extractedData.DocumentNumber}' ขึ้นต้นตรงกับ pattern '{vendorPred.TypicalDocNumberPrefix}' ของผู้ขายรายนี้");
+                    }
+                    else
+                    {
+                        extractedData.FieldConfidence["DocumentNumber"] = Math.Min(
+                            extractedData.FieldConfidence.GetValueOrDefault("DocumentNumber", 0.7), 0.5);
+                        extractedData.ReasoningTrace.Add(
+                            $"[VendorIntel] เลขเอกสาร '{extractedData.DocumentNumber}' ไม่ตรง pattern '{vendorPred.TypicalDocNumberPrefix}' ของผู้ขายรายนี้ — โปรดตรวจสอบ");
+                    }
+                }
+
+                // Boost ExpenseCategory confidence when the current scan's
+                // descriptions share words with the vendor's historical
+                // top-keywords. This pushes a marginal category match into
+                // high-confidence territory without overriding what the user
+                // (or learner) has already trained.
+                if (vendorPred.TopLineKeywords != null && vendorPred.TopLineKeywords.Count > 0
+                    && !string.IsNullOrEmpty(extractedData.ExpenseCategory))
+                {
+                    var corpus = string.Join(" ",
+                        new[] { extractedData.ExpenseCategory ?? "" }
+                            .Concat(extractedData.Items.Select(i => i.Description ?? ""))
+                    ).ToLowerInvariant();
+                    int hits = vendorPred.TopLineKeywords
+                        .Where(kv => corpus.Contains(kv.Key))
+                        .Sum(kv => kv.Value);
+                    if (hits >= 3)
+                    {
+                        extractedData.FieldConfidence["ExpenseCategory"] = Math.Max(
+                            extractedData.FieldConfidence.GetValueOrDefault("ExpenseCategory", 0), 0.92);
+                        extractedData.ReasoningTrace.Add(
+                            $"[VendorIntel] รายการตรงกับ keyword ประวัติ {hits} ครั้ง → หมวด '{extractedData.ExpenseCategory}' มั่นใจสูง");
+                    }
                 }
             }
 

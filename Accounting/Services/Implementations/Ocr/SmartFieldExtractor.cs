@@ -63,23 +63,33 @@ internal static class SmartFieldExtractor
         // 2. Resolve vendor vs buyer with mutual exclusion
         AssignVendorBuyerRoles(data, rawText, taxIds);
 
-        // 3. Math invariants — fill missing amounts
+        // 3. Math invariants — fill missing amounts (extended to include WHT)
         ApplyAmountMath(data, rawText);
 
         // 4. VAT rate cross-check (Thai standard 7%)
         ValidateOrInferVatRate(data);
 
-        // 5. WHT rate normalization
+        // 5. WHT rate normalization + statutory-rate inference from category
         NormalizeWhtRate(data, rawText);
 
-        // 6. Date validation + Buddhist year conversion
+        // 6. Date validation: Buddhist year, future-date rejection, plausibility
         ValidateAndNormalizeDate(data);
 
         // 7. Document number plausibility
         EnsureDocumentNumberPlausible(data, rawText);
 
-        // 8. Line items sum sanity
+        // 8. Line items sum sanity + per-line qty × unit-price check
         ValidateLineItemSum(data);
+        ValidateLineItemPerRowMath(data);
+
+        // 9. Tax-ID type classification (juristic vs personal) — feeds WHT/VAT inference
+        ClassifyTaxIdTypes(data);
+
+        // 10. Total amount math: Total = SubTotal + VAT - WHTAmount
+        ApplyTotalWithWhtMath(data);
+
+        // 11. Total cannot be less than VAT — sanity check
+        ValidateAmountOrdering(data);
     }
 
     // ─── 1. Tax-ID with checksum filter ──────────────────────────────────
@@ -425,5 +435,162 @@ internal static class SmartFieldExtractor
             data.ReasoningTrace.Add(
                 $"[SmartExtract] ยอด line items รวม {lineSum:N2} ≠ SubTotal {data.SubTotal:N2} (ต่าง {diff:N2})");
         }
+    }
+
+    // ─── 8b. Per-line: Quantity × UnitPrice ≈ Amount ────────────────────
+    // OCR commonly confuses commas/decimals — this picks up the row where
+    // 5 × 100 = 500 was read as "5 × 100 = 50.0" or similar.
+    private static void ValidateLineItemPerRowMath(OcrExtractedData data)
+    {
+        if (data.Items == null) return;
+        foreach (var line in data.Items)
+        {
+            if (!line.Quantity.HasValue || !line.UnitPrice.HasValue || !line.Amount.HasValue) continue;
+            if (line.Quantity.Value <= 0 || line.UnitPrice.Value <= 0 || line.Amount.Value <= 0) continue;
+            var expected = line.Quantity.Value * line.UnitPrice.Value;
+            var diff = Math.Abs(expected - line.Amount.Value);
+            var tolerance = Math.Max(0.5m, expected * 0.02m);
+            if (diff > tolerance)
+            {
+                data.ReasoningTrace.Add(
+                    $"[SmartExtract] รายการ '{line.Description}': qty×price = {expected:N2} ≠ amount {line.Amount:N2}");
+            }
+        }
+    }
+
+    // ─── 9. Tax-ID type classification ──────────────────────────────────
+    // First digit of a 13-digit Thai tax ID encodes the holder type. We use
+    // this to:
+    //   • Bias VAT-registration expectation (juristic codes 0/8/9 are almost
+    //     always VAT-registered; individuals usually not)
+    //   • Decide statutory WHT rate when ambiguous (Section 50 has different
+    //     rates for individuals vs juristic recipients).
+    //
+    // Reference: Thai Civil Registration Act + Revenue Department rules:
+    //   1   = Thai national ID issued post-1984 (บัตรประชาชนสมัยใหม่)
+    //   2   = Thai national ID issued pre-1984 / supplementary
+    //   3   = Permanent resident card (พร.)
+    //   4–7 = Various historical legacy registration types
+    //   8   = Juristic ID — partnership / private limited / public limited
+    //   0/9 = Other juristic registrations (state enterprise, foundation)
+    private static void ClassifyTaxIdTypes(OcrExtractedData data)
+    {
+        ClassifyOne(data, data.VendorTaxId, "Vendor");
+        ClassifyOne(data, data.BuyerTaxId, "Buyer");
+    }
+
+    private static void ClassifyOne(OcrExtractedData data, string? id, string role)
+    {
+        if (string.IsNullOrEmpty(id) || id.Length != 13) return;
+        var first = id[0];
+        var isJuristic = first == '0' || first == '8' || first == '9';
+        var key = $"{role}TaxIdType";
+        if (isJuristic)
+        {
+            data.FieldConfidence[key] = 0.9;
+            // Juristic vendors → very likely VAT-registered → expect 7% VAT.
+            // Don't auto-set HasWht here; that depends on what we BUY from them.
+        }
+        else
+        {
+            data.FieldConfidence[key] = 0.9;
+            // Personal (1-7) → typically NOT VAT-registered; expect 0% VAT.
+            // If extraction said VAT > 0 for a personal vendor, flag it.
+            if (role == "Vendor" && data.VatAmount.HasValue && data.VatAmount.Value > 0)
+            {
+                data.ReasoningTrace.Add(
+                    $"[SmartExtract] ผู้ขายมีรหัสบัตรบุคคลธรรมดา (ขึ้นต้น {first}) แต่มี VAT {data.VatAmount:N2} — ตรวจสอบ");
+            }
+        }
+    }
+
+    public static bool IsJuristicTaxId(string? id)
+    {
+        if (string.IsNullOrEmpty(id) || id.Length != 13) return false;
+        return id[0] == '0' || id[0] == '8' || id[0] == '9';
+    }
+
+    // ─── 10. Total = SubTotal + VAT - WHT math ──────────────────────────
+    // When the document shows WHT separately at the bottom (common on
+    // service invoices), the "ยอดที่ต้องชำระ" / "Net Payable" already
+    // reflects WHT deduction. Compute and validate when we have the rate.
+    private static void ApplyTotalWithWhtMath(OcrExtractedData data)
+    {
+        if (!data.SubTotal.HasValue) return;
+        if (!data.HasWht || !data.WhtRate.HasValue) return;
+
+        var whtAmount = Math.Round(data.SubTotal.Value * data.WhtRate.Value / 100m, 2);
+        var vat = data.VatAmount ?? 0m;
+        var netPayable = data.SubTotal.Value + vat - whtAmount;
+
+        if (data.TotalAmount.HasValue)
+        {
+            // If extracted Total matches gross (sub+vat) AND WHT >0, the user
+            // is going to be paying NetPayable — flag for review so downstream
+            // doesn't book the wrong amount to AP/cash.
+            var gross = data.SubTotal.Value + vat;
+            if (Math.Abs(data.TotalAmount.Value - gross) < 1m
+                && Math.Abs(data.TotalAmount.Value - netPayable) > 1m)
+            {
+                data.ReasoningTrace.Add(
+                    $"[SmartExtract] Total {data.TotalAmount:N2} = gross, แต่หลังหัก WHT จ่ายจริง ≈ {netPayable:N2}");
+            }
+        }
+    }
+
+    // ─── 11. Amount ordering sanity ─────────────────────────────────────
+    private static void ValidateAmountOrdering(OcrExtractedData data)
+    {
+        if (data.TotalAmount.HasValue && data.VatAmount.HasValue
+            && data.TotalAmount.Value < data.VatAmount.Value)
+        {
+            data.ReasoningTrace.Add(
+                $"[SmartExtract] Total {data.TotalAmount:N2} < VAT {data.VatAmount:N2} — ค่าสลับกันหรือเปล่า?");
+            data.FieldConfidence["TotalAmount"] = 0.3;
+            data.FieldConfidence["VatAmount"] = 0.3;
+        }
+        if (data.TotalAmount.HasValue && data.TotalAmount.Value < 0)
+        {
+            data.ReasoningTrace.Add($"[SmartExtract] Total {data.TotalAmount:N2} ติดลบ — ล้างค่า");
+            data.TotalAmount = null;
+        }
+        if (data.VatAmount.HasValue && data.VatAmount.Value < 0)
+        {
+            data.VatAmount = null;
+        }
+    }
+
+    // ─── Phone, postal code, email extraction (for vendor/buyer enrichment) ─
+    // Not used by Enrich itself yet — exposed so the caller can pull contact
+    // info to attach to the matched Contact entity.
+
+    public static string? ExtractFirstThaiPhone(string text)
+    {
+        // 9-10 digits, optionally with dashes/spaces; first digit must be 0
+        var m = Regex.Match(text, @"\b(0\d[\s\-]?\d{3}[\s\-]?\d{4})\b");
+        return m.Success ? Regex.Replace(m.Groups[1].Value, @"[\s\-]", "") : null;
+    }
+
+    public static string? ExtractFirstThaiPostalCode(string text)
+    {
+        // 5 digits in Thai range 10000-96999; bias toward those following
+        // a province name or "รหัสไปรษณีย์" keyword to avoid mistaking an
+        // amount for a postal code.
+        var anchored = Regex.Match(text, @"(?:รหัสไปรษณีย์|Postal\s*Code)\s*[:：]?\s*(\d{5})", RegexOptions.IgnoreCase);
+        if (anchored.Success) return anchored.Groups[1].Value;
+        // Free-floating: only accept when the 5-digit number stands by itself
+        // (no decimal, not part of a longer number).
+        foreach (Match m in Regex.Matches(text, @"(?<!\d)(\d{5})(?!\d)"))
+        {
+            var code = int.Parse(m.Groups[1].Value);
+            if (code >= 10000 && code <= 96999) return m.Groups[1].Value;
+        }
+        return null;
+    }
+
+    public static string? ExtractFirstEmail(string text)
+    {
+        var m = Regex.Match(text, @"\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b");
+        return m.Success ? m.Groups[1].Value : null;
     }
 }

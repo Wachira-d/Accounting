@@ -166,6 +166,17 @@ public class VendorIntelligenceService
             prediction.Reasons.Add("ℹ️ ข้อมูลจากระบบกลาง — บริษัทยังไม่มีประวัติกับผู้ขายรายนี้");
         }
 
+        // Surface learned patterns so OcrService can use them downstream
+        prediction.TypicalDocNumberPrefix = intel.TypicalDocNumberPrefix;
+        if (!string.IsNullOrEmpty(intel.TopLineKeywordsJson))
+        {
+            try
+            {
+                prediction.TopLineKeywords = JsonSerializer.Deserialize<Dictionary<string, int>>(intel.TopLineKeywordsJson);
+            }
+            catch { /* malformed JSON — leave null */ }
+        }
+
         return prediction;
     }
 
@@ -494,6 +505,37 @@ public class VendorIntelligenceService
                 intel.TypicalPaymentTermsDays = days;
         }
 
+        // ─── Learned doc-number prefix ───
+        // Keep the longest digit-friendly prefix shared with prior docs.
+        // When a vendor consistently issues numbers like "612724 / 612823 /
+        // 613145" we end up with prefix "61" which lets the OCR boost a new
+        // candidate that also starts with 61.
+        if (!string.IsNullOrEmpty(doc.Reference))
+        {
+            var current = doc.Reference.Trim();
+            if (string.IsNullOrEmpty(intel.TypicalDocNumberPrefix))
+                intel.TypicalDocNumberPrefix = current;
+            else
+                intel.TypicalDocNumberPrefix = CommonPrefix(intel.TypicalDocNumberPrefix, current);
+        }
+
+        // ─── Learned line-item keywords (top 30 by count) ───
+        // Used by the category resolver / future smart-extract pass to
+        // boost confidence when a new scan's description matches one we've
+        // seen on prior approved docs from this vendor.
+        if (doc.Lines.Count > 0)
+        {
+            var kwMap = ParseBreakdown(intel.TopLineKeywordsJson);
+            foreach (var line in doc.Lines)
+            {
+                foreach (var tok in TokenizeForLearning(line.Description))
+                    kwMap[tok] = kwMap.GetValueOrDefault(tok) + 1;
+            }
+            // Keep top 30 — the rest is noise and bloats the JSON column
+            var top = kwMap.OrderByDescending(kv => kv.Value).Take(30).ToDictionary(kv => kv.Key, kv => kv.Value);
+            intel.TopLineKeywordsJson = JsonSerializer.Serialize(top);
+        }
+
         // M3: Mark the document as trained — prevents double-counting on re-approval
         doc.OcrIntelTrainedAt = DateTime.UtcNow;
 
@@ -733,6 +775,37 @@ public class VendorIntelligenceService
         catch { return new(); }
     }
 
+    /// <summary>Common prefix of two strings — used to converge on a
+    /// vendor's typical document-number pattern across many docs.</summary>
+    private static string CommonPrefix(string a, string b)
+    {
+        var n = Math.Min(a.Length, b.Length);
+        int i = 0;
+        while (i < n && a[i] == b[i]) i++;
+        // Trim trailing punctuation so the stored prefix is matchable
+        var prefix = a.Substring(0, i).TrimEnd('-', '/', '_', ' ', '.');
+        return prefix;
+    }
+
+    /// <summary>Tokenize a line-item description for keyword learning.
+    /// Same shape as ExpenseCategoryLearner.ExtractTokens but lives here to
+    /// avoid a cross-file private dependency. Drops pure-digit tokens and
+    /// stopwords; lower-cases everything.</summary>
+    private static IEnumerable<string> TokenizeForLearning(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) yield break;
+        var raw = description.ToLowerInvariant()
+            .Replace(",", " ").Replace(".", " ").Replace("-", " ")
+            .Replace("(", " ").Replace(")", " ").Replace("/", " ")
+            .Replace(":", " ").Replace(";", " ");
+        foreach (var part in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part.Length < 2) continue;
+            if (part.All(char.IsDigit)) continue;
+            yield return part;
+        }
+    }
+
     private static string ThaiDocLabel(DocumentType t) => t switch
     {
         DocumentType.PurchaseInvoice => "ใบแจ้งหนี้ซื้อ",
@@ -771,6 +844,14 @@ public class VendorPrediction
     public int? TypicalPaymentTermsDays { get; set; }
 
     public bool? AmountWithinTypicalRange { get; set; }
+
+    // Learned patterns surfaced for OCR boosting:
+    //   • TypicalDocNumberPrefix lets the smart extractor prefer a candidate
+    //     starting with the same characters this vendor has used in past docs.
+    //   • TopLineKeywords lets the category resolver give extra weight to
+    //     keywords that occur frequently on this vendor's past invoices.
+    public string? TypicalDocNumberPrefix { get; set; }
+    public Dictionary<string, int>? TopLineKeywords { get; set; }
 
     public List<string> Reasons { get; set; } = new();
 }

@@ -1279,6 +1279,16 @@ public static class DatabaseMigrationHelper
             ON "OcrVendorIntelligence" ("CompanyId", "VendorKey");
             """,
 
+            // OcrVendorIntelligence: learned-pattern columns for OCR boosting
+            // (added after the table existed for some tenants — must be
+            // idempotent ALTER, not part of the original CREATE TABLE).
+            """
+            ALTER TABLE "OcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "TypicalDocNumberPrefix" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "OcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "TopLineKeywordsJson" text NULL;
+            """,
+
             // ===== SystemOcrCategoryMappings: system-wide vendor → account knowledge =====
             // Mirrors OcrCategoryMappings but without CompanyId. Trained by SystemAdmin
             // from /admin/ocr-config; consulted as fallback when tenant has no row.
