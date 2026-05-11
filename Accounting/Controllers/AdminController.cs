@@ -1083,7 +1083,6 @@ public class AdminController : ControllerBase
         Gmail: new GmailConfigDto(s.SystemGmailClientId,
             !string.IsNullOrEmpty(s.SystemGmailClientSecret),
             !string.IsNullOrEmpty(s.SystemGmailRefreshToken)));
-}
 
     // ===== Azure Document Intelligence Config =====
 
