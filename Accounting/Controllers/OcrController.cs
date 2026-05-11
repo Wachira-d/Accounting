@@ -207,6 +207,46 @@ public class OcrController : ControllerBase
     }
 
     /// <summary>
+    /// Ranked review queue — surfaces the scans whose user-correction
+    /// would yield the highest learning signal. Score combines per-field
+    /// uncertainty, vendor novelty, recency, and the asset-alert flag.
+    /// Use from a "Needs Review" UI tab so the user spends correction
+    /// effort where it does most good.
+    /// </summary>
+    [HttpGet("review-queue")]
+    public async Task<ActionResult<ApiResponse<object>>> ReviewQueue(
+        Guid companyId, [FromQuery] int limit = 20,
+        [FromServices] Services.Implementations.Ocr.ActiveLearningRanker ranker)
+    {
+        var ranked = await ranker.RankAsync(companyId, Math.Clamp(limit, 1, 100));
+        // Annotate with letter-grade quality for at-a-glance UI rendering
+        var scans = await _db.Set<Accounting.Models.Entities.OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && ranked.Select(x => x.ScanId).Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => r);
+        var result = ranked.Select(r =>
+        {
+            scans.TryGetValue(r.ScanId, out var scan);
+            var grade = scan != null ? Services.Implementations.Ocr.ScanQualityGrader.Compute(scan) : null;
+            return new
+            {
+                r.ScanId,
+                r.VendorName,
+                r.OriginalFileName,
+                r.ProcessedAt,
+                r.Confidence,
+                r.UncertaintyScore,
+                r.NoveltyScore,
+                r.RecencyFactor,
+                r.HasPotentialFixedAsset,
+                r.PriorityScore,
+                r.ReasonHint,
+                Quality = grade != null ? new { grade.Letter, grade.Score, grade.Color } : null,
+            };
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, result));
+    }
+
+    /// <summary>
     /// Delete an OCR scan result. When the scan auto-created a draft
     /// document, pass cascade=true to delete the document too — the
     /// service will refuse if that document has already been approved

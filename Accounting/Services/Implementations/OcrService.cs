@@ -1111,6 +1111,20 @@ public class OcrService : IOcrService
         if (!preflight.Ok)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), preflight.ErrorMessage);
 
+        // ─── In-process image enhancement before sending to Azure ───
+        // ImagePreprocessor: EXIF auto-rotate, grayscale, contrast bump,
+        // upscale small images. Returns identical bytes for clean inputs
+        // (PDFs / high-res images). Improves Azure DI extraction on
+        // phone-camera snaps; reduces payload size for jpegs.
+        var prep = Ocr.ImagePreprocessor.Process(fileBytes, contentType, file.OriginalFileName);
+        if (prep.StepsApplied.Count > 0)
+        {
+            fileBytes = prep.Bytes;
+            contentType = prep.ContentType;
+            _logger.LogInformation("Image preprocessed for {File}: {Steps}",
+                file.OriginalFileName, string.Join(", ", prep.StepsApplied));
+        }
+
         var azureResult = await _azureDi.AnalyzeAsync(fileBytes, contentType, siteSettings,
             fileName: file.OriginalFileName);
         if (azureResult == null)
