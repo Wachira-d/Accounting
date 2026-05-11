@@ -80,6 +80,32 @@
   </style>
 </head>
 <body>
+  <!-- ─── DIAGNOSTIC: visible viewport info + build marker (top-left fixed) ─── -->
+  <!-- Helps debug "sidebar missing" symptoms — user can read this badge even when
+       the rest of the page is broken. Auto-hides on JS errors. -->
+  <div id="diagBadge" style="position:fixed;top:8px;right:8px;z-index:99999;background:#1e293b;color:#94a3b8;font-family:monospace;font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #334155;line-height:1.4;pointer-events:none">
+    build: 7de140e<br>
+    <span id="diagViewport">viewport: ?</span><br>
+    <span id="diagAuth">auth: ?</span><br>
+    <span id="diagSidebar" style="color:#94a3b8">sidebar: ?</span>
+  </div>
+  <script>
+    // Populate diagnostic immediately (before any other script runs)
+    (function() {
+      try {
+        var vp = document.getElementById('diagViewport');
+        if (vp) vp.textContent = 'viewport: ' + window.innerWidth + '×' + window.innerHeight + (window.innerWidth <= 900 ? ' (≤900 — sidebar collapsed)' : ' (>900 — sidebar should show)');
+        var auth = document.getElementById('diagAuth');
+        if (auth) {
+          var token = localStorage.getItem('admin_token');
+          var user = localStorage.getItem('admin_user');
+          auth.textContent = 'auth: ' + (token ? 'token✓' : 'NO_TOKEN') + (user ? ' user✓' : ' NO_USER');
+          if (!token || !user) auth.style.color = '#ef4444';
+        }
+      } catch (e) { /* swallow */ }
+    })();
+  </script>
+
   <div id="pageContent">
     <div class="info-box">
       <strong>OCR & Azure Document Intelligence</strong> ตั้งค่า Provider สำหรับสแกนเอกสาร (ระดับ System — ใช้ร่วมกันทุกบริษัท),
@@ -557,11 +583,25 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
     // Visible stamp so admins can confirm which build is deployed; also wraps
     // AdminLayout.init in try/catch so script execution continues to define
     // all functions (systemTestScan etc.) even if sidebar rendering fails.
-    const __PAGE_VERSION = 'd085ce5-2026-01-14';
+    const __PAGE_VERSION = '7de140e+diag';
     console.log('[ocr-config.html] version:', __PAGE_VERSION);
     try {
       AdminLayout.init('ocr-config');
       console.log('[ocr-config.html] AdminLayout.init succeeded');
+      // Update diagnostic badge — confirm sidebar element exists after init
+      setTimeout(function() {
+        var d = document.getElementById('diagSidebar');
+        if (!d) return;
+        var s = document.querySelector('.admin-sidebar');
+        if (!s) { d.textContent = 'sidebar: NOT RENDERED'; d.style.color = '#ef4444'; return; }
+        var rect = s.getBoundingClientRect();
+        var styles = window.getComputedStyle(s);
+        var visible = rect.width > 0 && rect.height > 0 && styles.display !== 'none' && styles.visibility !== 'hidden';
+        var translated = styles.transform && styles.transform !== 'none';
+        d.textContent = 'sidebar: ' + (visible ? '✓ rendered' : '✗ hidden') +
+          ' (w=' + Math.round(rect.width) + ' x=' + Math.round(rect.left) + (translated ? ' transformed' : '') + ')';
+        d.style.color = visible && rect.left >= 0 ? '#22c55e' : '#ef4444';
+      }, 50);
     } catch (err) {
       console.error('[ocr-config.html] AdminLayout.init FAILED:', err);
       // Show a visible diagnostic banner so the user can see what failed
