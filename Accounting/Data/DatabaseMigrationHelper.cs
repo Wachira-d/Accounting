@@ -1221,6 +1221,47 @@ public static class DatabaseMigrationHelper
             ON "OcrCategoryMappings" ("CompanyId", "VendorKey", "DescriptionKeyword");
             """,
 
+            // ===== OcrVendorIntelligence: per-vendor aggregated stats for self-learning =====
+            // One row per vendor per company. Updated each time a Document is approved.
+            // Read on every OCR scan to suggest DocumentType / debit account / WHT rate.
+            """
+            CREATE TABLE IF NOT EXISTS "OcrVendorIntelligence" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "VendorKey" varchar(200) NOT NULL DEFAULT '',
+                "VendorName" varchar(300) NULL,
+                "VendorTaxId" varchar(20) NULL,
+                "MostCommonDocumentType" varchar(50) NULL,
+                "MostCommonDocumentTypeCount" integer NOT NULL DEFAULT 0,
+                "TotalDocuments" integer NOT NULL DEFAULT 0,
+                "DocumentTypeBreakdownJson" text NULL,
+                "MostCommonDebitAccountCode" varchar(20) NULL,
+                "MostCommonDebitAccountName" text NULL,
+                "MostCommonDebitAccountCount" integer NOT NULL DEFAULT 0,
+                "DebitAccountBreakdownJson" text NULL,
+                "TypicallyHasWht" boolean NOT NULL DEFAULT false,
+                "TypicalWhtRate" decimal(5,2) NULL,
+                "WhtUsageCount" integer NOT NULL DEFAULT 0,
+                "AvgTotalAmount" decimal(18,2) NULL,
+                "MinTotalAmount" decimal(18,2) NULL,
+                "MaxTotalAmount" decimal(18,2) NULL,
+                "MedianTotalAmount" decimal(18,2) NULL,
+                "TypicalPaymentTermsDays" integer NULL,
+                "LastTrainedAt" timestamp NOT NULL DEFAULT now(),
+                "LastDocumentDate" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_OcrVendorIntelligence" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_OcrVendorIntelligence_CompanyId_VendorKey"
+            ON "OcrVendorIntelligence" ("CompanyId", "VendorKey");
+            """,
+
             // ===== OcrCreditPurchases table =====
             """
             CREATE TABLE IF NOT EXISTS "OcrCreditPurchases" (

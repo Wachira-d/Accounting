@@ -19,11 +19,13 @@ public class DocumentService : IDocumentService
     private readonly IEtaxInvoiceService _etaxService;
     private readonly ILogger<DocumentService> _logger;
     private readonly ILineNotifyService _lineNotify;
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
-        ILineNotifyService lineNotify)
+        ILineNotifyService lineNotify,
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _accountingService = accountingService;
@@ -32,6 +34,7 @@ public class DocumentService : IDocumentService
         _etaxService = etaxService;
         _logger = logger;
         _lineNotify = lineNotify;
+        _vendorIntel = vendorIntel;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -524,6 +527,18 @@ public class DocumentService : IDocumentService
                 throw;
             }
         });
+
+        // Best-effort: train vendor intelligence cache for OCR self-learning.
+        // Failures must not roll back the approval — training is a derived
+        // side-effect that can always be rebuilt via BackfillFromHistoryAsync.
+        try
+        {
+            await _vendorIntel.TrainFromDocumentAsync(companyId, doc.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Vendor intelligence training failed for document {DocId}", doc.Id);
+        }
 
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so

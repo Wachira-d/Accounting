@@ -329,6 +329,17 @@
       <div id="quotaExtra" style="font-size:12px;color:#0369a1;margin-top:6px"></div>
     </div>
 
+    <!-- Self-Learning Intelligence Bar -->
+    <div style="background:linear-gradient(135deg,#f0fdfa,#ccfbf1);border:1px solid #5eead4;border-radius:12px;padding:14px 20px;margin-bottom:16px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-weight:600;color:#134e4a;margin-bottom:2px">🧠 ระบบเรียนรู้อัตโนมัติ</div>
+        <div style="font-size:12px;color:#0f766e">ระบบจะเรียนประเภทเอกสาร, รหัสบัญชี, WHT จากผู้ขายแต่ละรายโดยอัตโนมัติเมื่ออนุมัติเอกสาร</div>
+      </div>
+      <button type="button" onclick="Page.backfillIntelligence()" style="background:#0d9488;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">
+        เรียนรู้จากเอกสารเก่า
+      </button>
+    </div>
+
     <!-- Upload Zone -->
     <div class="upload-zone" id="uploadZone">
       <div class="upload-zone-icon">&#x1F4C4;</div>
@@ -474,6 +485,21 @@
           if (total <= 0) extras.push('โควต้าหมด — กรุณาซื้อเครดิตเพิ่ม');
           document.getElementById('quotaExtra').textContent = extras.join(' | ');
         } catch (e) { /* quota display is optional */ }
+      },
+
+      // ==================== Self-Learning Backfill ====================
+      async backfillIntelligence() {
+        if (!confirm('ระบบจะอ่านเอกสารย้อนหลัง 24 เดือน เพื่อเรียนรู้ประเภทเอกสาร, รหัสบัญชี, WHT ของผู้ขายแต่ละราย\n\nกระบวนการนี้อาจใช้เวลาหลายวินาที ดำเนินการต่อ?')) return;
+        try {
+          const res = await Layout.api(`/api/companies/${Layout.companyId}/ocr/intelligence/backfill?sinceMonths=24`, { method: 'POST' });
+          if (res?.success) {
+            alert(res.message || `เรียนรู้สำเร็จ ${res.data?.vendorsTrained || 0} ราย`);
+          } else {
+            alert('ไม่สำเร็จ: ' + (res?.message || 'unknown'));
+          }
+        } catch (e) {
+          alert('ไม่สำเร็จ: ' + e.message);
+        }
       },
 
       // ==================== Upload ====================
@@ -1261,6 +1287,9 @@
                     .replace(/\[Zone Analysis\]/g,'<strong style="color:var(--primary)">[Zone Analysis]</strong>')
                     .replace(/\[Field Confidence\]/g,'<strong style="color:#059669">[Field Confidence]</strong>')
                     .replace(/\[Reasoning\]/g,'<strong style="color:#7c3aed">[Reasoning]</strong>')
+                    .replace(/\[VendorIntel\]/g,'<strong style="color:#0d9488;background:#ccfbf1;padding:1px 4px;border-radius:3px">🧠 VendorIntel</strong>')
+                    .replace(/\[Learner\]/g,'<strong style="color:#0891b2;background:#cffafe;padding:1px 4px;border-radius:3px">📚 Learner</strong>')
+                    .replace(/\[Gateway\]/g,'<strong style="color:#dc2626">[Gateway]</strong>')
                     .replace(/\[(Seller|Buyer|Header|Items|Summary|Payment)\]/g,'<span style="color:#2563eb;font-weight:600">[$1]</span>')
                     .replace(/\[Swap\]/g,'<strong style="color:#d97706">[Swap]</strong>')}</pre>
                 </div>` : ''}

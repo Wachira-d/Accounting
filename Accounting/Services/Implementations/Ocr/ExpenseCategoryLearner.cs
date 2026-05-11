@@ -33,7 +33,7 @@ public class ExpenseCategoryLearner
 
         var keyword = NormalizeDescription(description);
 
-        // First try exact (vendor + keyword) match — strongest signal
+        // ─── Tier 1: exact (vendor + full keyword) match — strongest signal ───
         if (!string.IsNullOrEmpty(keyword))
         {
             var exact = await _db.OcrCategoryMappings
@@ -47,7 +47,45 @@ public class ExpenseCategoryLearner
                 return (exact.AccountCode, exact.AccountName, ScoreConfidence(exact.TimesUsed));
         }
 
-        // Fallback to vendor-only match (any description) — vendor X almost always books to account Y
+        // ─── Tier 2: token-based fuzzy match — split description into meaningful
+        // words and look for any past mapping whose keyword shares tokens. Handles
+        // "ค่าน้ำมันเบนซิน 95" matching "ค่าน้ำมัน" or "เบนซิน" when the exact
+        // string differs but the vendor + topic is the same. ───
+        var tokens = ExtractTokens(description);
+        if (tokens.Count > 0)
+        {
+            var vendorMappings = await _db.OcrCategoryMappings
+                .Where(m => m.CompanyId == companyId && m.VendorKey == vendorKey && !m.IsDeleted)
+                .Select(m => new { m.DescriptionKeyword, m.AccountCode, m.AccountName, m.TimesUsed })
+                .ToListAsync();
+
+            // Score each mapping by overlap of tokens
+            var best = vendorMappings
+                .Select(m => new
+                {
+                    m.AccountCode, m.AccountName, m.TimesUsed,
+                    Overlap = tokens.Count(t => m.DescriptionKeyword.Contains(t))
+                })
+                .Where(x => x.Overlap > 0)
+                .GroupBy(x => new { x.AccountCode, x.AccountName })
+                .Select(g => new
+                {
+                    g.Key.AccountCode, g.Key.AccountName,
+                    Score = g.Sum(x => x.Overlap * x.TimesUsed),
+                    SumUsed = g.Sum(x => x.TimesUsed)
+                })
+                .OrderByDescending(x => x.Score)
+                .FirstOrDefault();
+
+            if (best != null)
+            {
+                // Lower confidence than exact match — token overlap is fuzzier
+                var conf = ScoreConfidence(best.SumUsed) * 0.75m;
+                return (best.AccountCode, best.AccountName, conf);
+            }
+        }
+
+        // ─── Tier 3: vendor-only fallback — vendor X almost always books to account Y ───
         var vendorOnly = await _db.OcrCategoryMappings
             .Where(m => m.CompanyId == companyId
                 && m.VendorKey == vendorKey
@@ -57,10 +95,49 @@ public class ExpenseCategoryLearner
             .OrderByDescending(g => g.Sum)
             .FirstOrDefaultAsync();
         if (vendorOnly != null)
-            return (vendorOnly.AccountCode, vendorOnly.AccountName, ScoreConfidence(vendorOnly.Sum) * 0.85m);
+            return (vendorOnly.AccountCode, vendorOnly.AccountName, ScoreConfidence(vendorOnly.Sum) * 0.65m);
 
         return (null, null, 0m);
     }
+
+    /// <summary>
+    /// Extract meaningful tokens from a Thai/English description for fuzzy matching.
+    /// Strips punctuation, splits on whitespace, drops common stopwords + tokens
+    /// shorter than 2 chars. Both Thai and English work — for Thai we don't have
+    /// a tokenizer, but most line descriptions in invoices already have whitespace
+    /// or punctuation between concepts ("ค่าน้ำมัน เบนซิน 95 ลิตร").
+    /// </summary>
+    private static HashSet<string> ExtractTokens(string? description)
+    {
+        var tokens = new HashSet<string>();
+        if (string.IsNullOrWhiteSpace(description)) return tokens;
+
+        // Split on whitespace + common Thai/English punctuation
+        var raw = description.ToLowerInvariant()
+            .Replace(",", " ").Replace(".", " ").Replace("-", " ")
+            .Replace("(", " ").Replace(")", " ").Replace("/", " ")
+            .Replace(":", " ").Replace(";", " ");
+
+        foreach (var part in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // Drop tokens that are pure numbers (quantities, sizes) and short noise
+            if (part.Length < 2) continue;
+            if (part.All(char.IsDigit)) continue;
+            if (Stopwords.Contains(part)) continue;
+            tokens.Add(part);
+        }
+        return tokens;
+    }
+
+    private static readonly HashSet<string> Stopwords = new()
+    {
+        // Thai
+        "และ", "หรือ", "เป็น", "ของ", "ให้", "กับ", "ใน", "ที่", "จาก",
+        "ค่า", "ค่ะ", "ครับ", "ตาม", "โดย", "เพื่อ", "ทั้ง", "ทุก",
+        // English
+        "and", "or", "the", "a", "an", "of", "in", "to", "for", "with",
+        "on", "at", "by", "from", "as", "is", "this", "that"
+    };
 
     /// <summary>
     /// Record that a user (or auto-create) booked a document with a specific account

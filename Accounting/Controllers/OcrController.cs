@@ -206,4 +206,59 @@ public class OcrController : ControllerBase
 
         return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream", file.OriginalFileName);
     }
+
+    /// <summary>
+    /// Rebuild the vendor intelligence cache from existing approved Documents.
+    /// Run once after deploy / data import so OCR auto-suggestions work for
+    /// vendors that already have history. Idempotent — safe to re-run.
+    /// </summary>
+    [HttpPost("intelligence/backfill")]
+    public async Task<ActionResult<ApiResponse<object>>> BackfillVendorIntelligence(
+        Guid companyId,
+        [FromServices] Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        [FromQuery] int sinceMonths = 24)
+    {
+        var trained = await vendorIntel.BackfillFromHistoryAsync(companyId, sinceMonths);
+        return Ok(new ApiResponse<object>(true, new { vendorsTrained = trained, sinceMonths },
+            $"เรียนรู้ข้อมูลผู้ขาย {trained} ราย จากเอกสารย้อนหลัง {sinceMonths} เดือน"));
+    }
+
+    /// <summary>
+    /// Inspect what the system has learned about a specific vendor — useful for
+    /// debugging "why did OCR pre-fill account X for this vendor?"
+    /// </summary>
+    [HttpGet("intelligence/vendor")]
+    public async Task<ActionResult<ApiResponse<object>>> GetVendorIntelligence(
+        Guid companyId, [FromQuery] string? taxId, [FromQuery] string? name)
+    {
+        if (string.IsNullOrEmpty(taxId) && string.IsNullOrEmpty(name))
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุ taxId หรือ name อย่างน้อย 1 อย่าง"));
+
+        string key = "";
+        if (!string.IsNullOrEmpty(taxId))
+        {
+            var digits = new string(taxId.Where(char.IsDigit).ToArray());
+            if (digits.Length == 13) key = $"tax:{digits}";
+        }
+        if (string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(name))
+            key = $"name:{name.Trim().ToLowerInvariant()}";
+
+        var intel = await _db.OcrVendorIntelligence
+            .FirstOrDefaultAsync(v => v.CompanyId == companyId && v.VendorKey == key && !v.IsDeleted);
+        if (intel == null)
+            return Ok(new ApiResponse<object>(true, null, "ไม่พบประวัติของผู้ขายรายนี้"));
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            intel.VendorName, intel.VendorTaxId,
+            intel.MostCommonDocumentType, intel.MostCommonDocumentTypeCount,
+            intel.TotalDocuments, intel.DocumentTypeBreakdownJson,
+            intel.MostCommonDebitAccountCode, intel.MostCommonDebitAccountName,
+            intel.MostCommonDebitAccountCount, intel.DebitAccountBreakdownJson,
+            intel.TypicallyHasWht, intel.TypicalWhtRate, intel.WhtUsageCount,
+            intel.AvgTotalAmount, intel.MinTotalAmount, intel.MaxTotalAmount, intel.MedianTotalAmount,
+            intel.TypicalPaymentTermsDays,
+            intel.LastTrainedAt, intel.LastDocumentDate
+        }, "ข้อมูลที่ระบบเรียนรู้เกี่ยวกับผู้ขายรายนี้"));
+    }
 }

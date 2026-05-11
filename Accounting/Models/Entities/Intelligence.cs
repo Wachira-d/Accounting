@@ -194,6 +194,54 @@ public class OcrCategoryMapping : TenantEntity
 }
 
 /// <summary>
+/// Per-vendor aggregated intelligence cache. Built from approved Documents history
+/// and refreshed on each new document approval. Drives auto-suggestion of:
+///   • DocumentType (most common type used with this vendor)
+///   • Debit account (most common booking)
+///   • WHT habits (does this vendor usually have WHT? what rate?)
+///   • Amount sanity range (flag scans with anomalous totals)
+///   • Payment terms
+/// One row per (CompanyId, VendorKey). Denormalized for sub-millisecond lookup
+/// during ScanAsync — full per-document scans on every OCR would be too slow.
+/// </summary>
+public class OcrVendorIntelligence : TenantEntity
+{
+    public string VendorKey { get; set; } = "";              // tax:1234567890123 or name:lower
+    public string? VendorName { get; set; }
+    public string? VendorTaxId { get; set; }
+
+    // ─── DocumentType prediction ───
+    public string? MostCommonDocumentType { get; set; }      // e.g. "PurchaseInvoice"
+    public int MostCommonDocumentTypeCount { get; set; }
+    public int TotalDocuments { get; set; }
+    public string? DocumentTypeBreakdownJson { get; set; }   // {"PurchaseInvoice":12,"Expense":3}
+
+    // ─── Debit account prediction ───
+    public string? MostCommonDebitAccountCode { get; set; }
+    public string? MostCommonDebitAccountName { get; set; }
+    public int MostCommonDebitAccountCount { get; set; }
+    public string? DebitAccountBreakdownJson { get; set; }   // {"5300":8,"5402":4}
+
+    // ─── WHT habits ───
+    public bool TypicallyHasWht { get; set; }                // >50% of past docs had WHT
+    public decimal? TypicalWhtRate { get; set; }             // mode of past WHT rates
+    public int WhtUsageCount { get; set; }
+
+    // ─── Amount sanity range ───
+    public decimal? AvgTotalAmount { get; set; }
+    public decimal? MinTotalAmount { get; set; }
+    public decimal? MaxTotalAmount { get; set; }
+    public decimal? MedianTotalAmount { get; set; }
+
+    // ─── Payment terms ───
+    public int? TypicalPaymentTermsDays { get; set; }
+
+    // Audit
+    public DateTime LastTrainedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastDocumentDate { get; set; }
+}
+
+/// <summary>
 /// การซื้อเครดิต OCR เพิ่มเติม (add-on pages)
 /// </summary>
 public class OcrCreditPurchase : TenantEntity

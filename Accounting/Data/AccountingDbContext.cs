@@ -194,6 +194,7 @@ public class AccountingDbContext : DbContext
     public DbSet<OcrLearnedPattern> OcrLearnedPatterns => Set<OcrLearnedPattern>();
     public DbSet<OcrCreditPurchase> OcrCreditPurchases => Set<OcrCreditPurchase>();
     public DbSet<OcrCategoryMapping> OcrCategoryMappings => Set<OcrCategoryMapping>();
+    public DbSet<OcrVendorIntelligence> OcrVendorIntelligence => Set<OcrVendorIntelligence>();
 
     // Custom Reports
     public DbSet<CustomReport> CustomReports => Set<CustomReport>();
@@ -1402,6 +1403,18 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.AccountCode).HasMaxLength(20);
             // Composite lookup index: scan-time queries filter by (CompanyId, VendorKey)
             e.HasIndex(p => new { p.CompanyId, p.VendorKey, p.DescriptionKeyword });
+        });
+
+        // ===== OcrVendorIntelligence =====
+        modelBuilder.Entity<OcrVendorIntelligence>(e =>
+        {
+            e.Property(p => p.VendorKey).HasMaxLength(200);
+            e.Property(p => p.VendorName).HasMaxLength(300);
+            e.Property(p => p.VendorTaxId).HasMaxLength(20);
+            e.Property(p => p.MostCommonDocumentType).HasMaxLength(50);
+            e.Property(p => p.MostCommonDebitAccountCode).HasMaxLength(20);
+            // One row per vendor — must be unique so training upsert is safe
+            e.HasIndex(p => new { p.CompanyId, p.VendorKey }).IsUnique();
         });
 
         // ===== CustomReport =====

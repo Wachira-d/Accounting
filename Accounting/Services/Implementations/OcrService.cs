@@ -20,12 +20,14 @@ public class OcrService : IOcrService
     private readonly IDbdLookupService _dbdLookup;
     private readonly AzureDocumentIntelligenceService _azureDi;
     private readonly ExpenseCategoryLearner _categoryLearner;
+    private readonly VendorIntelligenceService _vendorIntel;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
         IDbdLookupService dbdLookup,
         AzureDocumentIntelligenceService azureDi,
-        ExpenseCategoryLearner categoryLearner)
+        ExpenseCategoryLearner categoryLearner,
+        VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -34,6 +36,7 @@ public class OcrService : IOcrService
         _dbdLookup = dbdLookup;
         _azureDi = azureDi;
         _categoryLearner = categoryLearner;
+        _vendorIntel = vendorIntel;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -221,7 +224,7 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
                     string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
 
-            // ───── Learned category prediction ─────
+            // ───── Learned category prediction (per line description) ─────
             // If we have a learned mapping for this vendor, prefer it over generic
             // industry-based defaults. Per-line predictions also override individual
             // line item.SuggestedAccountCode when learner is more confident.
@@ -233,7 +236,7 @@ public class OcrService : IOcrService
             {
                 extractedData.DebitAccountCode = learnedCode;
                 extractedData.DebitAccountName = learnedName;
-                extractedData.ReasoningTrace.Add($"[Learner] เคยใช้รหัส {learnedCode} กับผู้ขายนี้ (confidence {learnedConf:P0})");
+                extractedData.ReasoningTrace.Add($"[Learner] เคยใช้รหัส {learnedCode} กับผู้ขายนี้+คำอธิบายนี้ (confidence {learnedConf:P0})");
 
                 // Per-line override
                 foreach (var item in extractedData.Items)
@@ -245,6 +248,70 @@ public class OcrService : IOcrService
                         if (perLineCode != null && perLineConf >= 0.55m)
                             item.SuggestedAccountCode = perLineCode;
                     }
+                }
+            }
+
+            // ───── Vendor intelligence prediction (DocumentType + WHT + amount sanity) ─────
+            // Higher-level "what does this supplier usually look like?" cache built from
+            // approved Documents history. Used to:
+            //   • Auto-select DocumentType when AI/rules are uncertain
+            //   • Fill in WHT habits when extraction missed it
+            //   • Flag amount anomalies for user review
+            //   • Backfill debit account when per-line learner had no match
+            var vendorPred = await _vendorIntel.PredictAsync(
+                companyId, extractedData.VendorTaxId, extractedData.VendorName, extractedData.TotalAmount);
+            if (vendorPred.HasHistory)
+            {
+                extractedData.ReasoningTrace.Add($"[VendorIntel] พบประวัติ {vendorPred.SampleSize} เอกสารของผู้ขายรายนี้");
+                foreach (var reason in vendorPred.Reasons)
+                    extractedData.ReasoningTrace.Add("[VendorIntel] " + reason);
+
+                // Auto-apply DocumentType when high confidence
+                if (vendorPred.DocumentType.HasValue && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.HighConfidence)
+                {
+                    var newType = vendorPred.DocumentType.Value.ToString();
+                    if (extractedData.DocumentType != newType)
+                    {
+                        extractedData.ReasoningTrace.Add(
+                            $"[VendorIntel] เปลี่ยนประเภทเอกสารจาก {extractedData.DocumentType} → {newType} (confidence {vendorPred.DocumentTypeConfidence:P0})");
+                        extractedData.DocumentType = newType;
+                    }
+                    // Confidence boost when vendor history confirms
+                    extractedData.Confidence = Math.Max(extractedData.Confidence, vendorPred.DocumentTypeConfidence);
+                }
+                else if (vendorPred.DocumentType.HasValue && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.MediumConfidence)
+                {
+                    extractedData.ReasoningTrace.Add(
+                        $"[VendorIntel] แนะนำประเภท {vendorPred.DocumentType.Value} (confidence {vendorPred.DocumentTypeConfidence:P0}) — รอผู้ใช้ยืนยัน");
+                }
+
+                // Auto-fill debit account when per-line learner had no result
+                if (string.IsNullOrEmpty(extractedData.DebitAccountCode)
+                    && !string.IsNullOrEmpty(vendorPred.DebitAccountCode)
+                    && vendorPred.DebitAccountConfidence >= VendorIntelligenceService.MediumConfidence)
+                {
+                    extractedData.DebitAccountCode = vendorPred.DebitAccountCode;
+                    extractedData.DebitAccountName = vendorPred.DebitAccountName;
+                    extractedData.ReasoningTrace.Add(
+                        $"[VendorIntel] เลือกรหัสบัญชี {vendorPred.DebitAccountCode} จากประวัติผู้ขาย (confidence {vendorPred.DebitAccountConfidence:P0})");
+                }
+
+                // Auto-fill WHT habits when extraction missed it but vendor typically has WHT
+                if (!extractedData.HasWht && vendorPred.HasWht == true && vendorPred.WhtRate.HasValue
+                    && vendorPred.WhtConfidence >= VendorIntelligenceService.MediumConfidence)
+                {
+                    extractedData.HasWht = true;
+                    extractedData.WhtRate = vendorPred.WhtRate;
+                    extractedData.ReasoningTrace.Add(
+                        $"[VendorIntel] ตั้ง WHT = {vendorPred.WhtRate}% จากประวัติผู้ขาย (confidence {vendorPred.WhtConfidence:P0})");
+                }
+
+                // Auto-fill payment terms when missing
+                if (!extractedData.PaymentTermsDays.HasValue && vendorPred.TypicalPaymentTermsDays.HasValue)
+                {
+                    extractedData.PaymentTermsDays = vendorPred.TypicalPaymentTermsDays;
+                    extractedData.ReasoningTrace.Add(
+                        $"[VendorIntel] ตั้ง payment terms = {vendorPred.TypicalPaymentTermsDays} วัน จากประวัติผู้ขาย");
                 }
             }
 
