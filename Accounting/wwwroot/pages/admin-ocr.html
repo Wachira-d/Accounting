@@ -149,7 +149,7 @@
           <div id="dropZone" class="drop-zone" onclick="document.getElementById('testFileInput').click()">
             <div style="font-size:48px">📄</div>
             <div style="margin-top:8px;font-weight:600">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</div>
-            <div style="font-size:12px;color:#64748b;margin-top:4px">รองรับ: JPG, PNG, PDF (max 10MB) — ทดสอบไม่กิน quota</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">รองรับ: JPG, PNG, BMP, TIFF, PDF (max 10MB) — PDF จะถูก rasterize อัตโนมัติเมื่อใช้ Embedded engine, สูงสุด 10 หน้า — ทดสอบไม่กิน quota</div>
           </div>
           <input type="file" id="testFileInput" style="display:none" accept="image/*,application/pdf" onchange="Page.runTest(this.files[0])">
 

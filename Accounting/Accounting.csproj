@@ -29,6 +29,10 @@
          Thai+English ship in wwwroot/tessdata. -->
     <PackageReference Include="Tesseract" Version="5.2.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.5" />
+    <!-- PDF → image rasterization for the embedded OCR path. Pure-managed wrapper
+         around SkiaSharp + PDFium; cross-platform native libs ship with NuGet.
+         Lets the in-process Tesseract engine handle PDF uploads transparently. -->
+    <PackageReference Include="PDFtoImage" Version="5.0.1" />
   </ItemGroup>
 
   <ItemGroup>
