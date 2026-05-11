@@ -208,11 +208,10 @@ public class OcrService : IOcrService
             }
 
             scanResult.ExpenseCategory = extractedData.ExpenseCategory;
-            scanResult.HasWht = extractedData.HasWht;
-            scanResult.WhtRate = extractedData.WhtRate;
-            scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
+            // NOTE: HasWht/WhtRate/PaymentTermsDays/DocumentType/Confidence are re-synced
+            // AFTER the vendorPred block below — vendor intelligence may override them.
 
-            // Store zone analysis info for debugging
+            // Store zone analysis info for debugging — these never change after this point
             if (!string.IsNullOrEmpty(extractedData.ZoneSummary))
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Zone Analysis]\n" + extractedData.ZoneSummary;
             if (!string.IsNullOrEmpty(extractedData.BuyerName))
@@ -220,9 +219,7 @@ public class OcrService : IOcrService
             if (extractedData.FieldConfidence.Count > 0)
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
                     string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
-            if (extractedData.ReasoningTrace.Count > 0)
-                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
-                    string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
+            // [Reasoning] section is built AFTER vendorPred so VendorIntel/Learner traces are included.
 
             // ───── Learned category prediction (per line description) ─────
             // If we have a learned mapping for this vendor, prefer it over generic
@@ -314,6 +311,22 @@ public class OcrService : IOcrService
                         $"[VendorIntel] ตั้ง payment terms = {vendorPred.TypicalPaymentTermsDays} วัน จากประวัติผู้ขาย");
                 }
             }
+
+            // ───── Re-sync mutable fields (extractedData → scanResult) ─────
+            // VendorIntel / Learner blocks above mutate extractedData. These assignments
+            // make sure the mutations are persisted to OcrScanResult so they reach
+            // MapToResponse() (the API response), AutoCreateDocumentAsync() (which
+            // reads scan.DocumentType), and the UI's processingNotes display.
+            scanResult.DocumentType = extractedData.DocumentType;
+            scanResult.HasWht = extractedData.HasWht;
+            scanResult.WhtRate = extractedData.WhtRate;
+            scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
+            scanResult.Confidence = extractedData.Confidence;
+
+            // Build [Reasoning] section LAST so it includes VendorIntel + Learner traces
+            if (extractedData.ReasoningTrace.Count > 0)
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
+                    string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
 
             if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
             {

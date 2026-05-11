@@ -12,6 +12,7 @@ public class ECommerceService : IECommerceService
     private readonly AccountingDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ECommerceService> _logger;
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
 
     private static readonly Dictionary<string, string> PlatformApiEndpoints = new()
     {
@@ -22,11 +23,13 @@ public class ECommerceService : IECommerceService
         { "LINE Shopping", "https://api-lineshopping.line.me" }
     };
 
-    public ECommerceService(AccountingDbContext db, IHttpClientFactory httpClientFactory, ILogger<ECommerceService> logger)
+    public ECommerceService(AccountingDbContext db, IHttpClientFactory httpClientFactory, ILogger<ECommerceService> logger,
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _vendorIntel = vendorIntel;
     }
 
     public async Task<ECommerceConnectionResponse> ConnectAsync(Guid companyId, ConnectECommerceRequest request)
@@ -105,6 +108,7 @@ public class ECommerceService : IECommerceService
 
             int newOrders = 0, invoicesCreated = 0;
             decimal totalAmount = 0;
+            var createdDocIds = new List<Guid>();
 
             foreach (var order in orders)
             {
@@ -136,6 +140,7 @@ public class ECommerceService : IECommerceService
                     var doc = await CreateInvoiceFromOrder(companyId, order, contact);
                     syncLog.CreatedDocumentId = doc.Id;
                     invoicesCreated++;
+                    createdDocIds.Add(doc.Id);
                 }
 
                 _db.Set<IntegrationSyncLog>().Add(syncLog);
@@ -146,6 +151,11 @@ public class ECommerceService : IECommerceService
             integration.ConsecutiveErrors = 0;
 
             await _db.SaveChangesAsync();
+
+            // Train vendor intelligence per created document — runs after the docs
+            // have real Ids assigned by the SaveChangesAsync above.
+            foreach (var docId in createdDocIds)
+                await _vendorIntel.TryTrainAsync(companyId, docId);
 
             return new ECommerceSyncResult(connectionId, integration.SystemName, shopName,
                 orders.Count, newOrders, invoicesCreated, totalAmount, "Success", null);

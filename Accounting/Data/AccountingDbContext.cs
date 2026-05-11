@@ -1415,6 +1415,8 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.MostCommonDebitAccountCode).HasMaxLength(20);
             // One row per vendor — must be unique so training upsert is safe
             e.HasIndex(p => new { p.CompanyId, p.VendorKey }).IsUnique();
+            // Soft delete — consistent with every other entity
+            e.HasQueryFilter(v => !v.IsDeleted);
         });
 
         // ===== CustomReport =====

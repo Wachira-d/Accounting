@@ -490,15 +490,19 @@
       // ==================== Self-Learning Backfill ====================
       async backfillIntelligence() {
         if (!confirm('ระบบจะอ่านเอกสารย้อนหลัง 24 เดือน เพื่อเรียนรู้ประเภทเอกสาร, รหัสบัญชี, WHT ของผู้ขายแต่ละราย\n\nกระบวนการนี้อาจใช้เวลาหลายวินาที ดำเนินการต่อ?')) return;
+        const cid = Layout.getCompanyId();
+        if (!cid) { alert('ไม่พบ companyId'); return; }
         try {
-          const res = await Layout.api(`/api/companies/${Layout.companyId}/ocr/intelligence/backfill?sinceMonths=24`, { method: 'POST' });
+          // Use API.post directly — Layout.api(url) is a no-arg helper that returns
+          // the company-scoped API client, NOT a fetch wrapper.
+          const res = await API.post(`/api/companies/${cid}/ocr/intelligence/backfill?sinceMonths=24`);
           if (res?.success) {
             alert(res.message || `เรียนรู้สำเร็จ ${res.data?.vendorsTrained || 0} ราย`);
           } else {
             alert('ไม่สำเร็จ: ' + (res?.message || 'unknown'));
           }
         } catch (e) {
-          alert('ไม่สำเร็จ: ' + e.message);
+          alert('ไม่สำเร็จ: ' + (e?.message || e));
         }
       },
 

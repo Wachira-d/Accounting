@@ -75,6 +75,12 @@ public class Document : TenantEntity
     public string? WitnessPosition { get; set; }          // ตำแหน่งพยาน
     public DateTime? PaymentDate { get; set; }            // วันที่จ่ายเงินจริง
 
+    // ===== OCR Self-Learning =====
+    // Watermark set by VendorIntelligenceService.TrainFromDocumentAsync after this
+    // document's data has been counted into the per-vendor intelligence cache.
+    // Prevents double-counting on re-approval (Draft → Approved → Rejected → Draft → Approved).
+    public DateTime? OcrIntelTrainedAt { get; set; }
+
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();

@@ -31,6 +31,17 @@ public class VendorIntelligenceService
     public const decimal HighConfidence = 0.85m;
     public const decimal MediumConfidence = 0.65m;
 
+    // Single source of truth — used by BOTH TrainFromDocumentAsync (filter) and
+    // BackfillFromHistoryAsync (filter) so the two methods always agree on which
+    // document types contribute to vendor intelligence.
+    public static readonly DocumentType[] PurchaseSideTypes = {
+        DocumentType.PurchaseInvoice,
+        DocumentType.Expense,
+        DocumentType.CertificateInLieu,
+        DocumentType.PurchaseOrder,
+        DocumentType.PaymentVoucher,
+    };
+
     public VendorIntelligenceService(AccountingDbContext db, ILogger<VendorIntelligenceService> logger)
     {
         _db = db;
@@ -83,11 +94,14 @@ public class VendorIntelligenceService
         }
 
         // ─── WHT habits ───
-        if (intel.WhtUsageCount > 0)
+        // Confidence is "how sure are we about whichever side (yes/no) we're picking",
+        // i.e. the dominance of the majority class. Uniform binary entropy: max(p, 1-p).
+        // 50/50 split → 0.5 confidence (genuine uncertainty); 90/10 → 0.9 in either direction.
+        if (intel.WhtUsageCount > 0 || intel.TotalDocuments > 0)
         {
             var whtPct = (decimal)intel.WhtUsageCount / intel.TotalDocuments;
             prediction.HasWht = whtPct >= 0.5m;
-            prediction.WhtConfidence = Math.Min(whtPct, 1m - whtPct) > 0.2m ? whtPct : Math.Max(whtPct, 1m - whtPct);
+            prediction.WhtConfidence = Math.Max(whtPct, 1m - whtPct);
             if (prediction.HasWht == true && intel.TypicalWhtRate.HasValue)
             {
                 prediction.WhtRate = intel.TypicalWhtRate;
@@ -122,18 +136,50 @@ public class VendorIntelligenceService
     // ─────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Update vendor intelligence from a single approved document. Idempotent:
-    /// if called twice for the same DocumentId, the second call short-circuits
-    /// (recorded via LastDocumentDate watermark + DocumentId check via the doc's UpdatedAt).
-    /// Called from DocumentService.ApproveDocumentAsync after the journal posts.
+    /// Best-effort training wrapper used by all approval paths (DocumentService,
+    /// SignatureApprovalService, IntegrationService, ECommerceService, MobileApi).
+    /// Catches and logs any exception — vendor intelligence is a derived cache
+    /// and must never block document approval. On failure, the data can be
+    /// recovered via BackfillFromHistoryAsync.
     /// </summary>
-    public async Task TrainFromDocumentAsync(Guid companyId, Guid documentId)
+    public async Task TryTrainAsync(Guid companyId, Guid documentId)
+    {
+        try
+        {
+            await TrainFromDocumentAsync(companyId, documentId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Vendor intelligence training failed for document {DocId}", documentId);
+        }
+    }
+
+    /// <summary>
+    /// Update vendor intelligence from a single approved document. Idempotent
+    /// per DocumentId — re-approval (Draft → Approved → Rejected → Draft → Approved)
+    /// will only train once, tracked via the document's IsTrainedToVendorIntel flag.
+    /// Wrapped in a retry on unique-index conflict to handle parallel approvals
+    /// for the same vendor.
+    /// </summary>
+    public Task TrainFromDocumentAsync(Guid companyId, Guid documentId)
+        => TrainFromDocumentAsync(companyId, documentId, retryCount: 0);
+
+    private async Task TrainFromDocumentAsync(Guid companyId, Guid documentId, int retryCount)
     {
         var doc = await _db.Documents
             .Include(d => d.Contact)
             .Include(d => d.Lines).ThenInclude(l => l.Account)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
         if (doc == null) return;
+
+        // M3: Idempotent — never train the same document twice. Tracked via the
+        // OcrIntelTrainedAt column on Document; if set, this doc has already been
+        // counted (re-approval after rejection won't double-count).
+        if (doc.OcrIntelTrainedAt.HasValue) return;
+
+        // M7: Only learn from successfully-approved documents. Drafts can change.
+        // Voided docs should not be trained from.
+        if (doc.Status != DocumentStatus.Approved && doc.Status != DocumentStatus.Paid) return;
 
         // Only learn from documents where vendor info is meaningful
         var vendorTaxId = doc.Contact?.TaxId;
@@ -142,10 +188,11 @@ public class VendorIntelligenceService
         if (string.IsNullOrEmpty(key)) return;
 
         // Only learn from purchase/expense-side docs (where we predict for OCR)
-        if (!IsPurchaseSideType(doc.DocumentType)) return;
+        if (!PurchaseSideTypes.Contains(doc.DocumentType)) return;
 
+        // M2: Filter soft-deleted intel rows so we don't resurrect them
         var intel = await _db.OcrVendorIntelligence
-            .FirstOrDefaultAsync(v => v.CompanyId == companyId && v.VendorKey == key);
+            .FirstOrDefaultAsync(v => v.CompanyId == companyId && v.VendorKey == key && !v.IsDeleted);
 
         if (intel == null)
         {
@@ -239,7 +286,37 @@ public class VendorIntelligenceService
                 intel.TypicalPaymentTermsDays = days;
         }
 
-        await _db.SaveChangesAsync();
+        // M3: Mark the document as trained — prevents double-counting on re-approval
+        doc.OcrIntelTrainedAt = DateTime.UtcNow;
+
+        // M4: Handle the race where two parallel approvals for the same vendor both
+        // see "no existing intel row" and both INSERT, violating the unique
+        // (CompanyId, VendorKey) index. On first conflict, reload + retry once.
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex) && retryCount < 2)
+        {
+            _logger.LogInformation("Concurrent training conflict for vendor {V}; retrying", key);
+            // Discard our pending Add — the failed SaveChanges already rolled back
+            // doc.OcrIntelTrainedAt in the DB, so the recursive call's early-return
+            // guard won't trip. The retry will find the row inserted by the winning
+            // thread and do an UPDATE instead of an INSERT.
+            _db.ChangeTracker.Clear();
+            await TrainFromDocumentAsync(companyId, documentId, retryCount + 1);
+        }
+    }
+
+    private static bool IsUniqueViolation(DbUpdateException ex)
+    {
+        // Postgres unique-violation SQLSTATE = 23505. Use the typed PostgresException
+        // when available (Npgsql is a transitive dep) — falls back to type-name check
+        // for forward compatibility.
+        if (ex.InnerException is Npgsql.PostgresException pg)
+            return pg.SqlState == "23505";
+        return ex.InnerException?.GetType().Name == "PostgresException"
+            && ex.InnerException.Message.Contains("23505");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -254,23 +331,51 @@ public class VendorIntelligenceService
     public async Task<int> BackfillFromHistoryAsync(Guid companyId, int sinceMonths = 24)
     {
         var since = DateTime.UtcNow.AddMonths(-sinceMonths);
-        var purchaseTypes = new[] {
-            DocumentType.PurchaseInvoice, DocumentType.Expense,
-            DocumentType.CertificateInLieu, DocumentType.PurchaseOrder
-        };
 
-        // Wipe existing cache for this company so the rebuild is deterministic
+        // C5: Wrap the destructive wipe + rebuild in a single transaction with
+        // execution strategy. If the rebuild throws, the wipe is rolled back so
+        // we never leave the company in a "no intel rows at all" state.
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var trained = 0;
+
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            trained = await BackfillCoreAsync(companyId, since);
+            await tx.CommitAsync();
+        });
+
+        _logger.LogInformation("Backfilled vendor intelligence for company={C}: {N} vendors", companyId, trained);
+        return trained;
+    }
+
+    private async Task<int> BackfillCoreAsync(Guid companyId, DateTime since)
+    {
+        // Wipe existing cache for this company so the rebuild is deterministic.
+        // Inside transaction: if rebuild throws, the wipe is rolled back.
         var existing = await _db.OcrVendorIntelligence
             .Where(v => v.CompanyId == companyId).ToListAsync();
         _db.OcrVendorIntelligence.RemoveRange(existing);
+
+        // Also clear the per-document training watermark — backfill is a clean
+        // rebuild, so subsequent re-approvals shouldn't see "already trained".
+        // We re-mark each doc as we count it below.
+        await _db.Documents
+            .Where(d => d.CompanyId == companyId && d.OcrIntelTrainedAt != null)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.OcrIntelTrainedAt, (DateTime?)null));
+
         await _db.SaveChangesAsync();
 
+        // C4: Use the unified PurchaseSideTypes array — same set as TrainFromDocumentAsync
+        // M7: Filter to approved-only (consistent with incremental training)
+        // M6: Include ExpenseCategory so the header-level account fallback works
         var docs = await _db.Documents
             .Include(d => d.Contact)
             .Include(d => d.Lines).ThenInclude(l => l.Account)
+            .Include(d => d.ExpenseCategory)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && purchaseTypes.Contains(d.DocumentType)
-                && d.Status != DocumentStatus.Voided
+                && PurchaseSideTypes.Contains(d.DocumentType)
+                && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Paid)
                 && d.DocumentDate >= since)
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
@@ -312,12 +417,19 @@ public class VendorIntelligenceService
 
                 // Pick the dominant account for THIS document (by total amount), then
                 // increment its bucket once — keeps ratios bounded by TotalDocuments.
-                var dominantLine = d.Lines
+                // M6: Falls back to header ExpenseCategoryId when no lines have an
+                // account assigned — matches TrainFromDocumentAsync behavior.
+                ChartOfAccount? dominantLine = d.Lines
                     .Where(l => l.Account != null)
                     .GroupBy(l => l.AccountId!.Value)
                     .OrderByDescending(g => g.Sum(l => l.Amount))
                     .Select(g => g.First().Account)
                     .FirstOrDefault();
+                if (dominantLine == null && d.ExpenseCategoryId.HasValue)
+                {
+                    // Header-level fallback — find the account from CoA
+                    dominantLine = d.ExpenseCategory;  // Eager-loaded if available
+                }
                 if (dominantLine != null)
                 {
                     var code = dominantLine.AccountCode;
@@ -377,11 +489,16 @@ public class VendorIntelligenceService
 
             _db.OcrVendorIntelligence.Add(intel);
             trained++;
+
+            // Mark every counted document with the training watermark so future
+            // TrainFromDocumentAsync calls (incremental approvals) short-circuit
+            // on these docs and don't double-count.
+            var trainedAt = DateTime.UtcNow;
+            foreach (var x in grp)
+                x.Doc.OcrIntelTrainedAt = trainedAt;
         }
 
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Backfilled vendor intelligence for company={C}: {N} vendors from {D} documents",
-            companyId, trained, docs.Count);
         return trained;
     }
 
@@ -400,11 +517,6 @@ public class VendorIntelligenceService
             return $"name:{name.Trim().ToLowerInvariant()}";
         return "";
     }
-
-    private static bool IsPurchaseSideType(DocumentType t) => t is
-        DocumentType.PurchaseInvoice or DocumentType.Expense
-        or DocumentType.CertificateInLieu or DocumentType.PurchaseOrder
-        or DocumentType.PaymentVoucher;
 
     private static Dictionary<string, int> ParseBreakdown(string? json)
     {

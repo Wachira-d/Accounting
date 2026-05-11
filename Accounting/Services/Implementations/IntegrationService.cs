@@ -14,12 +14,15 @@ public class IntegrationService : IIntegrationService
     private readonly AccountingDbContext _db;
     private readonly ISettingsService _settingsService;
     private readonly ILogger<IntegrationService> _logger;
+    private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
 
-    public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger)
+    public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
     {
         _db = db;
         _settingsService = settingsService;
         _logger = logger;
+        _vendorIntel = vendorIntel;
     }
 
     // ===== Helper: Atomic Journal Entry Number =====
@@ -511,6 +514,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             // Auto-create journal entry from category mappings
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "invoice");
@@ -656,6 +660,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             // Create journal entry for credit note
             // ใบลดหนี้ (ฝั่งรายรับ): Dr รายได้ + Dr ภาษีขาย, Cr ลูกหนี้การค้า
@@ -748,6 +753,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             // Create journal entry for debit note
             // ใบเพิ่มหนี้ (ฝั่งรายรับ): Dr ลูกหนี้การค้า, Cr รายได้ + Cr ภาษีขาย
@@ -1628,6 +1634,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
 
@@ -1707,6 +1714,7 @@ public class IntegrationService : IIntegrationService
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
 

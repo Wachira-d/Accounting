@@ -529,16 +529,9 @@ public class DocumentService : IDocumentService
         });
 
         // Best-effort: train vendor intelligence cache for OCR self-learning.
-        // Failures must not roll back the approval — training is a derived
-        // side-effect that can always be rebuilt via BackfillFromHistoryAsync.
-        try
-        {
-            await _vendorIntel.TrainFromDocumentAsync(companyId, doc.Id);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Vendor intelligence training failed for document {DocId}", doc.Id);
-        }
+        // Failures are logged inside the helper — training is a derived side-effect
+        // that can always be rebuilt via BackfillFromHistoryAsync.
+        await _vendorIntel.TryTrainAsync(companyId, doc.Id);
 
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so

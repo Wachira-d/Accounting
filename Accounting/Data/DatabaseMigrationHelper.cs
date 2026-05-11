@@ -1358,6 +1358,12 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentDate" timestamp NULL;
             """,
+            // OCR self-learning idempotency watermark — set when VendorIntelligenceService
+            // counts this document into the per-vendor stats; prevents double-counting on
+            // re-approval (Draft → Approved → Rejected → Draft → Approved).
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OcrIntelTrainedAt" timestamp NULL;
+            """,
         ];
     }
 
