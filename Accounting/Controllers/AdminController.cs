@@ -1184,6 +1184,26 @@ public class AdminController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Status of the in-process embedded Tesseract OCR engine. Unlike the
+    /// optional Python service, this engine ships with the .NET app — its
+    /// only requirement is the tessdata language files in wwwroot/tessdata.
+    /// </summary>
+    [HttpGet("ocr-config/embedded-status")]
+    public ActionResult<ApiResponse<object>> GetEmbeddedOcrStatus(
+        [FromServices] Services.Implementations.Ocr.EmbeddedTesseractOcrService embedded)
+    {
+        return Ok(new ApiResponse<object>(true, new
+        {
+            available = embedded.IsAvailable,
+            languages = embedded.Languages,
+            tessdataPath = embedded.TessdataPath,
+            installCommand = "scripts/download-tessdata.sh fast",
+        }, embedded.IsAvailable
+            ? $"Embedded Tesseract พร้อมใช้งาน ({string.Join("+", embedded.Languages)})"
+            : "Embedded Tesseract ใช้ไม่ได้ — ต้อง install tessdata files (eng + tha)"));
+    }
+
     [HttpPost("ocr-config/test-azure")]
     public async Task<ActionResult<ApiResponse<object>>> TestAzureDi()
     {
