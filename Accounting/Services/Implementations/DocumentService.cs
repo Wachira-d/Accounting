@@ -248,7 +248,8 @@ public class DocumentService : IDocumentService
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = whtAmt,
                     AccountId = line.AccountId,
-                    ProjectId = line.ProjectId
+                    ProjectId = line.ProjectId,
+                    ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim()
                 });
             }
 
@@ -457,7 +458,8 @@ public class DocumentService : IDocumentService
                     VatAmount = vatAmt,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = whtAmt,
-                    AccountId = line.AccountId
+                    AccountId = line.AccountId,
+                    ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim()
                 });
             }
 
@@ -1389,7 +1391,8 @@ public class DocumentService : IDocumentService
         var lines = source.Lines.Select(l => new DocumentLineRequest(
             l.Description, l.Quantity, l.Unit, l.UnitPrice,
             l.DiscountPercent, l.VatRate, l.WithholdingTaxRate, l.AccountId,
-            ProjectId: l.ProjectId)).ToList();
+            ProjectId: l.ProjectId,
+            ProductCode: l.ProductCode)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, DateTime.UtcNow, source.DueDate, source.ContactId,
@@ -2544,7 +2547,8 @@ public class DocumentService : IDocumentService
             l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
             l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount,
             AccountId: l.AccountId,
-            ProjectId: l.ProjectId)).ToList(),
+            ProjectId: l.ProjectId,
+            ProductCode: l.ProductCode)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,

@@ -792,16 +792,21 @@ public class OcrService : IOcrService
                 }
             }
 
-            // ═══════ DBD-GATED CONTACT AUTO-CREATION ═══════
-            // Only auto-create when we have a verified TaxId from DBD/RD VAT lookup.
-            // Without this gate, a misread "12345678901" would spawn a junk Contact.
-            // For OCR-only data (no DBD match), we leave Contact unmatched and let the
-            // user create it manually after reviewing the scan.
+            // ═══════ CONTACT AUTO-CREATION — DBD preferred, OCR fallback ═══════
+            // Decision tree when no existing contact matched:
+            //   1. DBD verified  → create with DBD canonical name + address (best case)
+            //   2. DBD failed BUT TaxId checksum-valid + ≥1 supporting field
+            //      (vendor name OR address OR phone) → create from OCR data,
+            //      tag as Unverified so user knows to confirm. Better than
+            //      "Manual Review Required" — saves the user from re-typing.
+            //   3. No TaxId at all but strong vendor name + address → create
+            //      with TaxId=null, ContactType=JuristicPerson (best guess).
+            //   4. Nothing actionable → leave Contact null + surface note.
             if (!scanResult.MatchedContactId.HasValue
                 && extractedData.DbdMatched
                 && !string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
-                // Parse address into structured fields when DBD provides a single string.
+                // ───── Branch 1: DBD verified ─────
                 var addressParts = ParseAddressIntoParts(extractedData.DbdAddress);
 
                 var newContact = new Contact
@@ -809,10 +814,13 @@ public class OcrService : IOcrService
                     CompanyId = companyId,
                     Name = extractedData.DbdCanonicalName ?? extractedData.VendorName ?? $"ผู้ขาย (TaxID: {extractedData.VendorTaxId})",
                     TaxId = extractedData.VendorTaxId,
+                    BranchCode = extractedData.VendorBranchCode,
                     IsCustomer = false,
                     IsSupplier = true,
                     ContactType = ContactType.JuristicPerson,
                     Address = extractedData.DbdAddress,
+                    Phone = extractedData.VendorPhone,
+                    Email = extractedData.VendorEmail,
                     BuildingNumber = addressParts.BuildingNumber,
                     StreetName = addressParts.StreetName,
                     SubDistrict = addressParts.SubDistrict,
@@ -830,35 +838,115 @@ public class OcrService : IOcrService
                 _logger.LogInformation("Auto-created DBD-verified contact for company {CompanyId} TaxId={TaxId} Name={Name}",
                     companyId, newContact.TaxId, newContact.Name);
             }
-            else if (!scanResult.MatchedContactId.HasValue
-                && !string.IsNullOrEmpty(extractedData.VendorTaxId)
-                && !extractedData.DbdMatched)
+            else if (!scanResult.MatchedContactId.HasValue)
             {
-                // Surface to user that no contact was created — they need to review TaxId
-                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
-                    + $"\n[Manual Review Required] ไม่สามารถยืนยัน TaxID {extractedData.VendorTaxId} จาก DBD/RD — กรุณาตรวจสอบและสร้าง Contact ด้วยตนเอง";
+                // ───── Branches 2-4: DBD unavailable / failed ─────
+                var hasValidTaxId = !string.IsNullOrEmpty(extractedData.VendorTaxId)
+                    && Ocr.SmartFieldExtractor.IsValidThaiTaxId(extractedData.VendorTaxId);
+                var hasVendorName = !string.IsNullOrWhiteSpace(extractedData.VendorName)
+                    && extractedData.VendorName.Trim().Length >= 3;
+                var hasAddress = !string.IsNullOrWhiteSpace(extractedData.VendorAddress);
+                var hasPhone = !string.IsNullOrWhiteSpace(extractedData.VendorPhone);
+                // Quality gate — we want at least ONE supporting field beyond
+                // the TaxId, OR (when no TaxId) a strong name+address combo.
+                // This keeps a misread "12345678901" with no other data from
+                // spawning a junk contact, while still helping the user when
+                // OCR has captured meaningful detail.
+                var canCreateFromOcr =
+                    (hasValidTaxId && (hasVendorName || hasAddress || hasPhone)) ||
+                    (hasVendorName && hasAddress);
+
+                if (canCreateFromOcr)
+                {
+                    var addressParts = ParseAddressIntoParts(extractedData.VendorAddress);
+                    var fallbackName = hasVendorName
+                        ? extractedData.VendorName!.Trim()
+                        : (hasValidTaxId
+                            ? $"ผู้ขาย (TaxID: {extractedData.VendorTaxId})"
+                            : "ผู้ขายจาก OCR (ยังไม่ได้ยืนยัน)");
+
+                    var newContact = new Contact
+                    {
+                        CompanyId = companyId,
+                        Name = fallbackName,
+                        TaxId = hasValidTaxId ? extractedData.VendorTaxId : null,
+                        BranchCode = extractedData.VendorBranchCode,
+                        IsCustomer = false,
+                        IsSupplier = true,
+                        // ContactType heuristic: 13-digit TaxId starting with 0 = juristic;
+                        // starting with 1-8 = individual NID. When unsure default to
+                        // JuristicPerson — most OCR'd receipts are from companies, and
+                        // the user can flip the type if it turns out to be a person.
+                        ContactType = hasValidTaxId
+                            ? (extractedData.VendorTaxId!.StartsWith("0") ? ContactType.JuristicPerson : ContactType.Individual)
+                            : ContactType.JuristicPerson,
+                        Address = extractedData.VendorAddress,
+                        Phone = extractedData.VendorPhone,
+                        Email = extractedData.VendorEmail,
+                        BuildingNumber = addressParts.BuildingNumber,
+                        StreetName = addressParts.StreetName,
+                        SubDistrict = addressParts.SubDistrict,
+                        District = addressParts.District,
+                        Province = addressParts.Province,
+                        PostalCode = addressParts.PostalCode,
+                        CountryCode = "TH",
+                        // Suffix tags the source so admins can later filter "needs
+                        // verification" contacts and follow up. Keep it short —
+                        // CreatedBy is shown in the audit log column.
+                        CreatedBy = "OCR-FallbackAutoCreate"
+                    };
+                    _db.Contacts.Add(newContact);
+                    await _db.SaveChangesAsync();
+                    scanResult.MatchedContactId = newContact.Id;
+                    var verifyHint = extractedData.DbdLookupAttempted
+                        ? "DBD ยืนยันไม่ได้"
+                        : "ไม่ได้ตรวจกับ DBD";
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Auto-Create (Unverified)] สร้าง Contact จาก OCR: {newContact.Name}"
+                        + (newContact.TaxId != null ? $" (TaxID {newContact.TaxId})" : "")
+                        + $" — {verifyHint}, กรุณาตรวจสอบในภายหลัง";
+                    _logger.LogInformation(
+                        "Auto-created OCR-only contact (DBD failed) for company {CompanyId} TaxId={TaxId} Name={Name}",
+                        companyId, newContact.TaxId, newContact.Name);
+                }
+                else if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
+                {
+                    // Have a TaxId but nothing else trustworthy — keep the
+                    // original "Manual Review Required" note so user can
+                    // resolve in the UI.
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Manual Review Required] ไม่สามารถยืนยัน TaxID {extractedData.VendorTaxId} จาก DBD/RD และข้อมูลผู้ขายไม่เพียงพอ — กรุณาตรวจสอบและสร้าง Contact ด้วยตนเอง";
+                }
             }
-            else if (scanResult.MatchedContactId.HasValue && extractedData.DbdCanonicalName != null)
+            if (scanResult.MatchedContactId.HasValue
+                && (extractedData.DbdCanonicalName != null
+                    || !string.IsNullOrWhiteSpace(extractedData.VendorPhone)
+                    || !string.IsNullOrWhiteSpace(extractedData.VendorAddress)))
             {
-                // Existing contact: enrich missing fields from DBD without overwriting user data
+                // Existing contact: enrich missing fields from DBD + OCR without
+                // overwriting user-entered data. We only fill blanks, never
+                // replace — the user's manual edits are always authoritative.
                 var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == scanResult.MatchedContactId);
                 if (existing != null)
                 {
                     bool changed = false;
                     if (string.IsNullOrWhiteSpace(existing.TaxId) && !string.IsNullOrEmpty(extractedData.VendorTaxId))
+                    { existing.TaxId = extractedData.VendorTaxId; changed = true; }
+                    if (string.IsNullOrWhiteSpace(existing.Address))
                     {
-                        existing.TaxId = extractedData.VendorTaxId;
-                        changed = true;
+                        var addr = extractedData.DbdAddress ?? extractedData.VendorAddress;
+                        if (!string.IsNullOrEmpty(addr)) { existing.Address = addr; changed = true; }
                     }
-                    if (string.IsNullOrWhiteSpace(existing.Address) && !string.IsNullOrEmpty(extractedData.DbdAddress))
-                    {
-                        existing.Address = extractedData.DbdAddress;
-                        changed = true;
-                    }
+                    if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(extractedData.VendorPhone))
+                    { existing.Phone = extractedData.VendorPhone; changed = true; }
+                    if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(extractedData.VendorEmail))
+                    { existing.Email = extractedData.VendorEmail; changed = true; }
+                    if (string.IsNullOrWhiteSpace(existing.BranchCode) && !string.IsNullOrWhiteSpace(extractedData.VendorBranchCode))
+                    { existing.BranchCode = extractedData.VendorBranchCode; changed = true; }
                     if (changed)
                     {
-                        existing.UpdatedBy = "OCR-DbdEnrich";
-                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[DBD] Enriched contact {existing.Name}";
+                        existing.UpdatedBy = extractedData.DbdMatched ? "OCR-DbdEnrich" : "OCR-Enrich";
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Enrich] อัปเดตข้อมูล Contact ที่ว่างของ {existing.Name}";
                     }
                 }
             }
@@ -1188,8 +1276,11 @@ public class OcrService : IOcrService
             DocumentDate = azure.InvoiceDate,
             VendorName = azure.VendorName,
             VendorTaxId = ExtractDigits(azure.VendorTaxId, 13),
+            VendorAddress = azure.VendorAddress,
+            VendorPhone = azure.VendorPhone,
             BuyerName = azure.CustomerName,
             BuyerTaxId = ExtractDigits(azure.CustomerTaxId, 13),
+            BuyerAddress = azure.CustomerAddress,
             SubTotal = azure.SubTotal,
             VatAmount = azure.TotalTax,
             TotalAmount = azure.InvoiceTotal ?? azure.AmountDue,
@@ -2018,6 +2109,66 @@ public class OcrService : IOcrService
         data.VendorName = vendorName;
         data.VendorTaxId = vendorTaxId;
 
+        // ─── Vendor contact details (used by Contact-fallback auto-create) ───
+        // Phone: covers Thai land-line, mobile, and 4-digit short codes.
+        // Examples this matches: "02-123-4567", "081 234 5678", "1234"
+        // Anchored to keywords (โทร / TEL) where possible to avoid grabbing
+        // a random number on the page (postal/document/tax IDs).
+        var phoneMatch = Regex.Match(text,
+            @"(?:โทร(?:ศัพท์)?\.?|TEL\.?|TELEPHONE|PHONE|มือถือ)\s*[:：]?\s*([0-9][\d\-\s\.()]{7,18}\d)",
+            RegexOptions.IgnoreCase);
+        if (phoneMatch.Success)
+        {
+            var raw = phoneMatch.Groups[1].Value;
+            var digits = Regex.Replace(raw, @"[^\d]", "");
+            // Filter out the obvious non-phones: 13 digits = TaxId, 5 = postal.
+            if (digits.Length >= 9 && digits.Length <= 11)
+                data.VendorPhone = raw.Trim();
+        }
+
+        // Email — RFC-lite, sufficient for the patterns Thai vendors actually
+        // use ("contact@example.co.th"). Picks the FIRST email on the page
+        // which is typically the seller's; buyer emails appear less often in
+        // Thai receipts.
+        var emailMatch = Regex.Match(text, @"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}");
+        if (emailMatch.Success)
+            data.VendorEmail = emailMatch.Value.Trim().TrimEnd('.', ',', ';');
+
+        // Branch code — Thai e-Tax requires this 5-digit code separately
+        // from TaxId. Common pattern is "สาขา 00001" or "Branch 00001"
+        // or "สาขาที่ 1" (we pad those to 5 digits as the e-Tax spec demands).
+        var branchMatch = Regex.Match(text,
+            @"(?:สาขา(?:ที่)?|BRANCH)\s*(?:เลข(?:ที่)?\s*)?[:：]?\s*(\d{1,5})",
+            RegexOptions.IgnoreCase);
+        if (branchMatch.Success)
+        {
+            var b = branchMatch.Groups[1].Value.PadLeft(5, '0');
+            data.VendorBranchCode = b;
+        }
+        else if (Regex.IsMatch(text, @"สำนักงานใหญ่|HEAD\s*OFFICE", RegexOptions.IgnoreCase))
+        {
+            // e-Tax spec encodes the head office as "00000".
+            data.VendorBranchCode = "00000";
+        }
+
+        // Address — heuristic: collect lines between "ที่อยู่" / "Address"
+        // and the next blank line or the next labelled field (เลขที่ผู้เสีย/โทร).
+        // Falls through to null when the document doesn't have a clear
+        // address block — fine because DBD's address takes precedence.
+        var addrMatch = Regex.Match(text,
+            @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
+            RegexOptions.IgnoreCase);
+        if (addrMatch.Success)
+        {
+            var raw = addrMatch.Groups[1].Value
+                .Replace("\r", " ").Replace("\n", " ")
+                .Trim();
+            // Sanity cap — anything > 250 chars is almost certainly a parse
+            // bleed-through and not a real address.
+            if (raw.Length >= 10 && raw.Length <= 250)
+                data.VendorAddress = raw;
+        }
+
         // Document number
         string?[] docNumPatterns = {
             @"เลขที่\s*[:：]?\s*([A-Za-z0-9\-/]+\d+)",
@@ -2841,6 +2992,17 @@ internal class OcrExtractedData
     public string? DbdJuristicType { get; set; }
     public string? DbdStatus { get; set; }
     public List<OcrExtractedLineItem> Items { get; set; } = new();
+    // ─── Vendor contact details (used by Contact auto-create fallback when DBD fails) ───
+    // Azure DI populates VendorAddress/VendorPhone directly; ParseThaiDocument
+    // best-effort extracts them from raw text via regex on Thai phone/postal patterns.
+    public string? VendorAddress { get; set; }
+    public string? VendorPhone { get; set; }
+    public string? VendorEmail { get; set; }
+    public string? VendorBranchCode { get; set; }
+    public string? BuyerAddress { get; set; }
+    public string? BuyerPhone { get; set; }
+    public string? BuyerEmail { get; set; }
+    public string? BuyerBranchCode { get; set; }
 }
 
 internal class OcrExtractedLineItem

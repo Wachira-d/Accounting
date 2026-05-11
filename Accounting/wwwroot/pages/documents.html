@@ -205,10 +205,13 @@
               <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
             </div>
             <div class="table-container">
-              <table class="table">
+              <table class="table" id="linesTable" data-doc-side="revenue">
                 <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
+              <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+                💡 พิมพ์ในช่อง "รายละเอียด" อย่างน้อย 2 ตัวอักษรเพื่อค้นหาสินค้า/บริการ — ราคาและ VAT จะถูกเติมให้อัตโนมัติ
+              </div>
             </div>
           </div>
 
@@ -319,6 +322,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/export.js"></script>
+  <script src="/js/product-lookup.js"></script>
   <script>
     const Page = {
       page: 1, docType: '', side: '', contacts: [], projects: [], selectedDocs: new Set(),
@@ -439,6 +443,80 @@
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
         else await this.load();
+
+        // OCR scan → document handoff: when the user pressed "เปิดในฟอร์มเอกสาร"
+        // on the scan-detail page, we land here with ?from=scan and a payload
+        // staged in sessionStorage. Pop the create modal pre-filled so they
+        // can review/edit before saving.
+        if (params.get('from') === 'scan') {
+          await this._consumeScanHandoff();
+        }
+      },
+
+      async _consumeScanHandoff() {
+        let payload;
+        try {
+          const raw = sessionStorage.getItem('ocr_handoff_payload');
+          if (!raw) return;
+          payload = JSON.parse(raw);
+        } catch (e) { return; }
+        // One-shot — clear immediately so a refresh doesn't replay it.
+        sessionStorage.removeItem('ocr_handoff_payload');
+        // Stale payload guard (>10 min old).
+        if (!payload.createdAt || (Date.now() - payload.createdAt) > 600_000) return;
+
+        const side = payload.side === 'expense' ? 'expense' : 'revenue';
+        this.openCreate(side);
+        // Wait a tick for openCreate's DOM mutations to settle.
+        await new Promise(r => setTimeout(r, 30));
+
+        // Target document type (the inferrer's suggestion).
+        const dtSel = document.getElementById('fDocType');
+        if (payload.documentType && dtSel) {
+          const opt = [...dtSel.options].find(o => o.value === payload.documentType);
+          if (opt) dtSel.value = payload.documentType;
+        }
+        if (payload.documentDate) {
+          try { document.getElementById('fDate').value = Layout.dateInput(payload.documentDate); } catch (e) {}
+        }
+        if (payload.reference) document.getElementById('fRef').value = payload.reference;
+        if (payload.notes) document.getElementById('fNotes').value = payload.notes;
+
+        // Pre-fill contact when we matched one during the scan (DBD-confirmed
+        // or fuzzy-matched). Otherwise drop the extracted name into the
+        // visible input so the user sees it but the hidden id stays empty —
+        // they need to actively pick or create a contact before save() will
+        // accept the document (save() enforces non-empty fContactId).
+        if (payload.contactId && this._contactAC) {
+          this._contactAC.setValue(payload.contactId, payload.contactName || '');
+        } else if (payload.contactName) {
+          const inp = document.getElementById('fContact');
+          if (inp) {
+            inp.value = payload.contactName;
+            // Hint the user that a contact must still be picked from the
+            // autocomplete — the hidden ID is what save() validates.
+            inp.placeholder = 'กรุณาคลิกเลือกผู้ติดต่อจากรายการค้นหา';
+          }
+        }
+
+        // Replace the placeholder row with the OCR-extracted lines.
+        document.getElementById('linesBody').innerHTML = '';
+        this.lineCount = 0;
+        (payload.lines || []).forEach(l => {
+          this.addLine();
+          const row = document.getElementById('linesBody').lastElementChild;
+          row.querySelector('[data-f="desc"]').value = l.description || '';
+          row.querySelector('[data-f="qty"]').value = l.quantity ?? 1;
+          row.querySelector('[data-f="price"]').value = l.unitPrice ?? 0;
+          row.querySelector('[data-f="disc"]').value = l.discountPercent ?? 0;
+          const vatSel = row.querySelector('[data-f="vat"]');
+          if (vatSel) vatSel.value = String(l.vatRate ?? 7);
+          row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate ?? 0;
+        });
+        if (!document.querySelector('#linesBody tr')) this.addLine();
+        this.calcSum();
+
+        Layout.toast('นำเข้าข้อมูลจาก OCR แล้ว — กรุณาตรวจสอบก่อนบันทึก', 'info');
       },
       toggleSendEmail() {
         const on = document.getElementById('fSendEmail').checked;
@@ -719,7 +797,7 @@
         const i = this.lineCount++;
         const row = document.createElement('tr');
         row.innerHTML = `
-          <td><input type="text" class="form-input" style="font-size:13px" data-f="desc"></td>
+          <td><input type="text" class="form-input" style="font-size:13px" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ…"></td>
           <td><input type="number" class="form-input text-right" value="1" min="1" step="1" data-f="qty" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></td>
@@ -727,6 +805,13 @@
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></td>
           <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcSum()">✕</button></td>`;
         document.getElementById('linesBody').appendChild(row);
+        // Wire the product typeahead. On select we keep whatever quantity the
+        // user already typed (overwriteQty:false) — picking a product mid-edit
+        // shouldn't reset the count they just entered.
+        const descInput = row.querySelector('[data-f="desc"]');
+        if (window.ProductLookup) {
+          ProductLookup.attach(descInput, (r, p) => ProductLookup.fillRow(r, p, { overwriteQty: false }));
+        }
       },
       calcSum() {
         let sub = 0, vat = 0, wht = 0;
@@ -754,6 +839,10 @@
         this.editingId = null;
         const isExpense = side === 'expense';
         document.querySelector('#formModal .modal-title').textContent = isExpense ? 'สร้างเอกสารรายจ่าย' : 'สร้างเอกสารรายรับ';
+        // Tag the line table so ProductLookup knows whether to fill selling
+        // (revenue side) or cost (expense side) price by default.
+        const linesTbl = document.getElementById('linesTable');
+        if (linesTbl) linesTbl.dataset.docSide = isExpense ? 'expense' : 'revenue';
         const sel = document.getElementById('fDocType');
         sel.disabled = false;
         // Show only relevant optgroup
@@ -807,6 +896,12 @@
           document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
           document.getElementById('fDocType').value = d.documentType;
           document.getElementById('fDocType').disabled = true;
+          // Re-tag the line table for selling-vs-cost defaults on the typeahead.
+          const linesTbl = document.getElementById('linesTable');
+          if (linesTbl) {
+            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+            linesTbl.dataset.docSide = expenseTypes.has(d.documentType) ? 'expense' : 'revenue';
+          }
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
@@ -845,6 +940,18 @@
             row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
             row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+            // Restore the product linkage chip if this line was previously
+            // tied to a product. The chip shows the code + offers an unlink ✕.
+            if (l.productCode) {
+              row.dataset.productCode = l.productCode;
+              const descCell = row.querySelector('[data-f="desc"]').closest('td');
+              const chip = document.createElement('div');
+              chip.className = 'product-chip';
+              chip.style.cssText = 'font-size:10px;color:#0369a1;margin-top:2px;display:flex;align-items:center;gap:4px';
+              chip.innerHTML = `📦 ${Layout.esc(l.productCode)} <a href="javascript:void(0)" style="color:#94a3b8;text-decoration:none" title="ยกเลิกการผูกสินค้า">✕</a>`;
+              chip.querySelector('a').addEventListener('click', () => { row.dataset.productCode = ''; chip.remove(); });
+              descCell.appendChild(chip);
+            }
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
@@ -859,14 +966,19 @@
         const api = Layout.api(); if (!api) return;
         const lines = [];
         document.querySelectorAll('#linesBody tr').forEach(row => {
-          lines.push({
+          const line = {
             description: row.querySelector('[data-f="desc"]').value,
             quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: parseFloat(row.querySelector('[data-f="disc"]').value) || 0,
             vatRate: parseFloat(row.querySelector('[data-f="vat"]').value) || 0,
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
-          });
+          };
+          // Persist the product linkage when the user picked one via the typeahead.
+          // Server keys on productCode (string), not the id, because Code is the
+          // user-facing immutable identifier in DocumentLine.
+          if (row.dataset.productCode) line.productCode = row.dataset.productCode;
+          lines.push(line);
         });
         const contactId = document.getElementById('fContactId').value;
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }

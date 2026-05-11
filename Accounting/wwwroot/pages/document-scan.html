@@ -418,7 +418,8 @@
         <div class="modal-footer" id="reviewFooter">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
-          <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()">สร้างเอกสาร</button>
+          <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
+          <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสารทันทีตามข้อมูลที่แกะได้ (สถานะ Draft)">สร้างเอกสารทันที</button>
         </div>
       </div>
     </div>
@@ -1729,8 +1730,72 @@
         } catch (err) {
           Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;
-          btn.textContent = 'สร้างเอกสาร';
+          btn.textContent = 'สร้างเอกสารทันที';
         }
+      },
+
+      /**
+       * Hand the extracted scan data off to the document-create form.
+       * Instead of creating the document server-side immediately, we stage
+       * a payload in sessionStorage and redirect to documents.html — that
+       * page picks it up on init, pre-fills the modal, and lets the user
+       * tweak before saving. This makes it easy to use the existing line-
+       * item typeahead to upgrade an OCR'd "น้ำดื่ม 12 ขวด" line into a
+       * linked product, or to fix anything the OCR mis-extracted.
+       */
+      openInDocumentForm() {
+        const scan = this._reviewScan;
+        if (!scan) return;
+
+        // Decide which side of the documents page to land on, based on the
+        // OurRole hint from the role inferrer. Buyer-side scans (most
+        // common) become expense documents; Seller-side become revenue.
+        const isBuyer = (scan.ourRole || 'Buyer') === 'Buyer';
+        const side = isBuyer ? 'expense' : 'revenue';
+
+        // Use the target doc type the inferrer suggested. Falls back to a
+        // sensible per-side default if the inferrer wasn't confident.
+        const targetType = scan.targetDocumentType ||
+          (isBuyer ? 'PurchaseInvoice' : 'TaxInvoice');
+
+        // Extract line items the OCR pulled out. ProductCode left blank
+        // here — the typeahead on the documents page will let the user
+        // attach a product to each line interactively.
+        const lines = (scan.extractedItems || []).map(it => ({
+          description: it.description || '',
+          quantity: it.quantity || 1,
+          unitPrice: it.unitPrice || (it.amount && it.quantity ? it.amount / it.quantity : 0),
+          discountPercent: 0,
+          vatRate: scan.extractedVatAmount && scan.extractedSubTotal ? 7 : 0,
+          withholdingTaxRate: scan.hasWht ? (scan.whtRate || 0) : 0,
+        }));
+        // Always provide at least one row so the user has somewhere to start.
+        if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
+
+        const handoff = {
+          source: 'ocr-scan',
+          scanId: scan.id,
+          side,
+          documentType: targetType,
+          contactId: scan.matchedContactId || null,
+          contactName: scan.extractedVendorName || null,
+          documentDate: scan.extractedDate || null,
+          reference: scan.extractedDocumentNumber || null,
+          notes: scan.processingNotes ? `(จาก OCR) ${scan.processingNotes}` : null,
+          lines,
+          createdAt: Date.now(),
+        };
+
+        try {
+          sessionStorage.setItem('ocr_handoff_payload', JSON.stringify(handoff));
+        } catch (e) {
+          Layout.toast('เก็บข้อมูลชั่วคราวไม่สำเร็จ', 'error');
+          return;
+        }
+
+        // Navigate to the documents page with a query flag so it knows to
+        // pop the modal immediately. The page reads sessionStorage in init.
+        window.location.href = `/pages/documents.html?side=${side}&from=scan`;
       },
 
       // ==================== Refresh ====================

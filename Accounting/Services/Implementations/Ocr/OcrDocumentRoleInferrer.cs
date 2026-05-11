@@ -79,6 +79,75 @@ public static class OcrDocumentRoleInferrer
                 reasons.Add($"ชื่อผู้ขายใกล้เคียงกับบริษัทเรา → role = Seller (fuzzy)");
             }
         }
+
+        // ─── Step 1b: Phrase + position heuristics (kicks in when no tax/name match) ───
+        // When tax IDs & names didn't pin down our role, look at how the
+        // document itself describes the parties. Receipts almost always
+        // show "ลูกค้า:" or "นามผู้ซื้อ:" labels — when the OCR'd buyer
+        // name is also near that label, our role is almost certainly Buyer.
+        // Similarly, the seller block is normally in the upper-left third
+        // of the page (header zone) — when the vendor name was extracted
+        // from there, that's another Buyer signal for us.
+        if (roleConf < 0.75m && !string.IsNullOrEmpty(rawText))
+        {
+            (int buyerLabelPos, _) = FindRolePhrasePositions(rawText);
+
+            // Heuristic 1 — "หัก ณ ที่จ่าย / WHT certificate" alone is a
+            // strong Seller signal because the supplier ISSUES the cert to
+            // the buyer. We are typically the entity NAMED ON the cert (=
+            // the supplier whose payment got withheld), so when "หัก ณ ที่
+            // จ่าย" + "รับรอง" co-occur, lean Seller. Buyers of WHT-cert
+            // documents normally upload the recipient copy, but defaulting
+            // to Seller is the right bias for the more common bookkeeping
+            // case (we ISSUED the underlying service invoice).
+            var hasWhtCert = ContainsAll(text, "หัก ณ ที่จ่าย", "รับรอง")
+                          || text.Contains("withholding tax certificate");
+            if (hasWhtCert && role == "Buyer" && roleConf < 0.7m)
+            {
+                role = "Seller";
+                roleConf = 0.65m;
+                reasons.Add("พบ \"หนังสือรับรองการหักภาษี ณ ที่จ่าย\" → ลีน Seller (เราเป็นผู้ออกใบกำกับเดิม)");
+            }
+
+            // Heuristic 2 — position bias. Top-third of the document is the
+            // header zone, which Thai/INTL receipt conventions reserve for
+            // the issuer (seller). If the vendor name was extracted from
+            // that zone AND the buyer name later, we're probably Buyer.
+            if (roleConf < 0.7m && !string.IsNullOrEmpty(vendorName))
+            {
+                var vendorPos = rawText.IndexOf(vendorName!, StringComparison.OrdinalIgnoreCase);
+                var topZone = rawText.Length / 3;     // upper third by char count
+                if (vendorPos >= 0 && vendorPos < topZone)
+                {
+                    role = "Buyer";
+                    roleConf = Math.Max(roleConf, 0.6m);
+                    reasons.Add("ชื่อผู้ขายอยู่ในส่วนหัวเอกสาร (top 1/3) → ลีน Buyer (ของเรา)");
+                }
+            }
+
+            // Heuristic 3 — explicit "ลูกค้า/Bill To" label near the
+            // buyer name. If the buyer-side label exists AND the company
+            // name we extracted as Buyer is within ~120 chars after it,
+            // bump confidence — labels are an extremely strong signal.
+            if (roleConf < 0.75m && buyerLabelPos >= 0 && !string.IsNullOrEmpty(buyerName))
+            {
+                var buyerPos = rawText.IndexOf(buyerName!, buyerLabelPos, StringComparison.OrdinalIgnoreCase);
+                if (buyerPos >= 0 && buyerPos - buyerLabelPos <= 120)
+                {
+                    // Buyer label is present + close → that party is the
+                    // buyer. We default to Buyer because most scanned
+                    // docs are inbound; but if the buyer-label vicinity
+                    // also fuzzy-matches our company name, lock in Buyer.
+                    if (!string.IsNullOrEmpty(companyNm) && NameOverlaps(buyerName!.ToLowerInvariant(), companyNm))
+                    {
+                        role = "Buyer";
+                        roleConf = Math.Max(roleConf, 0.85m);
+                        reasons.Add("ป้าย \"ลูกค้า/Bill To\" ใกล้ชื่อบริษัทเรา → role = Buyer (label + fuzzy)");
+                    }
+                }
+            }
+        }
+
         if (roleConf < 0.7m)
             reasons.Add("ไม่สามารถยืนยันบทบาท → สมมุติเป็น Buyer (default — เอกสารส่วนใหญ่ที่สแกนเป็นฝั่งซื้อ)");
 
@@ -197,4 +266,29 @@ public static class OcrDocumentRoleInferrer
 
     private static bool ContainsAll(string text, params string[] needles)
         => needles.All(n => text.Contains(n.ToLowerInvariant()));
+
+    /// <summary>
+    /// Locate the first occurrence of buyer-side and seller-side labels in
+    /// the raw text. Returns (-1, -1) when neither side is labelled. Used
+    /// by the role inferrer to pin parties to position when tax/name
+    /// matching is inconclusive.
+    /// </summary>
+    private static (int buyerLabelPos, int sellerLabelPos) FindRolePhrasePositions(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return (-1, -1);
+        var buyerLabels = new[] { "ผู้ซื้อ", "ลูกค้า", "นามผู้ซื้อ", "Bill To", "BILL TO", "Sold To", "SOLD TO", "ส่งถึง", "Customer", "BUYER" };
+        var sellerLabels = new[] { "ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "ผู้ออก", "Seller", "SELLER", "From", "FROM" };
+        int buyerIdx = -1, sellerIdx = -1;
+        foreach (var l in buyerLabels)
+        {
+            var i = text.IndexOf(l, StringComparison.OrdinalIgnoreCase);
+            if (i >= 0 && (buyerIdx < 0 || i < buyerIdx)) buyerIdx = i;
+        }
+        foreach (var l in sellerLabels)
+        {
+            var i = text.IndexOf(l, StringComparison.OrdinalIgnoreCase);
+            if (i >= 0 && (sellerIdx < 0 || i < sellerIdx)) sellerIdx = i;
+        }
+        return (buyerIdx, sellerIdx);
+    }
 }

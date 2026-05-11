@@ -38,7 +38,11 @@ public record DocumentLineRequest(
     decimal WithholdingTaxRate,
     Guid? AccountId,
     // Optional per-line project override (null → inherits Document.ProjectId)
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    // Optional product linkage — set when the user picked a product via
+    // the line-item typeahead. Stored on DocumentLine.ProductCode so reports
+    // can group revenue/cost by product without re-parsing descriptions.
+    string? ProductCode = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -124,7 +128,8 @@ public record DocumentLineResponse(
     decimal WithholdingTaxRate,
     decimal WithholdingTaxAmount,
     Guid? AccountId = null,
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    string? ProductCode = null);
 
 public record ContactBrief(Guid Id, string Name, string? TaxId);
 
