@@ -742,6 +742,10 @@ public class OcrService : IOcrService
             return new AzureExtractionResult(false, "", new OcrExtractedData(), azureResult.ErrorMessage);
 
         var data = await MapAzureDiToExtractedDataAsync(companyId, azureResult);
+        // Apply universal constraints — keeps the data shape consistent across
+        // all three OCR providers and enforces math invariants / tax-id
+        // checksum / WHT-rate validity that Azure DI may have missed.
+        Ocr.SmartFieldExtractor.Enrich(data, azureResult.RawText ?? "");
         return new AzureExtractionResult(true, azureResult.RawText, data, null);
     }
 
@@ -873,6 +877,11 @@ public class OcrService : IOcrService
         // may bump it up if it found high-signal keywords (e.g. "ใบกำกับภาษี").
         data.Confidence = Math.Max(result.Confidence, data.Confidence);
         data.ReasoningTrace.Add($"[Embedded] Tesseract OCR confidence = {result.Confidence:P0}");
+        // Pull every remaining field via real-world constraints (tax-id
+        // checksum, vendor≠buyer mutual exclusion, math invariants, WHT
+        // normalization, date range, doc-number plausibility) — this is the
+        // path that benefits most from the smart extractor.
+        Ocr.SmartFieldExtractor.Enrich(data, result.Text ?? "");
         return (result.Text, data);
     }
 
@@ -1013,6 +1022,10 @@ public class OcrService : IOcrService
             }
 
             var rawText = root.TryGetProperty("raw_text", out var rt) ? rt.GetString() ?? "" : "";
+            // Apply universal constraints — keeps the data shape consistent
+            // across all three OCR providers and recovers fields the Python
+            // service may have missed (e.g. buyer tax id, math invariants).
+            Ocr.SmartFieldExtractor.Enrich(data, rawText);
             // A successful HTTP 200 with empty raw_text is still a "service worked but
             // couldn't read the document" — let the caller decide whether to fall
             // through to embedded. We DON'T throw here; we return the empty result
