@@ -20,12 +20,14 @@ public class DocumentService : IDocumentService
     private readonly ILogger<DocumentService> _logger;
     private readonly ILineNotifyService _lineNotify;
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
+    private readonly CrossTenantWorkflowService _crossTenantWorkflow;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
         ILineNotifyService lineNotify,
-        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        CrossTenantWorkflowService crossTenantWorkflow)
     {
         _db = db;
         _accountingService = accountingService;
@@ -35,6 +37,7 @@ public class DocumentService : IDocumentService
         _logger = logger;
         _lineNotify = lineNotify;
         _vendorIntel = vendorIntel;
+        _crossTenantWorkflow = crossTenantWorkflow;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -532,6 +535,14 @@ public class DocumentService : IDocumentService
         // Failures are logged inside the helper — training is a derived side-effect
         // that can always be rebuilt via BackfillFromHistoryAsync.
         await _vendorIntel.TryTrainAsync(companyId, doc.Id);
+
+        // Best-effort: cross-tenant routing. If the recipient Contact maps to a
+        // partner Company we have an Accepted partnership with, the document
+        // shows up in their inbox automatically. Failures are logged and don't
+        // unwind the approval.
+        try { await _crossTenantWorkflow.OnDocumentSentAsync(doc); }
+        catch (Exception ex)
+        { _logger.LogWarning(ex, "Cross-tenant routing failed for doc {Id}", doc.Id); }
 
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so

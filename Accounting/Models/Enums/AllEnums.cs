@@ -307,6 +307,38 @@ public enum ApprovalStatus
     Recalled = 3
 }
 
+// ==================== Cross-tenant trading partnership ====================
+public enum TradingPartnershipStatus
+{
+    Pending = 0,      // invitation sent, awaiting partner acceptance
+    Accepted = 1,     // both sides confirmed, docs may flow
+    Suspended = 2,    // either side paused (recoverable)
+    Rejected = 3,     // invitation declined / link severed
+}
+
+public enum CrossTenantLinkType
+{
+    /// <summary>A's Quotation routed to B for approval.</summary>
+    QuotationFlow = 0,
+    /// <summary>B's Purchase Order routed back to A.</summary>
+    PoFlow = 1,
+    /// <summary>A's Invoice routed to B.</summary>
+    InvoiceFlow = 2,
+    /// <summary>A's Receipt routed to B.</summary>
+    ReceiptFlow = 3,
+    /// <summary>B's Payment notification routed to A.</summary>
+    PaymentFlow = 4,
+}
+
+public enum CrossTenantLinkStatus
+{
+    PendingApproval = 0,
+    Approved = 1,
+    Rejected = 2,
+    AutoChained = 3,    // approved and downstream doc auto-created
+    Withdrawn = 4,      // source side voided / withdrew
+}
+
 // ==================== Subscription Payment ====================
 public enum SubscriptionPaymentStatus
 {

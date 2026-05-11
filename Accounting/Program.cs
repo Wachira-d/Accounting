@@ -156,6 +156,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.TfIdfNaiveBay
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RecurringExpenseDetector>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.DocumentWorkflowPredictor>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorClusteringService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkflowService>();
 // Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
 // and the service maintains a thread-local engine pool for thread safety.
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();

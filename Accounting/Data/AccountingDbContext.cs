@@ -267,6 +267,11 @@ public class AccountingDbContext : DbContext
     public DbSet<DocumentApproval> DocumentApprovals => Set<DocumentApproval>();
     public DbSet<DocumentSignature> DocumentSignatures => Set<DocumentSignature>();
 
+    // ===== Cross-tenant B2B workflow =====
+    public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
+    public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
+    public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
+
     // ===== CMS & Multi-Site =====
     // Core
     public DbSet<Site> Sites => Set<Site>();
@@ -1455,6 +1460,44 @@ public class AccountingDbContext : DbContext
             // Index by consequent so "show me all rules → 5402" is fast
             e.HasIndex(p => p.Consequent);
             e.HasQueryFilter(r => !r.IsDeleted);
+        });
+
+        // ===== TradingPartnership =====
+        modelBuilder.Entity<TradingPartnership>(e =>
+        {
+            e.HasOne(p => p.CompanyA).WithMany().HasForeignKey(p => p.CompanyAId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(p => p.CompanyB).WithMany().HasForeignKey(p => p.CompanyBId).OnDelete(DeleteBehavior.Restrict);
+            // Canonical pair — unique combination since we always order
+            // (CompanyAId, CompanyBId) so the smaller GUID comes first.
+            e.HasIndex(p => new { p.CompanyAId, p.CompanyBId }).IsUnique();
+            e.Property(p => p.AutoApproveAmountLimit).HasPrecision(18, 2);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        // ===== CrossTenantDocumentLink =====
+        modelBuilder.Entity<CrossTenantDocumentLink>(e =>
+        {
+            e.HasOne(l => l.TradingPartnership).WithMany().HasForeignKey(l => l.TradingPartnershipId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.SourceDocument).WithMany().HasForeignKey(l => l.SourceDocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(l => l.TargetDocument).WithMany().HasForeignKey(l => l.TargetDocumentId).OnDelete(DeleteBehavior.SetNull);
+            // Inbox query "show me incoming links for company X" by Target+Status
+            e.HasIndex(l => new { l.TargetCompanyId, l.Status });
+            // Outbox query "show me what we sent" by Source+Status
+            e.HasIndex(l => new { l.SourceCompanyId, l.Status });
+            e.HasIndex(l => l.SourceDocumentId);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+
+        // ===== WorkflowAutomationConfig =====
+        modelBuilder.Entity<WorkflowAutomationConfig>(e =>
+        {
+            e.HasOne(c => c.Company).WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(c => c.DefaultApproverUser).WithMany().HasForeignKey(c => c.DefaultApproverUserId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(c => c.DefaultSignature).WithMany().HasForeignKey(c => c.DefaultSignatureId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(c => c.CompanyId).IsUnique();
+            e.Property(c => c.AutoApproveMinAmount).HasPrecision(18, 2);
+            e.Property(c => c.AutoApproveMaxAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(c => !c.IsDeleted);
         });
 
         // ===== CustomReport =====

@@ -1389,6 +1389,107 @@ public static class DatabaseMigrationHelper
             ON "SystemOcrAssociationRules" ("Consequent");
             """,
 
+            // ===== TradingPartnerships: cross-tenant B2B handshake =====
+            // Single row per ordered (CompanyA, CompanyB) pair; both sides
+            // must accept before any cross-tenant document flow is allowed.
+            """
+            CREATE TABLE IF NOT EXISTS "TradingPartnerships" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyAId" uuid NOT NULL,
+                "CompanyBId" uuid NOT NULL,
+                "Status" integer NOT NULL DEFAULT 0,
+                "InvitedByCompanyId" uuid NOT NULL,
+                "InvitedByUserId" uuid NOT NULL,
+                "InvitationMessage" text NULL,
+                "AcceptedAt" timestamp NULL,
+                "AcceptedByUserId" uuid NULL,
+                "RejectedAt" timestamp NULL,
+                "RejectionReason" text NULL,
+                "AutoApproveAmountLimit" decimal(18,2) NULL,
+                "NotifyEmail" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_TradingPartnerships" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_TradingPartnerships_AB"
+            ON "TradingPartnerships" ("CompanyAId", "CompanyBId");
+            """,
+
+            // ===== CrossTenantDocumentLinks: per-step routing log =====
+            // One row per document flow event (Quotation→approval, PO→supplier,
+            // Invoice→buyer, ...). SnapshotJson preserves the source doc state
+            // at the moment of approval for immutable audit.
+            """
+            CREATE TABLE IF NOT EXISTS "CrossTenantDocumentLinks" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "TradingPartnershipId" uuid NOT NULL,
+                "SourceCompanyId" uuid NOT NULL,
+                "SourceDocumentId" uuid NOT NULL,
+                "TargetCompanyId" uuid NOT NULL,
+                "TargetDocumentId" uuid NULL,
+                "LinkType" integer NOT NULL DEFAULT 0,
+                "Status" integer NOT NULL DEFAULT 0,
+                "ApproverUserId" uuid NULL,
+                "ApprovedAt" timestamp NULL,
+                "DocumentApprovalId" uuid NULL,
+                "RejectionReason" text NULL,
+                "SnapshotJson" text NULL,
+                "Comment" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_CrossTenantDocumentLinks" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_CrossTenantDocumentLinks_Target_Status"
+            ON "CrossTenantDocumentLinks" ("TargetCompanyId", "Status");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_CrossTenantDocumentLinks_Source_Status"
+            ON "CrossTenantDocumentLinks" ("SourceCompanyId", "Status");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_CrossTenantDocumentLinks_SourceDoc"
+            ON "CrossTenantDocumentLinks" ("SourceDocumentId");
+            """,
+
+            // ===== WorkflowAutomationConfigs: per-company toggles =====
+            """
+            CREATE TABLE IF NOT EXISTS "WorkflowAutomationConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "AutoApproveIncomingQuotations" boolean NOT NULL DEFAULT false,
+                "AutoApproveMinAmount" decimal(18,2) NULL,
+                "AutoApproveMaxAmount" decimal(18,2) NULL,
+                "AutoCreatePoOnQuotationApproval" boolean NOT NULL DEFAULT false,
+                "AutoCreateInvoiceFromIncomingPo" boolean NOT NULL DEFAULT false,
+                "AutoCreateReceiptFromIncomingPayment" boolean NOT NULL DEFAULT false,
+                "AutoStampSignature" boolean NOT NULL DEFAULT false,
+                "DefaultApproverUserId" uuid NULL,
+                "DefaultSignatureId" uuid NULL,
+                "NotifyOnIncomingDocument" boolean NOT NULL DEFAULT true,
+                "NotifyEmail" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_WorkflowAutomationConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_WorkflowAutomationConfigs_CompanyId"
+            ON "WorkflowAutomationConfigs" ("CompanyId");
+            """,
+
             // ===== OcrCreditPurchases table =====
             """
             CREATE TABLE IF NOT EXISTS "OcrCreditPurchases" (
