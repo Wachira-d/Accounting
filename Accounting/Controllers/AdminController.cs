@@ -1185,6 +1185,103 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// SystemAdmin trains the OCR learners against a chosen company. Wraps both
+    /// ExpenseCategoryLearner (per-line: vendor + description → account) AND
+    /// VendorIntelligence (per-vendor: doc type / WHT / payment terms / amount
+    /// stats). Lets SystemAdmin seed a tenant's learner with high-quality
+    /// corrections gathered from the /admin/ocr-config test playground.
+    /// </summary>
+    [HttpPost("ocr-config/train")]
+    public async Task<ActionResult<ApiResponse<object>>> TrainOcrFromSystemAdmin(
+        [FromBody] SystemAdminTrainRequest req,
+        [FromServices] Services.Implementations.Ocr.ExpenseCategoryLearner learner,
+        [FromServices] Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
+    {
+        if (req.CompanyId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุบริษัทที่จะ train"));
+        if (string.IsNullOrWhiteSpace(req.VendorName) && string.IsNullOrWhiteSpace(req.VendorTaxId))
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุชื่อหรือเลขประจำตัวผู้ขาย"));
+
+        // Verify company exists
+        var companyExists = await _db.Companies.AnyAsync(c => c.Id == req.CompanyId && !c.IsDeleted);
+        if (!companyExists)
+            return BadRequest(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+
+        // Resolve account name for richer learner records
+        string? accountName = null;
+        if (!string.IsNullOrEmpty(req.AccountCode))
+        {
+            accountName = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == req.CompanyId && a.AccountCode == req.AccountCode && !a.IsDeleted)
+                .Select(a => a.AccountName)
+                .FirstOrDefaultAsync();
+        }
+
+        // 1. ExpenseCategoryLearner — per-line records (one per supplied line item,
+        //    fallback to a single header-level record when no lines provided)
+        var trainedLines = 0;
+        if (req.Lines != null && req.Lines.Count > 0 && !string.IsNullOrEmpty(req.AccountCode))
+        {
+            foreach (var line in req.Lines)
+            {
+                if (string.IsNullOrWhiteSpace(line.Description)) continue;
+                await learner.RecordAsync(req.CompanyId, req.VendorTaxId, req.VendorName,
+                    line.Description, req.AccountCode, accountName);
+                trainedLines++;
+            }
+        }
+        else if (!string.IsNullOrEmpty(req.AccountCode))
+        {
+            await learner.RecordAsync(req.CompanyId, req.VendorTaxId, req.VendorName,
+                req.Description ?? "", req.AccountCode, accountName);
+            trainedLines = 1;
+        }
+
+        // 2. VendorIntelligence — per-vendor stats
+        Models.Enums.DocumentType? docType = null;
+        if (!string.IsNullOrEmpty(req.DocumentType)
+            && Enum.TryParse<Models.Enums.DocumentType>(req.DocumentType, ignoreCase: true, out var dt))
+            docType = dt;
+
+        await vendorIntel.TrainFromAdminAsync(
+            req.CompanyId, req.VendorTaxId, req.VendorName,
+            docType, req.AccountCode, accountName,
+            req.WhtRate, req.PaymentTermsDays,
+            weight: Math.Max(1, req.Weight ?? 1));
+
+        await LogAuditAsync(req.CompanyId, "OcrTrainedFromSystemAdmin",
+            $"SystemAdmin trained vendor '{req.VendorName ?? req.VendorTaxId}' " +
+            $"→ {req.AccountCode}{(docType.HasValue ? $" + {docType.Value}" : "")} " +
+            $"({trainedLines} line(s), weight {req.Weight ?? 1})");
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            companyId = req.CompanyId,
+            vendorKey = req.VendorTaxId ?? req.VendorName,
+            accountName,
+            trainedLines,
+            trainedDocumentType = docType?.ToString(),
+            trainedWhtRate = req.WhtRate,
+            trainedPaymentTerms = req.PaymentTermsDays
+        }, $"สอนระบบของบริษัทเรียบร้อย: ผู้ขาย '{req.VendorName ?? req.VendorTaxId}' → {req.AccountCode}" +
+           $"{(docType.HasValue ? $" + {docType.Value}" : "")}{(req.WhtRate.HasValue ? $" + WHT {req.WhtRate}%" : "")}"));
+    }
+
+    public record SystemAdminTrainRequest(
+        Guid CompanyId,
+        string? VendorName,
+        string? VendorTaxId,
+        string? Description,
+        string? AccountCode,
+        string? DocumentType,           // "PurchaseInvoice" | "Expense" | ...
+        decimal? WhtRate,
+        int? PaymentTermsDays,
+        int? Weight,                    // confidence — default 1
+        List<TrainLineItem>? Lines);    // per-line records (optional)
+
+    public record TrainLineItem(string Description, string? AccountCode, decimal? Amount);
+
+    /// <summary>
     /// System-level OCR test — SystemAdmin uploads a file from the /admin
     /// shell, runs it through the requested provider (no quota, no tenant
     /// context, no training), and gets back raw text + parsed fields for

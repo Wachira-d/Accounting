@@ -281,9 +281,119 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             <span id="systemTestProviderLabel" style="font-size:12px;color:#64748b"></span>
           </div>
           <div style="background:#f0fdfa;border:1px solid #5eead4;border-radius:8px;padding:12px;margin-bottom:12px">
-            <strong style="font-size:13px;color:#134e4a">📊 ข้อมูลที่ระบบแยกได้</strong>
+            <strong style="font-size:13px;color:#134e4a">📊 ข้อมูลที่ระบบแยกได้ (อ่านอย่างเดียว)</strong>
             <div id="systemParsedFields" style="margin-top:8px;font-size:13px"></div>
           </div>
+
+          <!-- Train form — editable fields pre-filled from OCR result -->
+          <div style="background:#fef3c7;border:2px solid #fcd34d;border-radius:8px;padding:14px;margin-bottom:12px">
+            <strong style="font-size:14px;color:#78350f">🎓 Train ระบบเรียนรู้ (per-tenant)</strong>
+            <p style="font-size:12px;color:#78350f;margin:4px 0 12px;line-height:1.5">
+              ตรวจสอบ/แก้ไขข้อมูลที่ OCR อ่านได้ → เลือกบริษัทที่จะ train → กดปุ่ม "บันทึก Training"
+              ระบบจะอัพเดต <b>ExpenseCategoryLearner</b> (vendor + description → account)
+              และ <b>VendorIntelligence</b> (ประเภทเอกสาร, WHT, payment terms) ของบริษัทที่เลือก
+            </p>
+
+            <!-- Company selector — required -->
+            <div style="margin-bottom:12px">
+              <label style="display:block;font-size:13px;font-weight:600;color:#78350f;margin-bottom:4px">บริษัทที่จะ train *</label>
+              <select id="trainCompanyId" style="width:100%;padding:8px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:13px;background:white">
+                <option value="">— เลือกบริษัท —</option>
+              </select>
+              <div style="font-size:11px;color:#92400e;margin-top:2px">รายการบริษัทโหลดจาก customers — ค้นหาในช่องนี้ได้ (กดค้างคีย์)</div>
+            </div>
+
+            <!-- Vendor identity -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ชื่อผู้ขาย</label>
+                <input type="text" id="trainSysVendorName" placeholder="เช่น บริษัท ABC จำกัด" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+                <input type="text" id="trainSysVendorTaxId" placeholder="0123456789012" maxlength="13" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+            </div>
+
+            <!-- Document metadata -->
+            <div style="display:grid;grid-template-columns:1fr 140px 140px;gap:8px;margin-bottom:8px">
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">เลขที่เอกสาร</label>
+                <input type="text" id="trainSysDocNumber" placeholder="INV-2025-0001" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">ประเภทเอกสาร</label>
+                <select id="trainSysDocType" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+                  <option value="">— ไม่ระบุ —</option>
+                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+                  <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
+                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                  <option value="PurchaseOrder">ใบสั่งซื้อ</option>
+                  <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                </select>
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">วันที่</label>
+                <input type="text" id="trainSysDocDate" placeholder="01/01/2025" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+            </div>
+
+            <!-- Amounts -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">SubTotal</label>
+                <input type="number" id="trainSysSubTotal" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">VAT</label>
+                <input type="number" id="trainSysVat" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">WHT %</label>
+                <input type="number" id="trainSysWhtRate" step="1" min="0" max="15" placeholder="0" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Total</label>
+                <input type="number" id="trainSysTotal" step="0.01" placeholder="0.00" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+              </div>
+            </div>
+
+            <!-- Booking + account -->
+            <div style="display:grid;grid-template-columns:1fr 140px 100px 80px;gap:8px;margin-bottom:10px">
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">คำอธิบายหลัก (header)</label>
+                <input type="text" id="trainSysDescription" placeholder="เช่น ค่าน้ำมัน, ค่าโฆษณา" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">รหัสบัญชี Debit</label>
+                <input type="text" id="trainSysAccountCode" placeholder="5402" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">Credit Days</label>
+                <input type="number" id="trainSysPaymentTerms" min="0" max="365" placeholder="30" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">น้ำหนัก</label>
+                <input type="number" id="trainSysWeight" min="1" max="50" value="1" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace;text-align:right">
+              </div>
+            </div>
+
+            <!-- Line items table -->
+            <div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <label style="font-size:12px;font-weight:600;color:#78350f">รายการสินค้า/บริการ (line items)</label>
+                <button type="button" onclick="addTrainLine()" style="background:#fef3c7;color:#78350f;border:1px solid #fcd34d;padding:2px 10px;border-radius:4px;font-size:11px;cursor:pointer">+ เพิ่มรายการ</button>
+              </div>
+              <div id="trainSysLines" style="border:1px solid #fcd34d;border-radius:6px;background:white;padding:6px"></div>
+              <div style="font-size:11px;color:#92400e;margin-top:2px">ถ้ามีรายการย่อย — ระบบจะ train รหัสบัญชีแยกตามแต่ละ description</div>
+            </div>
+
+            <button type="button" onclick="submitSystemTraining()" id="btnTrainSystem" style="background:#d97706;color:white;border:none;padding:10px 24px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;width:100%">
+              ✓ บันทึก Training สำหรับบริษัทที่เลือก
+            </button>
+            <div id="trainSysResult" style="margin-top:8px;font-size:12px;text-align:center"></div>
+          </div>
+
           <details>
             <summary style="cursor:pointer;font-size:13px;font-weight:600">📜 Raw OCR Text</summary>
             <pre id="systemRawText" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;font-size:11px;line-height:1.6;margin-top:8px"></pre>
@@ -635,6 +745,105 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       }
     }
 
+    // Companies list cached for train dropdown
+    let _trainCompanies = [];
+    async function loadTrainCompanies() {
+      try {
+        const res = await AdminAPI.customers('?pageSize=500');
+        const items = res?.data?.items || res?.items || [];
+        _trainCompanies = items;
+        const sel = document.getElementById('trainCompanyId');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— เลือกบริษัท —</option>' +
+          items.map(c => `<option value="${c.id}">${escapeHtml(c.name)}${c.taxId ? ' • ' + c.taxId : ''}</option>`).join('');
+      } catch (e) {
+        console.warn('Failed to load companies for train dropdown:', e);
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function addTrainLine(description = '', accountCode = '', amount = '') {
+      const container = document.getElementById('trainSysLines');
+      const row = document.createElement('div');
+      row.className = 'train-line-row';
+      row.style = 'display:grid;grid-template-columns:1fr 120px 100px 30px;gap:6px;margin-bottom:4px;align-items:center';
+      row.innerHTML = `
+        <input type="text" class="train-line-desc" placeholder="คำอธิบายรายการ" value="${escapeHtml(description)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+        <input type="text" class="train-line-account" placeholder="รหัสบัญชี" value="${escapeHtml(accountCode)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;font-family:monospace">
+        <input type="number" class="train-line-amount" placeholder="0.00" step="0.01" value="${escapeHtml(amount)}" style="padding:5px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;font-family:monospace;text-align:right">
+        <button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#991b1b;border:none;border-radius:4px;cursor:pointer;height:28px">×</button>`;
+      container.appendChild(row);
+    }
+
+    function clearTrainLines() {
+      document.getElementById('trainSysLines').innerHTML = '';
+    }
+
+    async function submitSystemTraining() {
+      const btn = document.getElementById('btnTrainSystem');
+      const result = document.getElementById('trainSysResult');
+      const companyId = document.getElementById('trainCompanyId').value;
+      if (!companyId) {
+        result.style.color = '#dc2626';
+        result.textContent = '❌ กรุณาเลือกบริษัทก่อน';
+        return;
+      }
+      const vendorName = document.getElementById('trainSysVendorName').value.trim();
+      const vendorTaxId = document.getElementById('trainSysVendorTaxId').value.trim();
+      if (!vendorName && !vendorTaxId) {
+        result.style.color = '#dc2626';
+        result.textContent = '❌ กรุณากรอกชื่อหรือเลขประจำตัวผู้ขาย';
+        return;
+      }
+      const accountCode = document.getElementById('trainSysAccountCode').value.trim();
+      const whtRate = parseFloat(document.getElementById('trainSysWhtRate').value);
+      const paymentTerms = parseInt(document.getElementById('trainSysPaymentTerms').value);
+      const weight = parseInt(document.getElementById('trainSysWeight').value) || 1;
+      const docType = document.getElementById('trainSysDocType').value || null;
+
+      const lines = [...document.querySelectorAll('.train-line-row')].map(row => ({
+        description: row.querySelector('.train-line-desc').value.trim(),
+        accountCode: row.querySelector('.train-line-account').value.trim() || null,
+        amount: parseFloat(row.querySelector('.train-line-amount').value) || null,
+      })).filter(l => l.description);
+
+      const body = {
+        companyId,
+        vendorName: vendorName || null,
+        vendorTaxId: vendorTaxId || null,
+        description: document.getElementById('trainSysDescription').value.trim() || null,
+        accountCode: accountCode || null,
+        documentType: docType,
+        whtRate: isNaN(whtRate) ? null : whtRate,
+        paymentTermsDays: isNaN(paymentTerms) ? null : paymentTerms,
+        weight,
+        lines: lines.length ? lines : null,
+      };
+
+      btn.disabled = true;
+      btn.textContent = 'กำลังบันทึก...';
+      result.textContent = '';
+      try {
+        const res = await AdminAPI.post('/ocr-config/train', body);
+        if (res?.success) {
+          result.style.color = '#16a34a';
+          result.textContent = '✓ ' + (res.message || 'บันทึกสำเร็จ');
+        } else {
+          result.style.color = '#dc2626';
+          result.textContent = '❌ ' + (res?.message || 'ไม่สำเร็จ');
+        }
+      } catch (e) {
+        result.style.color = '#dc2626';
+        result.textContent = '❌ ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '✓ บันทึก Training สำหรับบริษัทที่เลือก';
+      }
+    }
+
     async function systemTestScan(file) {
       if (!file) return;
       const provider = document.getElementById('systemTestProvider').value;
@@ -643,6 +852,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       document.getElementById('systemParsedFields').innerHTML = '<em style="color:#64748b">กำลังประมวลผล...</em>';
       document.getElementById('systemRawText').textContent = '';
       document.getElementById('systemTestProviderLabel').textContent = '';
+      // Ensure companies are loaded (lazy on first scan)
+      if (_trainCompanies.length === 0) loadTrainCompanies();
 
       const fd = new FormData();
       fd.append('file', file);
@@ -686,6 +897,49 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             </div>`;
         }
         document.getElementById('systemRawText').textContent = d.rawText || '(ไม่มีข้อความ)';
+
+        // ─── Prefill the train form with extracted values (admin will edit/confirm) ───
+        const p = d.parsedFields;
+        if (p) {
+          if (p.taxIds && p.taxIds.length > 0) {
+            document.getElementById('trainSysVendorTaxId').value = p.taxIds[0];
+          }
+          if (p.documentNumbers && p.documentNumbers.length > 0) {
+            document.getElementById('trainSysDocNumber').value = p.documentNumbers[0];
+          }
+          if (p.dates && p.dates.length > 0) {
+            document.getElementById('trainSysDocDate').value = p.dates[0];
+          }
+          if (p.documentType) {
+            const sel = document.getElementById('trainSysDocType');
+            // Try to map regex parser output to the dropdown values
+            const map = {
+              'Invoice': 'PurchaseInvoice', 'TaxInvoice': 'PurchaseInvoice',
+              'Receipt': 'Expense', 'CertificateInLieu': 'CertificateInLieu',
+              'PurchaseOrder': 'PurchaseOrder'
+            };
+            const v = map[p.documentType] || '';
+            if (v) sel.value = v;
+          }
+          // Heuristic: the LAST numeric amount in the doc is usually the grand total,
+          // the second-to-last is usually subtotal+vat. Admin can edit.
+          if (p.amounts && p.amounts.length > 0) {
+            const nums = p.amounts.map(a => parseFloat(a.replace(/,/g, ''))).filter(n => !isNaN(n));
+            if (nums.length > 0) {
+              document.getElementById('trainSysTotal').value = nums[nums.length - 1].toFixed(2);
+            }
+            if (nums.length >= 2) {
+              document.getElementById('trainSysSubTotal').value = nums[nums.length - 2].toFixed(2);
+            }
+            if (nums.length >= 3) {
+              // Estimate VAT as total - subtotal
+              const vat = nums[nums.length - 1] - nums[nums.length - 2];
+              if (vat > 0 && vat < nums[nums.length - 2]) {
+                document.getElementById('trainSysVat').value = vat.toFixed(2);
+              }
+            }
+          }
+        }
       } catch (e) {
         document.getElementById('systemParsedFields').innerHTML =
           `<span style="color:#dc2626">❌ ${e.message}</span>`;
@@ -804,6 +1058,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
 
     loadConfig();
     checkEmbeddedStatus();
+    loadTrainCompanies();
+    // Start with one empty line item row so admins see the table immediately
+    document.addEventListener('DOMContentLoaded', () => {
+      if (document.getElementById('trainSysLines')) addTrainLine();
+    });
   </script>
 </body>
 </html>
