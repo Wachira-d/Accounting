@@ -368,7 +368,7 @@ public class OcrController : ControllerBase
         IFormFile file,
         [FromQuery] string? forceProvider,  // "azure" | "python" | "embedded" — overrides chain
         [FromServices] Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService embeddedOcr,
-        [FromServices] AzureDocumentIntelligenceService azureDi)
+        [FromServices] Accounting.Services.Implementations.Ocr.AzureDocumentIntelligenceService azureDi)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
