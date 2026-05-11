@@ -1328,6 +1328,36 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// Aggregate per-tenant OCR learning into the system-wide tables.
+    /// Only patterns where ≥ minTenants distinct companies have used the
+    /// same (vendor, keyword → account) combo are promoted — k-anonymity
+    /// preserves single-tenant detail. Companies that opted out via
+    /// CompanySettings.ShareTrainingDataAnonymously = false are
+    /// excluded entirely.
+    ///
+    /// Re-run periodically (e.g. nightly) so the system layer reflects
+    /// the latest cross-tenant consensus. New tenants benefit immediately.
+    /// </summary>
+    [HttpPost("ocr-config/aggregate-tenant-knowledge")]
+    public async Task<ActionResult<ApiResponse<object>>> AggregateTenantKnowledge(
+        [FromServices] Services.Implementations.Ocr.CrossTenantKnowledgeAggregator aggregator,
+        [FromQuery] int minTenants = 2)
+    {
+        var result = await aggregator.AggregateAsync(minTenants);
+        await LogAuditAsync(null, "CrossTenantKnowledgeAggregated",
+            $"tenants={result.TenantsConsidered} category+{result.CategoryMappingsPromoted} " +
+            $"vi+{result.VendorIntelligencePromoted} in {result.Duration.TotalSeconds:F1}s");
+        return Ok(new ApiResponse<object>(true, new
+        {
+            tenantsConsidered = result.TenantsConsidered,
+            categoryMappingsPromoted = result.CategoryMappingsPromoted,
+            vendorIntelligencePromoted = result.VendorIntelligencePromoted,
+            durationSeconds = result.Duration.TotalSeconds,
+            minTenants,
+        }, $"Aggregate สำเร็จ: cat+{result.CategoryMappingsPromoted} vi+{result.VendorIntelligencePromoted} จาก {result.TenantsConsidered} tenants"));
+    }
+
+    /// <summary>
     /// Run the system-wide Apriori-style basket-analysis miner. Scans every
     /// approved/paid Document in the last `sinceMonths` months across all
     /// tenants, discovers (vendor + keyword) → account association rules,

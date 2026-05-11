@@ -311,6 +311,14 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "JournalEntryLines" ADD COLUMN IF NOT EXISTS "Tags" varchar(500) NULL;
             """,
 
+            // ===== CompanySettings: Cross-tenant knowledge sharing =====
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ShareTrainingDataAnonymously" boolean NOT NULL DEFAULT true;
+            """,
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "OwnTrainingBonusMultiplier" decimal(4,2) NOT NULL DEFAULT 2.0;
+            """,
+
             // ===== CompanySettings: Landing page services =====
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LandingContactPhone" varchar(50) NULL;

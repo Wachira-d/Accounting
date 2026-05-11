@@ -33,6 +33,18 @@ public class ExpenseCategoryLearner
 
         var keyword = NormalizeDescription(description);
 
+        // Per-tenant bonus multiplier: company can configure how strongly
+        // their OWN training outweighs cross-tenant aggregates. Default
+        // 2.0 means a tenant's own learned mapping confidence is doubled
+        // before being compared to system-wide fallback. The bonus is
+        // applied to every tenant tier (1-3) so own data always wins
+        // unless the system aggregate has substantially more evidence.
+        var tenantBonus = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+            .Select(s => s.OwnTrainingBonusMultiplier)
+            .FirstOrDefaultAsync();
+        if (tenantBonus <= 0) tenantBonus = 2.0m;
+
         // ─── Tier 1: exact (vendor + full keyword) match — strongest signal ───
         if (!string.IsNullOrEmpty(keyword))
         {
@@ -44,7 +56,7 @@ public class ExpenseCategoryLearner
                 .OrderByDescending(m => m.TimesUsed)
                 .FirstOrDefaultAsync();
             if (exact != null)
-                return (exact.AccountCode, exact.AccountName, ScoreConfidence(exact.TimesUsed));
+                return (exact.AccountCode, exact.AccountName, Boost(ScoreConfidence(exact.TimesUsed), tenantBonus));
         }
 
         // ─── Tier 2: token-based fuzzy match — split description into meaningful
@@ -80,7 +92,7 @@ public class ExpenseCategoryLearner
             if (best != null)
             {
                 // Lower confidence than exact match — token overlap is fuzzier
-                var conf = ScoreConfidence(best.SumUsed) * 0.75m;
+                var conf = Boost(ScoreConfidence(best.SumUsed) * 0.75m, tenantBonus);
                 return (best.AccountCode, best.AccountName, conf);
             }
         }
@@ -95,7 +107,8 @@ public class ExpenseCategoryLearner
             .OrderByDescending(g => g.Sum)
             .FirstOrDefaultAsync();
         if (vendorOnly != null)
-            return (vendorOnly.AccountCode, vendorOnly.AccountName, ScoreConfidence(vendorOnly.Sum) * 0.65m);
+            return (vendorOnly.AccountCode, vendorOnly.AccountName,
+                Boost(ScoreConfidence(vendorOnly.Sum) * 0.65m, tenantBonus));
 
         // ─── Tier 4: system-wide fallback — SystemAdmin-trained knowledge base ───
         // Tenant has no row for this vendor at all. Consult the shared system
@@ -286,4 +299,11 @@ public class ExpenseCategoryLearner
         // Asymptotic curve: 1 - (1 / (1 + 0.5*n))
         return 1m - (1m / (1m + 0.5m * timesUsed));
     }
+
+    /// <summary>Apply the tenant-bonus multiplier without ever exceeding
+    /// 0.99 — a single learned mapping cannot be more certain than 99%.
+    /// Mirrors the asymptote in ScoreConfidence so the curve stays smooth
+    /// even when the bonus would otherwise push past 1.0.</summary>
+    private static decimal Boost(decimal baseConfidence, decimal bonus)
+        => Math.Min(0.99m, baseConfidence * bonus);
 }

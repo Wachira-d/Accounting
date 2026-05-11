@@ -93,6 +93,22 @@ public class CompanySettings : TenantEntity
     public string? EmailGmailRefreshToken { get; set; }
     public string? EmailGmailServiceAccountJson { get; set; }         // alt: service account credentials JSON
 
+    // ─── Cross-tenant knowledge sharing (OCR learning) ───
+    // When true (default), this company's per-tenant training data
+    // (OcrCategoryMappings + OcrVendorIntelligence) is anonymously
+    // aggregated into the system-wide tables after at least
+    // CrossTenantAggregateMinTenants distinct companies have used the
+    // same (vendor, keyword → account) pattern. Only the aggregate is
+    // promoted — no single-company detail is exposed. Companies that
+    // want their training kept entirely private can opt out here.
+    public bool ShareTrainingDataAnonymously { get; set; } = true;
+
+    // Per-tenant bonus multiplier applied to this company's OWN learned
+    // mappings at prediction time. Higher = own data wins more
+    // decisively over system aggregates. Default 2.0 means own training
+    // counts twice; range 1.0–10.0.
+    public decimal OwnTrainingBonusMultiplier { get; set; } = 2.0m;
+
     // Landing Page – Accounting Services
     public string? LandingContactPhone { get; set; }           // เบอร์ติดต่อแสดงหน้าแรก
     public string? LandingContactLine { get; set; }            // LINE ID
