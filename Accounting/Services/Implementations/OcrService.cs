@@ -146,9 +146,13 @@ public class OcrService : IOcrService
             var azureHasKey = !string.IsNullOrEmpty(siteSettings?.AzureDiApiKey);
             var azureEnabled = azureToggleOn && azureHasEndpoint && azureHasKey;
             string? azureSkipReason = null;
-            if (ocrProvider == "local")
-                azureSkipReason = "ตั้งค่า Provider = local (ข้าม Azure)";
-            else if (!azureToggleOn)
+            // The OcrProvider field is the FALLBACK preference (which engine
+            // to try when Azure isn't available). It must NOT block Azure
+            // when the admin has explicitly enabled and configured it —
+            // doing so was confusing for users who left provider="local"
+            // from earlier setup and then enabled Azure but couldn't figure
+            // out why scans still went to local.
+            if (!azureToggleOn)
                 azureSkipReason = "AzureDiEnabled = false (ยังไม่เปิด toggle)";
             else if (!azureHasEndpoint)
                 azureSkipReason = "Azure DI Endpoint ว่าง — กรุณากรอกใน admin/ocr-config";
@@ -160,8 +164,9 @@ public class OcrService : IOcrService
             string? lastError = null;
             string? ocrEngineUsed = null;   // surfaced on scanResult.OcrEngine for the debug panel
 
-            // Tier 1: Azure DI (unless explicitly forced to local)
-            if (azureEnabled && ocrProvider != "local")
+            // Tier 1: Azure DI — runs whenever the admin has fully configured
+            // it (toggle + endpoint + key), regardless of OcrProvider's value.
+            if (azureEnabled)
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)

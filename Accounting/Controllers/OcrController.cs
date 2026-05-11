@@ -272,7 +272,10 @@ public class OcrController : ControllerBase
 
         if (request.AzureDiEnabled.HasValue) settings.AzureDiEnabled = request.AzureDiEnabled.Value;
         if (request.AzureDiEndpoint != null) settings.AzureDiEndpoint = request.AzureDiEndpoint;
-        if (request.AzureDiApiKey != null) settings.AzureDiApiKey = request.AzureDiApiKey;
+        // Defense-in-depth: only overwrite when a non-empty value is supplied.
+        // Some serializers map an empty input field to "" rather than null,
+        // which would silently wipe the stored secret on every save.
+        if (!string.IsNullOrEmpty(request.AzureDiApiKey)) settings.AzureDiApiKey = request.AzureDiApiKey;
         if (request.AzureDiModelId != null) settings.AzureDiModelId = request.AzureDiModelId;
         if (request.AzureDiApiVersion != null) settings.AzureDiApiVersion = request.AzureDiApiVersion;
         if (request.OcrProvider != null) settings.OcrProvider = request.OcrProvider;

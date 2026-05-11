@@ -206,8 +206,8 @@
           <div class="form-group">
             <label>API Key</label>
             <div class="password-field">
-              <input type="password" id="azureDiApiKey" placeholder="ใส่ API Key ใหม่">
-              <span class="keep-existing" id="azureKeyHint" style="display:none">มี key อยู่แล้ว</span>
+              <input type="password" id="azureDiApiKey" placeholder="ใส่ API Key ใหม่ (เว้นว่าง = ใช้ key เดิม)">
+              <span class="keep-existing" id="azureKeyHint" style="display:none;color:#059669;font-weight:600">✓ มี key อยู่แล้ว — เว้นว่างไว้ถ้าไม่เปลี่ยน</span>
             </div>
           </div>
         </div>
@@ -900,8 +900,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         const azureKey = document.getElementById('azureDiApiKey').value;
         if (azureKey) body.azureDiApiKey = azureKey;
 
-        await AdminAPI.put('/ocr-config', body);
-        showToast('บันทึกการตั้งค่าสำเร็จ', 'success');
+        // Backend now returns azureDiKeyAction so the toast can spell out
+        // exactly what happened to the secret — eliminates the user-facing
+        // confusion "did my key just get wiped because the input was empty?"
+        const res = await AdminAPI.put('/ocr-config', body);
+        showToast(res?.message || 'บันทึกการตั้งค่าสำเร็จ', 'success');
+        // Clear the password field after a successful save so it's
+        // visually obvious that the input no longer holds the secret —
+        // the "✓ มี key อยู่แล้ว" hint will reappear via loadConfig.
+        document.getElementById('azureDiApiKey').value = '';
         await loadConfig();
       } catch (err) {
         showToast(err.message, 'error');

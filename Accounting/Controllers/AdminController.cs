@@ -1121,9 +1121,14 @@ public class AdminController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> UpdateOcrConfig([FromBody] UpdateOcrConfigRequest req)
     {
         var s = await GetOrCreateSiteSettings();
+        var hadKeyBefore = !string.IsNullOrEmpty(s.AzureDiApiKey);
 
         if (req.AzureDiEndpoint != null) s.AzureDiEndpoint = req.AzureDiEndpoint;
-        if (req.AzureDiApiKey != null) s.AzureDiApiKey = req.AzureDiApiKey;
+        // Defense-in-depth: only overwrite the API key when a non-empty
+        // string is supplied. Some serializers bind missing/empty fields
+        // to "" rather than null, which would silently wipe the stored
+        // secret on every save where the user didn't re-type it.
+        if (!string.IsNullOrEmpty(req.AzureDiApiKey)) s.AzureDiApiKey = req.AzureDiApiKey;
         if (req.AzureDiModelId != null) s.AzureDiModelId = req.AzureDiModelId;
         if (req.AzureDiApiVersion != null) s.AzureDiApiVersion = req.AzureDiApiVersion;
         if (req.AzureDiEnabled.HasValue) s.AzureDiEnabled = req.AzureDiEnabled.Value;
@@ -1154,7 +1159,28 @@ public class AdminController : ControllerBase
 
         await _db.SaveChangesAsync();
         await LogAuditAsync(null, "OcrConfigUpdated", string.Join(", ", changedFields));
-        return Ok(new ApiResponse<object>(true, null, "บันทึกการตั้งค่า OCR สำเร็จ"));
+
+        // Surface what happened to the API key so the UI can confirm
+        // whether the stored secret was changed, kept, or never existed.
+        // Eliminates the user-facing confusion where a save with an empty
+        // password input looks identical to a save that wiped the key.
+        var hasKeyAfter = !string.IsNullOrEmpty(s.AzureDiApiKey);
+        var keyAction = !string.IsNullOrEmpty(req.AzureDiApiKey)
+            ? "updated"
+            : (hasKeyAfter ? "kept-existing" : "absent");
+        var msg = keyAction switch
+        {
+            "updated" => "บันทึกการตั้งค่า OCR สำเร็จ + อัปเดต Azure DI API Key",
+            "kept-existing" => "บันทึกการตั้งค่า OCR สำเร็จ (ใช้ Azure DI API Key เดิม)",
+            _ => "บันทึกการตั้งค่า OCR สำเร็จ"
+        };
+        return Ok(new ApiResponse<object>(true, new
+        {
+            azureDiHasKey = hasKeyAfter,
+            azureDiKeyAction = keyAction,
+            azureDiEnabled = s.AzureDiEnabled,
+            ocrProvider = s.OcrProvider,
+        }, msg));
     }
 
     [HttpPost("ocr-config/test-local")]
