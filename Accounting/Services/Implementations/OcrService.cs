@@ -21,13 +21,15 @@ public class OcrService : IOcrService
     private readonly AzureDocumentIntelligenceService _azureDi;
     private readonly ExpenseCategoryLearner _categoryLearner;
     private readonly VendorIntelligenceService _vendorIntel;
+    private readonly EmbeddedTesseractOcrService _embeddedOcr;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
         IDbdLookupService dbdLookup,
         AzureDocumentIntelligenceService azureDi,
         ExpenseCategoryLearner categoryLearner,
-        VendorIntelligenceService vendorIntel)
+        VendorIntelligenceService vendorIntel,
+        EmbeddedTesseractOcrService embeddedOcr)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -37,6 +39,7 @@ public class OcrService : IOcrService
         _azureDi = azureDi;
         _categoryLearner = categoryLearner;
         _vendorIntel = vendorIntel;
+        _embeddedOcr = embeddedOcr;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -114,19 +117,28 @@ public class OcrService : IOcrService
         {
             string extractedText;
 
-            // ─── Strict provider chain: Azure DI (if configured) → Local (PaddleOCR+EasyOCR) ───
-            // Legacy providers (Google Vision, Azure OCR v3.x, standalone Tesseract) were
-            // removed — their accuracy on Thai invoices was consistently worse than
-            // Azure DI v4 and the local PaddleOCR+EasyOCR ensemble.
+            // ─── 3-tier provider chain ───
+            //   1. Azure DI v4 (cloud) — highest accuracy, requires API key + internet
+            //   2. Python ocr-service (PaddleOCR+EasyOCR) — high accuracy, requires
+            //      external Python service running at LocalServiceUrl
+            //   3. Embedded Tesseract (in-process, ALWAYS available) — last-resort
+            //      fallback so the system never fails when the upper tiers are
+            //      unreachable. Pure NuGet + tessdata files in wwwroot — no
+            //      external installation needed.
             //
-            // The local microservice (default http://localhost:8501) runs PaddleOCR for
-            // primary recognition + EasyOCR (different architecture) for verification on
-            // low-confidence regions. Both are pure-Python (pip-installable, no apt-get).
+            // Cascade: each tier's failure falls down to the next, with the reason
+            // recorded in ReasoningTrace so the user knows which engine produced
+            // the result.
 
             var azureEnabled = siteSettings?.AzureDiEnabled == true
                 && !string.IsNullOrEmpty(siteSettings.AzureDiEndpoint)
                 && !string.IsNullOrEmpty(siteSettings.AzureDiApiKey);
 
+            extractedData = null;
+            extractedText = "";
+            string? lastError = null;
+
+            // Tier 1: Azure DI (unless explicitly forced to local)
             if (azureEnabled && ocrProvider != "local")
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
@@ -137,21 +149,44 @@ public class OcrService : IOcrService
                 }
                 else
                 {
-                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to local PaddleOCR+EasyOCR", azureResult.Error ?? "unknown");
-                    var localResult = await ExtractWithLocalServiceAsync(file);
-                    extractedText = localResult.RawText;
-                    extractedData = localResult.Data;
-                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {azureResult.Error ?? "unknown"} — used local pipeline");
+                    lastError = azureResult.Error ?? "unknown";
+                    _logger.LogWarning("Azure DI failed ({Err}) — falling back to next tier", lastError);
                 }
             }
-            else
+
+            // Tier 2: Python local service (PaddleOCR+EasyOCR)
+            if (extractedData == null)
             {
-                // Local pipeline (PaddleOCR + EasyOCR combined inside the microservice)
-                var localResult = await ExtractWithLocalServiceAsync(file);
-                extractedText = localResult.RawText;
-                extractedData = localResult.Data;
-                if (!azureEnabled)
-                    extractedData.ReasoningTrace.Insert(0, "[Provider] Azure DI ไม่เปิดใช้ — ใช้ Local (PaddleOCR+EasyOCR)");
+                try
+                {
+                    var localResult = await ExtractWithLocalServiceAsync(file);
+                    if (!string.IsNullOrEmpty(localResult.RawText))
+                    {
+                        extractedText = localResult.RawText;
+                        extractedData = localResult.Data;
+                        if (lastError != null)
+                            extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {lastError} — used Python local pipeline");
+                        else if (!azureEnabled)
+                            extractedData.ReasoningTrace.Insert(0, "[Provider] Azure DI ไม่เปิดใช้ — ใช้ Local (PaddleOCR+EasyOCR)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = $"Python local: {ex.Message}";
+                    _logger.LogWarning(ex, "Python local OCR failed — falling back to embedded Tesseract");
+                }
+            }
+
+            // Tier 3: Embedded Tesseract (always available, in-process)
+            if (extractedData == null)
+            {
+                var embeddedResult = await ExtractWithEmbeddedTesseractAsync(file);
+                extractedText = embeddedResult.RawText;
+                extractedData = embeddedResult.Data;
+                if (lastError != null)
+                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
+                else
+                    extractedData.ReasoningTrace.Insert(0, "[Provider] ใช้ Embedded Tesseract (in-process fallback)");
             }
 
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
@@ -730,6 +765,62 @@ public class OcrService : IOcrService
         if (string.IsNullOrEmpty(value)) return null;
         var digits = new string(value.Where(char.IsDigit).ToArray());
         return digits.Length == expectedLength ? digits : (digits.Length > 0 ? digits : null);
+    }
+
+    /// <summary>
+    /// Embedded Tesseract OCR — runs entirely in-process, no external service.
+    /// Used as the last-resort fallback when Azure DI and the Python ocr-service
+    /// are both unavailable. Accuracy is lower than the upper tiers but the
+    /// reasoning trace + ParseThaiDocument rule-based extraction still produces
+    /// usable data (vendor name, tax ID, amounts) that the user can correct.
+    /// </summary>
+    private async Task<(string RawText, OcrExtractedData Data)> ExtractWithEmbeddedTesseractAsync(FileAttachment file)
+    {
+        if (!_embeddedOcr.IsAvailable)
+        {
+            // Both upper tiers + embedded failed — return an empty result with
+            // a clear reasoning trace. The user can still re-scan after the
+            // admin installs tessdata.
+            var emptyData = new OcrExtractedData
+            {
+                DocumentType = "Receipt",
+                Confidence = 0m,
+            };
+            emptyData.ReasoningTrace.Add("[Embedded] ไม่พบ tessdata — กรุณา download (scripts/download-tessdata.sh)");
+            return ("", emptyData);
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = await File.ReadAllBytesAsync(file.StoragePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read file for embedded OCR: {Path}", file.StoragePath);
+            var errData = new OcrExtractedData { DocumentType = "Receipt", Confidence = 0m };
+            errData.ReasoningTrace.Add($"[Embedded] อ่านไฟล์ไม่ได้: {ex.Message}");
+            return ("", errData);
+        }
+
+        var result = await _embeddedOcr.ExtractTextAsync(bytes, file.ContentType ?? "", file.OriginalFileName);
+        if (!result.Success)
+        {
+            var errData = new OcrExtractedData { DocumentType = "Receipt", Confidence = 0m };
+            errData.ReasoningTrace.Add($"[Embedded] OCR ล้มเหลว: {result.Error ?? "unknown"}");
+            return ("", errData);
+        }
+
+        // ParseThaiDocument is the same rule-based extractor used by the Python
+        // local service — it works on raw text from any source. So Tesseract's
+        // output flows through the same field extraction (vendor name, tax ID,
+        // amounts, document type detection from keywords).
+        var data = ParseThaiDocument(result.Text);
+        // Use Tesseract's mean word confidence as the baseline; ParseThaiDocument
+        // may bump it up if it found high-signal keywords (e.g. "ใบกำกับภาษี").
+        data.Confidence = Math.Max(result.Confidence, data.Confidence);
+        data.ReasoningTrace.Add($"[Embedded] Tesseract OCR confidence = {result.Confidence:P0}");
+        return (result.Text, data);
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)

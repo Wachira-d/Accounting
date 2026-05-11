@@ -208,6 +208,271 @@ public class OcrController : ControllerBase
     }
 
     /// <summary>
+    /// Read current OCR provider configuration + status. Admin uses this on the
+    /// admin-ocr page to show "Azure DI: Enabled / Disabled", "Embedded Tesseract:
+    /// Ready (eng+tha)" etc.
+    /// </summary>
+    [HttpGet("admin/config")]
+    public async Task<ActionResult<ApiResponse<object>>> GetOcrConfig(
+        Guid companyId,
+        [FromServices] Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService embeddedOcr)
+    {
+        var settings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+        return Ok(new ApiResponse<object>(true, new
+        {
+            azure = new
+            {
+                enabled = settings?.AzureDiEnabled ?? false,
+                endpoint = settings?.AzureDiEndpoint,
+                hasApiKey = !string.IsNullOrEmpty(settings?.AzureDiApiKey),
+                modelId = settings?.AzureDiModelId,
+                apiVersion = settings?.AzureDiApiVersion,
+                lastTestStatus = settings?.AzureDiLastTestStatus,
+            },
+            embedded = new
+            {
+                available = embeddedOcr.IsAvailable,
+                languages = embeddedOcr.Languages,
+                tessdataPath = embeddedOcr.TessdataPath,
+            },
+            pythonService = new
+            {
+                // Python service URL comes from appsettings.json (not the per-tenant SiteSettings)
+                // because it's a deployment-level configuration, not a user-tunable setting.
+                url = HttpContext.RequestServices.GetService<IConfiguration>()?["Ocr:LocalServiceUrl"] ?? "(not configured)",
+            },
+            provider = settings?.OcrProvider ?? "auto",
+        }, "OCR configuration"));
+    }
+
+    /// <summary>
+    /// Update OCR provider settings. Only the fields supplied in the body are
+    /// changed — null/missing fields are left as-is.
+    /// </summary>
+    [HttpPut("admin/config")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateOcrConfig(
+        Guid companyId,
+        [FromBody] UpdateOcrConfigRequest request)
+    {
+        var settings = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (settings == null)
+        {
+            settings = new SiteSettings();
+            _db.SiteSettings.Add(settings);
+        }
+
+        if (request.AzureDiEnabled.HasValue) settings.AzureDiEnabled = request.AzureDiEnabled.Value;
+        if (request.AzureDiEndpoint != null) settings.AzureDiEndpoint = request.AzureDiEndpoint;
+        if (request.AzureDiApiKey != null) settings.AzureDiApiKey = request.AzureDiApiKey;
+        if (request.AzureDiModelId != null) settings.AzureDiModelId = request.AzureDiModelId;
+        if (request.AzureDiApiVersion != null) settings.AzureDiApiVersion = request.AzureDiApiVersion;
+        if (request.OcrProvider != null) settings.OcrProvider = request.OcrProvider;
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, "บันทึกการตั้งค่า OCR สำเร็จ"));
+    }
+
+    public record UpdateOcrConfigRequest(
+        bool? AzureDiEnabled,
+        string? AzureDiEndpoint,
+        string? AzureDiApiKey,
+        string? AzureDiModelId,
+        string? AzureDiApiVersion,
+        string? OcrProvider);
+
+    /// <summary>
+    /// Submit a training correction from the admin-ocr test page. Unlike the
+    /// regular SubmitCorrectionAsync (which trains from a persisted scan row),
+    /// this endpoint trains from raw fields the admin typed in — used when
+    /// they're testing a sample file that wasn't saved as a real scan.
+    /// </summary>
+    [HttpPost("admin/train-from-sample")]
+    public async Task<ActionResult<ApiResponse<object>>> TrainFromSample(
+        Guid companyId,
+        [FromBody] AdminTrainRequest request,
+        [FromServices] Accounting.Services.Implementations.Ocr.ExpenseCategoryLearner learner)
+    {
+        if (string.IsNullOrWhiteSpace(request.VendorName) && string.IsNullOrWhiteSpace(request.VendorTaxId))
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุชื่อหรือเลขประจำตัวผู้ขาย"));
+        if (string.IsNullOrWhiteSpace(request.AccountCode))
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุรหัสบัญชีที่ต้องการสอน"));
+
+        var accountName = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.AccountCode == request.AccountCode && !a.IsDeleted)
+            .Select(a => a.AccountName)
+            .FirstOrDefaultAsync();
+
+        await learner.RecordAsync(
+            companyId,
+            request.VendorTaxId,
+            request.VendorName,
+            request.Description ?? "",
+            request.AccountCode,
+            accountName);
+
+        return Ok(new ApiResponse<object>(true, new { accountName }, $"สอนระบบเรียบร้อย: ผู้ขาย '{request.VendorName ?? request.VendorTaxId}' + '{request.Description}' → {request.AccountCode}"));
+    }
+
+    public record AdminTrainRequest(
+        string? VendorName,
+        string? VendorTaxId,
+        string? Description,
+        string AccountCode);
+
+    /// <summary>
+    /// Admin test-scan endpoint — runs the full OCR pipeline on an uploaded file
+    /// WITHOUT consuming quota or persisting a scan row. Used by the admin page
+    /// to inspect what each provider reads from a sample document. Returns the
+    /// raw OCR text + parsed fields + reasoning trace + which provider was used.
+    /// </summary>
+    [HttpPost("admin/test-scan")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> AdminTestScan(
+        Guid companyId,
+        IFormFile file,
+        [FromQuery] string? forceProvider,  // "azure" | "python" | "embedded" — overrides chain
+        [FromServices] Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService embeddedOcr,
+        [FromServices] AzureDocumentIntelligenceService azureDi)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
+
+        byte[] fileBytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms);
+            fileBytes = ms.ToArray();
+        }
+
+        // Run the requested provider. Admin test bypasses quota and doesn't
+        // persist anything — output is purely for inspection.
+        string rawText = "";
+        decimal confidence = 0;
+        string providerUsed = "";
+        string? error = null;
+
+        try
+        {
+            switch ((forceProvider ?? "embedded").ToLowerInvariant())
+            {
+                case "embedded":
+                    providerUsed = "Embedded Tesseract";
+                    var emb = await embeddedOcr.ExtractTextAsync(fileBytes, file.ContentType ?? "", file.FileName);
+                    rawText = emb.Text;
+                    confidence = emb.Confidence;
+                    error = emb.Success ? null : emb.Error;
+                    break;
+
+                case "azure":
+                    providerUsed = "Azure DI";
+                    var siteSettings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+                    if (siteSettings?.AzureDiEnabled != true || string.IsNullOrEmpty(siteSettings.AzureDiEndpoint))
+                    {
+                        error = "Azure DI ไม่ได้ตั้งค่า — กรุณาเปิดใช้ใน admin settings ก่อน";
+                        break;
+                    }
+                    try
+                    {
+                        var azResult = await azureDi.AnalyzeAsync(fileBytes, file.ContentType ?? "application/octet-stream", siteSettings);
+                        rawText = azResult?.RawText ?? "";
+                        confidence = azResult?.OverallConfidence ?? 0m;
+                    }
+                    catch (Exception ex)
+                    {
+                        error = $"Azure error: {ex.Message}";
+                    }
+                    break;
+
+                case "python":
+                    providerUsed = "Python local service";
+                    error = "Python test mode — please use the existing OCR upload flow (uses Ocr:LocalServiceUrl)";
+                    break;
+
+                default:
+                    error = $"Unknown provider: {forceProvider}";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+
+        // Always run the rule-based parser on whatever text we got — gives the
+        // admin a preview of which fields the pipeline would extract.
+        var parsed = string.IsNullOrEmpty(rawText) ? null : ParseAdminPreview(rawText);
+
+        return Ok(new ApiResponse<object>(error == null, new
+        {
+            provider = providerUsed,
+            embeddedAvailable = embeddedOcr.IsAvailable,
+            embeddedLanguages = embeddedOcr.Languages,
+            embeddedTessdataPath = embeddedOcr.TessdataPath,
+            rawText,
+            confidence,
+            parsedFields = parsed,
+            error
+        }, error ?? "OCR สำเร็จ"));
+    }
+
+    /// <summary>
+    /// Run the same rule-based Thai-document parser used in production on raw
+    /// OCR text — purely for admin inspection. Mirrors a subset of
+    /// OcrService.ParseThaiDocument but doesn't depend on its internals.
+    /// </summary>
+    private static object ParseAdminPreview(string text)
+    {
+        var upperText = text.ToUpperInvariant();
+        string? docType = null;
+        if (text.Contains("ใบกำกับภาษี") || upperText.Contains("TAX INVOICE")) docType = "TaxInvoice";
+        else if (text.Contains("ใบรับรองแทนใบเสร็จ") || upperText.Contains("CERTIFICATE IN LIEU")) docType = "CertificateInLieu";
+        else if (text.Contains("ใบลดหนี้") || upperText.Contains("CREDIT NOTE")) docType = "CreditNote";
+        else if (text.Contains("ใบเพิ่มหนี้") || upperText.Contains("DEBIT NOTE")) docType = "DebitNote";
+        else if (text.Contains("ใบสั่งซื้อ") || upperText.Contains("PURCHASE ORDER")) docType = "PurchaseOrder";
+        else if (text.Contains("ใบแจ้งหนี้") || (upperText.Contains("INVOICE") && !upperText.Contains("TAX INVOICE"))) docType = "Invoice";
+        else if (text.Contains("ใบเสร็จรับเงิน") || upperText.Contains("RECEIPT")) docType = "Receipt";
+
+        // Extract all 13-digit Thai tax IDs found in the text
+        var taxIdPattern = @"(\d{1}\s*-?\s*\d{4}\s*-?\s*\d{5}\s*-?\s*\d{2}\s*-?\s*\d{1})";
+        var taxIds = System.Text.RegularExpressions.Regex.Matches(text, taxIdPattern)
+            .Select(m => new string(m.Value.Where(char.IsDigit).ToArray()))
+            .Where(s => s.Length == 13)
+            .Distinct()
+            .Take(5)
+            .ToArray();
+        if (taxIds.Length == 0)
+        {
+            taxIds = System.Text.RegularExpressions.Regex.Matches(text, @"\d{13}")
+                .Select(m => m.Value).Distinct().Take(5).ToArray();
+        }
+
+        // Money amounts — patterns like "1,234.56" or "1234"
+        var amountPattern = @"(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})";
+        var amounts = System.Text.RegularExpressions.Regex.Matches(text, amountPattern)
+            .Select(m => m.Value).Take(20).ToArray();
+
+        // Dates — basic Thai/Western formats
+        var datePattern = @"\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}";
+        var dates = System.Text.RegularExpressions.Regex.Matches(text, datePattern)
+            .Select(m => m.Value).Take(10).ToArray();
+
+        // Document numbers — common prefixes
+        var docNumberPattern = @"(?:เลขที่|No\.?|INV|TAX|REF)\s*[:\#]?\s*([A-Z0-9\-/]{4,20})";
+        var docNumbers = System.Text.RegularExpressions.Regex.Matches(text, docNumberPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(m => m.Groups[1].Value).Take(5).ToArray();
+
+        return new
+        {
+            documentType = docType,
+            taxIds,
+            amounts,
+            dates,
+            documentNumbers = docNumbers,
+            textLength = text.Length
+        };
+    }
+
+    /// <summary>
     /// Rebuild the vendor intelligence cache from existing approved Documents.
     /// Run once after deploy / data import so OCR auto-suggestions work for
     /// vendors that already have history. Idempotent — safe to re-run.

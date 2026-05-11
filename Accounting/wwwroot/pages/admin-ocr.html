@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR Admin - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .ocr-grid { display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+    @media (max-width:1024px) { .ocr-grid { grid-template-columns: 1fr; } }
+    .status-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+    .status-ok { background:#dcfce7; color:#166534; }
+    .status-warn { background:#fef3c7; color:#92400e; }
+    .status-err { background:#fee2e2; color:#991b1b; }
+    .drop-zone {
+      border:2px dashed #cbd5e1; border-radius:12px; padding:48px 20px;
+      text-align:center; cursor:pointer; transition:all .2s;
+      background:#f8fafc;
+    }
+    .drop-zone.dragover, .drop-zone:hover { border-color:#0d9488; background:#f0fdfa; }
+    .field-grid { display:grid; grid-template-columns: 140px 1fr; gap:8px; font-size:13px; }
+    .field-key { color:#64748b; font-weight:600; }
+    .field-val { font-family:'JetBrains Mono', monospace; word-break:break-all; }
+    .tag { display:inline-block; background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:4px; font-size:11px; margin:2px 2px 0 0; font-family:monospace; }
+    pre.rawtext {
+      background:#1e1e2e; color:#cdd6f4; padding:14px; border-radius:8px;
+      white-space:pre-wrap; word-break:break-word; max-height:400px; overflow:auto;
+      font-size:12px; line-height:1.6;
+    }
+  </style>
+</head>
+<body>
+  <div id="layout-shell"></div>
+  <main id="layout-main">
+    <div class="container" style="max-width:1400px;margin:0 auto;padding:20px">
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h1 style="margin:0;font-size:24px;font-weight:700">⚙️ OCR Admin Console</h1>
+          <p style="margin:4px 0 0;color:#64748b;font-size:14px">ตั้งค่า OCR providers, ทดสอบ, และ train ระบบเรียนรู้</p>
+        </div>
+        <div id="overallStatus"></div>
+      </div>
+
+      <!-- Top: Provider status cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:24px">
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <strong>☁️ Azure DI</strong>
+            <span id="statusAzure" class="status-pill status-warn">checking…</span>
+          </div>
+          <div id="azureDetail" style="font-size:12px;color:#64748b">—</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <strong>🔧 Embedded Tesseract</strong>
+            <span id="statusEmbedded" class="status-pill status-warn">checking…</span>
+          </div>
+          <div id="embeddedDetail" style="font-size:12px;color:#64748b">—</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <strong>🐍 Python service (optional)</strong>
+            <span class="status-pill status-warn">info</span>
+          </div>
+          <div style="font-size:12px;color:#64748b">ตั้งค่าผ่าน Ocr:LocalServiceUrl ใน appsettings.json — รัน scripts/setup-paddle-easyocr.sh เพื่อเปิดใช้</div>
+        </div>
+      </div>
+
+      <!-- Main grid: config + test -->
+      <div class="ocr-grid">
+
+        <!-- LEFT: Configuration -->
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px">
+          <h2 style="font-size:18px;margin:0 0 16px">การตั้งค่า Provider</h2>
+
+          <div style="margin-bottom:16px">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer">
+              <input type="checkbox" id="azureEnabled" style="width:18px;height:18px">
+              เปิดใช้ Azure Document Intelligence
+            </label>
+            <p style="font-size:12px;color:#64748b;margin:4px 0 0">ถ้าปิด — ระบบจะใช้ Embedded Tesseract หรือ Python service ทันที</p>
+          </div>
+
+          <div id="azureFields">
+            <div style="margin-bottom:12px">
+              <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Endpoint</label>
+              <input type="text" id="azureEndpoint" placeholder="https://your-resource.cognitiveservices.azure.com/"
+                style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:monospace">
+            </div>
+            <div style="margin-bottom:12px">
+              <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">API Key</label>
+              <input type="password" id="azureApiKey" placeholder="ใส่ค่าใหม่เพื่อเปลี่ยน (ค่าเดิมถูกซ่อน)"
+                style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:monospace">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+              <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Model ID</label>
+                <input type="text" id="azureModelId" value="prebuilt-invoice"
+                  style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:monospace">
+              </div>
+              <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">API Version</label>
+                <input type="text" id="azureApiVersion" value="2024-11-30"
+                  style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:monospace">
+              </div>
+            </div>
+          </div>
+
+          <button onclick="Page.saveConfig()" style="background:#0d9488;color:white;border:none;padding:10px 20px;border-radius:6px;font-weight:600;cursor:pointer;width:100%">
+            💾 บันทึกการตั้งค่า
+          </button>
+
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0">
+
+          <h3 style="font-size:16px;margin:0 0 12px">🧠 Self-Learning</h3>
+          <p style="font-size:13px;color:#475569;margin-bottom:10px">
+            ระบบเรียนรู้ประเภทเอกสาร, รหัสบัญชี, WHT ของผู้ขายแต่ละรายโดยอัตโนมัติเมื่ออนุมัติเอกสาร
+          </p>
+          <button onclick="Page.runBackfill()" style="background:#0891b2;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;margin-right:8px">
+            🔄 เรียนรู้จากเอกสารเก่า
+          </button>
+          <button onclick="Page.openVendorLookup()" style="background:#475569;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">
+            🔍 ดูข้อมูลที่เรียนรู้
+          </button>
+        </div>
+
+        <!-- RIGHT: Test playground -->
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px">
+          <h2 style="font-size:18px;margin:0 0 16px">🧪 ทดสอบ OCR</h2>
+
+          <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
+            <label style="font-size:13px;font-weight:600">Provider:</label>
+            <select id="testProvider" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+              <option value="embedded">Embedded Tesseract</option>
+              <option value="azure">Azure DI</option>
+            </select>
+          </div>
+
+          <div id="dropZone" class="drop-zone" onclick="document.getElementById('testFileInput').click()">
+            <div style="font-size:48px">📄</div>
+            <div style="margin-top:8px;font-weight:600">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">รองรับ: JPG, PNG, PDF (max 10MB) — ทดสอบไม่กิน quota</div>
+          </div>
+          <input type="file" id="testFileInput" style="display:none" accept="image/*,application/pdf" onchange="Page.runTest(this.files[0])">
+
+          <div id="testResult" style="margin-top:16px;display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <strong>ผลลัพธ์:</strong>
+              <span id="testProviderLabel" style="font-size:12px;color:#64748b"></span>
+            </div>
+
+            <!-- Parsed fields -->
+            <div style="background:#f0fdfa;border:1px solid #5eead4;border-radius:8px;padding:12px;margin-bottom:12px">
+              <strong style="font-size:13px;color:#134e4a">📊 ข้อมูลที่ระบบแยกได้</strong>
+              <div id="parsedFields" style="margin-top:8px"></div>
+            </div>
+
+            <!-- Train form -->
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px;margin-bottom:12px">
+              <strong style="font-size:13px;color:#78350f">🎓 สอนระบบ (Self-Learning)</strong>
+              <p style="font-size:12px;color:#78350f;margin:4px 0 10px">
+                กรอกข้อมูลด้านล่างเพื่อสอน VendorIntel + ExpenseCategoryLearner สำหรับการสแกนครั้งถัดไป
+              </p>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+                <input type="text" id="trainVendorName" placeholder="ชื่อผู้ขาย" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+                <input type="text" id="trainVendorTaxId" placeholder="เลขประจำตัวผู้เสียภาษี" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 140px;gap:8px;margin-bottom:8px">
+                <input type="text" id="trainDescription" placeholder="คำอธิบายรายการ (เช่น ค่าน้ำมัน)" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
+                <input type="text" id="trainAccountCode" placeholder="รหัสบัญชี" style="padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px;font-family:monospace">
+              </div>
+              <button onclick="Page.train()" style="background:#d97706;color:white;border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px">
+                ✓ สอนระบบ
+              </button>
+            </div>
+
+            <!-- Raw text -->
+            <details>
+              <summary style="cursor:pointer;font-size:13px;font-weight:600;margin-bottom:8px">📜 Raw OCR Text</summary>
+              <pre id="rawText" class="rawtext"></pre>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vendor lookup modal -->
+      <div id="vendorModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+        <div style="background:white;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <h3 style="margin:0">🔍 ดูข้อมูลที่ระบบเรียนรู้</h3>
+            <button onclick="document.getElementById('vendorModal').style.display='none'" style="background:none;border:none;font-size:24px;cursor:pointer">×</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+            <input type="text" id="lookupTaxId" placeholder="เลขประจำตัวผู้เสียภาษี" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-family:monospace">
+            <input type="text" id="lookupName" placeholder="หรือชื่อผู้ขาย" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px">
+          </div>
+          <button onclick="Page.lookupVendor()" style="background:#0d9488;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;width:100%;margin-bottom:14px">
+            ค้นหา
+          </button>
+          <div id="vendorLookupResult"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('admin-ocr')) return;
+        Layout.setTitle('OCR Admin');
+        await this.loadConfig();
+        this.setupDropZone();
+      },
+
+      async loadConfig() {
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.get(`/api/companies/${cid}/ocr/admin/config`);
+          if (!res?.success) throw new Error(res?.message || 'load failed');
+          const cfg = res.data;
+
+          // Azure
+          document.getElementById('azureEnabled').checked = cfg.azure.enabled;
+          document.getElementById('azureEndpoint').value = cfg.azure.endpoint || '';
+          document.getElementById('azureApiKey').value = '';  // never preload secret
+          document.getElementById('azureModelId').value = cfg.azure.modelId || 'prebuilt-invoice';
+          document.getElementById('azureApiVersion').value = cfg.azure.apiVersion || '2024-11-30';
+
+          const azPill = document.getElementById('statusAzure');
+          if (cfg.azure.enabled && cfg.azure.hasApiKey) {
+            azPill.textContent = 'Enabled';
+            azPill.className = 'status-pill status-ok';
+            document.getElementById('azureDetail').textContent = cfg.azure.endpoint || '';
+          } else {
+            azPill.textContent = 'Disabled';
+            azPill.className = 'status-pill status-warn';
+            document.getElementById('azureDetail').textContent = cfg.azure.enabled ? 'ขาด API Key' : 'ปิดใช้งาน';
+          }
+
+          // Embedded
+          const embPill = document.getElementById('statusEmbedded');
+          if (cfg.embedded.available) {
+            embPill.textContent = 'Ready';
+            embPill.className = 'status-pill status-ok';
+            document.getElementById('embeddedDetail').textContent = 'ภาษา: ' + (cfg.embedded.languages || []).join(', ');
+          } else {
+            embPill.textContent = 'Missing tessdata';
+            embPill.className = 'status-pill status-err';
+            document.getElementById('embeddedDetail').innerHTML = 'รัน <code>scripts/download-tessdata.sh</code> เพื่อ install';
+          }
+
+          // Overall
+          const overall = cfg.embedded.available || (cfg.azure.enabled && cfg.azure.hasApiKey);
+          document.getElementById('overallStatus').innerHTML =
+            `<span class="status-pill ${overall ? 'status-ok' : 'status-err'}">${overall ? 'พร้อมใช้งาน' : 'ยังใช้ไม่ได้'}</span>`;
+        } catch (e) {
+          alert('โหลดการตั้งค่าไม่สำเร็จ: ' + e.message);
+        }
+      },
+
+      async saveConfig() {
+        const cid = Layout.getCompanyId();
+        const body = {
+          azureDiEnabled: document.getElementById('azureEnabled').checked,
+          azureDiEndpoint: document.getElementById('azureEndpoint').value.trim() || null,
+          azureDiModelId: document.getElementById('azureModelId').value.trim() || null,
+          azureDiApiVersion: document.getElementById('azureApiVersion').value.trim() || null,
+        };
+        const newKey = document.getElementById('azureApiKey').value.trim();
+        if (newKey) body.azureDiApiKey = newKey;
+
+        try {
+          const res = await API.put(`/api/companies/${cid}/ocr/admin/config`, body);
+          if (!res?.success) throw new Error(res?.message || 'save failed');
+          alert('บันทึกแล้ว');
+          await this.loadConfig();
+        } catch (e) {
+          alert('บันทึกไม่สำเร็จ: ' + e.message);
+        }
+      },
+
+      setupDropZone() {
+        const zone = document.getElementById('dropZone');
+        zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', e => {
+          e.preventDefault();
+          zone.classList.remove('dragover');
+          if (e.dataTransfer.files.length > 0) this.runTest(e.dataTransfer.files[0]);
+        });
+      },
+
+      async runTest(file) {
+        if (!file) return;
+        const cid = Layout.getCompanyId();
+        const provider = document.getElementById('testProvider').value;
+        const resultBox = document.getElementById('testResult');
+        resultBox.style.display = 'block';
+        document.getElementById('parsedFields').innerHTML = '<em style="color:#64748b">กำลังประมวลผล...</em>';
+        document.getElementById('rawText').textContent = '';
+
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+          const url = `/api/companies/${cid}/ocr/admin/test-scan?forceProvider=${provider}`;
+          const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token },
+            body: fd
+          });
+          const res = await r.json();
+          if (!r.ok || !res?.success) {
+            document.getElementById('parsedFields').innerHTML = `<span style="color:#dc2626">❌ ${res?.message || res?.data?.error || 'ผิดพลาด'}</span>`;
+            return;
+          }
+          const d = res.data;
+          document.getElementById('testProviderLabel').textContent = `${d.provider} • confidence ${(d.confidence * 100).toFixed(0)}%`;
+
+          // Parsed fields
+          const p = d.parsedFields;
+          if (!p) {
+            document.getElementById('parsedFields').innerHTML = '<em style="color:#64748b">ไม่มีข้อมูลที่แยกได้</em>';
+          } else {
+            document.getElementById('parsedFields').innerHTML = `
+              <div class="field-grid">
+                <div class="field-key">ประเภทเอกสาร:</div><div class="field-val">${p.documentType || '—'}</div>
+                <div class="field-key">เลขประจำตัวผู้เสียภาษี:</div><div class="field-val">${(p.taxIds || []).map(t=>'<span class="tag">'+t+'</span>').join('') || '—'}</div>
+                <div class="field-key">เลขที่เอกสาร:</div><div class="field-val">${(p.documentNumbers || []).map(t=>'<span class="tag">'+t+'</span>').join('') || '—'}</div>
+                <div class="field-key">วันที่:</div><div class="field-val">${(p.dates || []).map(t=>'<span class="tag">'+t+'</span>').join('') || '—'}</div>
+                <div class="field-key">ยอดเงิน:</div><div class="field-val">${(p.amounts || []).slice(0, 10).map(t=>'<span class="tag">'+t+'</span>').join('') || '—'}</div>
+                <div class="field-key">ความยาวข้อความ:</div><div class="field-val">${p.textLength} ตัวอักษร</div>
+              </div>`;
+
+            // Pre-fill train form with detected values
+            if ((p.taxIds || []).length > 0) document.getElementById('trainVendorTaxId').value = p.taxIds[0];
+          }
+
+          // Raw text
+          document.getElementById('rawText').textContent = d.rawText || '(ไม่มีข้อความ)';
+        } catch (e) {
+          document.getElementById('parsedFields').innerHTML = `<span style="color:#dc2626">❌ ${e.message}</span>`;
+        }
+      },
+
+      async train() {
+        const cid = Layout.getCompanyId();
+        const body = {
+          vendorName: document.getElementById('trainVendorName').value.trim() || null,
+          vendorTaxId: document.getElementById('trainVendorTaxId').value.trim() || null,
+          description: document.getElementById('trainDescription').value.trim() || null,
+          accountCode: document.getElementById('trainAccountCode').value.trim(),
+        };
+        if (!body.accountCode) { alert('กรุณากรอกรหัสบัญชี'); return; }
+        if (!body.vendorName && !body.vendorTaxId) { alert('กรุณากรอกชื่อหรือเลขประจำตัวผู้ขาย'); return; }
+        try {
+          const res = await API.post(`/api/companies/${cid}/ocr/admin/train-from-sample`, body);
+          if (!res?.success) throw new Error(res?.message);
+          alert(res.message || 'สอนระบบเรียบร้อย');
+        } catch (e) {
+          alert('สอนไม่สำเร็จ: ' + e.message);
+        }
+      },
+
+      async runBackfill() {
+        if (!confirm('ระบบจะอ่านเอกสารย้อนหลัง 24 เดือนเพื่อเรียนรู้ — ดำเนินการต่อ?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/ocr/intelligence/backfill?sinceMonths=24`);
+          alert(res?.message || `เรียนรู้สำเร็จ ${res?.data?.vendorsTrained || 0} ราย`);
+        } catch (e) {
+          alert('ไม่สำเร็จ: ' + (e?.message || e));
+        }
+      },
+
+      openVendorLookup() {
+        document.getElementById('vendorModal').style.display = 'flex';
+        document.getElementById('vendorLookupResult').innerHTML = '';
+      },
+
+      async lookupVendor() {
+        const cid = Layout.getCompanyId();
+        const taxId = document.getElementById('lookupTaxId').value.trim();
+        const name = document.getElementById('lookupName').value.trim();
+        if (!taxId && !name) { alert('กรอก taxId หรือ name'); return; }
+        const params = new URLSearchParams();
+        if (taxId) params.set('taxId', taxId);
+        if (name) params.set('name', name);
+        try {
+          const res = await API.get(`/api/companies/${cid}/ocr/intelligence/vendor?${params}`);
+          const box = document.getElementById('vendorLookupResult');
+          if (!res?.data) {
+            box.innerHTML = '<em style="color:#64748b">' + (res?.message || 'ไม่พบ') + '</em>';
+            return;
+          }
+          const d = res.data;
+          box.innerHTML = `
+            <div style="background:#f0fdfa;border:1px solid #5eead4;border-radius:8px;padding:14px">
+              <div style="display:grid;grid-template-columns:160px 1fr;gap:8px;font-size:13px">
+                <div style="color:#475569">ผู้ขาย:</div><div><strong>${d.vendorName || '—'}</strong> ${d.vendorTaxId ? '<span class="tag">'+d.vendorTaxId+'</span>' : ''}</div>
+                <div style="color:#475569">ประเภทเอกสารหลัก:</div><div><strong>${d.mostCommonDocumentType || '—'}</strong> (${d.mostCommonDocumentTypeCount}/${d.totalDocuments} ครั้ง)</div>
+                <div style="color:#475569">รหัสบัญชีหลัก:</div><div><strong>${d.mostCommonDebitAccountCode || '—'}</strong> ${d.mostCommonDebitAccountName ? '— '+d.mostCommonDebitAccountName : ''} (${d.mostCommonDebitAccountCount}/${d.totalDocuments})</div>
+                <div style="color:#475569">WHT ปกติ:</div><div>${d.typicallyHasWht ? '✓ '+(d.typicalWhtRate || '?')+'% ('+d.whtUsageCount+'/'+d.totalDocuments+')' : '— ไม่มี WHT'}</div>
+                <div style="color:#475569">ยอดเงินเฉลี่ย:</div><div>${d.avgTotalAmount ? d.avgTotalAmount.toLocaleString() + ' บาท (' + (d.minTotalAmount || 0).toLocaleString() + ' - ' + (d.maxTotalAmount || 0).toLocaleString() + ')' : '—'}</div>
+                <div style="color:#475569">Payment terms ปกติ:</div><div>${d.typicalPaymentTermsDays ? d.typicalPaymentTermsDays + ' วัน' : '—'}</div>
+                <div style="color:#475569">อัพเดตล่าสุด:</div><div>${d.lastTrainedAt ? new Date(d.lastTrainedAt).toLocaleString('th') : '—'}</div>
+              </div>
+              <details style="margin-top:10px">
+                <summary style="cursor:pointer;font-size:12px;color:#475569">ดู breakdown ทั้งหมด</summary>
+                <pre style="font-size:11px;background:#f8fafc;padding:8px;border-radius:4px;margin-top:6px">DocumentType: ${d.documentTypeBreakdownJson || '{}'}\nAccount: ${d.debitAccountBreakdownJson || '{}'}</pre>
+              </details>
+            </div>`;
+        } catch (e) {
+          document.getElementById('vendorLookupResult').innerHTML = '<span style="color:#dc2626">' + e.message + '</span>';
+        }
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>
