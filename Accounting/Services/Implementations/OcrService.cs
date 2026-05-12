@@ -1074,10 +1074,21 @@ public class OcrService : IOcrService
                 _logger.LogWarning(ex, "Recurring detection failed (non-fatal)");
             }
 
+            // Critical-fields hard gate: even if Confidence and contact match
+            // both look good, refuse to auto-create when the OCR couldn't
+            // extract a usable date, document number, or total. These three
+            // are the bookkeeping minimum — without them the created
+            // document is just noise the user has to delete + redo.
+            var hasUsableTotal = (extractedData.TotalAmount ?? 0) > 0m;
+            var hasUsableDate = extractedData.DocumentDate.HasValue;
+            var hasUsableDocNumber = !string.IsNullOrWhiteSpace(extractedData.DocumentNumber);
+            var criticalFieldsOk = hasUsableTotal && hasUsableDate && hasUsableDocNumber;
+
             if (scanResult.Confidence >= autoCreateThreshold
                 && scanResult.MatchedContactId.HasValue
                 && !scanResult.IsDuplicate
-                && !scanResult.CreatedDocumentId.HasValue)
+                && !scanResult.CreatedDocumentId.HasValue
+                && criticalFieldsOk)
             {
                 try
                 {
@@ -1088,6 +1099,19 @@ public class OcrService : IOcrService
                     _logger.LogWarning(ex, "Auto-create document failed for scan {ScanId}", scanResult.Id);
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-create failed: {ex.Message}";
                 }
+            }
+            else if (scanResult.Confidence >= autoCreateThreshold
+                  && scanResult.MatchedContactId.HasValue
+                  && !criticalFieldsOk)
+            {
+                // Surface why we declined to auto-create — admin opens the
+                // scan and sees exactly which fields the OCR missed.
+                var missing = new List<string>();
+                if (!hasUsableTotal) missing.Add("ยอดรวม");
+                if (!hasUsableDate) missing.Add("วันที่");
+                if (!hasUsableDocNumber) missing.Add("เลขที่เอกสาร");
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + $"\n[Auto-create ระงับ] ข้อมูลสำคัญยังขาด: {string.Join(", ", missing)} — กรุณากรอกใน \"ตรวจสอบ & สอนระบบ\" ก่อนสร้างเอกสาร";
             }
         }
         catch (Exception ex)

@@ -171,15 +171,33 @@ public static class OcrConfidenceGateway
             }
         }
 
-        // 9. Missing critical fields — flag (no penalty, but surface for review)
+        // 9. Missing critical fields — penalize each one heavily so a scan
+        // that can't extract date/number/total can't sail past the auto-
+        // create threshold on TYPE-detection confidence alone. Previously
+        // these were flag-only; auto-create then fired on a document with
+        // every field null (just because "ใบกำกับภาษี" appeared on the
+        // page and ParseThaiDocument set Confidence = 0.95 on that marker).
+        const decimal MissingCriticalPenalty = 0.20m;
         if (string.IsNullOrWhiteSpace(documentNumber))
+        {
             warnings.Add("ไม่พบเลขที่เอกสาร — กรุณาตรวจสอบ");
+            penalty += MissingCriticalPenalty;
+        }
         if (!documentDate.HasValue)
+        {
             warnings.Add("ไม่พบวันที่เอกสาร — กรุณาตรวจสอบ");
+            penalty += MissingCriticalPenalty;
+        }
         if (string.IsNullOrWhiteSpace(vendorName))
+        {
             warnings.Add("ไม่พบชื่อผู้ขาย — กรุณาตรวจสอบ");
+            penalty += MissingCriticalPenalty;
+        }
         if (!total.HasValue || total.Value == 0)
+        {
             warnings.Add("ไม่พบยอดรวม — กรุณาตรวจสอบ");
+            penalty += MissingCriticalPenalty;
+        }
 
         // Cap penalty
         if (penalty > config.MaxPenalty) penalty = config.MaxPenalty;
