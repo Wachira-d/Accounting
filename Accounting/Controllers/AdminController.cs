@@ -1321,12 +1321,23 @@ public class AdminController : ControllerBase
         var result = await seeder.SeedAsync();
         await LogAuditAsync(null, "SystemOcrKnowledgeSeeded",
             $"category+{result.CategoryMappings} vendorIntel+{result.VendorIntelligence} associationRules+{result.AssociationRules}");
+        var totalAdded = result.CategoryMappings + result.VendorIntelligence + result.AssociationRules;
+        var totalExisting = result.ExistingCategoryMappings + result.ExistingVendorIntelligence + result.ExistingAssociationRules;
+        var msg = totalAdded > 0
+            ? $"Seed สำเร็จ: เพิ่มใหม่ {totalAdded} รายการ (มีอยู่แล้ว {totalExisting})"
+            : $"ไม่ได้เพิ่มอะไรใหม่ — ฐานข้อมูลมี seed ครบแล้ว ({totalExisting} รายการ). ระบบ auto-seed ตอน startup เมื่อตารางว่าง — ปกติแล้วครับ";
         return Ok(new ApiResponse<object>(true, new
         {
             categoryMappingsAdded = result.CategoryMappings,
             vendorIntelligenceAdded = result.VendorIntelligence,
             associationRulesAdded = result.AssociationRules,
-        }, $"Seed สำเร็จ: category+{result.CategoryMappings} vi+{result.VendorIntelligence} rules+{result.AssociationRules}"));
+            categoryMappingsExisting = result.ExistingCategoryMappings,
+            vendorIntelligenceExisting = result.ExistingVendorIntelligence,
+            associationRulesExisting = result.ExistingAssociationRules,
+            totalAdded,
+            totalExisting,
+            alreadySeeded = totalAdded == 0 && totalExisting > 0
+        }, msg));
     }
 
     /// <summary>
