@@ -578,6 +578,14 @@
       },
 
       _inFlightUploads: new Set(),
+      // Serializes the duplicate-confirmation modal so multiple files
+      // hitting the same name don't fight over _duplicateResolve.
+      _dupModalChain: Promise.resolve(),
+      // Tunable client-side concurrency. Server-side Azure throttling
+      // is independent (see admin/ocr-config) — this just controls how
+      // many uploads from THIS browser run in parallel before the
+      // server queues them.
+      _maxParallelUploads: 3,
 
       async handleFiles(fileList) {
         const files = Array.from(fileList);
@@ -590,7 +598,7 @@
 
         // Client-side dedup: skip files already being uploaded right now
         const fingerprint = (f) => `${f.name}|${f.size}|${f.lastModified}`;
-        const toUpload = [];
+        const toQueue = [];
         for (const file of validFiles) {
           const key = fingerprint(file);
           if (this._inFlightUploads.has(key)) {
@@ -598,24 +606,35 @@
             continue;
           }
           this._inFlightUploads.add(key);
-          toUpload.push({ file, key });
+          toQueue.push({ file, key, item: this._enqueueFileItem(file) });
         }
 
-        for (const { file, key } of toUpload) {
-          try { await this.processFile(file); }
-          finally { this._inFlightUploads.delete(key); }
-        }
+        // Process with bounded parallelism — N workers pull from the
+        // shared queue. User sees ALL items in the upload list right
+        // away (rendered above as "รอคิว"), and items light up green
+        // as they finish independently rather than appearing one at a
+        // time.
+        const queue = [...toQueue];
+        const worker = async () => {
+          while (queue.length) {
+            const job = queue.shift();
+            try { await this.processFile(job.file, job.item); }
+            finally { this._inFlightUploads.delete(job.key); }
+          }
+        };
+        const workers = Array(Math.min(this._maxParallelUploads, toQueue.length))
+          .fill(0).map(() => worker());
+        await Promise.all(workers);
       },
 
-      async processFile(file) {
-        // Check for duplicates first
-        const isDuplicate = await this.checkDuplicate(file);
-        if (isDuplicate === 'skip') return;
-
-        // Create upload item UI
+      // Render the upload-queue UI item for a file BEFORE any processing
+      // starts. Lets the user see all N files immediately when they drop
+      // a batch — previously only 1-2 appeared because the row was
+      // created inside processFile and that ran serially.
+      _enqueueFileItem(file) {
         const itemId = 'upload-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
         const queue = document.getElementById('uploadQueue');
-        const icon = file.type === 'application/pdf' ? '&#x1F4C4;' : '&#x1F5BC;';
+        const icon = file.type === 'application/pdf' ? '📄' : '🖼️';
         const itemEl = document.createElement('div');
         itemEl.className = 'upload-item';
         itemEl.id = itemId;
@@ -623,14 +642,43 @@
           <div class="upload-item-icon">${icon}</div>
           <div class="upload-item-info">
             <div class="upload-item-name">${Layout.esc(file.name)}</div>
-            <div class="upload-item-status">กำลังอัปโหลด...</div>
+            <div class="upload-item-status">รอคิว...</div>
             <div class="upload-progress-bar"><div class="upload-progress-fill" id="${itemId}-progress"></div></div>
           </div>`;
         queue.prepend(itemEl);
+        return {
+          itemId, itemEl,
+          statusEl: itemEl.querySelector('.upload-item-status'),
+          progressEl: document.getElementById(itemId + '-progress'),
+        };
+      },
+
+      async processFile(file, item) {
+        // Backwards-compat: when called without a pre-rendered item
+        // (legacy single-file paths), create one now.
+        item = item || this._enqueueFileItem(file);
+        const { statusEl, progressEl } = item;
+
+        const { itemEl, itemId } = item;
+
+        // Check for duplicates first — modal chain ensures only ONE
+        // duplicate prompt is visible at a time when a batch has
+        // multiple name-matches.
+        statusEl.textContent = 'ตรวจสอบไฟล์ซ้ำ...';
+        let dupResult;
+        // Wait for previous dup-modal to finish, then await our own.
+        const myDupCheck = this._dupModalChain.then(() => this.checkDuplicate(file));
+        this._dupModalChain = myDupCheck.catch(() => null);    // never let one bad dup-promise break the chain
+        dupResult = await myDupCheck;
+        if (dupResult === 'skip') {
+          statusEl.textContent = '⏭ ข้าม (ไฟล์ซ้ำ)';
+          statusEl.style.color = '#94a3b8';
+          setTimeout(() => { itemEl.style.opacity = '0'; setTimeout(() => itemEl.remove(), 300); }, 3000);
+          return;
+        }
 
         try {
-          // Upload
-          const progressEl = document.getElementById(itemId + '-progress');
+          statusEl.textContent = 'กำลังอัปโหลด...';
           progressEl.style.width = '30%';
 
           const formData = new FormData();
@@ -680,10 +728,10 @@
           setTimeout(() => { itemEl.style.opacity = '0'; setTimeout(() => itemEl.remove(), 300); }, 4000);
           this.loadScans();
         } catch (err) {
-          const progressEl = document.getElementById(itemId + '-progress');
-          if (progressEl) { progressEl.style.width = '100%'; progressEl.classList.add('error'); }
-          const statusEl = itemEl.querySelector('.upload-item-status');
-          if (statusEl) { statusEl.textContent = 'ผิดพลาด: ' + err.message; statusEl.style.color = '#DC2626'; }
+          progressEl.style.width = '100%';
+          progressEl.classList.add('error');
+          statusEl.textContent = 'ผิดพลาด: ' + err.message;
+          statusEl.style.color = '#DC2626';
           Layout.toast('อัปโหลดไม่สำเร็จ: ' + err.message, 'error');
           setTimeout(() => { itemEl.style.opacity = '0'; setTimeout(() => itemEl.remove(), 300); }, 5000);
         }
