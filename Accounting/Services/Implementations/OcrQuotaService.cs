@@ -27,6 +27,56 @@ public class OcrQuotaService : IOcrQuotaService
         if (sub == null)
             return new OcrQuotaStatus(0, 0, 0, 0, 0, DateTime.UtcNow, 0, 0);
 
+        // Self-heal: when the subscription's OCR quotas don't match the
+        // PlanTemplate for its current status, sync them on the fly. This
+        // catches the case where admin edited the template before the
+        // propagation code existed (or the subscription's status was
+        // hand-flipped in the DB outside the upgrade flow) — without it
+        // the tenant sees "10 / 10 pages" forever on an Enterprise plan
+        // and has to wait for the admin to click Resync manually.
+        try
+        {
+            var template = await _db.PlanTemplates.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
+            if (template != null)
+            {
+                bool changed = false;
+                if (sub.Status == SubscriptionStatus.Trial)
+                {
+                    if (sub.MaxOcrPagesPerMonth != template.TrialMaxOcrPagesPerMonth)
+                    { sub.MaxOcrPagesPerMonth = template.TrialMaxOcrPagesPerMonth; changed = true; }
+                }
+                else
+                {
+                    // Paid statuses (Active / PastDue / Expired-in-grace etc.)
+                    // get the full per-engine breakdown.
+                    if (sub.MaxOcrPagesPerMonth != template.MaxOcrPagesPerMonth)
+                    { sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth; changed = true; }
+                    if (sub.AzureOcrPagesPerMonth != template.AzureOcrPagesPerMonth)
+                    { sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth; changed = true; }
+                    if (sub.LocalOcrPagesPerMonth != template.LocalOcrPagesPerMonth)
+                    { sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth; changed = true; }
+                    if (sub.FallbackToLocalWhenAzureExhausted != template.FallbackToLocalWhenAzureExhausted)
+                    { sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted; changed = true; }
+                }
+                if (changed)
+                {
+                    sub.UpdatedBy = "OcrQuota-SelfHeal";
+                    await _db.SaveChangesAsync();
+                    _logger.LogInformation(
+                        "OCR quota self-heal: Subscription {CompanyId} synced from template (status={Status}, total={Total})",
+                        companyId, sub.Status, sub.MaxOcrPagesPerMonth);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Self-heal is best-effort — never let a sync failure block the
+            // quota-read path from returning. The Resync admin button stays
+            // available as a manual escape hatch.
+            _logger.LogWarning(ex, "OCR quota self-heal failed for company {CompanyId}", companyId);
+        }
+
         var siteSettings = await _db.SiteSettings.FirstOrDefaultAsync();
 
         var creditPages = await _db.OcrCreditPurchases
