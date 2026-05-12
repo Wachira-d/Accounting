@@ -49,7 +49,17 @@ public class OcrQuotaService : IOcrQuotaService
             TotalAvailable: Math.Max(0, totalAvailable),
             UsageResetDate: sub.UsageResetDate,
             CreditPricePerPage: siteSettings?.OcrCreditPricePerPage ?? 2.0m,
-            CreditMinPurchase: siteSettings?.OcrCreditMinPurchase ?? 100);
+            CreditMinPurchase: siteSettings?.OcrCreditMinPurchase ?? 100,
+            // Per-engine breakdown so the user-facing UI can show
+            // "Azure used X / Y, Local used X / Y" instead of one
+            // opaque total. Null on either side means "this plan
+            // doesn't split — uses MaxPagesPerMonth above".
+            AzureMaxPagesPerMonth: sub.AzureOcrPagesPerMonth,
+            AzureUsedThisMonth: sub.AzureOcrPagesPerMonth.HasValue ? sub.CurrentMonthAzureOcrPages : null,
+            LocalMaxPagesPerMonth: sub.LocalOcrPagesPerMonth,
+            LocalUsedThisMonth: sub.LocalOcrPagesPerMonth.HasValue ? sub.CurrentMonthLocalOcrPages : null,
+            FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted,
+            PlanName: sub.Plan.ToString());
     }
 
     public async Task<bool> CanScanAsync(Guid companyId)

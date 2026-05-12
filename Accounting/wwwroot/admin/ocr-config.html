@@ -668,33 +668,24 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         </div>
       </div>
 
-      <!-- OCR Quota per Plan -->
+      <!-- OCR Credit pricing (per-page price + minimum purchase) -->
+      <!-- Note: per-plan free quotas (Trial/Basic/Pro/Enterprise) used to live
+           here as "OcrFreePages*" fields, but they were never read by the
+           quota service — the authoritative source is now per-template
+           fields configurable at /admin/plans.html. The duplicate UI was
+           removed to stop admins editing values that had no effect. -->
       <div class="admin-card">
         <div class="admin-card-header">
-          <div class="admin-card-title">โควต้า OCR ตามแพ็กเกจ</div>
-          <div style="font-size:13px;color:#94a3b8;margin-top:4px">จำนวนหน้า OCR ฟรีต่อเดือน สำหรับแต่ละระดับแพ็กเกจ</div>
+          <div class="admin-card-title">ราคาเครดิต OCR</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">
+            สำหรับลูกค้าที่ใช้ quota หมดแล้วต้องการซื้อเครดิตเพิ่ม
+          </div>
         </div>
-        <div class="form-row-4">
-          <div class="form-group">
-            <label>Trial (ทดลอง)</label>
-            <input type="number" id="ocrFreePagesTrial" min="0">
-            <div class="hint">หน้า/เดือน</div>
-          </div>
-          <div class="form-group">
-            <label>Basic</label>
-            <input type="number" id="ocrFreePagesBasic" min="0">
-            <div class="hint">หน้า/เดือน</div>
-          </div>
-          <div class="form-group">
-            <label>Pro</label>
-            <input type="number" id="ocrFreePagesPro" min="0">
-            <div class="hint">หน้า/เดือน</div>
-          </div>
-          <div class="form-group">
-            <label>Enterprise</label>
-            <input type="number" id="ocrFreePagesEnterprise" min="0">
-            <div class="hint">หน้า/เดือน</div>
-          </div>
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;color:#1e3a8a;line-height:1.6">
+          💡 <strong>โควต้า OCR ต่อเดือนสำหรับแต่ละแพ็คเกจ</strong>
+          (Azure DI / Local OCR / Trial) ตั้งค่าได้ที่
+          <a href="/admin/plans.html" style="color:#2563eb;text-decoration:underline;font-weight:600">/admin/plans.html</a>
+          → คลิกปุ่ม ✎ บนแพ็คเกจ → section <strong>"โควต้า OCR (หน้า/เดือน)"</strong>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -907,10 +898,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         badge.textContent = 'ยังไม่ตั้งค่า';
       }
 
-      document.getElementById('ocrFreePagesTrial').value = c.ocrFreePagesTrial;
-      document.getElementById('ocrFreePagesBasic').value = c.ocrFreePagesBasic;
-      document.getElementById('ocrFreePagesPro').value = c.ocrFreePagesPro;
-      document.getElementById('ocrFreePagesEnterprise').value = c.ocrFreePagesEnterprise;
+      // OcrFreePages* (Trial/Basic/Pro/Enterprise) load lines removed —
+      // those fields were never consumed by the quota service. Per-plan
+      // OCR quotas are configured at /admin/plans.html now.
       document.getElementById('ocrCreditPricePerPage').value = c.ocrCreditPricePerPage;
       document.getElementById('ocrCreditMinPurchase').value = c.ocrCreditMinPurchase;
 
@@ -974,10 +964,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           azureDiEnabled: document.getElementById('azureDiEnabled').checked,
           azureDiModelId: document.getElementById('azureDiModelId').value,
           azureDiApiVersion: document.getElementById('azureDiApiVersion').value,
-          ocrFreePagesTrial: parseInt(document.getElementById('ocrFreePagesTrial').value),
-          ocrFreePagesBasic: parseInt(document.getElementById('ocrFreePagesBasic').value),
-          ocrFreePagesPro: parseInt(document.getElementById('ocrFreePagesPro').value),
-          ocrFreePagesEnterprise: parseInt(document.getElementById('ocrFreePagesEnterprise').value),
+          // OcrFreePages* fields removed — moved to per-plan settings in /admin/plans.html
           ocrCreditPricePerPage: parseFloat(document.getElementById('ocrCreditPricePerPage').value),
           ocrCreditMinPurchase: parseInt(document.getElementById('ocrCreditMinPurchase').value),
           ocrGatewayMaxPenalty: parseFloat(document.getElementById('gwMaxPenalty').value),

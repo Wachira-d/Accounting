@@ -63,7 +63,17 @@ public record OcrQuotaStatus(
     int TotalAvailable,
     DateTime UsageResetDate,
     decimal CreditPricePerPage,
-    int CreditMinPurchase);
+    int CreditMinPurchase,
+    // ─── Per-engine breakdown (populated from the Subscription's
+    //     AzureOcrPagesPerMonth / LocalOcrPagesPerMonth, which were
+    //     copied in from PlanTemplate at subscription create time).
+    //     Null on legacy single-budget plans = "uses MaxPagesPerMonth".
+    int? AzureMaxPagesPerMonth = null,
+    int? AzureUsedThisMonth = null,
+    int? LocalMaxPagesPerMonth = null,
+    int? LocalUsedThisMonth = null,
+    bool FallbackToLocalWhenAzureExhausted = true,
+    string? PlanName = null);
 
 public record OcrCreditPurchaseResponse(
     Guid Id,
