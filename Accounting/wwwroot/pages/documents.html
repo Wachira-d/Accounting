@@ -1501,7 +1501,7 @@
         // history or server logs. Streams as blob and triggers a save dialog.
         const api = Layout.api(); if (!api) return;
         const url = api.downloadAttachmentUrl(attachmentId);
-        const token = localStorage.getItem('access_token');
+        const token = localStorage.getItem('token');
         try {
           const res = await fetch(url, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);

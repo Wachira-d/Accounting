@@ -1085,7 +1085,7 @@
         try {
           const res = await fetch(`/api/companies/${cid}/ocr/${scanId}/retry`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
           });
           const data = await res.json();
           if (!data.success) {
@@ -1132,7 +1132,7 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+              'Authorization': `Bearer ${localStorage.getItem('token')}`,
             },
             body: JSON.stringify({
               lineIndex: candidate.lineIndex,

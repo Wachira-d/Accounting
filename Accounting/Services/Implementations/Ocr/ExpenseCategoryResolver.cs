@@ -373,8 +373,14 @@ internal static class ExpenseCategoryResolver
 
     /// <summary>Apply the resolver's output to an OcrExtractedData, filling in
     /// expense category, debit account, and inferring statutory WHT when the
-    /// extracted rate was missing. Conservative — only fills empty fields.</summary>
-    public static void ApplyTo(OcrExtractedData data, CategoryResult result)
+    /// extracted rate was missing. Conservative — only fills empty fields.
+    /// <param name="rawText">Raw OCR text. When supplied, WHT is only inferred
+    /// from the statutory rate when the document ALSO explicitly mentions WHT
+    /// (keyword "หัก ณ ที่จ่าย" / "WHT" / "Withholding Tax" / "ภงด" etc.) —
+    /// otherwise a clean invoice that happens to fall into a WHT-eligible
+    /// category gets a misleading auto-3% added when the actual receipt
+    /// shows no withholding line.</param></summary>
+    public static void ApplyTo(OcrExtractedData data, CategoryResult result, string? rawText = null)
     {
         if (string.IsNullOrEmpty(data.ExpenseCategory))
         {
@@ -387,19 +393,57 @@ internal static class ExpenseCategoryResolver
             data.DebitAccountName = result.AccountName;
             data.FieldConfidence["DebitAccount"] = (double)result.Confidence;
         }
-        // Infer WHT only when the document didn't already pick one up and the
-        // category has a statutory rate. The user can still uncheck it in the
-        // review form.
+        // Infer WHT only when (1) the doc didn't already pick one up,
+        // (2) the category has a statutory rate, AND (3) the raw text
+        // explicitly mentions WHT. The user-visible rule: if the actual
+        // receipt shows no WHT line, don't auto-suggest 1%/3%/etc. just
+        // because the expense category technically allows it.
+        bool docMentionsWht = rawText != null && ContainsWhtKeyword(rawText);
         if (!data.HasWht && !data.WhtRate.HasValue && result.StatutoryWhtRate.HasValue
-            && result.StatutoryWhtRate.Value > 0 && result.Confidence >= 0.6m)
+            && result.StatutoryWhtRate.Value > 0 && result.Confidence >= 0.6m
+            && docMentionsWht)
         {
             data.HasWht = true;
             data.WhtRate = result.StatutoryWhtRate;
             data.FieldConfidence["WhtRate"] = 0.6;  // inferred, not extracted
             data.ReasoningTrace.Add(
-                $"[Category] อนุมาน WHT {result.StatutoryWhtRate}% จากหมวด '{result.Category}' (ป.รัษฎากร ม.50)");
+                $"[Category] อนุมาน WHT {result.StatutoryWhtRate}% จากหมวด '{result.Category}' (ป.รัษฎากร ม.50, เอกสารกล่าวถึง WHT)");
+        }
+        else if (!data.HasWht && result.StatutoryWhtRate.HasValue
+                 && result.StatutoryWhtRate.Value > 0 && rawText != null && !docMentionsWht)
+        {
+            // Surface the deliberate skip so admin can see WHY no WHT was
+            // suggested even though the category rule would have set it.
+            data.ReasoningTrace.Add(
+                $"[Category] ข้าม WHT inference — เอกสารไม่มียอดหัก ณ ที่จ่าย (statutory {result.StatutoryWhtRate}% สำหรับ '{result.Category}' ใช้ไม่ได้)");
         }
         foreach (var r in result.Reasons)
             data.ReasoningTrace.Add("[Category] " + r);
+    }
+
+    /// <summary>True when the raw OCR text contains any phrase that
+    /// indicates the document itself has a withholding-tax line item.
+    /// Conservative match — bare "ภาษี" alone (which appears on every
+    /// VAT invoice) does NOT count; needs the specific WHT phrasing.</summary>
+    private static bool ContainsWhtKeyword(string rawText)
+    {
+        if (string.IsNullOrEmpty(rawText)) return false;
+        // Thai phrases — case-insensitive isn't needed for Thai, but the
+        // English needles below are.
+        if (rawText.Contains("หัก ณ ที่จ่าย")
+            || rawText.Contains("หักภาษี ณ ที่จ่าย")
+            || rawText.Contains("ภาษีหัก ณ ที่จ่าย")
+            || rawText.Contains("ภ.ง.ด.3")
+            || rawText.Contains("ภ.ง.ด.53")
+            || rawText.Contains("ภงด3")
+            || rawText.Contains("ภงด53")
+            || rawText.Contains("50 ทวิ")
+            || rawText.Contains("หนังสือรับรองการหักภาษี"))
+            return true;
+        var lower = rawText.ToLowerInvariant();
+        return lower.Contains("withholding tax")
+            || lower.Contains("wht ")
+            || lower.Contains("wht%")
+            || lower.Contains("wht:");
     }
 }
