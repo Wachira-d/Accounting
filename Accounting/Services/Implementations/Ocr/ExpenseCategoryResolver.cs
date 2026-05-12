@@ -53,7 +53,6 @@ internal static class ExpenseCategoryResolver
         // Score every rule against the corpus; highest wins.
         CategoryRule? best = null;
         decimal bestScore = 0m;
-        bool bestUsedFuzzy = false;
         foreach (var rule in Rules)
         {
             int kwScore = 0;
@@ -80,7 +79,6 @@ internal static class ExpenseCategoryResolver
                     if (sim >= 0.65)
                     {
                         kwScore += 2;     // half of exact match's +4
-                        bestUsedFuzzy = true;
                         break;
                     }
                 }

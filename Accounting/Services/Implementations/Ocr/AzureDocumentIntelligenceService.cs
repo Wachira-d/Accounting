@@ -309,11 +309,11 @@ public class AzureDocumentIntelligenceService
                 {
                     var state = mark.TryGetProperty("state", out var st) ? st.GetString() : null;
                     if (string.IsNullOrEmpty(state)) continue;
-                    var conf = mark.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0m;
+                    var markConf = mark.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0m;
                     result.SelectionMarks.Add(new AzureDiSelectionMark
                     {
                         State = state,
-                        Confidence = conf,
+                        Confidence = markConf,
                         NearbyLabel = null,  // would require bounding-box pairing; skip for MVP
                     });
                 }

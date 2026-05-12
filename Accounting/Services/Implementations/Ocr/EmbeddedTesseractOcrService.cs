@@ -268,6 +268,10 @@ public class EmbeddedTesseractOcrService : IDisposable
             Dpi: dpi,
             WithAnnotations: true);
         int pageIndex = 0;
+        // CA1416: PDFtoImage's ToImages declares per-platform attributes (Android/iOS/etc)
+        // that the analyzer flags conservatively. Our deployment targets — Windows/Linux/
+        // macOS — are all explicitly supported by the library, so suppress the noise here.
+#pragma warning disable CA1416
         foreach (var bitmap in PDFtoImage.Conversion.ToImages(pdfBytes, options: renderOptions))
         {
             using (bitmap)
@@ -278,6 +282,7 @@ public class EmbeddedTesseractOcrService : IDisposable
             pageIndex++;
             if (pageIndex >= maxPages) break;
         }
+#pragma warning restore CA1416
         return pages;
     }
 

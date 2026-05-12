@@ -28,9 +28,9 @@
          or the optional Python ocr-service is not running. tessdata files for
          Thai+English ship in wwwroot/tessdata. -->
     <PackageReference Include="Tesseract" Version="5.2.0" />
-    <!-- 3.1.6 fixes GHSA-2cmq-823j-5qj8 (high) + GHSA-rxmq-m78w-7wmc (moderate).
-         3.1.5 has known vulnerabilities — DO NOT downgrade. -->
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.6" />
+    <!-- 3.1.12 supersedes 3.1.6 — 3.1.6 itself was flagged by GHSA-2cmq-823j-5qj8
+         and GHSA-rxmq-m78w-7wmc after release. DO NOT downgrade past 3.1.12. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <!-- PDF → image rasterization for the embedded OCR path. Pure-managed wrapper
          around SkiaSharp + PDFium; cross-platform native libs ship with NuGet.
          5.1.0 is the lowest version compatible with the API we use. -->

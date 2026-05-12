@@ -58,8 +58,13 @@ public static class ImagePreprocessor
             // 1. EXIF auto-rotate — bake the rotation flag into pixels
             // so downstream consumers see an upright image regardless of
             // how the source device tagged it.
-            var orientation = image.Metadata?.ExifProfile?.GetValue(ExifTag.Orientation);
-            int orientationValue = orientation != null ? (int)Convert.ChangeType(orientation.Value, typeof(int)) : 1;
+            int orientationValue = 1;
+            if (image.Metadata?.ExifProfile is { } exif
+                && exif.TryGetValue(ExifTag.Orientation, out var orientationVal)
+                && orientationVal?.Value is { } ov)
+            {
+                orientationValue = Convert.ToInt32(ov);
+            }
             if (orientationValue > 1 && orientationValue <= 8)
             {
                 image.Mutate(ctx => ctx.AutoOrient());

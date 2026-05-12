@@ -92,17 +92,11 @@ public static class OcrDocumentRoleInferrer
         {
             (int buyerLabelPos, _) = FindRolePhrasePositions(rawText);
 
-            // Heuristic 1 — "หัก ณ ที่จ่าย / WHT certificate" alone is a
-            // strong Seller signal because the supplier ISSUES the cert to
-            // the buyer. We are typically the entity NAMED ON the cert (=
-            // the supplier whose payment got withheld), so when "หัก ณ ที่
-            // จ่าย" + "รับรอง" co-occur, lean Seller. Buyers of WHT-cert
-            // documents normally upload the recipient copy, but defaulting
-            // to Seller is the right bias for the more common bookkeeping
-            // case (we ISSUED the underlying service invoice).
-            var hasWhtCert = ContainsAll(text, "หัก ณ ที่จ่าย", "รับรอง")
+            // Heuristic 1 — WHT-cert presence biases Seller (we issued the
+            // underlying invoice whose payment got withheld).
+            var whtCertHint = ContainsAll(text, "หัก ณ ที่จ่าย", "รับรอง")
                           || text.Contains("withholding tax certificate");
-            if (hasWhtCert && role == "Buyer" && roleConf < 0.7m)
+            if (whtCertHint && role == "Buyer" && roleConf < 0.7m)
             {
                 role = "Seller";
                 roleConf = 0.65m;
