@@ -15,6 +15,20 @@ public class AzureDocumentIntelligenceService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AzureDocumentIntelligenceService> _logger;
 
+    // ─── Batch rate-limiting ───
+    // F0 (free) Azure DI pricing tier is capped at 20 transactions/min and
+    // 1 concurrent request. Paid S0 is 15/sec. We cap concurrent submits
+    // at MaxConcurrentSubmits (2 — conservative; one extra above F0's
+    // strict 1 to ride out brief gaps without hammering). Static semaphore
+    // is process-wide so multi-tenant batch uploads share the cap.
+    //
+    // The 429 handler below ALSO honors the Retry-After header / parsed
+    // hint from the error body — so when admin overrides this to 5 for
+    // a paid tier and still occasionally hits the limit, requests back
+    // off instead of failing the whole upload batch.
+    private const int MaxConcurrentSubmits = 2;
+    private static readonly SemaphoreSlim _submitGate = new(MaxConcurrentSubmits, MaxConcurrentSubmits);
+
     public AzureDocumentIntelligenceService(
         AccountingDbContext db,
         IHttpClientFactory httpClientFactory,
@@ -68,16 +82,27 @@ public class AzureDocumentIntelligenceService
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
             string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
 
+        // Throttle submits to MaxConcurrentSubmits to avoid the F0-tier
+        // 1-concurrent-request limit. Batch uploads of 10 files no longer
+        // burst all at once → no immediate 429 on the back of the queue.
+        // Release as soon as Azure has accepted the submission — polling
+        // doesn't need the submit slot.
+        await _submitGate.WaitAsync(ct);
         HttpResponseMessage submitResponse;
         try
         {
-            submitResponse = await client.PostAsync(analyzeUrl, content, ct);
+            // 429-aware submit with up to 3 retries. Each retry honors
+            // the Retry-After header (Azure returns this on 429) so we
+            // wait exactly as long as Azure wants us to, no busy-loop.
+            submitResponse = await PostWith429RetryAsync(client, analyzeUrl, fileBytes, contentType, ct);
         }
         catch (Exception ex)
         {
+            _submitGate.Release();
             _logger.LogError(ex, "Azure DI submit failed");
             return new AzureDiResult { Success = false, ErrorMessage = ex.Message };
         }
+        _submitGate.Release();
 
         if (submitResponse.StatusCode != System.Net.HttpStatusCode.Accepted)
         {
@@ -102,6 +127,19 @@ public class AzureDocumentIntelligenceService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Azure DI poll attempt {Attempt} failed", attempt);
+                continue;
+            }
+
+            // 429 on the poll endpoint — F0 tier hits this when many
+            // tenants are scanning at once. Sleep for the Retry-After
+            // duration Azure provided (capped at 60s) and try again
+            // instead of failing the whole scan back to Tesseract.
+            if ((int)pollResponse.StatusCode == 429)
+            {
+                var waitSec = ParseRetryAfter(pollResponse) ?? ExtractRetryFromBody(await pollResponse.Content.ReadAsStringAsync(ct)) ?? 10;
+                waitSec = Math.Min(waitSec, 60);
+                _logger.LogInformation("Azure DI poll 429 — backing off {Sec}s (attempt {Attempt})", waitSec, attempt);
+                await Task.Delay(TimeSpan.FromSeconds(waitSec), ct);
                 continue;
             }
 
@@ -544,6 +582,66 @@ public class AzureDocumentIntelligenceService
         if (!fields.TryGetProperty(name, out var f)) return null;
         if (f.TryGetProperty("valueNumber", out var n))
             return n.GetDecimal();
+        return null;
+    }
+
+    /// <summary>POST the analyze submission with built-in 429 retry. Honors
+    /// Retry-After header and the "Please retry after N seconds" hint
+    /// inside Azure's error JSON. Up to 3 retries; total wait capped so
+    /// batch uploads back off without freezing the scan pipeline.</summary>
+    private async Task<HttpResponseMessage> PostWith429RetryAsync(
+        HttpClient client, string url, byte[] fileBytes, string contentType, CancellationToken ct)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            // Each attempt needs a fresh content payload — HttpContent
+            // streams once and is disposed after PostAsync. Reusing the
+            // outer content would throw on the second call.
+            using var body = new ByteArrayContent(fileBytes);
+            body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
+
+            var response = await client.PostAsync(url, body, ct);
+            if ((int)response.StatusCode != 429) return response;
+
+            var waitSec = ParseRetryAfter(response)
+                ?? ExtractRetryFromBody(await response.Content.ReadAsStringAsync(ct))
+                ?? (10 * (attempt + 1));     // exponential-ish: 10s, 20s, 30s
+            waitSec = Math.Min(waitSec, 60);
+            _logger.LogInformation("Azure DI submit 429 — backing off {Sec}s (attempt {Attempt}/3)", waitSec, attempt + 1);
+            response.Dispose();
+            await Task.Delay(TimeSpan.FromSeconds(waitSec), ct);
+        }
+        // Final attempt — return whatever Azure gives us (likely another
+        // 429) and let the caller surface it.
+        using var finalBody = new ByteArrayContent(fileBytes);
+        finalBody.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
+        return await client.PostAsync(url, finalBody, ct);
+    }
+
+    /// <summary>Read the Retry-After header. Returns the number of seconds
+    /// to wait or null when the header is missing / malformed.</summary>
+    private static int? ParseRetryAfter(HttpResponseMessage response)
+    {
+        var ra = response.Headers.RetryAfter;
+        if (ra?.Delta.HasValue == true) return (int)ra.Delta.Value.TotalSeconds;
+        if (ra?.Date.HasValue == true)
+        {
+            var s = (int)(ra.Date.Value - DateTimeOffset.UtcNow).TotalSeconds;
+            return s > 0 ? s : 1;
+        }
+        return null;
+    }
+
+    /// <summary>Extract the "Please retry after N seconds" hint Azure DI
+    /// embeds in its 429 error body. F0-tier limit messages look like
+    /// "Please retry after 39 seconds. To increase your rate limit ...".</summary>
+    private static int? ExtractRetryFromBody(string body)
+    {
+        if (string.IsNullOrEmpty(body)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(body, @"retry after (\d+)\s*sec", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (m.Success && int.TryParse(m.Groups[1].Value, out var n)) return n;
         return null;
     }
 }
