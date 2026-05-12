@@ -13,6 +13,24 @@ namespace Accounting.Services.Implementations;
 
 public class OcrService : IOcrService
 {
+    // Pre-compiled vendor-detail regexes used by ParseThaiDocument — hot path,
+    // 4-5 invocations per scan, so the compilation cost is worth amortizing.
+    private static readonly Regex VendorPhoneRegex = new(
+        @"(?:โทร(?:ศัพท์)?\.?|TEL\.?|TELEPHONE|PHONE|มือถือ)\s*[:：]?\s*([0-9][\d\-\s\.()]{7,18}\d)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex VendorEmailRegex = new(
+        @"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}",
+        RegexOptions.Compiled);
+    private static readonly Regex VendorBranchRegex = new(
+        @"(?:สาขา(?:ที่)?|BRANCH)\s*(?:เลข(?:ที่)?\s*)?[:：]?\s*(\d{1,5})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex HeadOfficeRegex = new(
+        @"สำนักงานใหญ่|HEAD\s*OFFICE",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex VendorAddressRegex = new(
+        @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private readonly AccountingDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
@@ -802,6 +820,9 @@ public class OcrService : IOcrService
             //   3. No TaxId at all but strong vendor name + address → create
             //      with TaxId=null, ContactType=JuristicPerson (best guess).
             //   4. Nothing actionable → leave Contact null + surface note.
+            // contactJustCreated short-circuits the enrichment block below
+            // (the freshly-created contact already has every field we'd fill).
+            bool contactJustCreated = false;
             if (!scanResult.MatchedContactId.HasValue
                 && extractedData.DbdMatched
                 && !string.IsNullOrEmpty(extractedData.VendorTaxId))
@@ -833,6 +854,7 @@ public class OcrService : IOcrService
                 _db.Contacts.Add(newContact);
                 await _db.SaveChangesAsync();
                 scanResult.MatchedContactId = newContact.Id;
+                contactJustCreated = true;
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                     + $"\n[Auto-Create] สร้าง Contact ใหม่จากข้อมูล DBD: {newContact.Name} (TaxID {newContact.TaxId})";
                 _logger.LogInformation("Auto-created DBD-verified contact for company {CompanyId} TaxId={TaxId} Name={Name}",
@@ -898,6 +920,7 @@ public class OcrService : IOcrService
                     _db.Contacts.Add(newContact);
                     await _db.SaveChangesAsync();
                     scanResult.MatchedContactId = newContact.Id;
+                    contactJustCreated = true;
                     var verifyHint = extractedData.DbdLookupAttempted
                         ? "DBD ยืนยันไม่ได้"
                         : "ไม่ได้ตรวจกับ DBD";
@@ -918,7 +941,8 @@ public class OcrService : IOcrService
                         + $"\n[Manual Review Required] ไม่สามารถยืนยัน TaxID {extractedData.VendorTaxId} จาก DBD/RD และข้อมูลผู้ขายไม่เพียงพอ — กรุณาตรวจสอบและสร้าง Contact ด้วยตนเอง";
                 }
             }
-            if (scanResult.MatchedContactId.HasValue
+            if (!contactJustCreated
+                && scanResult.MatchedContactId.HasValue
                 && (extractedData.DbdCanonicalName != null
                     || !string.IsNullOrWhiteSpace(extractedData.VendorPhone)
                     || !string.IsNullOrWhiteSpace(extractedData.VendorAddress)))
@@ -2109,62 +2133,34 @@ public class OcrService : IOcrService
         data.VendorName = vendorName;
         data.VendorTaxId = vendorTaxId;
 
-        // ─── Vendor contact details (used by Contact-fallback auto-create) ───
-        // Phone: covers Thai land-line, mobile, and 4-digit short codes.
-        // Examples this matches: "02-123-4567", "081 234 5678", "1234"
-        // Anchored to keywords (โทร / TEL) where possible to avoid grabbing
-        // a random number on the page (postal/document/tax IDs).
-        var phoneMatch = Regex.Match(text,
-            @"(?:โทร(?:ศัพท์)?\.?|TEL\.?|TELEPHONE|PHONE|มือถือ)\s*[:：]?\s*([0-9][\d\-\s\.()]{7,18}\d)",
-            RegexOptions.IgnoreCase);
+        // Vendor contact details — anchored to Thai keywords so a random
+        // 13-digit TaxId or 5-digit postal code can't be misread as a phone.
+        var phoneMatch = VendorPhoneRegex.Match(text);
         if (phoneMatch.Success)
         {
             var raw = phoneMatch.Groups[1].Value;
-            var digits = Regex.Replace(raw, @"[^\d]", "");
-            // Filter out the obvious non-phones: 13 digits = TaxId, 5 = postal.
-            if (digits.Length >= 9 && digits.Length <= 11)
+            var digitCount = raw.Count(char.IsDigit);
+            if (digitCount >= 9 && digitCount <= 11)
                 data.VendorPhone = raw.Trim();
         }
 
-        // Email — RFC-lite, sufficient for the patterns Thai vendors actually
-        // use ("contact@example.co.th"). Picks the FIRST email on the page
-        // which is typically the seller's; buyer emails appear less often in
-        // Thai receipts.
-        var emailMatch = Regex.Match(text, @"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}");
+        var emailMatch = VendorEmailRegex.Match(text);
         if (emailMatch.Success)
             data.VendorEmail = emailMatch.Value.Trim().TrimEnd('.', ',', ';');
 
-        // Branch code — Thai e-Tax requires this 5-digit code separately
-        // from TaxId. Common pattern is "สาขา 00001" or "Branch 00001"
-        // or "สาขาที่ 1" (we pad those to 5 digits as the e-Tax spec demands).
-        var branchMatch = Regex.Match(text,
-            @"(?:สาขา(?:ที่)?|BRANCH)\s*(?:เลข(?:ที่)?\s*)?[:：]?\s*(\d{1,5})",
-            RegexOptions.IgnoreCase);
+        // Branch code — e-Tax spec requires 5-digit zero-padded; "00000" = HQ.
+        var branchMatch = VendorBranchRegex.Match(text);
         if (branchMatch.Success)
-        {
-            var b = branchMatch.Groups[1].Value.PadLeft(5, '0');
-            data.VendorBranchCode = b;
-        }
-        else if (Regex.IsMatch(text, @"สำนักงานใหญ่|HEAD\s*OFFICE", RegexOptions.IgnoreCase))
-        {
-            // e-Tax spec encodes the head office as "00000".
+            data.VendorBranchCode = branchMatch.Groups[1].Value.PadLeft(5, '0');
+        else if (HeadOfficeRegex.IsMatch(text))
             data.VendorBranchCode = "00000";
-        }
 
-        // Address — heuristic: collect lines between "ที่อยู่" / "Address"
-        // and the next blank line or the next labelled field (เลขที่ผู้เสีย/โทร).
-        // Falls through to null when the document doesn't have a clear
-        // address block — fine because DBD's address takes precedence.
-        var addrMatch = Regex.Match(text,
-            @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
-            RegexOptions.IgnoreCase);
+        var addrMatch = VendorAddressRegex.Match(text);
         if (addrMatch.Success)
         {
             var raw = addrMatch.Groups[1].Value
                 .Replace("\r", " ").Replace("\n", " ")
                 .Trim();
-            // Sanity cap — anything > 250 chars is almost certainly a parse
-            // bleed-through and not a real address.
             if (raw.Length >= 10 && raw.Length <= 250)
                 data.VendorAddress = raw;
         }

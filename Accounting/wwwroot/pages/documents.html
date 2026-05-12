@@ -670,8 +670,17 @@
       },
       populateContacts() {
         if (!this._contactAC) {
+          const inp = document.getElementById('fContact');
+          const originalPlaceholder = inp?.placeholder || '';
           this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId', {
-            onSelect: (c) => { this._selectedContact = c; this.onContactChange(); }
+            onSelect: (c) => {
+              // Restore the default placeholder — the scan-handoff path
+              // overrides it with a "please pick" hint that would otherwise
+              // linger after the user actually picked a contact.
+              if (inp) inp.placeholder = originalPlaceholder;
+              this._selectedContact = c;
+              this.onContactChange();
+            }
           });
         }
       },
@@ -940,17 +949,9 @@
             row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
             row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
-            // Restore the product linkage chip if this line was previously
-            // tied to a product. The chip shows the code + offers an unlink ✕.
             if (l.productCode) {
               row.dataset.productCode = l.productCode;
-              const descCell = row.querySelector('[data-f="desc"]').closest('td');
-              const chip = document.createElement('div');
-              chip.className = 'product-chip';
-              chip.style.cssText = 'font-size:10px;color:#0369a1;margin-top:2px;display:flex;align-items:center;gap:4px';
-              chip.innerHTML = `📦 ${Layout.esc(l.productCode)} <a href="javascript:void(0)" style="color:#94a3b8;text-decoration:none" title="ยกเลิกการผูกสินค้า">✕</a>`;
-              chip.querySelector('a').addEventListener('click', () => { row.dataset.productCode = ''; chip.remove(); });
-              descCell.appendChild(chip);
+              if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
             }
           });
           if (!d.lines?.length) this.addLine();
