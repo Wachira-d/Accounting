@@ -109,6 +109,27 @@ public class CompanySettings : TenantEntity
     // counts twice; range 1.0–10.0.
     public decimal OwnTrainingBonusMultiplier { get; set; } = 2.0m;
 
+    // ─── OCR document-target preference ───
+    // When OCR scans a Buyer-side TaxInvoice / Invoice and the system
+    // has no vendor-specific history yet, what does THIS company usually
+    // book it as? Three common Thai SME flows:
+    //
+    //   • PaymentVoucher (default) — cash-basis. User uploads tax-invoice,
+    //     books PaymentVoucher (Dr Expense / Cr Cash) immediately because
+    //     they pay on receipt. Most one-person / small-team businesses.
+    //
+    //   • PurchaseInvoice — accrual A/P workflow. User books the
+    //     PurchaseInvoice (Dr Expense / Cr A/P), pays later via a
+    //     separate PaymentVoucher. Larger businesses with month-end close.
+    //
+    //   • Expense — quick-and-dirty journal. Skip the document workflow
+    //     entirely, post directly to Expense. Used for petty-cash flow.
+    //
+    // VendorIntelligenceService still overrides this when it has high-
+    // confidence history for a specific vendor — the setting is the
+    // FALLBACK when there's no learned preference yet.
+    public DocumentType OcrBuyerInvoiceDefaultTarget { get; set; } = DocumentType.PaymentVoucher;
+
     // Landing Page – Accounting Services
     public string? LandingContactPhone { get; set; }           // เบอร์ติดต่อแสดงหน้าแรก
     public string? LandingContactLine { get; set; }            // LINE ID

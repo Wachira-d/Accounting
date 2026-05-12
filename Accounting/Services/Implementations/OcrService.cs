@@ -491,6 +491,14 @@ public class OcrService : IOcrService
                 .Where(c => c.Id == companyId && !c.IsDeleted)
                 .Select(c => new { c.TaxId, c.Name, c.BusinessType, c.IndustryType })
                 .FirstOrDefaultAsync();
+            // Per-company preference for Buyer + TaxInvoice flow target.
+            // Defaults to PaymentVoucher (cash-basis, most Thai SMEs);
+            // accrual-basis companies set it to PurchaseInvoice in
+            // CompanySettings.
+            var buyerInvoiceTarget = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (DocumentType?)c.OcrBuyerInvoiceDefaultTarget)
+                .FirstOrDefaultAsync();
             {
                 DocumentType? prevScanned = null;
                 if (Enum.TryParse<DocumentType>(extractedData.DocumentType, ignoreCase: true, out var prevDt))
@@ -508,7 +516,8 @@ public class OcrService : IOcrService
                     buyerName: extractedData.BuyerName,
                     companyTaxId: companyContext?.TaxId,
                     companyName: companyContext?.Name,
-                    previousScannedType: prevScanned);
+                    previousScannedType: prevScanned,
+                    buyerInvoiceDefaultTarget: buyerInvoiceTarget);
                 if (role.ScannedDocType.HasValue)
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
                 extractedData.OurRole = role.OurRole;

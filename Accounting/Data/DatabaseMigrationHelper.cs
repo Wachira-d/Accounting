@@ -770,6 +770,12 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EmailGmailServiceAccountJson" text NULL;
             """,
+            // OCR document-target default — 13 = DocumentType.PaymentVoucher.
+            // Match the entity default so existing rows behave like the new
+            // "cash-basis" default (which most Thai SMEs want).
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "OcrBuyerInvoiceDefaultTarget" integer NOT NULL DEFAULT 13;
+            """,
 
             // ===== RecurringTransactions: PreferredDay to prevent date drift on monthly schedules =====
             """

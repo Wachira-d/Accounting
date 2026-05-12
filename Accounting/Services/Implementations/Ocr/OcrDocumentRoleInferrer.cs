@@ -35,7 +35,12 @@ public static class OcrDocumentRoleInferrer
         string? buyerName,
         string? companyTaxId,
         string? companyName,
-        DocumentType? previousScannedType = null)
+        DocumentType? previousScannedType = null,
+        // When set, this overrides the default "PaymentVoucher" target
+        // for the Buyer + TaxInvoice/Invoice case. Lets companies on
+        // accrual-basis (A/P workflow) keep getting PurchaseInvoice
+        // instead. See CompanySettings.OcrBuyerInvoiceDefaultTarget.
+        DocumentType? buyerInvoiceDefaultTarget = null)
     {
         var reasons = new List<string>();
         var text = (rawText ?? "").ToLowerInvariant();
@@ -192,11 +197,22 @@ public static class OcrDocumentRoleInferrer
                 // explicitly the "paid in cash" case).
                 target = DocumentType.PaymentVoucher;
             else if (hasTaxInvoice || hasInvoice)
-                target = DocumentType.PurchaseInvoice;
+            {
+                // Default = PaymentVoucher (cash-basis flow — most Thai
+                // SMEs). Companies on accrual-basis A/P can override via
+                // CompanySettings.OcrBuyerInvoiceDefaultTarget which is
+                // threaded in here. VendorIntelligence still overrides
+                // both when it has high-confidence history for a vendor.
+                target = buyerInvoiceDefaultTarget ?? DocumentType.PaymentVoucher;
+                if (buyerInvoiceDefaultTarget != null && buyerInvoiceDefaultTarget != DocumentType.PaymentVoucher)
+                    reasons.Add($"target = {target} (จากการตั้งค่าบริษัท — flow บัญชี A/P)");
+            }
             else if (hasPurchaseOrder)
                 target = DocumentType.PurchaseOrder;
             else
-                // No clear marker — most catch-all purchase scans book as Expense
+                // No clear marker — fall back to Expense (general journal
+                // entry). The invoice/taxInvoice branch above is what the
+                // PaymentVoucher default applies to.
                 target = DocumentType.Expense;
         }
         else // Seller
