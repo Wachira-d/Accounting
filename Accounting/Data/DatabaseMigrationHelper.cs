@@ -1071,6 +1071,36 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrLearnedPatterns" ADD COLUMN IF NOT EXISTS "FailureCount" integer NOT NULL DEFAULT 0;
             """,
 
+            // ===== VendorKnownGoodValues: Azure-DI-sourced canonical field values =====
+            // Populated whenever Azure DI extracts a high-confidence field
+            // for a recognized vendor. The Tier-2/3 local OCR cascade
+            // fuzzy-matches its own noisy output against these values
+            // and substitutes the canonical version when similarity ≥ 0.80.
+            """
+            CREATE TABLE IF NOT EXISTS "VendorKnownGoodValues" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorTaxId" varchar(13) NULL,
+                "FieldName" varchar(50) NOT NULL,
+                "Value" text NOT NULL,
+                "Confidence" numeric(5,4) NOT NULL DEFAULT 0,
+                "ConfirmedCount" integer NOT NULL DEFAULT 1,
+                "Source" varchar(20) NOT NULL DEFAULT 'AzureDI',
+                "LastSeenAt" timestamp NOT NULL DEFAULT now(),
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_VendorKnownGoodValues" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_VendorKnownGoodValues_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_VendorKnownGoodValues_CompanyId_VendorTaxId_FieldName"
+            ON "VendorKnownGoodValues" ("CompanyId", "VendorTaxId", "FieldName");
+            """,
+
             // ===== Sites: CMS columns added after initial table creation =====
             """
             ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CaptchaProvider" varchar(50) NULL;

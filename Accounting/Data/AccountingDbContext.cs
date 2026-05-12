@@ -192,6 +192,7 @@ public class AccountingDbContext : DbContext
     // OCR
     public DbSet<OcrScanResult> OcrScanResults => Set<OcrScanResult>();
     public DbSet<OcrLearnedPattern> OcrLearnedPatterns => Set<OcrLearnedPattern>();
+    public DbSet<VendorKnownGoodValue> VendorKnownGoodValues => Set<VendorKnownGoodValue>();
     public DbSet<OcrCreditPurchase> OcrCreditPurchases => Set<OcrCreditPurchase>();
     public DbSet<OcrCategoryMapping> OcrCategoryMappings => Set<OcrCategoryMapping>();
     public DbSet<OcrVendorIntelligence> OcrVendorIntelligence => Set<OcrVendorIntelligence>();
@@ -1392,6 +1393,15 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.FieldName).HasMaxLength(50);
             e.Property(p => p.ContextKeyword).HasMaxLength(200);
             e.Property(p => p.VendorTaxId).HasMaxLength(13);
+            e.HasIndex(p => new { p.CompanyId, p.VendorTaxId, p.FieldName });
+        });
+
+        // ===== VendorKnownGoodValue =====
+        modelBuilder.Entity<VendorKnownGoodValue>(e =>
+        {
+            e.Property(p => p.FieldName).HasMaxLength(50);
+            e.Property(p => p.VendorTaxId).HasMaxLength(13);
+            e.Property(p => p.Source).HasMaxLength(20);
             e.HasIndex(p => new { p.CompanyId, p.VendorTaxId, p.FieldName });
         });
 

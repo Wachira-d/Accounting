@@ -514,3 +514,34 @@ public class PortalActivity : TenantEntity
     public string? IpAddress { get; set; }
     public DateTime ActivityAt { get; set; } = DateTime.UtcNow;
 }
+
+/// <summary>
+/// Per-vendor "known good" field values, populated whenever Azure DI
+/// extracts a high-confidence value for a vendor we recognize. The
+/// local-OCR cascade (PaddleOCR / Tesseract) then fuzzy-matches its own
+/// noisy output against these values and substitutes the canonical
+/// version when similarity is high enough. Drastically reduces the
+/// "หจก . แอมแฮปปี๊เนส" (with stray spaces) → "หจก. แอมแฮปปี๊เนส"
+/// kind of noise that plagues Tesseract-only scans.
+///
+/// Keyed by (CompanyId, VendorTaxId, FieldName, Value). Repeated
+/// confirmations bump ConfirmedCount — values that Azure has seen 5+
+/// times beat one-off noise. Cleaned by background job after 12 months
+/// of inactivity.
+/// </summary>
+public class VendorKnownGoodValue : TenantEntity
+{
+    /// <summary>Vendor's TaxId. NULL allowed for vendor-name-only matches.</summary>
+    public string? VendorTaxId { get; set; }
+    /// <summary>SellerName / SellerTaxId / DocumentNumber / BuyerName / Address / Phone / Email / BranchCode.</summary>
+    public string FieldName { get; set; } = "";
+    /// <summary>The canonical value extracted by Azure DI (or user correction).</summary>
+    public string Value { get; set; } = "";
+    /// <summary>Confidence score from Azure DI (0–1). Used to weight when multiple variants exist.</summary>
+    public decimal Confidence { get; set; }
+    /// <summary>How many distinct scans confirmed this exact value.</summary>
+    public int ConfirmedCount { get; set; } = 1;
+    /// <summary>"AzureDI" | "UserCorrection" — source lets us trust user corrections over Azure on conflict.</summary>
+    public string Source { get; set; } = "AzureDI";
+    public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+}
