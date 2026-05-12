@@ -1685,10 +1685,17 @@ public class AdminController : ControllerBase
             client.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", s.AzureDiApiKey);
             var apiVersion = s.AzureDiApiVersion ?? "2024-11-30";
             var endpoint = s.AzureDiEndpoint.TrimEnd('/');
-            // v4.0 path; fall back to v3.x path for older endpoints
-            var response = await client.GetAsync($"{endpoint}/documentintelligence/info?api-version={apiVersion}");
+            // Use the documentModels listing endpoint instead of /info.
+            // The /info endpoint requires a "Cognitive Services Contributor"
+            // role; analyze-capable keys typically have only "User" role
+            // and 401 here even though they work fine for real scans
+            // (the user reported exactly this — basic ping 401 but the
+            // full analyze test succeeded). documentModels listing
+            // accepts the user role and is the lightest endpoint that
+            // proves both endpoint + key are valid for analyze.
+            var response = await client.GetAsync($"{endpoint}/documentintelligence/documentModels?api-version={apiVersion}");
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                response = await client.GetAsync($"{endpoint}/formrecognizer/info?api-version=2023-07-31");
+                response = await client.GetAsync($"{endpoint}/formrecognizer/documentModels?api-version=2023-07-31");
 
             s.AzureDiLastTestedAt = DateTime.UtcNow;
             s.AzureDiLastTestStatus = response.IsSuccessStatusCode ? "OK" : $"Error: {response.StatusCode}";
