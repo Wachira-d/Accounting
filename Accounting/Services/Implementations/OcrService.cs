@@ -2161,6 +2161,8 @@ public class OcrService : IOcrService
             var raw = addrMatch.Groups[1].Value
                 .Replace("\r", " ").Replace("\n", " ")
                 .Trim();
+            // >250 chars almost certainly means the regex bled through into
+            // the next section — Thai vendor addresses fit in ~120 chars.
             if (raw.Length >= 10 && raw.Length <= 250)
                 data.VendorAddress = raw;
         }
