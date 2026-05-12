@@ -1889,6 +1889,60 @@ public class OcrService : IOcrService
         if (correction.SubTotal.HasValue) result.ExtractedSubTotal = correction.SubTotal;
         if (correction.VatAmount.HasValue) result.ExtractedVatAmount = correction.VatAmount;
         if (correction.TotalAmount.HasValue) result.ExtractedTotalAmount = correction.TotalAmount;
+        // Persist remaining user edits back to the scan row — without this
+        // the user changes debit/credit account or WHT, clicks save, but
+        // the scan-detail panel reopens showing the original suggestions.
+        // (The previous code only fed corrections to the learners; it
+        // never updated the displayed scan record.)
+        if (correction.ExpenseCategory != null) result.ExpenseCategory = correction.ExpenseCategory;
+        if (correction.HasWht.HasValue) result.HasWht = correction.HasWht.Value;
+        if (correction.WhtRate.HasValue) result.WhtRate = correction.WhtRate;
+        if (correction.DebitAccountCode != null || correction.CreditAccountCode != null)
+        {
+            // SuggestedAccountsJson is the canonical store for the
+            // displayed Dr/Cr codes. Merge the user's edits into whatever
+            // the auto-suggester wrote so admin-Dr-edit doesn't blow
+            // away the auto-Cr suggestion (and vice versa).
+            string? debitCode = correction.DebitAccountCode;
+            string? creditCode = correction.CreditAccountCode;
+            string? debitName = null;
+            string? creditName = null;
+            if (!string.IsNullOrEmpty(debitCode))
+            {
+                debitName = await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == debitCode && !a.IsDeleted)
+                    .Select(a => a.AccountName).FirstOrDefaultAsync();
+            }
+            if (!string.IsNullOrEmpty(creditCode))
+            {
+                creditName = await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == creditCode && !a.IsDeleted)
+                    .Select(a => a.AccountName).FirstOrDefaultAsync();
+            }
+            // Preserve any side the admin didn't touch from the existing JSON.
+            string? existingDebit = null, existingCredit = null;
+            string? existingDebitName = null, existingCreditName = null;
+            if (!string.IsNullOrEmpty(result.SuggestedAccountsJson))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
+                    var r = doc.RootElement;
+                    if (r.TryGetProperty("DebitAccountCode", out var d)) existingDebit = d.GetString();
+                    if (r.TryGetProperty("CreditAccountCode", out var c)) existingCredit = c.GetString();
+                    if (r.TryGetProperty("DebitAccountName", out var dn)) existingDebitName = dn.GetString();
+                    if (r.TryGetProperty("CreditAccountName", out var cn)) existingCreditName = cn.GetString();
+                }
+                catch { /* malformed — overwrite */ }
+            }
+            result.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                DebitAccountCode = debitCode ?? existingDebit,
+                DebitAccountName = debitName ?? existingDebitName,
+                CreditAccountCode = creditCode ?? existingCredit,
+                CreditAccountName = creditName ?? existingCreditName,
+            });
+        }
 
         await _db.SaveChangesAsync();
 

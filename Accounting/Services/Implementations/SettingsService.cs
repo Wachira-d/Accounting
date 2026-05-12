@@ -68,6 +68,10 @@ public class SettingsService : ISettingsService
         if (request.LandingContactEmail != null) settings.LandingContactEmail = request.LandingContactEmail;
         if (request.LandingServicesJson != null) settings.LandingServicesJson = request.LandingServicesJson;
 
+        // OCR document-target preference
+        if (request.OcrBuyerInvoiceDefaultTarget.HasValue)
+            settings.OcrBuyerInvoiceDefaultTarget = request.OcrBuyerInvoiceDefaultTarget.Value;
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
     }
@@ -378,7 +382,9 @@ public class SettingsService : ISettingsService
         !string.IsNullOrEmpty(s.EtaxRdApiKey),
         // Landing Page
         s.LandingContactPhone, s.LandingContactLine, s.LandingContactEmail,
-        s.LandingServicesJson);
+        s.LandingServicesJson,
+        // OCR preference
+        s.OcrBuyerInvoiceDefaultTarget);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

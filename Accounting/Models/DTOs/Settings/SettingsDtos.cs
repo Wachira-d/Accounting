@@ -53,7 +53,13 @@ public record UpdateCompanySettingsRequest(
     string? LandingContactPhone,
     string? LandingContactLine,
     string? LandingContactEmail,
-    string? LandingServicesJson);
+    string? LandingServicesJson,
+
+    // OCR document-target preference (cash-basis vs A/P workflow).
+    // Default PaymentVoucher (13) — see CompanySettings entity for the
+    // semantics. Allow null so admins can skip it when updating other
+    // fields without overwriting this preference.
+    DocumentType? OcrBuyerInvoiceDefaultTarget = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -98,7 +104,10 @@ public record CompanySettingsResponse(
     string? LandingContactPhone,
     string? LandingContactLine,
     string? LandingContactEmail,
-    string? LandingServicesJson);
+    string? LandingServicesJson,
+
+    // OCR document-target preference
+    DocumentType OcrBuyerInvoiceDefaultTarget = DocumentType.PaymentVoucher);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(
