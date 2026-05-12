@@ -1808,6 +1808,26 @@ public class AdminController : ControllerBase
                 }, "AnalyzeAsync returned null — ตรวจสอบว่า toggle/endpoint/key ถูกต้อง"));
             }
 
+            // AnalyzeAsync swallows HTTP failures into a Success=false result
+            // (e.g. 401 Unauthorized = wrong API key → result.Success=false +
+            // result.ErrorMessage = "HTTP 401: ..."). Previously the test
+            // reported "success" on these because it only checked null — fix
+            // is to inspect the Success flag explicitly.
+            if (!result.Success)
+            {
+                s.AzureDiLastTestedAt = DateTime.UtcNow;
+                s.AzureDiLastTestStatus = $"Full Error: {result.ErrorMessage}";
+                await _db.SaveChangesAsync();
+                return Ok(new ApiResponse<object>(false, new
+                {
+                    plan.ModelId, plan.Locale, plan.Features, QueryString = queryString,
+                    Reasons = plan.Reasons,
+                    ElapsedMs = elapsedMs,
+                    Error = result.ErrorMessage,
+                    Warnings = result.Warnings,
+                }, $"ทดสอบสแกนจริงล้มเหลว: {result.ErrorMessage}"));
+            }
+
             s.AzureDiLastTestedAt = DateTime.UtcNow;
             s.AzureDiLastTestStatus = $"Full OK ({elapsedMs}ms)";
             await _db.SaveChangesAsync();
