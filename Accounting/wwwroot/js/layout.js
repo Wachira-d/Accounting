@@ -487,6 +487,14 @@ const Layout = {
 
     // Wrap page content
     const pageContent = document.getElementById('pageContent');
+    if (!pageContent) {
+      // Page missed migration to the standard `<div id="pageContent">`
+      // wrapper. Log + bail instead of throwing on appendChild(null),
+      // which used to leave the user with no sidebar AND no rendered
+      // page content (body.innerHTML was wiped after the throw).
+      console.warn('[Layout] missing <div id="pageContent"> — skipping render. Page:', this.currentPage);
+      return;
+    }
     const mainContent = document.createElement('div');
     mainContent.className = 'main-content';
     mainContent.appendChild(header);

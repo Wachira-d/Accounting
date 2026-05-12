@@ -26,6 +26,7 @@ public interface ISubscriptionService
     Task<PlanTemplateResponse> CreatePlanTemplateAsync(CreatePlanTemplateRequest request);
     Task<List<PlanTemplateResponse>> GetPlanTemplatesAsync(bool includeInactive = false);
     Task<PlanTemplateResponse> UpdatePlanTemplateAsync(Guid templateId, UpdatePlanTemplateRequest request);
+    Task<int> ResyncSubscriptionsFromTemplateAsync(Guid templateId);
 
     // Admin: Direct Trial Config Update
     Task<TrialStatusResponse> UpdateTrialConfigAsync(Guid companyId, UpdateTrialConfigRequest request, string performedBy);

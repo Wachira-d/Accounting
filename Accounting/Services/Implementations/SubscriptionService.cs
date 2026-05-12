@@ -541,6 +541,15 @@ public class SubscriptionService : ISubscriptionService
         var oldTrialMaxJournals = template.TrialMaxJournalEntriesPerMonth;
         var oldGrace = template.TrialGracePeriodDays;
         var oldBlock = template.TrialBlockOnExpiry;
+        // OCR quota snapshot — needed so a template-side change propagates
+        // to every existing subscription on this plan (so the user-facing
+        // quota banner immediately reflects "5000 หน้า/เดือน" instead of
+        // still showing the old 10 they got when they were on Trial).
+        var oldMaxOcr = template.MaxOcrPagesPerMonth;
+        var oldAzureOcr = template.AzureOcrPagesPerMonth;
+        var oldLocalOcr = template.LocalOcrPagesPerMonth;
+        var oldFallback = template.FallbackToLocalWhenAzureExhausted;
+        var oldTrialMaxOcr = template.TrialMaxOcrPagesPerMonth;
 
         if (request.Name != null) template.Name = request.Name;
         if (request.Description != null) template.Description = request.Description;
@@ -600,8 +609,16 @@ public class SubscriptionService : ISubscriptionService
             || template.TrialMaxJournalEntriesPerMonth != oldTrialMaxJournals
             || template.TrialGracePeriodDays != oldGrace
             || template.TrialBlockOnExpiry != oldBlock;
+        // OCR-side change flag — split into "paid" and "trial" buckets so
+        // we update only the relevant subscriptions per their status.
+        var paidOcrChanged = template.MaxOcrPagesPerMonth != oldMaxOcr
+            || template.AzureOcrPagesPerMonth != oldAzureOcr
+            || template.LocalOcrPagesPerMonth != oldLocalOcr
+            || template.FallbackToLocalWhenAzureExhausted != oldFallback;
+        var trialOcrChanged = template.TrialMaxOcrPagesPerMonth != oldTrialMaxOcr;
 
-        if (featuresChanged || paidLimitsChanged || trialLimitsChanged)
+        if (featuresChanged || paidLimitsChanged || trialLimitsChanged
+            || paidOcrChanged || trialOcrChanged)
         {
             var subs = await _db.Subscriptions
                 .Include(s => s.TrialConfig)
@@ -617,6 +634,13 @@ public class SubscriptionService : ISubscriptionService
                         sub.MaxUsers = template.TrialMaxUsers;
                         sub.MaxDocumentsPerMonth = template.TrialMaxDocumentsPerMonth;
                         sub.MaxJournalEntriesPerMonth = template.TrialMaxJournalEntriesPerMonth;
+                    }
+                    // Trial subscriptions use the Trial OCR budget. Without
+                    // this propagation an admin who edits the template sees
+                    // their user still stuck on the old default of 10.
+                    if (trialOcrChanged)
+                    {
+                        sub.MaxOcrPagesPerMonth = template.TrialMaxOcrPagesPerMonth;
                     }
                     if (sub.TrialConfig != null)
                     {
@@ -642,6 +666,17 @@ public class SubscriptionService : ISubscriptionService
                         sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
                         sub.MaxStorageBytes = template.MaxStorageBytes;
                     }
+                    // Paid (Active/Past-due/etc.) subscriptions: bring the
+                    // full OCR breakdown across. Total + per-engine + the
+                    // fallback toggle — same set CreateSubscriptionAsync
+                    // copies in for new subs.
+                    if (paidOcrChanged)
+                    {
+                        sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
+                        sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
+                        sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
+                        sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
+                    }
                 }
 
                 // Propagate permanent-free flag — if template now is permanent free,
@@ -662,6 +697,63 @@ public class SubscriptionService : ISubscriptionService
         }
 
         return MapTemplateToResponse(template);
+    }
+
+    /// <summary>
+    /// Force-resync every subscription on the given plan against the
+    /// template's current values — used when admin edited the template
+    /// but a particular tenant's subscription was missed (e.g. status was
+    /// hand-flipped in the DB and never went through UpgradeAsync). Same
+    /// branch logic as UpdatePlanTemplateAsync: Trial subs take the Trial
+    /// OCR budget; everyone else takes the per-engine paid breakdown.
+    /// Returns the number of subscriptions touched.
+    /// </summary>
+    public async Task<int> ResyncSubscriptionsFromTemplateAsync(Guid templateId)
+    {
+        var template = await _db.PlanTemplates.FindAsync(templateId)
+            ?? throw new KeyNotFoundException("ไม่พบ plan template");
+
+        var subs = await _db.Subscriptions
+            .Include(s => s.TrialConfig)
+            .Where(s => s.Plan == template.Plan && !s.IsDeleted)
+            .ToListAsync();
+
+        foreach (var sub in subs)
+        {
+            if (sub.Status == SubscriptionStatus.Trial)
+            {
+                sub.EnabledFeatures = template.TrialFeatures;
+                sub.MaxUsers = template.TrialMaxUsers;
+                sub.MaxDocumentsPerMonth = template.TrialMaxDocumentsPerMonth;
+                sub.MaxJournalEntriesPerMonth = template.TrialMaxJournalEntriesPerMonth;
+                sub.MaxOcrPagesPerMonth = template.TrialMaxOcrPagesPerMonth;
+                if (sub.TrialConfig != null)
+                {
+                    sub.TrialConfig.TrialFeatures = template.TrialFeatures;
+                    sub.TrialConfig.TrialMaxUsers = template.TrialMaxUsers;
+                    sub.TrialConfig.TrialMaxDocumentsPerMonth = template.TrialMaxDocumentsPerMonth;
+                    sub.TrialConfig.TrialMaxJournalEntriesPerMonth = template.TrialMaxJournalEntriesPerMonth;
+                    sub.TrialConfig.GracePeriodDays = template.TrialGracePeriodDays;
+                    sub.TrialConfig.BlockAccessOnExpiry = template.TrialBlockOnExpiry;
+                }
+            }
+            else
+            {
+                sub.EnabledFeatures = template.EnabledFeatures;
+                sub.MaxUsers = template.MaxUsers;
+                sub.MaxCompanies = template.MaxCompanies;
+                sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
+                sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
+                sub.MaxStorageBytes = template.MaxStorageBytes;
+                sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
+                sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
+                sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
+                sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
+            }
+            sub.UpdatedAt = DateTime.UtcNow;
+        }
+        await _db.SaveChangesAsync();
+        return subs.Count;
     }
 
     // ==================== Admin: Direct Trial Config Update ====================
@@ -1070,6 +1162,11 @@ public class SubscriptionService : ISubscriptionService
                 sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
                 sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
                 sub.MaxStorageBytes = template.MaxStorageBytes;
+                // OCR quotas — same upgrade-to-paid propagation as UpgradeAsync
+                sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
+                sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
+                sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
+                sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
 
                 var price = payment.RequestedBillingCycle switch
                 {

@@ -83,6 +83,7 @@ const AdminAPI = {
   plans(includeInactive = true) { return this.get(`/plans?includeInactive=${includeInactive}`); },
   createPlan(data) { return this.post('/plans', data); },
   updatePlan(id, data) { return this.put(`/plans/${id}`, data); },
+  resyncPlanSubscriptions(id) { return this.post(`/plans/${id}/resync-subscriptions`, {}); },
   features() { return this.get('/features'); },
 
   // Payments
