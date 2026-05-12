@@ -91,24 +91,42 @@ public static class AzureDiRequestPlanner
         var stringIndexType = locale == "th-TH" ? "utf16CodeUnit" : "codePoint";
 
         // 4. Features list
-        //    Always on (low / no cost):
-        //      • keyValuePairs — Thai-anchored fallback fields
-        //      • barcodes      — RD QR receipts
-        //      • styleFont     — handwriting detection. Flags scans where
-        //                        amounts / dates were hand-written on a
-        //                        printed form, so the review UI can mark
-        //                        them "manual verification recommended".
-        //                        Negligible additional cost.
-        //    Conditional:
-        //      • ocrHighResolution — premium tier, only worth it for low-
-        //        quality images. Clean PDFs and high-res photos get nothing
-        //        better from it; small mobile snapshots improve substantially.
-        //      • queryFields — natural-language extraction for Thai fields
-        //        the standard Invoice schema mis-anchors. Adds a comma-
-        //        separated list of field-name queries; Azure tries to find
-        //        each one. Limited to docs not in receipt model (receipts
-        //        already have direct fields).
-        var features = new List<string> { "keyValuePairs", "barcodes", "styleFont" };
+        //    Per Azure DI v4.0: feature support is model-specific.
+        //    Sending an unsupported feature returns HTTP 400
+        //    "InvalidParameter: The parameter <feature> is invalid or not
+        //    supported." So we gate each feature by the model it's known
+        //    to work on.
+        //
+        //    Universal (every model accepts):
+        //      • styleFont — handwriting detection. Page-level layout
+        //                    feature; supported on all prebuilt-*.
+        //
+        //    Layout-class only (prebuilt-layout / -document / -invoice):
+        //      • keyValuePairs — Thai-anchored fallback fields. NOT
+        //                        supported on receipt / idDocument /
+        //                        businessCard — those have their own
+        //                        fixed schema and Azure rejects with 400.
+        //      • barcodes      — RD QR receipts. Same gating.
+        //      • queryFields   — natural-language extraction. Already
+        //                        gated below; receipt has its own schema.
+        //
+        //    Conditional (image quality dependent):
+        //      • ocrHighResolution — small / low-res images only.
+        bool isLayoutClass = modelId.Equals("prebuilt-invoice", StringComparison.OrdinalIgnoreCase)
+            || modelId.Equals("prebuilt-document", StringComparison.OrdinalIgnoreCase)
+            || modelId.Equals("prebuilt-layout", StringComparison.OrdinalIgnoreCase)
+            || modelId.Equals("prebuilt-read", StringComparison.OrdinalIgnoreCase);
+
+        var features = new List<string> { "styleFont" };
+        if (isLayoutClass)
+        {
+            features.Add("keyValuePairs");
+            features.Add("barcodes");
+        }
+        else
+        {
+            reasons.Add($"skip keyValuePairs+barcodes (model {modelId} doesn't support them)");
+        }
         if (ShouldUseHighResolution(fileBytes, contentType, out var hiResReason))
         {
             features.Add("ocrHighResolution");
