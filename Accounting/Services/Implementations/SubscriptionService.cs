@@ -58,6 +58,13 @@ public class SubscriptionService : ISubscriptionService
             MaxDocumentsPerMonth = template?.TrialMaxDocumentsPerMonth ?? 20,
             MaxJournalEntriesPerMonth = template?.TrialMaxJournalEntriesPerMonth ?? 50,
             MaxStorageBytes = 50 * 1024 * 1024,
+            // Pull OCR quotas from the template so a new subscription
+            // honors the per-engine budget the admin configured for this
+            // plan tier (free=0 Azure pages, paid tiers get more).
+            MaxOcrPagesPerMonth = template?.TrialMaxOcrPagesPerMonth ?? 10,
+            AzureOcrPagesPerMonth = template?.AzureOcrPagesPerMonth,
+            LocalOcrPagesPerMonth = template?.LocalOcrPagesPerMonth,
+            FallbackToLocalWhenAzureExhausted = template?.FallbackToLocalWhenAzureExhausted ?? true,
             UsageResetDate = new DateTime(now.Year, now.Month, 1).AddMonths(1),
             CreatedBy = performedBy
         };
@@ -266,6 +273,11 @@ public class SubscriptionService : ISubscriptionService
         sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
         sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
         sub.MaxStorageBytes = template.MaxStorageBytes;
+        // Bring per-engine OCR quotas across when subscriber upgrades to paid.
+        sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
+        sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
+        sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
+        sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
 
         if (sub.TrialConfig != null)
             sub.TrialConfig.TrialStatus = TrialStatus.Converted;
@@ -351,6 +363,11 @@ public class SubscriptionService : ISubscriptionService
         sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
         sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
         sub.MaxStorageBytes = template.MaxStorageBytes;
+        // Bring per-engine OCR quotas across when subscriber upgrades to paid.
+        sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
+        sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
+        sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
+        sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
         sub.IsPermanentFree = template.IsPermanentFree;
         if (template.IsPermanentFree)
             sub.EndDate = DateTime.UtcNow.AddYears(100);
@@ -558,6 +575,15 @@ public class SubscriptionService : ISubscriptionService
         if (request.TrialBlockOnExpiry.HasValue) template.TrialBlockOnExpiry = request.TrialBlockOnExpiry.Value;
         if (request.TrialGracePeriodDays.HasValue) template.TrialGracePeriodDays = request.TrialGracePeriodDays.Value;
         if (request.IsPermanentFree.HasValue) template.IsPermanentFree = request.IsPermanentFree.Value;
+
+        // OCR per-engine quotas. Null preserves the existing value so a UI
+        // that only sends the field for plans that customize it doesn't
+        // accidentally zero out other plans.
+        if (request.MaxOcrPagesPerMonth.HasValue) template.MaxOcrPagesPerMonth = request.MaxOcrPagesPerMonth.Value;
+        if (request.AzureOcrPagesPerMonth.HasValue) template.AzureOcrPagesPerMonth = request.AzureOcrPagesPerMonth.Value;
+        if (request.LocalOcrPagesPerMonth.HasValue) template.LocalOcrPagesPerMonth = request.LocalOcrPagesPerMonth.Value;
+        if (request.FallbackToLocalWhenAzureExhausted.HasValue) template.FallbackToLocalWhenAzureExhausted = request.FallbackToLocalWhenAzureExhausted.Value;
+        if (request.TrialMaxOcrPagesPerMonth.HasValue) template.TrialMaxOcrPagesPerMonth = request.TrialMaxOcrPagesPerMonth.Value;
 
         await _db.SaveChangesAsync();
 
@@ -1354,7 +1380,12 @@ public class SubscriptionService : ISubscriptionService
             FeatureFlagsHelper.ToNameList(t.EnabledFeatures),
             t.TrialDurationDays, t.TrialMaxExtensions, t.TrialExtensionDays, t.TrialFeatures,
             FeatureFlagsHelper.ToNameList(t.TrialFeatures),
-            t.IsPermanentFree);
+            t.IsPermanentFree,
+            t.MaxOcrPagesPerMonth,
+            t.AzureOcrPagesPerMonth,
+            t.LocalOcrPagesPerMonth,
+            t.FallbackToLocalWhenAzureExhausted,
+            t.TrialMaxOcrPagesPerMonth);
     }
 }
 

@@ -141,7 +141,15 @@ public record UpdatePlanTemplateRequest(
     int? TrialMaxJournalEntriesPerMonth,
     bool? TrialBlockOnExpiry,
     int? TrialGracePeriodDays,
-    bool? IsPermanentFree = null);
+    bool? IsPermanentFree = null,
+    // ─── OCR per-engine quotas (null on AzureOcrPagesPerMonth /
+    //     LocalOcrPagesPerMonth means "use the legacy single-bucket
+    //     MaxOcrPagesPerMonth"). 0 = no Azure for this plan tier.
+    int? MaxOcrPagesPerMonth = null,
+    int? AzureOcrPagesPerMonth = null,
+    int? LocalOcrPagesPerMonth = null,
+    bool? FallbackToLocalWhenAzureExhausted = null,
+    int? TrialMaxOcrPagesPerMonth = null);
 
 public record PlanTemplateResponse(
     Guid Id,
@@ -165,7 +173,13 @@ public record PlanTemplateResponse(
     int TrialExtensionDays,
     FeatureFlags TrialFeatures,
     List<string> TrialFeatureNames,
-    bool IsPermanentFree = false);
+    bool IsPermanentFree = false,
+    // ─── OCR per-engine quotas surfaced for the admin plans UI ───
+    int MaxOcrPagesPerMonth = 0,
+    int? AzureOcrPagesPerMonth = null,
+    int? LocalOcrPagesPerMonth = null,
+    bool FallbackToLocalWhenAzureExhausted = true,
+    int TrialMaxOcrPagesPerMonth = 10);
 
 // ===== Subscription Notification Settings =====
 public record UpdateSubscriptionNotificationRequest(
