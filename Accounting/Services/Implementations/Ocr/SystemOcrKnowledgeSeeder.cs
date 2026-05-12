@@ -85,15 +85,22 @@ public class SystemOcrKnowledgeSeeder
         _logger = logger;
     }
 
-    public record SeedResult(int CategoryMappings, int VendorIntelligence, int AssociationRules);
+    public record SeedResult(int CategoryMappings, int VendorIntelligence, int AssociationRules,
+        int ExistingCategoryMappings, int ExistingVendorIntelligence, int ExistingAssociationRules);
 
     public async Task<SeedResult> SeedAsync(bool overwrite = false, CancellationToken ct = default)
     {
         int catAdded = await SeedCategoryMappingsAsync(overwrite, ct);
         int viAdded = await SeedVendorIntelligenceAsync(overwrite, ct);
         int arAdded = await SeedAssociationRulesAsync(overwrite, ct);
-        _logger.LogInformation("System OCR knowledge seeded: cat+{C} vi+{V} ar+{A}", catAdded, viAdded, arAdded);
-        return new SeedResult(catAdded, viAdded, arAdded);
+        // Existing counts surface to the admin UI so "0 added" doesn't look
+        // broken when seeds were already populated by the startup auto-seed.
+        int catExisting = await _db.SystemOcrCategoryMappings.CountAsync(m => !m.IsDeleted, ct);
+        int viExisting = await _db.SystemOcrVendorIntelligence.CountAsync(v => !v.IsDeleted, ct);
+        int arExisting = await _db.SystemOcrAssociationRules.CountAsync(r => !r.IsDeleted, ct);
+        _logger.LogInformation("System OCR knowledge seeded: cat+{C}/{TC} vi+{V}/{TV} ar+{A}/{TA}",
+            catAdded, catExisting, viAdded, viExisting, arAdded, arExisting);
+        return new SeedResult(catAdded, viAdded, arAdded, catExisting, viExisting, arExisting);
     }
 
     // ─────────────────────────────────────────────────────────────────

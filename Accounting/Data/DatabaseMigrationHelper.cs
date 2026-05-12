@@ -1263,6 +1263,37 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxOcrPagesPerMonth" integer NOT NULL DEFAULT 10;
             """,
+            // PlanTemplate entity defines these per-engine columns but they
+            // were only migrated on Subscriptions / SubscriptionPlans —
+            // /api/admin/plans 500'd because EF SELECT *'d the missing
+            // columns from PlanTemplates.
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "AzureOcrPagesPerMonth" integer NULL;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "LocalOcrPagesPerMonth" integer NULL;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "FallbackToLocalWhenAzureExhausted" boolean NOT NULL DEFAULT true;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "Currency" text NOT NULL DEFAULT 'THB';
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxUsers" integer NOT NULL DEFAULT 2;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxDocumentsPerMonth" integer NOT NULL DEFAULT 20;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxJournalEntriesPerMonth" integer NOT NULL DEFAULT 50;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialBlockOnExpiry" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialGracePeriodDays" integer NOT NULL DEFAULT 7;
+            """,
 
             // ===== TrialConfigs: OCR quota fields =====
             """

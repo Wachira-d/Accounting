@@ -233,11 +233,17 @@ public class OcrService : IOcrService
             // its Azure budget this month. When that happens, skip Tier 1
             // and route directly to local OCR (when FallbackToLocal is on
             // for this tenant). The legacy single-budget mode is unchanged.
-            bool azureQuotaAllowed = await _quota.CanUseAzureAsync(companyId);
+            var (azureQuotaAllowed, quotaSkipReason) = await _quota.CheckAzureQuotaAsync(companyId);
             if (!azureQuotaAllowed)
             {
-                extractedData?.ReasoningTrace.Add("[Quota] Azure DI quota หมดสำหรับเดือนนี้ — fall back ไป local OCR");
-                _logger.LogInformation("Azure DI quota exhausted for {Cid} — routing to local cascade", companyId);
+                // Fold the precise quota reason into the existing skip-reason
+                // pipeline so it ends up in ProcessingNotes alongside the
+                // toggle/endpoint/key reasons. Distinguishes "plan = 0 pages"
+                // from "quota หมด" so the admin knows whether to upgrade
+                // plan vs buy credits vs wait for next month.
+                azureSkipReason = quotaSkipReason ?? "Azure DI quota หมดสำหรับเดือนนี้";
+                extractedData?.ReasoningTrace.Add($"[Quota] {azureSkipReason} — fall back ไป local OCR");
+                _logger.LogInformation("Azure DI skipped for {Cid}: {Reason}", companyId, azureSkipReason);
             }
 
             if (extractedData == null && azureEnabled && azureQuotaAllowed)
@@ -296,9 +302,16 @@ public class OcrService : IOcrService
                     extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
                 else
                     extractedData.ReasoningTrace.Insert(0, "[Provider] ใช้ Embedded Tesseract (in-process fallback)");
-                // Always make the Azure-skip reason visible even when embedded ran cleanly
+                // Always make the Azure-skip reason visible even when embedded ran cleanly.
+                // Surface to ProcessingNotes too so the admin sees it in the scan detail
+                // (ReasoningTrace is in-memory only). Common case: admin tested the
+                // connection but forgot to flip the AzureDiEnabled toggle.
                 if (azureSkipReason != null)
+                {
                     extractedData.ReasoningTrace.Add($"[Azure DI] {azureSkipReason}");
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Azure DI ข้าม] {azureSkipReason}";
+                }
             }
 
             scanResult.OcrEngine = ocrEngineUsed;
@@ -1061,10 +1074,21 @@ public class OcrService : IOcrService
                 _logger.LogWarning(ex, "Recurring detection failed (non-fatal)");
             }
 
+            // Critical-fields hard gate: even if Confidence and contact match
+            // both look good, refuse to auto-create when the OCR couldn't
+            // extract a usable date, document number, or total. These three
+            // are the bookkeeping minimum — without them the created
+            // document is just noise the user has to delete + redo.
+            var hasUsableTotal = (extractedData.TotalAmount ?? 0) > 0m;
+            var hasUsableDate = extractedData.DocumentDate.HasValue;
+            var hasUsableDocNumber = !string.IsNullOrWhiteSpace(extractedData.DocumentNumber);
+            var criticalFieldsOk = hasUsableTotal && hasUsableDate && hasUsableDocNumber;
+
             if (scanResult.Confidence >= autoCreateThreshold
                 && scanResult.MatchedContactId.HasValue
                 && !scanResult.IsDuplicate
-                && !scanResult.CreatedDocumentId.HasValue)
+                && !scanResult.CreatedDocumentId.HasValue
+                && criticalFieldsOk)
             {
                 try
                 {
@@ -1075,6 +1099,19 @@ public class OcrService : IOcrService
                     _logger.LogWarning(ex, "Auto-create document failed for scan {ScanId}", scanResult.Id);
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-create failed: {ex.Message}";
                 }
+            }
+            else if (scanResult.Confidence >= autoCreateThreshold
+                  && scanResult.MatchedContactId.HasValue
+                  && !criticalFieldsOk)
+            {
+                // Surface why we declined to auto-create — admin opens the
+                // scan and sees exactly which fields the OCR missed.
+                var missing = new List<string>();
+                if (!hasUsableTotal) missing.Add("ยอดรวม");
+                if (!hasUsableDate) missing.Add("วันที่");
+                if (!hasUsableDocNumber) missing.Add("เลขที่เอกสาร");
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + $"\n[Auto-create ระงับ] ข้อมูลสำคัญยังขาด: {string.Join(", ", missing)} — กรุณากรอกใน \"ตรวจสอบ & สอนระบบ\" ก่อนสร้างเอกสาร";
             }
         }
         catch (Exception ex)

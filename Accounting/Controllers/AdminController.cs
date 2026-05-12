@@ -376,10 +376,24 @@ public class AdminController : ControllerBase
     }
 
     [HttpGet("plans")]
-    public async Task<ActionResult<ApiResponse<List<PlanTemplateResponse>>>> GetPlanTemplates([FromQuery] bool includeInactive = false)
+    public async Task<ActionResult<ApiResponse<List<PlanTemplateResponse>>>> GetPlanTemplates(
+        [FromQuery] bool includeInactive = false,
+        [FromServices] ILogger<AdminController>? logger = null)
     {
-        var result = await _subscriptionService.GetPlanTemplatesAsync(includeInactive);
-        return Ok(new ApiResponse<List<PlanTemplateResponse>>(true, result));
+        try
+        {
+            var result = await _subscriptionService.GetPlanTemplatesAsync(includeInactive);
+            return Ok(new ApiResponse<List<PlanTemplateResponse>>(true, result));
+        }
+        catch (Exception ex)
+        {
+            // Localize the failure so the admin can see WHICH plan template
+            // triggered the issue — letting the middleware swallow turns
+            // every problem into a generic "An internal server error occurred".
+            logger?.LogError(ex, "GetPlanTemplates failed (includeInactive={Inc}): {Type} — {Msg}",
+                includeInactive, ex.GetType().FullName, ex.Message);
+            throw;
+        }
     }
 
     [HttpPut("plans/{templateId:guid}")]
@@ -1321,12 +1335,23 @@ public class AdminController : ControllerBase
         var result = await seeder.SeedAsync();
         await LogAuditAsync(null, "SystemOcrKnowledgeSeeded",
             $"category+{result.CategoryMappings} vendorIntel+{result.VendorIntelligence} associationRules+{result.AssociationRules}");
+        var totalAdded = result.CategoryMappings + result.VendorIntelligence + result.AssociationRules;
+        var totalExisting = result.ExistingCategoryMappings + result.ExistingVendorIntelligence + result.ExistingAssociationRules;
+        var msg = totalAdded > 0
+            ? $"Seed สำเร็จ: เพิ่มใหม่ {totalAdded} รายการ (มีอยู่แล้ว {totalExisting})"
+            : $"ไม่ได้เพิ่มอะไรใหม่ — ฐานข้อมูลมี seed ครบแล้ว ({totalExisting} รายการ). ระบบ auto-seed ตอน startup เมื่อตารางว่าง — ปกติแล้วครับ";
         return Ok(new ApiResponse<object>(true, new
         {
             categoryMappingsAdded = result.CategoryMappings,
             vendorIntelligenceAdded = result.VendorIntelligence,
             associationRulesAdded = result.AssociationRules,
-        }, $"Seed สำเร็จ: category+{result.CategoryMappings} vi+{result.VendorIntelligence} rules+{result.AssociationRules}"));
+            categoryMappingsExisting = result.ExistingCategoryMappings,
+            vendorIntelligenceExisting = result.ExistingVendorIntelligence,
+            associationRulesExisting = result.ExistingAssociationRules,
+            totalAdded,
+            totalExisting,
+            alreadySeeded = totalAdded == 0 && totalExisting > 0
+        }, msg));
     }
 
     /// <summary>
@@ -1650,11 +1675,26 @@ public class AdminController : ControllerBase
 
             s.AzureDiLastTestedAt = DateTime.UtcNow;
             s.AzureDiLastTestStatus = response.IsSuccessStatusCode ? "OK" : $"Error: {response.StatusCode}";
+            // Auto-enable on successful test — admins who "test and save"
+            // shouldn't also have to flip a separate toggle. Tier 1 in
+            // OcrService.ScanAsync requires AzureDiEnabled=true; without
+            // this auto-enable the next scan would still go to Tesseract
+            // and the user can't tell why.
+            bool wasAutoEnabled = false;
+            if (response.IsSuccessStatusCode && !s.AzureDiEnabled)
+            {
+                s.AzureDiEnabled = true;
+                wasAutoEnabled = true;
+            }
             await _db.SaveChangesAsync();
 
+            var msg = response.IsSuccessStatusCode
+                ? (wasAutoEnabled ? "เชื่อมต่อ Azure DI สำเร็จ — เปิดใช้งานอัตโนมัติแล้ว (Tier 1 พร้อมใช้งานในการสแกนถัดไป)"
+                                  : "เชื่อมต่อ Azure DI สำเร็จ")
+                : $"ไม่สามารถเชื่อมต่อได้: {response.StatusCode}";
             return Ok(new ApiResponse<object>(response.IsSuccessStatusCode,
-                new { StatusCode = (int)response.StatusCode },
-                response.IsSuccessStatusCode ? "เชื่อมต่อ Azure DI สำเร็จ" : $"ไม่สามารถเชื่อมต่อได้: {response.StatusCode}"));
+                new { StatusCode = (int)response.StatusCode, AutoEnabled = wasAutoEnabled, Enabled = s.AzureDiEnabled },
+                msg));
         }
         catch (Exception ex)
         {

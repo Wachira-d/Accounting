@@ -26,6 +26,13 @@ public interface IOcrQuotaService
     Task<bool> CanUseAzureAsync(Guid companyId);
 
     /// <summary>
+    /// Same gate as CanUseAzureAsync but also returns a human-readable Thai
+    /// reason when blocked — so the cascade can surface "plan ไม่ให้ Azure"
+    /// vs "quota หมด" to the admin via ProcessingNotes.
+    /// </summary>
+    Task<(bool Allowed, string? Reason)> CheckAzureQuotaAsync(Guid companyId);
+
+    /// <summary>
     /// Atomically check + reserve one page from the engine-specific
     /// counter. Returns false when the engine-specific quota is hit
     /// (caller may then route to a different engine).

@@ -1032,7 +1032,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         let detail = '';
         if (data) {
           // Compact summary of common counter fields
-          const fields = ['categoryMappingsAdded','vendorIntelligenceAdded','associationRulesAdded',
+          const fields = ['totalAdded','totalExisting',
+                          'categoryMappingsAdded','vendorIntelligenceAdded','associationRulesAdded',
+                          'categoryMappingsExisting','vendorIntelligenceExisting','associationRulesExisting',
                           'categoryMappingsPromoted','vendorIntelligencePromoted','tenantsConsidered',
                           'rulesPersisted','rulesDiscovered','transactionsScanned',
                           'vendorsClustered','iterations','durationSeconds'];
