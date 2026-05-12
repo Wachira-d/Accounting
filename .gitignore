@@ -373,3 +373,4 @@ secrets/
 *.p12
 *.key
 *.pem
+/.github/copilot-instructions.md
