@@ -376,10 +376,24 @@ public class AdminController : ControllerBase
     }
 
     [HttpGet("plans")]
-    public async Task<ActionResult<ApiResponse<List<PlanTemplateResponse>>>> GetPlanTemplates([FromQuery] bool includeInactive = false)
+    public async Task<ActionResult<ApiResponse<List<PlanTemplateResponse>>>> GetPlanTemplates(
+        [FromQuery] bool includeInactive = false,
+        [FromServices] ILogger<AdminController>? logger = null)
     {
-        var result = await _subscriptionService.GetPlanTemplatesAsync(includeInactive);
-        return Ok(new ApiResponse<List<PlanTemplateResponse>>(true, result));
+        try
+        {
+            var result = await _subscriptionService.GetPlanTemplatesAsync(includeInactive);
+            return Ok(new ApiResponse<List<PlanTemplateResponse>>(true, result));
+        }
+        catch (Exception ex)
+        {
+            // Localize the failure so the admin can see WHICH plan template
+            // triggered the issue — letting the middleware swallow turns
+            // every problem into a generic "An internal server error occurred".
+            logger?.LogError(ex, "GetPlanTemplates failed (includeInactive={Inc}): {Type} — {Msg}",
+                includeInactive, ex.GetType().FullName, ex.Message);
+            throw;
+        }
     }
 
     [HttpPut("plans/{templateId:guid}")]
