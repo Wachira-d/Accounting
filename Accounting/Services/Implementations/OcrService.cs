@@ -547,7 +547,7 @@ public class OcrService : IOcrService
                 industry: companyContext?.IndustryType,
                 businessType: companyContext?.BusinessType);
             if (categoryResult != null)
-                Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult);
+                Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult, categoryResolverText);
 
             // ───── Basket-analysis association rule lookup ─────
             // Apriori-mined rules from approved-doc history across all
