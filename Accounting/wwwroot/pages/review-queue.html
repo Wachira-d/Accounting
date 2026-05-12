@@ -121,7 +121,7 @@
       listEl.innerHTML = '<div style="text-align:center;padding:48px;color:var(--gray-400)">กำลังโหลด...</div>';
       try {
         const res = await fetch(`/api/companies/${cid}/ocr/review-queue?limit=${limit}`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
         });
         const data = await res.json();
         if (!data.success) {
