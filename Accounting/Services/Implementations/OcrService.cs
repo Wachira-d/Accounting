@@ -794,6 +794,45 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
                     string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
 
+            // ── Credit-account auto-fill by target document type ──
+            // The Category resolver fills the DEBIT side (expense
+            // account). Credit depends on the bookkeeping flow:
+            //   PaymentVoucher / Expense / ReceiptVoucher → cash (1110)
+            //   PurchaseInvoice                           → A/P (2100)
+            //   Invoice / TaxInvoice (Seller)             → A/R (1130)
+            // We pick the first matching account in the company's CoA
+            // by code prefix — accommodates Thai SMEs that use 1110,
+            // 1111, 11110, etc. Falls through silently if none exists.
+            if (string.IsNullOrEmpty(extractedData.CreditAccountCode)
+                && !string.IsNullOrEmpty(extractedData.TargetDocumentType))
+            {
+                string[] creditPrefixes = extractedData.TargetDocumentType switch
+                {
+                    "PaymentVoucher" or "Expense" => new[] { "1111", "1110", "111" },        // Cash / Bank
+                    "ReceiptVoucher"             => new[] { "1111", "1110", "111" },        // Cash received
+                    "PurchaseInvoice"            => new[] { "2110", "2100", "211" },        // A/P
+                    "Invoice" or "TaxInvoice"    => new[] { "1130", "1131", "113" },        // A/R
+                    _ => Array.Empty<string>()
+                };
+                foreach (var pfx in creditPrefixes)
+                {
+                    var creditAcct = await _db.ChartOfAccounts
+                        .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(pfx)
+                                && a.IsActive && !a.IsDeleted)
+                        .OrderBy(a => a.AccountCode)
+                        .Select(a => new { a.AccountCode, a.AccountName })
+                        .FirstOrDefaultAsync();
+                    if (creditAcct != null)
+                    {
+                        extractedData.CreditAccountCode = creditAcct.AccountCode;
+                        extractedData.CreditAccountName = creditAcct.AccountName;
+                        extractedData.ReasoningTrace.Add(
+                            $"[Credit] เลือกบัญชีเครดิต {creditAcct.AccountCode} จากประเภทเอกสาร {extractedData.TargetDocumentType}");
+                        break;
+                    }
+                }
+            }
+
             if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
             {
                 scanResult.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
@@ -803,6 +842,13 @@ public class OcrService : IOcrService
                     extractedData.VatAccountCode, extractedData.VatAccountName,
                 });
             }
+            // Re-sync ExpenseCategory after the resolver / vendor-intel /
+            // basket-rule miners have all written to extractedData. The
+            // earlier sync at line ~477 ran BEFORE the resolver, leaving
+            // the scan row showing "Expense Category: null" even when
+            // the resolver matched "ค่าน้ำประปา" with score 8.0.
+            if (!string.IsNullOrEmpty(extractedData.ExpenseCategory))
+                scanResult.ExpenseCategory = extractedData.ExpenseCategory;
 
             // Match GL accounts from suggestions against company's chart of accounts
             if (!string.IsNullOrEmpty(extractedData.DebitAccountCode))

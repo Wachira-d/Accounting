@@ -1646,22 +1646,41 @@
           if (debitSel) debitSel.innerHTML = buildOptions(initialDebit);
           if (creditSel) creditSel.innerHTML = buildOptions(initialCredit);
 
-          // Wire the expense-category select so changing it auto-suggests the
-          // matching debit account from the category→code map. User can still
-          // override after the suggestion lands.
+          // Wire 2-way binding between expense-category and debit-account
+          // selects. Either dropdown's change updates the other so they
+          // never disagree. User can still override after the suggestion.
           const catSel = document.getElementById('revExpenseCategory');
+          const debitSel2 = document.getElementById('revDebitAccount');
           if (catSel && !catSel.dataset.wired) {
             catSel.dataset.wired = '1';
             catSel.addEventListener('change', () => {
               const code = this._mapCategoryToAccountCode(catSel.value);
               if (!code) return;
-              const debit = document.getElementById('revDebitAccount');
-              if (!debit) return;
-              // Only update if the target code actually exists in this
-              // company's CoA — never leave the user with an invalid value.
-              const exists = (this._allAccounts || []).some(a => a.accountCode === code);
-              if (exists) debit.value = code;
+              // Find first exact OR prefix-matching account in the
+              // company's CoA — handles 5306, 53060, 54430 (custom
+              // codes ผู้ใช้ extend จาก base code) etc.
+              const acct = (this._allAccounts || []).find(a => a.accountCode === code)
+                ?? (this._allAccounts || []).find(a => a.accountCode.startsWith(code));
+              if (acct) debitSel2.value = acct.accountCode;
             });
+          }
+          if (debitSel2 && !debitSel2.dataset.wired) {
+            debitSel2.dataset.wired = '1';
+            debitSel2.addEventListener('change', () => {
+              const cat = this._mapAccountCodeToCategory(debitSel2.value);
+              if (cat && catSel) catSel.value = cat;
+            });
+          }
+
+          // Apply the AI's suggested debit even when the OCR result didn't
+          // pick a category — derive the category from the suggested debit
+          // account's name. Resolves the reported "scan says ค่าน้ำประปา
+          // (score 8) but UI shows '-- เลือก --'" issue: even when the
+          // scan row's expenseCategory is null, we can recover the
+          // category from the suggested account's name keywords.
+          if (catSel && !catSel.value && initialDebit) {
+            const cat = this._mapAccountCodeToCategory(initialDebit);
+            if (cat) catSel.value = cat;
           }
         } catch (err) {
           console.warn('Failed to load chart of accounts:', err);
@@ -1692,6 +1711,66 @@
           'อื่นๆ': '5901',
         };
         return map[category] || null;
+      },
+
+      // Reverse mapping — given a chart-of-accounts code (or its name),
+      // return the most likely expense-category dropdown value. Two
+      // strategies stacked:
+      //   1) Code prefix match against the static map (5306, 53061,
+      //      54430-* all → ค่าซ่อมแซม because they all start with code
+      //      regions used for repair expenses).
+      //   2) Account-name keyword match — handles custom CoA codes
+      //      where the prefix doesn't match the standard map. e.g. a
+      //      tenant who renames 54430 to "ค่าซ่อมรถยนต์" still gets
+      //      ค่าซ่อมแซม via the keyword "ซ่อม".
+      _mapAccountCodeToCategory(code) {
+        if (!code) return null;
+        const acct = (this._allAccounts || []).find(a => a.accountCode === code);
+        const name = acct?.accountName || '';
+        // Keyword match has higher precision than prefix (custom CoA),
+        // so check it first. Keywords ordered most-specific first to
+        // avoid "ค่าซ่อมรถยนต์" also matching "ค่าเดินทาง" through
+        // the "รถ" substring.
+        const keywordMap = [
+          { kw: ['ซ่อม', 'บำรุงรักษา', 'repair'], cat: 'ค่าซ่อมแซม' },
+          { kw: ['ขนส่ง', 'จัดส่ง', 'shipping', 'delivery', 'freight'], cat: 'ค่าขนส่ง' },
+          { kw: ['โฆษณา', 'การตลาด', 'ad', 'marketing'], cat: 'ค่าโฆษณา' },
+          { kw: ['น้ำประปา', 'ไฟฟ้า', 'น้ำมัน', 'อินเทอร์เน็ต', 'โทรศัพท์', 'สาธารณูปโภค', 'utilities'], cat: 'ค่าสาธารณูปโภค' },
+          { kw: ['เช่า', 'rent'], cat: 'ค่าเช่า' },
+          { kw: ['วัสดุสำนักงาน', 'เครื่องเขียน', 'office supply', 'stationery'], cat: 'ค่าวัสดุสำนักงาน' },
+          { kw: ['เดินทาง', 'รถแท็กซี่', 'travel', 'taxi'], cat: 'ค่าเดินทาง' },
+          { kw: ['ที่ปรึกษา', 'professional', 'audit', 'consult'], cat: 'ค่าที่ปรึกษา' },
+          { kw: ['ประกัน', 'insurance'], cat: 'ค่าประกัน' },
+          { kw: ['สินค้า', 'cogs', 'cost of goods'], cat: 'ค่าสินค้า' },
+        ];
+        const nameLower = name.toLowerCase();
+        for (const { kw, cat } of keywordMap) {
+          if (kw.some(k => name.includes(k) || nameLower.includes(k.toLowerCase()))) return cat;
+        }
+        // Fallback to prefix on standard Thai SME chart layout
+        // (5xxx expense ranges). Returns null when no prefix matches —
+        // user can pick manually.
+        const prefixMap = [
+          ['5306', 'ค่าซ่อมแซม'], ['5443', 'ค่าซ่อมแซม'],
+          ['5102', 'ค่าขนส่ง'],
+          ['5101', 'ค่าโฆษณา'],
+          ['5303', 'ค่าสาธารณูปโภค'],   // electricity
+          ['5302', 'ค่าสาธารณูปโภค'],   // water
+          ['5304', 'ค่าสาธารณูปโภค'],   // telecom
+          ['5305', 'ค่าวัสดุสำนักงาน'],
+          ['5301', 'ค่าเช่า'],
+          ['5401', 'ค่าเดินทาง'],
+          ['5402', 'ค่าสาธารณูปโภค'],   // fuel sometimes goes here
+          ['5502', 'ค่าที่ปรึกษา'],
+          ['5800', 'ค่าประกัน'],
+          ['5000', 'ค่าสินค้า'],
+          ['5001', 'ค่าสินค้า'],
+          ['5300', 'ค่าบริการ'],
+        ];
+        for (const [pfx, cat] of prefixMap) {
+          if (code.startsWith(pfx)) return cat;
+        }
+        return null;
       },
 
       _contactSearchTimer: null,
