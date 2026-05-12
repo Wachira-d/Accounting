@@ -296,9 +296,16 @@ public class OcrService : IOcrService
                     extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
                 else
                     extractedData.ReasoningTrace.Insert(0, "[Provider] ใช้ Embedded Tesseract (in-process fallback)");
-                // Always make the Azure-skip reason visible even when embedded ran cleanly
+                // Always make the Azure-skip reason visible even when embedded ran cleanly.
+                // Surface to ProcessingNotes too so the admin sees it in the scan detail
+                // (ReasoningTrace is in-memory only). Common case: admin tested the
+                // connection but forgot to flip the AzureDiEnabled toggle.
                 if (azureSkipReason != null)
+                {
                     extractedData.ReasoningTrace.Add($"[Azure DI] {azureSkipReason}");
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Azure DI ข้าม] {azureSkipReason}";
+                }
             }
 
             scanResult.OcrEngine = ocrEngineUsed;

@@ -1661,11 +1661,26 @@ public class AdminController : ControllerBase
 
             s.AzureDiLastTestedAt = DateTime.UtcNow;
             s.AzureDiLastTestStatus = response.IsSuccessStatusCode ? "OK" : $"Error: {response.StatusCode}";
+            // Auto-enable on successful test — admins who "test and save"
+            // shouldn't also have to flip a separate toggle. Tier 1 in
+            // OcrService.ScanAsync requires AzureDiEnabled=true; without
+            // this auto-enable the next scan would still go to Tesseract
+            // and the user can't tell why.
+            bool wasAutoEnabled = false;
+            if (response.IsSuccessStatusCode && !s.AzureDiEnabled)
+            {
+                s.AzureDiEnabled = true;
+                wasAutoEnabled = true;
+            }
             await _db.SaveChangesAsync();
 
+            var msg = response.IsSuccessStatusCode
+                ? (wasAutoEnabled ? "เชื่อมต่อ Azure DI สำเร็จ — เปิดใช้งานอัตโนมัติแล้ว (Tier 1 พร้อมใช้งานในการสแกนถัดไป)"
+                                  : "เชื่อมต่อ Azure DI สำเร็จ")
+                : $"ไม่สามารถเชื่อมต่อได้: {response.StatusCode}";
             return Ok(new ApiResponse<object>(response.IsSuccessStatusCode,
-                new { StatusCode = (int)response.StatusCode },
-                response.IsSuccessStatusCode ? "เชื่อมต่อ Azure DI สำเร็จ" : $"ไม่สามารถเชื่อมต่อได้: {response.StatusCode}"));
+                new { StatusCode = (int)response.StatusCode, AutoEnabled = wasAutoEnabled, Enabled = s.AzureDiEnabled },
+                msg));
         }
         catch (Exception ex)
         {
