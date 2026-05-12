@@ -190,6 +190,13 @@ public class OcrService : IOcrService
             extractedText = "";
             string? lastError = null;
             string? ocrEngineUsed = null;   // surfaced on scanResult.OcrEngine for the debug panel
+            // Tier-outcome ledger — every cascade step writes ONE line so the
+            // debug panel can show the full story regardless of which tier
+            // finally produced the result. Without this, an Azure failure
+            // got silently overwritten when Python local also failed, and
+            // the user had no way to see why Azure was bypassed.
+            var tierTrace = new List<string>();
+            string? azureOutcome = null;     // "skipped: ...", "failed: ...", "ok"
             // PDF text-layer side channel — extracted lazily once (when we
             // need it as a hybrid signal in Tier 3). We no longer use it
             // as a standalone Tier-0 bypass because (a) it misses table
@@ -200,6 +207,13 @@ public class OcrService : IOcrService
             // characters + spatial OCR — fed into ParseThaiDocument.
             string? pdfTextLayer = null;
             string? pdfTextLayerReason = null;
+
+            // Pre-tier diagnostic: WHY would Azure not even be tried?
+            //   • toggle off / endpoint or key missing → azureSkipReason
+            //     was set above based on AzureDiEnabled / Endpoint / Key.
+            //   • quota exhausted → resolved below.
+            // Capture all three branches in azureOutcome so the trace is
+            // always populated.
 
             // Tier 1: Azure DI — runs whenever the admin has fully configured
             // it (toggle + endpoint + key), regardless of OcrProvider's value.
@@ -217,7 +231,6 @@ public class OcrService : IOcrService
                 // from "quota หมด" so the admin knows whether to upgrade
                 // plan vs buy credits vs wait for next month.
                 azureSkipReason = quotaSkipReason ?? "Azure DI quota หมดสำหรับเดือนนี้";
-                extractedData?.ReasoningTrace.Add($"[Quota] {azureSkipReason} — fall back ไป local OCR");
                 _logger.LogInformation("Azure DI skipped for {Cid}: {Reason}", companyId, azureSkipReason);
             }
 
@@ -229,6 +242,7 @@ public class OcrService : IOcrService
                     extractedText = azureResult.Text;
                     extractedData = azureResult.Data;
                     ocrEngineUsed = "AzureDI";
+                    azureOutcome = $"ok (confidence {extractedData.Confidence:P0})";
                     // Engine-specific accounting: record the Azure page usage
                     // so the next CanUseAzureAsync correctly reflects the new total.
                     await _quota.RecordEngineUsageAsync(companyId, "Azure");
@@ -259,11 +273,22 @@ public class OcrService : IOcrService
                 else
                 {
                     lastError = azureResult.Error ?? "unknown";
+                    azureOutcome = $"failed: {lastError}";
                     _logger.LogWarning("Azure DI failed ({Err}) — falling back to next tier", lastError);
                 }
             }
+            else if (azureSkipReason != null)
+            {
+                azureOutcome = $"skipped: {azureSkipReason}";
+            }
+            else if (!azureEnabled)
+            {
+                azureOutcome = "skipped: AzureDI ไม่ได้เปิดใช้งาน (ตรวจสอบ admin/ocr-config — toggle + endpoint + key)";
+            }
+            tierTrace.Add($"[Tier 1 Azure DI] {azureOutcome ?? "(not attempted)"}");
 
             // Tier 2: Python local service (PaddleOCR+EasyOCR)
+            string? pythonOutcome = null;
             if (extractedData == null)
             {
                 try
@@ -274,6 +299,7 @@ public class OcrService : IOcrService
                         extractedText = localResult.RawText;
                         extractedData = localResult.Data;
                         ocrEngineUsed = "LocalPython";
+                        pythonOutcome = $"ok (confidence {extractedData.Confidence:P0})";
                         await _quota.RecordEngineUsageAsync(companyId, "Local");
                         if (lastError != null)
                             extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {lastError} — used Python local pipeline");
@@ -284,13 +310,23 @@ public class OcrService : IOcrService
                         // vendor on a previous scan, when fuzzy match passes.
                         await _knownGoodCorrector.ApplyAsync(companyId, extractedData);
                     }
+                    else
+                    {
+                        pythonOutcome = "no text returned";
+                    }
                 }
                 catch (Exception ex)
                 {
                     lastError = $"Python local: {ex.Message}";
+                    pythonOutcome = $"failed: {ex.Message}";
                     _logger.LogWarning(ex, "Python local OCR failed — falling back to embedded Tesseract");
                 }
             }
+            else
+            {
+                pythonOutcome = "not attempted (Tier 1 succeeded)";
+            }
+            tierTrace.Add($"[Tier 2 Python local] {pythonOutcome}");
 
             // Tier 3: Embedded Tesseract (always available, in-process) —
             // hybrid with PDF text-layer when the input file is a digital
@@ -371,11 +407,17 @@ public class OcrService : IOcrService
                 // forgot to flip the AzureDiEnabled toggle.
                 if (azureSkipReason != null)
                 {
-                    extractedData.ReasoningTrace.Add($"[Azure DI] {azureSkipReason}");
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                         + $"\n[Azure DI ข้าม] {azureSkipReason}";
                 }
             }
+            tierTrace.Add($"[Tier 3 Local hybrid] {(ocrEngineUsed == "PdfTextLayer+Tesseract" ? "PDF text-layer + Tesseract" : ocrEngineUsed == "EmbeddedTesseract" ? "Tesseract only" : "not attempted")}");
+
+            // Prepend the tier-outcome ledger to the reasoning trace so the
+            // debug panel shows EVERY tier's status — no more silent
+            // "Azure was bypassed" mystery when both Azure and Python fail.
+            for (int i = tierTrace.Count - 1; i >= 0; i--)
+                extractedData.ReasoningTrace.Insert(0, tierTrace[i]);
 
             scanResult.OcrEngine = ocrEngineUsed;
 
