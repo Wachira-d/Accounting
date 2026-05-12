@@ -85,6 +85,16 @@ public class SiteSettings : BaseEntity
     public bool AzureDiEnabled { get; set; } = false;
     public DateTime? AzureDiLastTestedAt { get; set; }
     public string? AzureDiLastTestStatus { get; set; }
+    // Rate-limit knobs. Microsoft caps F0 (free) at 1 analyze TPS / 1
+    // get-poll TPS; S0 (standard) at 15 analyze TPS / 50 poll TPS.
+    //   AzureDiMaxConcurrentSubmits → semaphore size for parallel
+    //     submits. F0 must be 1; S0 paid can go up to 15.
+    //   AzureDiPollIntervalMs → minimum gap between poll GETs. F0 needs
+    //     ≥1000ms (1 TPS cap); S0 can poll faster (≥100ms).
+    // Defaults are the F0-safe values so a free-tier admin can't
+    // accidentally over-burst.
+    public int AzureDiMaxConcurrentSubmits { get; set; } = 1;
+    public int AzureDiPollIntervalMs { get; set; } = 1500;
 
     // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
     // Provider chain is strictly Azure DI v4 → Local (PaddleOCR + EasyOCR).

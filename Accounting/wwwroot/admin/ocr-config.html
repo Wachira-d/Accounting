@@ -228,6 +228,30 @@
             <input type="text" id="azureDiApiVersion" placeholder="2024-11-30">
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>โหลดพร้อมกันสูงสุด (Concurrent submits)</label>
+            <input type="number" id="azureDiMaxConcurrentSubmits" min="1" max="20" step="1">
+            <div class="hint">
+              <strong>F0 (Free):</strong> 1 (analyze cap 1 TPS) ·
+              <strong>S0 (Standard):</strong> 5–15 (analyze cap 15 TPS)
+            </div>
+          </div>
+          <div class="form-group">
+            <label>ช่วงเวลา poll (ms)</label>
+            <input type="number" id="azureDiPollIntervalMs" min="100" max="10000" step="100">
+            <div class="hint">
+              <strong>F0:</strong> 1500ms (cap 1 TPS) ·
+              <strong>S0:</strong> 100–500ms (cap 50 TPS)
+            </div>
+          </div>
+        </div>
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:12px;color:#14532d;line-height:1.6">
+          💡 <strong>F0 (Free tier)</strong> ของ Azure DI จำกัด 1 transaction/sec/operation
+          (analyze + poll). Batch อัพหลายไฟล์อาจชน 429 ทันที — เลือก concurrent=1 และ poll=1500ms.<br>
+          <strong>S0 (Standard)</strong> รองรับ 15 TPS analyze + 50 TPS poll (ปรับเพิ่มได้ผ่าน support).
+          ตั้ง concurrent=10 และ poll=200ms ได้สบายๆ
+        </div>
         <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
           <button class="btn-secondary" onclick="testAzure()"
                   title="ตรวจ endpoint + API key (ฟรี — แค่ ping /info)">
@@ -890,6 +914,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       document.getElementById('azureDiEnabled').checked = c.azureDiEnabled;
       document.getElementById('azureDiModelId').value = c.azureDiModelId || 'prebuilt-invoice';
       document.getElementById('azureDiApiVersion').value = c.azureDiApiVersion || '2024-11-30';
+      document.getElementById('azureDiMaxConcurrentSubmits').value = c.azureDiMaxConcurrentSubmits || 1;
+      document.getElementById('azureDiPollIntervalMs').value = c.azureDiPollIntervalMs || 1500;
 
       if (c.azureDiHasKey) document.getElementById('azureKeyHint').style.display = '';
 
@@ -972,6 +998,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           azureDiEnabled: document.getElementById('azureDiEnabled').checked,
           azureDiModelId: document.getElementById('azureDiModelId').value,
           azureDiApiVersion: document.getElementById('azureDiApiVersion').value,
+          azureDiMaxConcurrentSubmits: parseInt(document.getElementById('azureDiMaxConcurrentSubmits').value) || 1,
+          azureDiPollIntervalMs: parseInt(document.getElementById('azureDiPollIntervalMs').value) || 1500,
           // OcrFreePages* fields removed — moved to per-plan settings in /admin/plans.html
           ocrCreditPricePerPage: parseFloat(document.getElementById('ocrCreditPricePerPage').value),
           ocrCreditMinPurchase: parseInt(document.getElementById('ocrCreditMinPurchase').value),
