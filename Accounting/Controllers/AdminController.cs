@@ -13,7 +13,6 @@ using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using SixLabors.ImageSharp.Processing;
 using System.Text.Json;
 
 namespace Accounting.Controllers;
@@ -1755,22 +1754,27 @@ public class AdminController : ControllerBase
         byte[] sampleBytes;
         try
         {
-            using var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(400, 600);
-            img.Mutate(c => c.Fill(SixLabors.ImageSharp.Color.White));
-            // Black horizontal bars at varying widths simulate a receipt
-            // header / body / total layout, enough for Azure's document-
-            // detection to engage.
-            for (int row = 0; row < 600; row++)
+            // Direct pixel access — avoids the SixLabors.ImageSharp.Drawing
+            // package (we don't depend on it) which is where Fill / DrawText
+            // live. The image constructor defaults to transparent black; we
+            // set every pixel to white, then overlay black horizontal bars
+            // at receipt-layout positions so Azure DI's document detector
+            // engages.
+            const int W = 400, H = 600;
+            var white = new SixLabors.ImageSharp.PixelFormats.Rgba32(255, 255, 255, 255);
+            var black = new SixLabors.ImageSharp.PixelFormats.Rgba32(0, 0, 0, 255);
+            using var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(W, H);
+            for (int y = 0; y < H; y++)
             {
-                if ((row >= 80 && row <= 90) || (row >= 200 && row <= 210)
-                    || (row >= 320 && row <= 330) || (row >= 500 && row <= 515))
+                bool isBar = (y >= 80 && y <= 90) || (y >= 200 && y <= 210)
+                          || (y >= 320 && y <= 330) || (y >= 500 && y <= 515);
+                for (int x = 0; x < W; x++)
                 {
-                    for (int col = 40; col < 360; col++)
-                        img[col, row] = new SixLabors.ImageSharp.PixelFormats.Rgba32(0, 0, 0, 255);
+                    img[x, y] = (isBar && x >= 40 && x < 360) ? black : white;
                 }
             }
             using var ms = new MemoryStream();
-            await img.SaveAsPngAsync(ms);
+            img.SaveAsPng(ms);
             sampleBytes = ms.ToArray();
         }
         catch (Exception ex)
