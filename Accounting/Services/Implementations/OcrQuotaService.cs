@@ -154,18 +154,27 @@ public class OcrQuotaService : IOcrQuotaService
     /// <summary>Engine-aware quota check. Returns true when Azure DI is
     /// still allowed for this tenant this month.</summary>
     public async Task<bool> CanUseAzureAsync(Guid companyId)
+        => (await CheckAzureQuotaAsync(companyId)).Allowed;
+
+    public async Task<(bool Allowed, string? Reason)> CheckAzureQuotaAsync(Guid companyId)
     {
         var sub = await _db.Subscriptions.AsNoTracking()
             .Where(s => s.CompanyId == companyId && !s.IsDeleted)
             .Select(s => new { s.AzureOcrPagesPerMonth, s.CurrentMonthAzureOcrPages,
                 s.MaxOcrPagesPerMonth, s.CurrentMonthOcrPages })
             .FirstOrDefaultAsync();
-        if (sub == null) return true;  // unknown plan — let the cascade decide
-        // Legacy single-budget mode: no Azure-specific cap → fall back to total budget
+        if (sub == null) return (true, null);  // unknown plan — let the cascade decide
+        // Legacy single-budget mode: no Azure-specific cap → fall back to total budget.
         if (!sub.AzureOcrPagesPerMonth.HasValue)
-            return sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth;
-        // Engine-specific mode: 0 = no Azure at all (free plan)
-        return sub.CurrentMonthAzureOcrPages < sub.AzureOcrPagesPerMonth.Value;
+        {
+            if (sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth) return (true, null);
+            return (false, $"โควต้า OCR ทั้งหมดเดือนนี้เต็มแล้ว ({sub.CurrentMonthOcrPages}/{sub.MaxOcrPagesPerMonth} หน้า) — กรุณาซื้อเครดิตเพิ่ม หรือรอเดือนหน้า");
+        }
+        // Engine-specific mode.
+        if (sub.AzureOcrPagesPerMonth.Value == 0)
+            return (false, "แผนปัจจุบันให้ Azure DI 0 หน้า/เดือน — กรุณา upgrade plan หรือเพิ่ม AzureOcrPagesPerMonth บน Subscription");
+        if (sub.CurrentMonthAzureOcrPages < sub.AzureOcrPagesPerMonth.Value) return (true, null);
+        return (false, $"โควต้า Azure DI เดือนนี้เต็มแล้ว ({sub.CurrentMonthAzureOcrPages}/{sub.AzureOcrPagesPerMonth.Value} หน้า) — Local OCR ยังใช้งานได้");
     }
 
     public async Task<bool> TryConsumeForEngineAsync(Guid companyId, string engineKind)

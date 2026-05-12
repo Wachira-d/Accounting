@@ -233,11 +233,17 @@ public class OcrService : IOcrService
             // its Azure budget this month. When that happens, skip Tier 1
             // and route directly to local OCR (when FallbackToLocal is on
             // for this tenant). The legacy single-budget mode is unchanged.
-            bool azureQuotaAllowed = await _quota.CanUseAzureAsync(companyId);
+            var (azureQuotaAllowed, quotaSkipReason) = await _quota.CheckAzureQuotaAsync(companyId);
             if (!azureQuotaAllowed)
             {
-                extractedData?.ReasoningTrace.Add("[Quota] Azure DI quota หมดสำหรับเดือนนี้ — fall back ไป local OCR");
-                _logger.LogInformation("Azure DI quota exhausted for {Cid} — routing to local cascade", companyId);
+                // Fold the precise quota reason into the existing skip-reason
+                // pipeline so it ends up in ProcessingNotes alongside the
+                // toggle/endpoint/key reasons. Distinguishes "plan = 0 pages"
+                // from "quota หมด" so the admin knows whether to upgrade
+                // plan vs buy credits vs wait for next month.
+                azureSkipReason = quotaSkipReason ?? "Azure DI quota หมดสำหรับเดือนนี้";
+                extractedData?.ReasoningTrace.Add($"[Quota] {azureSkipReason} — fall back ไป local OCR");
+                _logger.LogInformation("Azure DI skipped for {Cid}: {Reason}", companyId, azureSkipReason);
             }
 
             if (extractedData == null && azureEnabled && azureQuotaAllowed)
