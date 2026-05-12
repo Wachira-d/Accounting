@@ -299,6 +299,37 @@
                 </div>
               </div>
 
+              <div style="font-weight:600;margin:16px 0 8px">โควต้า OCR (หน้า/เดือน)</div>
+              <div style="font-size:12px;color:#64748b;margin-bottom:8px;line-height:1.5">
+                💡 <strong>Azure DI</strong> = แม่นยำสูง (มีค่าใช้จ่ายต่อหน้า) — เซ็ต <code>0</code> เพื่อปิด Azure สำหรับแพ็คนี้.
+                <strong>Local OCR</strong> (PaddleOCR/Tesseract) = ฟรี — เว้นว่าง = ไม่จำกัด.
+                <strong>Total</strong> ใช้เป็น budget รวม (legacy) เมื่อ Azure/Local ไม่ได้แยกชัด.
+              </div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">รวมทั้งหมด (Total) /เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_total" value="${p.maxOcrPagesPerMonth || 0}" title="Legacy single budget — ใช้เมื่อ Azure/Local ไม่ได้แยกค่า">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Azure DI /เดือน <span style="color:#dc2626">💎</span></label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_azure" value="${p.azureOcrPagesPerMonth ?? ''}" placeholder="(ใช้ Total ด้านบน)" title="0 = ปิด Azure / ตัวเลข = limit ต่อเดือน / ว่าง = ใช้ Total">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Local OCR /เดือน <span style="color:#16a34a">🆓</span></label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_local" value="${p.localOcrPagesPerMonth ?? ''}" placeholder="(ไม่จำกัด)" title="ว่าง = ไม่จำกัด, ตัวเลข = limit ต่อเดือน">
+                </div>
+                <div class="admin-form-group" style="grid-column: span 2">
+                  <label class="admin-label" style="display:flex;align-items:center;gap:6px">
+                    <input type="checkbox" id="ep_ocr_fallback" ${p.fallbackToLocalWhenAzureExhausted ? 'checked' : ''}>
+                    <span>เมื่อ Azure quota หมด → fall back ไป Local OCR อัตโนมัติ</span>
+                  </label>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Trial OCR /เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_trial" value="${p.trialMaxOcrPagesPerMonth || 0}" title="โควต้า OCR ของผู้ใช้ที่อยู่ในช่วง Trial">
+                </div>
+              </div>
+
               <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้ (Trial)</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
@@ -390,6 +421,14 @@
           trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
           // Permanent free flag
           isPermanentFree: document.getElementById('ep_perm_free').checked,
+          // OCR per-engine quotas — empty input = leave as null (not set)
+          maxOcrPagesPerMonth: parseInt(document.getElementById('ep_ocr_total').value) || 0,
+          azureOcrPagesPerMonth: document.getElementById('ep_ocr_azure').value === ''
+            ? null : parseInt(document.getElementById('ep_ocr_azure').value),
+          localOcrPagesPerMonth: document.getElementById('ep_ocr_local').value === ''
+            ? null : parseInt(document.getElementById('ep_ocr_local').value),
+          fallbackToLocalWhenAzureExhausted: document.getElementById('ep_ocr_fallback').checked,
+          trialMaxOcrPagesPerMonth: parseInt(document.getElementById('ep_ocr_trial').value) || 0,
           // Features
           enabledFeatureNames,
           trialFeatureNames,

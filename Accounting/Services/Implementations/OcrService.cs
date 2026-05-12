@@ -44,6 +44,8 @@ public class OcrService : IOcrService
     private readonly TfIdfNaiveBayesClassifier _nbClassifier;
     private readonly RecurringExpenseDetector _recurringDetector;
     private readonly Services.Interfaces.IOcrQuotaService _quota;
+    private readonly Ocr.AzureDiPatternLearner _azureLearner;
+    private readonly Ocr.VendorKnownGoodCorrector _knownGoodCorrector;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -55,7 +57,9 @@ public class OcrService : IOcrService
         AssociationRuleMiner ruleMiner,
         TfIdfNaiveBayesClassifier nbClassifier,
         RecurringExpenseDetector recurringDetector,
-        Services.Interfaces.IOcrQuotaService quota)
+        Services.Interfaces.IOcrQuotaService quota,
+        Ocr.AzureDiPatternLearner azureLearner,
+        Ocr.VendorKnownGoodCorrector knownGoodCorrector)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -70,6 +74,8 @@ public class OcrService : IOcrService
         _nbClassifier = nbClassifier;
         _recurringDetector = recurringDetector;
         _quota = quota;
+        _azureLearner = azureLearner;
+        _knownGoodCorrector = knownGoodCorrector;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -257,6 +263,29 @@ public class OcrService : IOcrService
                     // Engine-specific accounting: record the Azure page usage
                     // so the next CanUseAzureAsync correctly reflects the new total.
                     await _quota.RecordEngineUsageAsync(companyId, "Azure");
+                    // Free training signal: feed Azure's authoritative output
+                    // into OcrLearnedPattern + VendorKnownGoodValue stores so
+                    // future Tier-2/3 fallback scans of this same vendor
+                    // benefit from Azure-grade accuracy on names/numbers.
+                    try
+                    {
+                        await _azureLearner.LearnAsync(
+                            companyId, extractedText ?? "",
+                            vendorTaxId: extractedData.VendorTaxId,
+                            vendorName: extractedData.VendorName,
+                            documentNumber: extractedData.DocumentNumber,
+                            buyerName: extractedData.BuyerName,
+                            buyerTaxId: extractedData.BuyerTaxId,
+                            vendorAddress: extractedData.VendorAddress,
+                            vendorPhone: extractedData.VendorPhone,
+                            vendorEmail: extractedData.VendorEmail,
+                            vendorBranchCode: extractedData.VendorBranchCode,
+                            sourceConfidence: extractedData.Confidence);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Azure-DI pattern learning failed (non-fatal)");
+                    }
                 }
                 else
                 {
@@ -281,6 +310,10 @@ public class OcrService : IOcrService
                             extractedData.ReasoningTrace.Insert(0, $"[Fallback] Azure DI failed: {lastError} — used Python local pipeline");
                         else if (azureSkipReason != null)
                             extractedData.ReasoningTrace.Insert(0, $"[Provider] ข้าม Azure DI — {azureSkipReason}; ใช้ Local (PaddleOCR+EasyOCR)");
+                        // Local-cascade output is noisy — substitute known-good
+                        // canonical values that Azure DI captured for this
+                        // vendor on a previous scan, when fuzzy match passes.
+                        await _knownGoodCorrector.ApplyAsync(companyId, extractedData);
                     }
                 }
                 catch (Exception ex)
@@ -302,6 +335,11 @@ public class OcrService : IOcrService
                     extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
                 else
                     extractedData.ReasoningTrace.Insert(0, "[Provider] ใช้ Embedded Tesseract (in-process fallback)");
+                // Tesseract output is the noisiest of the three engines —
+                // run the known-good corrector here too so any prior
+                // Azure-DI scan of this vendor cleans up the obvious
+                // garbling before it reaches the gateway / book.
+                await _knownGoodCorrector.ApplyAsync(companyId, extractedData);
                 // Always make the Azure-skip reason visible even when embedded ran cleanly.
                 // Surface to ProcessingNotes too so the admin sees it in the scan detail
                 // (ReasoningTrace is in-memory only). Common case: admin tested the

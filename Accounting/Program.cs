@@ -157,6 +157,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RecurringExpe
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.DocumentWorkflowPredictor>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorClusteringService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDiPatternLearner>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorKnownGoodCorrector>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.CrossTenantKnowledgeAggregator>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ActiveLearningRanker>();
 // Nightly batch — aggregator + miner — runs in-process via IHostedService
