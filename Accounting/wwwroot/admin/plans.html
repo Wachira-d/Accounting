@@ -380,8 +380,12 @@
               <div style="font-size:12px;color:#64748b;margin-bottom:8px">เมื่อบริษัทอยู่ในสถานะ Trial จะใช้ฟีเจอร์ตามรายการนี้แทน</div>
               <div id="features_trial_picker">${buildFeaturePickerHtml('feat_trial', p.trialFeatureNames)}</div>
 
-              <div class="admin-modal-actions">
+              <div class="admin-modal-actions" style="flex-wrap:wrap;gap:8px">
                 <button type="submit" class="admin-btn admin-btn-primary">บันทึก</button>
+                <button type="button" class="admin-btn admin-btn-outline" onclick="resyncSubscriptions('${p.id}')"
+                        title="ดันค่าใน template ลง subscription ทุกบริษัทบนแพ็คนี้ — ใช้เมื่อค่ายังไม่ตามไป (เช่นเปลี่ยนสถานะตรงๆ ใน DB)">
+                  ↻ Resync ลง subscription
+                </button>
                 <button type="button" class="admin-btn admin-btn-outline" onclick="closeEditModal()">ยกเลิก</button>
               </div>
             </form>
@@ -444,6 +448,21 @@
     function closeEditModal() {
       document.getElementById('editModal').style.display = 'none';
       document.getElementById('editModal').innerHTML = '';
+    }
+
+    // Force-push every subscription on this plan to use the template's
+    // current values. Use after editing the template if any tenant is
+    // stuck on old quotas (e.g. status hand-flipped in DB so the normal
+    // UpgradeAsync flow was bypassed).
+    async function resyncSubscriptions(planId) {
+      if (!confirm('ดันค่าใน template ลง subscription ทุกบริษัทบนแพ็คนี้?\n\n' +
+                   'ใช้กับกรณีลูกค้ายังเห็นโควต้าเก่า ทั้งที่แก้ template แล้ว.')) return;
+      try {
+        const res = await AdminAPI.resyncPlanSubscriptions(planId);
+        AdminLayout.toast(res?.message || 'Resync สำเร็จ');
+      } catch (err) {
+        AdminLayout.toast('Resync ล้มเหลว: ' + (err.message || err), 'error');
+      }
     }
 
     loadPlans();

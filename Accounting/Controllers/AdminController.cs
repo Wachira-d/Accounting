@@ -403,6 +403,23 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<PlanTemplateResponse>(true, result, "อัพเดท plan template สำเร็จ"));
     }
 
+    /// <summary>
+    /// Force-resync every subscription on a given plan against the current
+    /// template values. Use when admin edited the template but propagation
+    /// didn't kick (rare — usually only needed for subscriptions whose
+    /// status was hand-changed in the DB and never re-flowed through the
+    /// upgrade path). Same semantics as Trial/Paid branches in
+    /// UpdatePlanTemplateAsync — Trial subs get TrialMaxOcrPagesPerMonth,
+    /// Active/etc. subs get the full per-engine quotas.
+    /// </summary>
+    [HttpPost("plans/{templateId:guid}/resync-subscriptions")]
+    public async Task<ActionResult<ApiResponse<object>>> ResyncSubscriptions(Guid templateId)
+    {
+        var n = await _subscriptionService.ResyncSubscriptionsFromTemplateAsync(templateId);
+        return Ok(new ApiResponse<object>(true, new { syncedCount = n },
+            $"อัปเดต {n} subscription จาก template สำเร็จ"));
+    }
+
     // ===== Trial Config Management =====
 
     [HttpGet("companies/{companyId:guid}/trial")]
