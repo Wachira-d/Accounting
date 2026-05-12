@@ -40,8 +40,9 @@ public class VendorKnownGoodCorrector
     /// values with their canonical equivalents when the local cascade
     /// has previously learned them from Azure DI. Adds reasoning trace
     /// entries so the user can see why a value changed mid-pipeline.
+    /// Internal because OcrExtractedData is internal to this assembly.
     /// </summary>
-    public async Task ApplyAsync(Guid companyId, OcrExtractedData data, CancellationToken ct = default)
+    internal async Task ApplyAsync(Guid companyId, OcrExtractedData data, CancellationToken ct = default)
     {
         if (data == null) return;
         // Need at least vendor TaxId or vendor name to find anything.
