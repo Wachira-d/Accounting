@@ -53,6 +53,15 @@ public class ImportExportService : IImportExportService
                     case "journal-entries":
                         await ImportJournalEntryAsync(companyId, row, performedBy);
                         break;
+                    case "stock-opening":
+                        await ImportStockOpeningAsync(companyId, row, performedBy);
+                        break;
+                    case "stock-adjustments":
+                        await ImportStockAdjustmentAsync(companyId, row, performedBy);
+                        break;
+                    case "fixed-assets":
+                        await ImportFixedAssetAsync(companyId, row, performedBy);
+                        break;
                     default:
                         errors.Add(new ImportError(i + 1, "EntityType", request.EntityType, $"ไม่รองรับการนำเข้า {request.EntityType}"));
                         continue;
@@ -146,6 +155,26 @@ public class ImportExportService : IImportExportService
                 new() { ["TransactionDate"] = "2026-01-15", ["TransactionType"] = "Deposit", ["Amount"] = "50000.00", ["Description"] = "รับชำระเงิน" }
             }),
 
+            "stock-opening" => new ImportTemplateResponse("stock-opening", GetTemplateFields("stock-opening")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["ProductCode"] = "P001", ["Quantity"] = "100", ["UnitCost"] = "60.00", ["OpeningDate"] = "2026-01-01", ["Notes"] = "ยกมาจากระบบเดิม" }
+                }),
+
+            "stock-adjustments" => new ImportTemplateResponse("stock-adjustments", GetTemplateFields("stock-adjustments")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["ProductCode"] = "P001", ["AdjustmentDate"] = "2026-01-15", ["MovementType"] = "ADJUST", ["Quantity"] = "-2", ["Notes"] = "ของเสียหาย" }
+                }),
+
+            "fixed-assets" => new ImportTemplateResponse("fixed-assets", GetTemplateFields("fixed-assets")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["AssetCode"] = "FA-001", ["Name"] = "คอมพิวเตอร์โน้ตบุ๊ก", ["Category"] = "เครื่องใช้สำนักงาน",
+                        ["PurchaseDate"] = "2024-03-15", ["PurchaseCost"] = "35000.00", ["SalvageValue"] = "0",
+                        ["UsefulLifeMonths"] = "60", ["DepreciationMethod"] = "StraightLine", ["AccumulatedDepreciation"] = "0" }
+                }),
+
             _ => throw new InvalidOperationException($"ไม่รองรับ template สำหรับ {entityType}")
         };
 
@@ -178,8 +207,12 @@ public class ImportExportService : IImportExportService
             "contacts" => await ExportContactsAsync(companyId, request),
             "products" => await ExportProductsAsync(companyId, request),
             "chartofaccounts" or "chart-of-accounts" => await ExportAccountsAsync(companyId, request),
-            "journalentries" => await ExportJournalEntriesAsync(companyId, request),
+            "journalentries" or "journal-entries" => await ExportJournalEntriesAsync(companyId, request),
             "documents" => await ExportDocumentsAsync(companyId, request),
+            "banktransactions" => await ExportBankTransactionsAsync(companyId, request),
+            "stock-movements" => await ExportStockMovementsAsync(companyId, request),
+            "stock-balances" => await ExportStockBalancesAsync(companyId, request),
+            "fixed-assets" => await ExportFixedAssetsAsync(companyId, request),
             _ => throw new InvalidOperationException($"ไม่รองรับการส่งออก {request.EntityType}")
         };
 
@@ -194,7 +227,8 @@ public class ImportExportService : IImportExportService
     {
         return Task.FromResult(new List<string>
         {
-            "contacts", "products", "chartofaccounts", "journalentries", "documents"
+            "contacts", "products", "chartofaccounts", "journalentries", "documents",
+            "banktransactions", "stock-movements", "stock-balances", "fixed-assets"
         });
     }
 
@@ -441,6 +475,219 @@ public class ImportExportService : IImportExportService
         }).ToList();
     }
 
+    // ===== Stock import =====
+
+    private async Task ImportStockOpeningAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var code = row.GetValueOrDefault("ProductCode") ?? throw new InvalidOperationException("ProductCode is required");
+        var product = await _db.Products.FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Code == code)
+            ?? throw new KeyNotFoundException($"ไม่พบสินค้ารหัส {code}");
+
+        var qty = decimal.TryParse(row.GetValueOrDefault("Quantity"), out var q) ? q
+            : throw new InvalidOperationException("Quantity ไม่ถูกต้อง");
+        var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
+        var openingDate = DateTime.TryParse(row.GetValueOrDefault("OpeningDate"), out var od) ? od : DateTime.UtcNow;
+
+        // Replace any previously imported opening balance so re-running the
+        // file twice doesn't double-count. The MovementType OPENING is the
+        // unique signal we use to identify migration-time entries.
+        var existingOpening = await _db.StockMovements
+            .Where(m => m.CompanyId == companyId && m.ProductId == product.Id && m.MovementType == "OPENING")
+            .ToListAsync();
+        if (existingOpening.Count > 0)
+        {
+            foreach (var ex in existingOpening) product.CurrentStock -= ex.Quantity;
+            _db.StockMovements.RemoveRange(existingOpening);
+        }
+
+        product.CurrentStock += qty;
+        product.CostPrice = unitCost;
+
+        _db.StockMovements.Add(new StockMovement
+        {
+            CompanyId = companyId,
+            ProductId = product.Id,
+            MovementDate = openingDate,
+            MovementType = "OPENING",
+            Quantity = qty,
+            UnitCost = unitCost,
+            BalanceAfter = product.CurrentStock,
+            Notes = row.GetValueOrDefault("Notes") ?? "สต็อกยกมา (Import)",
+            CreatedBy = performedBy
+        });
+    }
+
+    private async Task ImportStockAdjustmentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var code = row.GetValueOrDefault("ProductCode") ?? throw new InvalidOperationException("ProductCode is required");
+        var product = await _db.Products.FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Code == code)
+            ?? throw new KeyNotFoundException($"ไม่พบสินค้ารหัส {code}");
+
+        var rawType = (row.GetValueOrDefault("MovementType") ?? "ADJUST").ToUpperInvariant();
+        if (rawType != "IN" && rawType != "OUT" && rawType != "ADJUST")
+            throw new InvalidOperationException($"MovementType ไม่ถูกต้อง: {rawType}");
+
+        var qty = decimal.TryParse(row.GetValueOrDefault("Quantity"), out var q) ? q
+            : throw new InvalidOperationException("Quantity ไม่ถูกต้อง");
+        // Normalize sign — IN is always positive, OUT always negative; ADJUST
+        // honours the sign the user gave (allowing both +/− variance).
+        var signed = rawType switch
+        {
+            "IN" => Math.Abs(qty),
+            "OUT" => -Math.Abs(qty),
+            _ => qty
+        };
+
+        var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
+        var date = DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out var d) ? d : DateTime.UtcNow;
+
+        product.CurrentStock += signed;
+
+        _db.StockMovements.Add(new StockMovement
+        {
+            CompanyId = companyId,
+            ProductId = product.Id,
+            MovementDate = date,
+            MovementType = rawType,
+            Quantity = signed,
+            UnitCost = unitCost,
+            BalanceAfter = product.CurrentStock,
+            Reference = row.GetValueOrDefault("Reference"),
+            Notes = row.GetValueOrDefault("Notes"),
+            CreatedBy = performedBy
+        });
+    }
+
+    // ===== Fixed Asset import =====
+
+    private async Task ImportFixedAssetAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var code = row.GetValueOrDefault("AssetCode") ?? throw new InvalidOperationException("AssetCode is required");
+        if (await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId && a.AssetCode == code))
+            throw new InvalidOperationException($"รหัสสินทรัพย์ {code} ซ้ำ");
+
+        var purchaseDate = DateTime.TryParse(row.GetValueOrDefault("PurchaseDate"), out var pd) ? pd
+            : throw new InvalidOperationException("PurchaseDate ไม่ถูกต้อง");
+        var purchaseCost = decimal.TryParse(row.GetValueOrDefault("PurchaseCost"), out var pc) ? pc
+            : throw new InvalidOperationException("PurchaseCost ไม่ถูกต้อง");
+        var salvage = decimal.TryParse(row.GetValueOrDefault("SalvageValue"), out var sv) ? sv : 0m;
+        var life = int.TryParse(row.GetValueOrDefault("UsefulLifeMonths"), out var lm) ? lm
+            : throw new InvalidOperationException("UsefulLifeMonths ไม่ถูกต้อง");
+        var accDep = decimal.TryParse(row.GetValueOrDefault("AccumulatedDepreciation"), out var ad) ? ad : 0m;
+        var method = Enum.TryParse<DepreciationMethod>(row.GetValueOrDefault("DepreciationMethod"), true, out var dm)
+            ? dm : DepreciationMethod.StraightLine;
+
+        _db.FixedAssets.Add(new FixedAsset
+        {
+            CompanyId = companyId,
+            AssetCode = code,
+            Name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required"),
+            Category = row.GetValueOrDefault("Category"),
+            Location = row.GetValueOrDefault("Location"),
+            SerialNumber = row.GetValueOrDefault("SerialNumber"),
+            PurchaseDate = purchaseDate,
+            PurchaseCost = purchaseCost,
+            SalvageValue = salvage,
+            UsefulLifeMonths = life,
+            DepreciationMethod = method,
+            AccumulatedDepreciation = accDep,
+            NetBookValue = purchaseCost - accDep,
+            Status = AssetStatus.Active,
+            CreatedBy = performedBy
+        });
+    }
+
+    // ===== Stock + Asset + Bank exports =====
+
+    private async Task<List<Dictionary<string, string>>> ExportStockMovementsAsync(Guid companyId, ExportRequest request)
+    {
+        var query = _db.StockMovements
+            .Include(m => m.Product)
+            .Where(m => m.CompanyId == companyId);
+        if (request.FromDate.HasValue) query = query.Where(m => m.MovementDate >= request.FromDate);
+        if (request.ToDate.HasValue) query = query.Where(m => m.MovementDate <= request.ToDate);
+        var movements = await query.OrderBy(m => m.MovementDate).ToListAsync();
+
+        return movements.Select(m => new Dictionary<string, string>
+        {
+            ["MovementDate"] = m.MovementDate.ToString("yyyy-MM-dd"),
+            ["ProductCode"] = m.Product.Code,
+            ["ProductName"] = m.Product.Name,
+            ["MovementType"] = m.MovementType,
+            ["Quantity"] = m.Quantity.ToString("F4"),
+            ["UnitCost"] = m.UnitCost.ToString("F2"),
+            ["BalanceAfter"] = m.BalanceAfter.ToString("F4"),
+            ["Reference"] = m.Reference ?? "",
+            ["Notes"] = m.Notes ?? ""
+        }).ToList();
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportStockBalancesAsync(Guid companyId, ExportRequest request)
+    {
+        var products = await _db.Products
+            .Where(p => p.CompanyId == companyId && p.TrackStock && p.IsActive)
+            .OrderBy(p => p.Code)
+            .ToListAsync();
+        return products.Select(p => new Dictionary<string, string>
+        {
+            ["Code"] = p.Code,
+            ["Name"] = p.Name,
+            ["Category"] = p.Category ?? "",
+            ["Unit"] = p.Unit,
+            ["CurrentStock"] = p.CurrentStock.ToString("F4"),
+            ["CostPrice"] = p.CostPrice.ToString("F2"),
+            ["StockValue"] = (p.CurrentStock * p.CostPrice).ToString("F2"),
+            ["MinimumStock"] = p.MinimumStock.ToString("F4"),
+            ["BelowMinimum"] = (p.CurrentStock < p.MinimumStock).ToString()
+        }).ToList();
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportFixedAssetsAsync(Guid companyId, ExportRequest request)
+    {
+        var assets = await _db.FixedAssets
+            .Where(a => a.CompanyId == companyId)
+            .OrderBy(a => a.AssetCode)
+            .ToListAsync();
+        return assets.Select(a => new Dictionary<string, string>
+        {
+            ["AssetCode"] = a.AssetCode,
+            ["Name"] = a.Name,
+            ["Category"] = a.Category ?? "",
+            ["Location"] = a.Location ?? "",
+            ["SerialNumber"] = a.SerialNumber ?? "",
+            ["PurchaseDate"] = a.PurchaseDate.ToString("yyyy-MM-dd"),
+            ["PurchaseCost"] = a.PurchaseCost.ToString("F2"),
+            ["SalvageValue"] = a.SalvageValue.ToString("F2"),
+            ["UsefulLifeMonths"] = a.UsefulLifeMonths.ToString(),
+            ["DepreciationMethod"] = a.DepreciationMethod.ToString(),
+            ["AccumulatedDepreciation"] = a.AccumulatedDepreciation.ToString("F2"),
+            ["NetBookValue"] = a.NetBookValue.ToString("F2"),
+            ["Status"] = a.Status.ToString()
+        }).ToList();
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportBankTransactionsAsync(Guid companyId, ExportRequest request)
+    {
+        var query = _db.BankTransactions
+            .Include(t => t.BankAccount)
+            .Where(t => t.CompanyId == companyId);
+        if (request.FromDate.HasValue) query = query.Where(t => t.TransactionDate >= request.FromDate);
+        if (request.ToDate.HasValue) query = query.Where(t => t.TransactionDate <= request.ToDate);
+        var txns = await query.OrderBy(t => t.TransactionDate).ToListAsync();
+
+        return txns.Select(t => new Dictionary<string, string>
+        {
+            ["TransactionDate"] = t.TransactionDate.ToString("yyyy-MM-dd"),
+            ["BankAccount"] = t.BankAccount?.AccountName ?? "",
+            ["BankAccountId"] = t.BankAccountId.ToString(),
+            ["TransactionType"] = t.TransactionType.ToString(),
+            ["Amount"] = t.Amount.ToString("F2"),
+            ["BalanceAfter"] = t.BalanceAfter.ToString("F2"),
+            ["Description"] = t.Description ?? "",
+            ["Reference"] = t.Reference ?? ""
+        }).ToList();
+    }
+
     // ===== Validation =====
 
     private static List<ImportError> ValidateRow(string entityType, Dictionary<string, string> row, int rowNumber)
@@ -476,6 +723,35 @@ public class ImportExportService : IImportExportService
                 var credit = decimal.TryParse(row.GetValueOrDefault("CreditAmount"), out var cv) ? cv : 0;
                 if (debit == 0 && credit == 0)
                     errors.Add(new ImportError(rowNumber, "Amount", "", "จำเป็นต้องระบุยอดเดบิตหรือเครดิต"));
+                break;
+            case "stock-opening":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ProductCode")))
+                    errors.Add(new ImportError(rowNumber, "ProductCode", "", "จำเป็นต้องระบุรหัสสินค้า"));
+                if (!decimal.TryParse(row.GetValueOrDefault("Quantity"), out _))
+                    errors.Add(new ImportError(rowNumber, "Quantity", row.GetValueOrDefault("Quantity") ?? "", "จำนวนไม่ถูกต้อง"));
+                break;
+            case "stock-adjustments":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ProductCode")))
+                    errors.Add(new ImportError(rowNumber, "ProductCode", "", "จำเป็นต้องระบุรหัสสินค้า"));
+                var mt = (row.GetValueOrDefault("MovementType") ?? "").ToUpperInvariant();
+                if (mt != "IN" && mt != "OUT" && mt != "ADJUST")
+                    errors.Add(new ImportError(rowNumber, "MovementType", mt, "ต้องเป็น IN / OUT / ADJUST"));
+                if (!decimal.TryParse(row.GetValueOrDefault("Quantity"), out _))
+                    errors.Add(new ImportError(rowNumber, "Quantity", row.GetValueOrDefault("Quantity") ?? "", "จำนวนไม่ถูกต้อง"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "AdjustmentDate", row.GetValueOrDefault("AdjustmentDate") ?? "", "วันที่ไม่ถูกต้อง"));
+                break;
+            case "fixed-assets":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AssetCode")))
+                    errors.Add(new ImportError(rowNumber, "AssetCode", "", "จำเป็นต้องระบุรหัสสินทรัพย์"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
+                    errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อสินทรัพย์"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("PurchaseDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "PurchaseDate", row.GetValueOrDefault("PurchaseDate") ?? "", "วันที่ซื้อไม่ถูกต้อง"));
+                if (!decimal.TryParse(row.GetValueOrDefault("PurchaseCost"), out _))
+                    errors.Add(new ImportError(rowNumber, "PurchaseCost", row.GetValueOrDefault("PurchaseCost") ?? "", "ราคาซื้อไม่ถูกต้อง"));
+                if (!int.TryParse(row.GetValueOrDefault("UsefulLifeMonths"), out var life) || life <= 0)
+                    errors.Add(new ImportError(rowNumber, "UsefulLifeMonths", row.GetValueOrDefault("UsefulLifeMonths") ?? "", "อายุการใช้งานไม่ถูกต้อง"));
                 break;
         }
 
@@ -723,6 +999,19 @@ public class ImportExportService : IImportExportService
                     case "banktransactions":
                         await ImportBankTransactionAsync(companyId, mappedRow);
                         break;
+                    case "journalentries":
+                    case "journal-entries":
+                        await ImportJournalEntryAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "stock-opening":
+                        await ImportStockOpeningAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "stock-adjustments":
+                        await ImportStockAdjustmentAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "fixed-assets":
+                        await ImportFixedAssetAsync(companyId, mappedRow, performedBy);
+                        break;
                     default:
                         errors.Add(new ImportError(i + 1, "EntityType", session.EntityType,
                             $"ไม่รองรับการนำเข้า {session.EntityType}"));
@@ -798,7 +1087,16 @@ public class ImportExportService : IImportExportService
             new("banktransactions", "รายการธนาคาร", "นำเข้ารายการเคลื่อนไหวบัญชีธนาคาร",
                 GetTemplateFields("banktransactions")!),
             new("journal-entries", "บันทึกบัญชี", "นำเข้ารายการบันทึกบัญชี (Journal Entries)",
-                GetTemplateFields("journal-entries")!)
+                GetTemplateFields("journal-entries")!),
+            new("stock-opening", "สต็อกยกมา (Opening Stock)",
+                "นำเข้ายอดสต็อกตั้งต้น — ใช้ตอน migrate จากระบบเดิม",
+                GetTemplateFields("stock-opening")!),
+            new("stock-adjustments", "ปรับสต็อก (Stock Adjustments)",
+                "เพิ่ม/ลดสต็อก พร้อมเหตุผล (เสียหาย, ปรับนับ, ฯลฯ)",
+                GetTemplateFields("stock-adjustments")!),
+            new("fixed-assets", "สินทรัพย์ถาวร (Fixed Assets)",
+                "นำเข้าทะเบียนสินทรัพย์ถาวร พร้อมข้อมูลค่าเสื่อม",
+                GetTemplateFields("fixed-assets")!)
         };
 
         return Task.FromResult(entities);
@@ -1069,6 +1367,39 @@ public class ImportExportService : IImportExportService
                 new("Description", "คำอธิบาย", "string", false, null, null),
                 new("Reference", "อ้างอิง", "string", false, null, null),
             },
+            "stock-opening" => new List<ImportField>
+            {
+                new("ProductCode", "รหัสสินค้า", "string", true, "ต้องมีอยู่ในระบบแล้ว", null),
+                new("Quantity", "ยอดยกมา", "decimal", true, "สต็อกตั้งต้น (จำนวน)", null),
+                new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "ใช้เป็นต้นทุนของสต็อกยกมา (default = CostPrice ของ Product)", null),
+                new("OpeningDate", "วันยกมา", "date", false, "default = วันนี้", null),
+                new("Notes", "หมายเหตุ", "string", false, null, null),
+            },
+            "stock-adjustments" => new List<ImportField>
+            {
+                new("ProductCode", "รหัสสินค้า", "string", true, null, null),
+                new("AdjustmentDate", "วันที่ปรับ", "date", true, "yyyy-MM-dd", null),
+                new("MovementType", "ประเภท", "enum", true, "IN=เพิ่ม, OUT=ลด, ADJUST=ปรับนับ", new List<string> { "IN", "OUT", "ADJUST" }),
+                new("Quantity", "จำนวน", "decimal", true, "บวกสำหรับ IN/ADJUST+, ลบสำหรับ OUT/ADJUST-", null),
+                new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "default = CostPrice ของ Product", null),
+                new("Reference", "เลขเอกสารอ้างอิง", "string", false, null, null),
+                new("Notes", "หมายเหตุ", "string", false, "เช่น เสียหาย, ปรับนับสิ้นเดือน", null),
+            },
+            "fixed-assets" => new List<ImportField>
+            {
+                new("AssetCode", "รหัสสินทรัพย์", "string", true, null, null),
+                new("Name", "ชื่อสินทรัพย์", "string", true, null, null),
+                new("Category", "หมวดหมู่", "string", false, "เช่น เครื่องใช้สำนักงาน, ยานพาหนะ", null),
+                new("PurchaseDate", "วันที่ซื้อ", "date", true, "yyyy-MM-dd", null),
+                new("PurchaseCost", "ราคาซื้อ", "decimal", true, null, null),
+                new("SalvageValue", "มูลค่าซาก", "decimal", false, "default = 0", null),
+                new("UsefulLifeMonths", "อายุการใช้งาน (เดือน)", "decimal", true, "เช่น 60 = 5 ปี", null),
+                new("DepreciationMethod", "วิธีคิดค่าเสื่อม", "enum", false, "default = StraightLine",
+                    new List<string> { "StraightLine", "DecliningBalance", "UnitsOfProduction" }),
+                new("AccumulatedDepreciation", "ค่าเสื่อมสะสมยกมา", "decimal", false, "ใช้ตอน migrate ระหว่างปี", null),
+                new("Location", "ตำแหน่ง", "string", false, null, null),
+                new("SerialNumber", "หมายเลขเครื่อง", "string", false, null, null),
+            },
             _ => null
         };
     }
@@ -1102,6 +1433,22 @@ public class ImportExportService : IImportExportService
             "TransactionType" => "Deposit",
             "Amount" => "50000.00",
             "Reference" => "REF001",
+            "ProductCode" => "P001",
+            "Quantity" => "100",
+            "UnitCost" => "60.00",
+            "OpeningDate" => "2026-01-01",
+            "AdjustmentDate" => "2026-01-15",
+            "MovementType" => "ADJUST",
+            "Notes" => "ปรับนับสิ้นเดือน",
+            "AssetCode" => "FA-001",
+            "PurchaseDate" => "2024-03-15",
+            "PurchaseCost" => "85000.00",
+            "SalvageValue" => "0",
+            "UsefulLifeMonths" => "60",
+            "DepreciationMethod" => "StraightLine",
+            "AccumulatedDepreciation" => "0",
+            "Location" => "สำนักงานใหญ่",
+            "SerialNumber" => "SN-12345",
             _ => ""
         };
     }

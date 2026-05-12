@@ -478,7 +478,9 @@
 
       async loadQuota() {
         try {
-          const res = await Layout.api(`/api/companies/${Layout.companyId}/ocr/quota`);
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const res = await API.get(`/api/companies/${cid}/ocr/quota`);
           if (!res.success || !res.data) return;
           const q = res.data;
           const bar = document.getElementById('ocrQuotaBar');
@@ -1062,8 +1064,10 @@
       // ==================== Review Modal ====================
       async retryScan(scanId) {
         if (!confirm('แกะข้อมูล OCR ใหม่อีกครั้ง? (ไม่ใช้โควต้า, จำกัดตามค่าที่ Admin ตั้งไว้)')) return;
+        const cid = Layout.getCompanyId();
+        if (!cid) { Layout.toast('ไม่พบ company context', 'error'); return; }
         try {
-          const res = await fetch(`/api/companies/${Layout.companyId}/ocr/${scanId}/retry`, {
+          const res = await fetch(`/api/companies/${cid}/ocr/${scanId}/retry`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
           });

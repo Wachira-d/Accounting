@@ -163,8 +163,12 @@ const Page = {
       }
     } catch (err) {
       // Fallback entities if API doesn't return them
-      const defaults = ['contacts','products','chartofaccounts','banktransactions'];
-      const labels = {'contacts':'ผู้ติดต่อ','products':'สินค้า','chartofaccounts':'ผังบัญชี','banktransactions':'รายการธนาคาร'};
+      const defaults = ['contacts','products','chartofaccounts','banktransactions','journal-entries','stock-opening','stock-adjustments','fixed-assets'];
+      const labels = {
+        'contacts':'ผู้ติดต่อ','products':'สินค้า','chartofaccounts':'ผังบัญชี','banktransactions':'รายการธนาคาร',
+        'journal-entries':'บันทึกบัญชี','stock-opening':'สต็อกยกมา','stock-adjustments':'ปรับสต็อก',
+        'fixed-assets':'สินทรัพย์ถาวร','stock-movements':'ประวัติเคลื่อนไหวสต็อก','stock-balances':'ยอดสต็อกคงเหลือ','documents':'เอกสาร'
+      };
       ['importEntity','exportEntity','smartEntity'].forEach(selId => {
         const sel = document.getElementById(selId);
         defaults.forEach(d => sel.innerHTML += `<option value="${d}">${labels[d]||d}</option>`);
@@ -195,7 +199,12 @@ const Page = {
 
   renderTemplates() {
     const container = document.getElementById('templateList');
-    const entities = this.importableEntities.length ? this.importableEntities : [{name:'contacts',displayName:'ผู้ติดต่อ'},{name:'products',displayName:'สินค้า'},{name:'chartofaccounts',displayName:'ผังบัญชี'},{name:'banktransactions',displayName:'รายการธนาคาร'}];
+    const entities = this.importableEntities.length ? this.importableEntities : [
+      {name:'contacts',displayName:'ผู้ติดต่อ'},{name:'products',displayName:'สินค้า'},
+      {name:'chartofaccounts',displayName:'ผังบัญชี'},{name:'banktransactions',displayName:'รายการธนาคาร'},
+      {name:'journal-entries',displayName:'บันทึกบัญชี'},{name:'stock-opening',displayName:'สต็อกยกมา'},
+      {name:'stock-adjustments',displayName:'ปรับสต็อก'},{name:'fixed-assets',displayName:'สินทรัพย์ถาวร'}
+    ];
     container.innerHTML = entities.map(e => {
       const name = e.name || e.entityType || e;
       const label = e.displayName || e.label || name;
@@ -239,6 +248,49 @@ const Page = {
     });
   },
 
+  _isExcel(file) { return /\.(xlsx|xls)$/i.test(file.name); },
+
+  // Load the SheetJS library on demand. The export path already uses it,
+  // but the import flow has independent timing so it pulls a fresh
+  // reference. Cached at window.XLSX after first call.
+  async _loadSheetJS() {
+    if (window.XLSX) return window.XLSX;
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+      s.onload = res; s.onerror = () => rej(new Error('โหลดตัวอ่าน Excel ไม่สำเร็จ'));
+      document.head.appendChild(s);
+    });
+    return window.XLSX;
+  },
+
+  // Unified file → parsed-rows pipeline. Detects xlsx/xls via extension
+  // and uses SheetJS to convert to a 2-D array; CSV files go through
+  // the existing parseCSV path. Returns { headers, rows, rawData }
+  // where rawData is the array-of-arrays form the smart-import API expects.
+  async loadAndParseFile(file) {
+    if (this._isExcel(file)) {
+      const XLSX = await this._loadSheetJS();
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+      const filtered = rawData.filter(r => r.some(c => String(c).trim() !== ''));
+      const headers = (filtered[0] || []).map(h => String(h).trim());
+      const rows = filtered.slice(1).map(r => {
+        const row = {};
+        headers.forEach((h, i) => row[h] = String(r[i] ?? '').trim());
+        return row;
+      });
+      return { headers, rows, rawData: filtered.map(r => r.map(v => String(v ?? ''))) };
+    }
+    const text = await this.readFileAsText(file);
+    const parsed = this.parseCSV(text);
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const rawData = lines.map(line => line.split(',').map(v => v.trim().replace(/^"|"$/g, '')));
+    return { headers: parsed.headers, rows: parsed.rows, rawData };
+  },
+
   async validateImport() {
     const api = Layout.api(); if (!api) return;
     const entity = document.getElementById('importEntity').value;
@@ -249,9 +301,8 @@ const Page = {
     result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">กำลังตรวจสอบ...</p></div>';
     try {
       const file = fileInput.files[0];
-      const text = await this.readFileAsText(file);
-      const parsed = this.parseCSV(text);
-      const format = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') ? 'excel' : 'csv';
+      const parsed = await this.loadAndParseFile(file);
+      const format = this._isExcel(file) ? 'excel' : 'csv';
       const requestBody = { entityType: entity, fileFormat: format, hasHeaderRow: true, columnMappings: null, data: parsed.rows };
       const res = await api.validateImport(requestBody);
       const d = res.data || {};
@@ -273,9 +324,8 @@ const Page = {
     result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">กำลังนำเข้า...</p></div>';
     try {
       const file = fileInput.files[0];
-      const text = await this.readFileAsText(file);
-      const parsed = this.parseCSV(text);
-      const format = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') ? 'excel' : 'csv';
+      const parsed = await this.loadAndParseFile(file);
+      const format = this._isExcel(file) ? 'excel' : 'csv';
       const requestBody = { entityType: entity, fileFormat: format, hasHeaderRow: true, columnMappings: null, data: parsed.rows };
       const res = await api.importData(requestBody);
       const d = res.data || {};
@@ -318,11 +368,9 @@ const Page = {
     result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">AI กำลังวิเคราะห์...</p></div>';
     try {
       const file = fileInput.files[0];
-      const text = await this.readFileAsText(file);
-      const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      const rawData = lines.map(line => line.split(',').map(v => v.trim().replace(/^"|"$/g, '')));
-      const format = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') ? 'excel' : 'csv';
-      const requestBody = { entityType: entity, fileName: file.name, fileFormat: format, hasHeaderRow: true, rawData: rawData };
+      const parsed = await this.loadAndParseFile(file);
+      const format = this._isExcel(file) ? 'excel' : 'csv';
+      const requestBody = { entityType: entity, fileName: file.name, fileFormat: format, hasHeaderRow: true, rawData: parsed.rawData };
       const res = await api.smartImportUpload(requestBody);
       const d = res.data || {};
       this.smartSessionId = d.sessionId || d.id;
