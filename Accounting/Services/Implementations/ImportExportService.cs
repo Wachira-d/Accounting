@@ -62,6 +62,21 @@ public class ImportExportService : IImportExportService
                     case "fixed-assets":
                         await ImportFixedAssetAsync(companyId, row, performedBy);
                         break;
+                    case "payments":
+                        await ImportPaymentAsync(companyId, row, performedBy);
+                        break;
+                    case "projects":
+                        await ImportProjectAsync(companyId, row, performedBy);
+                        break;
+                    case "employees":
+                        await ImportEmployeeAsync(companyId, row, performedBy);
+                        break;
+                    case "budgets":
+                        await ImportBudgetAsync(companyId, row, performedBy);
+                        break;
+                    case "documents":
+                        await ImportDocumentAsync(companyId, row, performedBy);
+                        break;
                     default:
                         errors.Add(new ImportError(i + 1, "EntityType", request.EntityType, $"ไม่รองรับการนำเข้า {request.EntityType}"));
                         continue;
@@ -175,6 +190,53 @@ public class ImportExportService : IImportExportService
                         ["UsefulLifeMonths"] = "60", ["DepreciationMethod"] = "StraightLine", ["AccumulatedDepreciation"] = "0" }
                 }),
 
+            "payments" => new ImportTemplateResponse("payments", GetTemplateFields("payments")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["DocumentNumber"] = "INV-202601-0001", ["PaymentDate"] = "2026-01-20",
+                        ["Amount"] = "10700.00", ["PaymentMethod"] = "BankTransfer", ["Reference"] = "TXN-12345" }
+                }),
+
+            "projects" => new ImportTemplateResponse("projects", GetTemplateFields("projects")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["Code"] = "PRJ-001", ["Name"] = "โปรเจกต์ตัวอย่าง", ["StartDate"] = "2026-01-01",
+                        ["BudgetAmount"] = "500000.00", ["Status"] = "Active", ["BillingMethod"] = "FixedPrice" }
+                }),
+
+            "employees" => new ImportTemplateResponse("employees", GetTemplateFields("employees")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["EmployeeCode"] = "EMP-001", ["TitleTh"] = "นาย", ["FirstNameTh"] = "สมชาย",
+                        ["LastNameTh"] = "ใจดี", ["StartDate"] = "2024-01-15", ["BaseSalary"] = "25000.00",
+                        ["SalaryType"] = "Monthly", ["Department"] = "ฝ่ายขาย" }
+                }),
+
+            "budgets" => new ImportTemplateResponse("budgets", GetTemplateFields("budgets")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["BudgetName"] = "งบ 2026", ["FiscalYear"] = "2026", ["AccountCode"] = "5210",
+                        ["Month1"] = "10000", ["Month2"] = "10000", ["Month3"] = "10000",
+                        ["Month4"] = "12000", ["Month5"] = "12000", ["Month6"] = "12000",
+                        ["Month7"] = "12000", ["Month8"] = "12000", ["Month9"] = "12000",
+                        ["Month10"] = "15000", ["Month11"] = "15000", ["Month12"] = "15000" }
+                }),
+
+            "documents" => new ImportTemplateResponse("documents", GetTemplateFields("documents")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["DocumentNumber"] = "INV-202601-0001", ["DocumentType"] = "Invoice",
+                        ["DocumentDate"] = "2026-01-15", ["DueDate"] = "2026-02-14",
+                        ["ContactName"] = "บริษัท ลูกค้า จำกัด", ["ContactTaxId"] = "0123456789012",
+                        ["LineDescription"] = "บริการที่ปรึกษา", ["LineQuantity"] = "1",
+                        ["LineUnitPrice"] = "10000.00", ["LineVatRate"] = "7", ["LineWhtRate"] = "3" },
+                    new() { ["DocumentNumber"] = "INV-202601-0001", ["DocumentType"] = "Invoice",
+                        ["DocumentDate"] = "2026-01-15", ["DueDate"] = "2026-02-14",
+                        ["ContactName"] = "บริษัท ลูกค้า จำกัด", ["ContactTaxId"] = "0123456789012",
+                        ["LineDescription"] = "ค่าเดินทาง", ["LineQuantity"] = "1",
+                        ["LineUnitPrice"] = "500.00", ["LineVatRate"] = "7" }
+                }),
+
             _ => throw new InvalidOperationException($"ไม่รองรับ template สำหรับ {entityType}")
         };
 
@@ -213,6 +275,10 @@ public class ImportExportService : IImportExportService
             "stock-movements" => await ExportStockMovementsAsync(companyId, request),
             "stock-balances" => await ExportStockBalancesAsync(companyId, request),
             "fixed-assets" => await ExportFixedAssetsAsync(companyId, request),
+            "payments" => await ExportPaymentsAsync(companyId, request),
+            "projects" => await ExportProjectsAsync(companyId, request),
+            "employees" => await ExportEmployeesAsync(companyId, request),
+            "budgets" => await ExportBudgetsAsync(companyId, request),
             _ => throw new InvalidOperationException($"ไม่รองรับการส่งออก {request.EntityType}")
         };
 
@@ -228,7 +294,8 @@ public class ImportExportService : IImportExportService
         return Task.FromResult(new List<string>
         {
             "contacts", "products", "chartofaccounts", "journalentries", "documents",
-            "banktransactions", "stock-movements", "stock-balances", "fixed-assets"
+            "banktransactions", "stock-movements", "stock-balances", "fixed-assets",
+            "payments", "projects", "employees", "budgets"
         });
     }
 
@@ -688,6 +755,336 @@ public class ImportExportService : IImportExportService
         }).ToList();
     }
 
+    // ===== Payments =====
+
+    private async Task ImportPaymentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var docNum = row.GetValueOrDefault("DocumentNumber") ?? throw new InvalidOperationException("DocumentNumber is required");
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.DocumentNumber == docNum)
+            ?? throw new KeyNotFoundException($"ไม่พบเอกสาร {docNum}");
+
+        var amount = decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) ? amt
+            : throw new InvalidOperationException("Amount ไม่ถูกต้อง");
+        var date = DateTime.TryParse(row.GetValueOrDefault("PaymentDate"), out var pd) ? pd : DateTime.UtcNow;
+        var method = Enum.TryParse<PaymentMethod>(row.GetValueOrDefault("PaymentMethod"), true, out var pm) ? pm : PaymentMethod.Cash;
+
+        // Reuse the same number-series pattern as the rest of the codebase
+        // (PaymentService uses "PAY" prefix per month). We replicate it here
+        // rather than reach into PaymentService — single tx, avoids a circular
+        // dependency.
+        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        var paymentPrefix = $"PAY-{yearMonth}-";
+        var lastNum = await _db.Payments
+            .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(paymentPrefix))
+            .OrderByDescending(p => p.PaymentNumber)
+            .Select(p => p.PaymentNumber).FirstOrDefaultAsync();
+        var nextSeq = 1;
+        if (lastNum != null && int.TryParse(lastNum.Substring(paymentPrefix.Length), out var n)) nextSeq = n + 1;
+
+        doc.PaidAmount += amount;
+        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+        doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+
+        _db.Payments.Add(new Payment
+        {
+            CompanyId = companyId,
+            PaymentNumber = $"{paymentPrefix}{nextSeq:D4}",
+            DocumentId = doc.Id,
+            PaymentDate = date,
+            Amount = amount,
+            PaymentMethod = method,
+            Reference = row.GetValueOrDefault("Reference"),
+            BankAccount = row.GetValueOrDefault("BankAccount"),
+            Notes = row.GetValueOrDefault("Notes"),
+            CreatedBy = performedBy
+        });
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportPaymentsAsync(Guid companyId, ExportRequest request)
+    {
+        var query = _db.Payments.Include(p => p.Document).Where(p => p.CompanyId == companyId);
+        if (request.FromDate.HasValue) query = query.Where(p => p.PaymentDate >= request.FromDate);
+        if (request.ToDate.HasValue) query = query.Where(p => p.PaymentDate <= request.ToDate);
+        var payments = await query.OrderBy(p => p.PaymentDate).ToListAsync();
+
+        return payments.Select(p => new Dictionary<string, string>
+        {
+            ["PaymentNumber"] = p.PaymentNumber,
+            ["PaymentDate"] = p.PaymentDate.ToString("yyyy-MM-dd"),
+            ["DocumentNumber"] = p.Document?.DocumentNumber ?? "",
+            ["Amount"] = p.Amount.ToString("F2"),
+            ["PaymentMethod"] = p.PaymentMethod.ToString(),
+            ["Reference"] = p.Reference ?? "",
+            ["BankAccount"] = p.BankAccount ?? "",
+            ["Notes"] = p.Notes ?? ""
+        }).ToList();
+    }
+
+    // ===== Projects =====
+
+    private async Task ImportProjectAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var code = row.GetValueOrDefault("Code") ?? throw new InvalidOperationException("Code is required");
+        if (await _db.Projects.AnyAsync(p => p.CompanyId == companyId && p.Code == code))
+            throw new InvalidOperationException($"รหัสโปรเจกต์ {code} ซ้ำ");
+
+        _db.Projects.Add(new Project
+        {
+            CompanyId = companyId,
+            Code = code,
+            Name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required"),
+            NameEn = row.GetValueOrDefault("NameEn"),
+            Description = row.GetValueOrDefault("Description"),
+            CustomerName = row.GetValueOrDefault("CustomerName"),
+            ProjectManagerName = row.GetValueOrDefault("ProjectManagerName"),
+            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? sd
+                : throw new InvalidOperationException("StartDate ไม่ถูกต้อง"),
+            EndDate = DateTime.TryParse(row.GetValueOrDefault("EndDate"), out var ed) ? ed : null,
+            Status = row.GetValueOrDefault("Status") ?? "Active",
+            BudgetAmount = decimal.TryParse(row.GetValueOrDefault("BudgetAmount"), out var ba) ? ba : 0,
+            ContractAmount = decimal.TryParse(row.GetValueOrDefault("ContractAmount"), out var ca) ? ca : 0,
+            BillingMethod = row.GetValueOrDefault("BillingMethod") ?? "FixedPrice",
+            CreatedBy = performedBy
+        });
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportProjectsAsync(Guid companyId, ExportRequest request)
+    {
+        var projects = await _db.Projects.Where(p => p.CompanyId == companyId).OrderBy(p => p.Code).ToListAsync();
+        return projects.Select(p => new Dictionary<string, string>
+        {
+            ["Code"] = p.Code,
+            ["Name"] = p.Name,
+            ["NameEn"] = p.NameEn ?? "",
+            ["CustomerName"] = p.CustomerName ?? "",
+            ["ProjectManagerName"] = p.ProjectManagerName ?? "",
+            ["StartDate"] = p.StartDate.ToString("yyyy-MM-dd"),
+            ["EndDate"] = p.EndDate?.ToString("yyyy-MM-dd") ?? "",
+            ["Status"] = p.Status,
+            ["BudgetAmount"] = p.BudgetAmount.ToString("F2"),
+            ["ContractAmount"] = p.ContractAmount.ToString("F2"),
+            ["ActualRevenue"] = p.ActualRevenue.ToString("F2"),
+            ["ActualCost"] = p.ActualCost.ToString("F2"),
+            ["BilledAmount"] = p.BilledAmount.ToString("F2"),
+            ["BillingMethod"] = p.BillingMethod
+        }).ToList();
+    }
+
+    // ===== Employees =====
+
+    private async Task ImportEmployeeAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var code = row.GetValueOrDefault("EmployeeCode") ?? throw new InvalidOperationException("EmployeeCode is required");
+        if (await _db.Employees.AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == code))
+            throw new InvalidOperationException($"รหัสพนักงาน {code} ซ้ำ");
+
+        _db.Employees.Add(new Employee
+        {
+            CompanyId = companyId,
+            EmployeeCode = code,
+            TitleTh = row.GetValueOrDefault("TitleTh") ?? "",
+            FirstNameTh = row.GetValueOrDefault("FirstNameTh") ?? throw new InvalidOperationException("FirstNameTh is required"),
+            LastNameTh = row.GetValueOrDefault("LastNameTh") ?? throw new InvalidOperationException("LastNameTh is required"),
+            FirstNameEn = row.GetValueOrDefault("FirstNameEn"),
+            LastNameEn = row.GetValueOrDefault("LastNameEn"),
+            CitizenId = row.GetValueOrDefault("CitizenId"),
+            DateOfBirth = DateTime.TryParse(row.GetValueOrDefault("DateOfBirth"), out var dob) ? dob : null,
+            Phone = row.GetValueOrDefault("Phone"),
+            Email = row.GetValueOrDefault("Email"),
+            Department = row.GetValueOrDefault("Department"),
+            Position = row.GetValueOrDefault("Position"),
+            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? sd
+                : throw new InvalidOperationException("StartDate ไม่ถูกต้อง"),
+            BaseSalary = decimal.TryParse(row.GetValueOrDefault("BaseSalary"), out var bs) ? bs
+                : throw new InvalidOperationException("BaseSalary ไม่ถูกต้อง"),
+            SalaryType = row.GetValueOrDefault("SalaryType") ?? "Monthly",
+            BankName = row.GetValueOrDefault("BankName"),
+            BankAccountNumber = row.GetValueOrDefault("BankAccountNumber"),
+            SocialSecurityNumber = row.GetValueOrDefault("SocialSecurityNumber"),
+            CreatedBy = performedBy
+        });
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportEmployeesAsync(Guid companyId, ExportRequest request)
+    {
+        var emps = await _db.Employees.Where(e => e.CompanyId == companyId).OrderBy(e => e.EmployeeCode).ToListAsync();
+        return emps.Select(e => new Dictionary<string, string>
+        {
+            ["EmployeeCode"] = e.EmployeeCode,
+            ["TitleTh"] = e.TitleTh,
+            ["FirstNameTh"] = e.FirstNameTh,
+            ["LastNameTh"] = e.LastNameTh,
+            ["FirstNameEn"] = e.FirstNameEn ?? "",
+            ["LastNameEn"] = e.LastNameEn ?? "",
+            ["CitizenId"] = e.CitizenId ?? "",
+            ["DateOfBirth"] = e.DateOfBirth?.ToString("yyyy-MM-dd") ?? "",
+            ["Phone"] = e.Phone ?? "",
+            ["Email"] = e.Email ?? "",
+            ["Department"] = e.Department ?? "",
+            ["Position"] = e.Position ?? "",
+            ["StartDate"] = e.StartDate.ToString("yyyy-MM-dd"),
+            ["BaseSalary"] = e.BaseSalary.ToString("F2"),
+            ["SalaryType"] = e.SalaryType,
+            ["BankName"] = e.BankName ?? "",
+            ["BankAccountNumber"] = e.BankAccountNumber ?? "",
+            ["SocialSecurityNumber"] = e.SocialSecurityNumber ?? "",
+            ["IsActive"] = e.IsActive.ToString()
+        }).ToList();
+    }
+
+    // ===== Budgets =====
+    // Rows are grouped by (BudgetName + FiscalYear). First row creates the
+    // header; subsequent rows append BudgetLine entries. Re-running with the
+    // same BudgetName + FiscalYear adds lines to the existing budget rather
+    // than spawning duplicates.
+
+    private async Task ImportBudgetAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var name = row.GetValueOrDefault("BudgetName") ?? throw new InvalidOperationException("BudgetName is required");
+        var year = int.TryParse(row.GetValueOrDefault("FiscalYear"), out var fy) ? fy
+            : throw new InvalidOperationException("FiscalYear ไม่ถูกต้อง");
+        var acctCode = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
+        var account = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == acctCode)
+            ?? throw new KeyNotFoundException($"ไม่พบบัญชี {acctCode}");
+
+        var budget = await _db.Budgets
+            .Include(b => b.Lines)
+            .FirstOrDefaultAsync(b => b.CompanyId == companyId && b.Name == name && b.FiscalYear == year);
+        if (budget == null)
+        {
+            budget = new Budget { CompanyId = companyId, Name = name, FiscalYear = year, IsActive = true, CreatedBy = performedBy };
+            _db.Budgets.Add(budget);
+        }
+
+        decimal M(string key) => decimal.TryParse(row.GetValueOrDefault(key), out var v) ? v : 0;
+        budget.Lines.Add(new BudgetLine
+        {
+            AccountId = account.Id,
+            Month1 = M("Month1"), Month2 = M("Month2"), Month3 = M("Month3"), Month4 = M("Month4"),
+            Month5 = M("Month5"), Month6 = M("Month6"), Month7 = M("Month7"), Month8 = M("Month8"),
+            Month9 = M("Month9"), Month10 = M("Month10"), Month11 = M("Month11"), Month12 = M("Month12"),
+        });
+    }
+
+    private async Task<List<Dictionary<string, string>>> ExportBudgetsAsync(Guid companyId, ExportRequest request)
+    {
+        var budgets = await _db.Budgets
+            .Include(b => b.Lines).ThenInclude(l => l.Account)
+            .Where(b => b.CompanyId == companyId)
+            .OrderBy(b => b.FiscalYear).ThenBy(b => b.Name)
+            .ToListAsync();
+        var rows = new List<Dictionary<string, string>>();
+        foreach (var b in budgets)
+            foreach (var l in b.Lines)
+                rows.Add(new Dictionary<string, string>
+                {
+                    ["BudgetName"] = b.Name, ["FiscalYear"] = b.FiscalYear.ToString(),
+                    ["AccountCode"] = l.Account.AccountCode, ["AccountName"] = l.Account.AccountName,
+                    ["Month1"] = l.Month1.ToString("F2"), ["Month2"] = l.Month2.ToString("F2"),
+                    ["Month3"] = l.Month3.ToString("F2"), ["Month4"] = l.Month4.ToString("F2"),
+                    ["Month5"] = l.Month5.ToString("F2"), ["Month6"] = l.Month6.ToString("F2"),
+                    ["Month7"] = l.Month7.ToString("F2"), ["Month8"] = l.Month8.ToString("F2"),
+                    ["Month9"] = l.Month9.ToString("F2"), ["Month10"] = l.Month10.ToString("F2"),
+                    ["Month11"] = l.Month11.ToString("F2"), ["Month12"] = l.Month12.ToString("F2"),
+                });
+        return rows;
+    }
+
+    // ===== Documents (legacy migration) =====
+    // 1 row = 1 line in a document. Rows with the same DocumentNumber are
+    // appended to the same Document header. The header is created on the
+    // FIRST occurrence of a DocumentNumber within this import session;
+    // subsequent rows reuse the entity from the tracking cache, so re-running
+    // a file with hundreds of rows for one document doesn't issue hundreds
+    // of duplicate-key collisions.
+
+    private async Task ImportDocumentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    {
+        var docNum = row.GetValueOrDefault("DocumentNumber") ?? throw new InvalidOperationException("DocumentNumber is required");
+
+        // Look up first in the change tracker (same session), then in DB.
+        var doc = _db.ChangeTracker.Entries<Document>()
+            .Select(e => e.Entity)
+            .FirstOrDefault(d => d.CompanyId == companyId && d.DocumentNumber == docNum)
+            ?? await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.DocumentNumber == docNum);
+
+        if (doc == null)
+        {
+            if (!Enum.TryParse<DocumentType>(row.GetValueOrDefault("DocumentType"), true, out var docType))
+                throw new InvalidOperationException("DocumentType ไม่ถูกต้อง");
+            var docDate = DateTime.TryParse(row.GetValueOrDefault("DocumentDate"), out var dd) ? dd
+                : throw new InvalidOperationException("DocumentDate ไม่ถูกต้อง");
+
+            var contactName = row.GetValueOrDefault("ContactName") ?? "";
+            var contactTaxId = row.GetValueOrDefault("ContactTaxId");
+            // Tax id is a stronger key — try that first.
+            Contact? contact = null;
+            if (!string.IsNullOrWhiteSpace(contactTaxId))
+                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == contactTaxId);
+            if (contact == null && !string.IsNullOrWhiteSpace(contactName))
+                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.Contains(contactName));
+            if (contact == null)
+                throw new KeyNotFoundException($"ไม่พบผู้ติดต่อ '{contactName}' (TaxId {contactTaxId ?? "-"})");
+
+            doc = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNum,
+                DocumentType = docType,
+                DocumentDate = docDate,
+                DueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var due) ? due : null,
+                ContactId = contact.Id,
+                Status = DocumentStatus.Draft,
+                Reference = row.GetValueOrDefault("Reference"),
+                Notes = row.GetValueOrDefault("Notes"),
+                CreatedBy = performedBy
+            };
+            _db.Documents.Add(doc);
+        }
+
+        var qty = decimal.TryParse(row.GetValueOrDefault("LineQuantity"), out var q) ? q : 1;
+        var price = decimal.TryParse(row.GetValueOrDefault("LineUnitPrice"), out var pr) ? pr : 0;
+        var disc = decimal.TryParse(row.GetValueOrDefault("LineDiscountPercent"), out var dp) ? dp : 0;
+        var vat = decimal.TryParse(row.GetValueOrDefault("LineVatRate"), out var vr) ? vr : 7;
+        var wht = decimal.TryParse(row.GetValueOrDefault("LineWhtRate"), out var wr) ? wr : 0;
+        var lineAmt = qty * price * (1 - disc / 100m);
+        var vatAmt = Math.Round(lineAmt * vat / 100m, 2, MidpointRounding.AwayFromZero);
+        var whtAmt = Math.Round(lineAmt * wht / 100m, 2, MidpointRounding.AwayFromZero);
+
+        Guid? accountId = null;
+        var acctCode = row.GetValueOrDefault("LineAccountCode");
+        if (!string.IsNullOrWhiteSpace(acctCode))
+        {
+            var acct = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == acctCode);
+            accountId = acct?.Id;
+        }
+
+        doc.Lines.Add(new DocumentLine
+        {
+            LineOrder = doc.Lines.Count + 1,
+            Description = row.GetValueOrDefault("LineDescription") ?? "",
+            Quantity = qty,
+            Unit = "ชิ้น",
+            UnitPrice = price,
+            DiscountPercent = disc,
+            Amount = lineAmt,
+            VatRate = vat,
+            VatAmount = vatAmt,
+            WithholdingTaxRate = wht,
+            WithholdingTaxAmount = whtAmt,
+            AccountId = accountId,
+            ProductCode = row.GetValueOrDefault("LineProductCode")
+        });
+
+        // Recompute header totals each line so the header stays consistent
+        // even when the run aborts mid-document.
+        doc.SubTotal = doc.Lines.Sum(l => l.Amount);
+        doc.VatAmount = doc.Lines.Sum(l => l.VatAmount);
+        doc.WithholdingTaxAmount = doc.Lines.Sum(l => l.WithholdingTaxAmount);
+        doc.TotalAmount = doc.SubTotal + doc.VatAmount - doc.WithholdingTaxAmount;
+        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+    }
+
     // ===== Validation =====
 
     private static List<ImportError> ValidateRow(string entityType, Dictionary<string, string> row, int rowNumber)
@@ -752,6 +1149,57 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "PurchaseCost", row.GetValueOrDefault("PurchaseCost") ?? "", "ราคาซื้อไม่ถูกต้อง"));
                 if (!int.TryParse(row.GetValueOrDefault("UsefulLifeMonths"), out var life) || life <= 0)
                     errors.Add(new ImportError(rowNumber, "UsefulLifeMonths", row.GetValueOrDefault("UsefulLifeMonths") ?? "", "อายุการใช้งานไม่ถูกต้อง"));
+                break;
+            case "payments":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("DocumentNumber")))
+                    errors.Add(new ImportError(rowNumber, "DocumentNumber", "", "จำเป็นต้องระบุเลขเอกสาร"));
+                if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out _))
+                    errors.Add(new ImportError(rowNumber, "Amount", row.GetValueOrDefault("Amount") ?? "", "จำนวนเงินไม่ถูกต้อง"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("PaymentDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "PaymentDate", row.GetValueOrDefault("PaymentDate") ?? "", "วันที่ชำระไม่ถูกต้อง"));
+                if (!Enum.TryParse<PaymentMethod>(row.GetValueOrDefault("PaymentMethod"), true, out _))
+                    errors.Add(new ImportError(rowNumber, "PaymentMethod", row.GetValueOrDefault("PaymentMethod") ?? "", "วิธีชำระไม่ถูกต้อง"));
+                break;
+            case "projects":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Code")))
+                    errors.Add(new ImportError(rowNumber, "Code", "", "จำเป็นต้องระบุรหัสโปรเจกต์"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
+                    errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อโปรเจกต์"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("StartDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "StartDate", row.GetValueOrDefault("StartDate") ?? "", "วันเริ่มต้นไม่ถูกต้อง"));
+                break;
+            case "employees":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("EmployeeCode")))
+                    errors.Add(new ImportError(rowNumber, "EmployeeCode", "", "จำเป็นต้องระบุรหัสพนักงาน"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("FirstNameTh")))
+                    errors.Add(new ImportError(rowNumber, "FirstNameTh", "", "จำเป็นต้องระบุชื่อ"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("LastNameTh")))
+                    errors.Add(new ImportError(rowNumber, "LastNameTh", "", "จำเป็นต้องระบุนามสกุล"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("StartDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "StartDate", row.GetValueOrDefault("StartDate") ?? "", "วันเริ่มงานไม่ถูกต้อง"));
+                if (!decimal.TryParse(row.GetValueOrDefault("BaseSalary"), out _))
+                    errors.Add(new ImportError(rowNumber, "BaseSalary", row.GetValueOrDefault("BaseSalary") ?? "", "เงินเดือนไม่ถูกต้อง"));
+                break;
+            case "budgets":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("BudgetName")))
+                    errors.Add(new ImportError(rowNumber, "BudgetName", "", "จำเป็นต้องระบุชื่องบประมาณ"));
+                if (!int.TryParse(row.GetValueOrDefault("FiscalYear"), out _))
+                    errors.Add(new ImportError(rowNumber, "FiscalYear", row.GetValueOrDefault("FiscalYear") ?? "", "ปีงบประมาณไม่ถูกต้อง"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
+                    errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
+                break;
+            case "documents":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("DocumentNumber")))
+                    errors.Add(new ImportError(rowNumber, "DocumentNumber", "", "จำเป็นต้องระบุเลขเอกสาร"));
+                if (!Enum.TryParse<DocumentType>(row.GetValueOrDefault("DocumentType"), true, out _))
+                    errors.Add(new ImportError(rowNumber, "DocumentType", row.GetValueOrDefault("DocumentType") ?? "", "ประเภทเอกสารไม่ถูกต้อง"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("DocumentDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "DocumentDate", row.GetValueOrDefault("DocumentDate") ?? "", "วันที่เอกสารไม่ถูกต้อง"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactName"))
+                    && string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactTaxId")))
+                    errors.Add(new ImportError(rowNumber, "ContactName", "", "ต้องระบุชื่อหรือเลขผู้เสียภาษีของผู้ติดต่อ"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("LineDescription")))
+                    errors.Add(new ImportError(rowNumber, "LineDescription", "", "จำเป็นต้องระบุรายละเอียดของรายการ"));
                 break;
         }
 
@@ -1012,6 +1460,21 @@ public class ImportExportService : IImportExportService
                     case "fixed-assets":
                         await ImportFixedAssetAsync(companyId, mappedRow, performedBy);
                         break;
+                    case "payments":
+                        await ImportPaymentAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "projects":
+                        await ImportProjectAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "employees":
+                        await ImportEmployeeAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "budgets":
+                        await ImportBudgetAsync(companyId, mappedRow, performedBy);
+                        break;
+                    case "documents":
+                        await ImportDocumentAsync(companyId, mappedRow, performedBy);
+                        break;
                     default:
                         errors.Add(new ImportError(i + 1, "EntityType", session.EntityType,
                             $"ไม่รองรับการนำเข้า {session.EntityType}"));
@@ -1096,7 +1559,22 @@ public class ImportExportService : IImportExportService
                 GetTemplateFields("stock-adjustments")!),
             new("fixed-assets", "สินทรัพย์ถาวร (Fixed Assets)",
                 "นำเข้าทะเบียนสินทรัพย์ถาวร พร้อมข้อมูลค่าเสื่อม",
-                GetTemplateFields("fixed-assets")!)
+                GetTemplateFields("fixed-assets")!),
+            new("payments", "การชำระเงิน (Payments)",
+                "นำเข้ารายการรับ-จ่ายชำระ ผูกกับเลขเอกสาร",
+                GetTemplateFields("payments")!),
+            new("projects", "โปรเจกต์ (Projects)",
+                "นำเข้าทะเบียนโปรเจกต์ พร้อมงบประมาณ + วันเริ่ม-สิ้นสุด",
+                GetTemplateFields("projects")!),
+            new("employees", "พนักงาน (Employees)",
+                "นำเข้าทะเบียนพนักงาน + เงินเดือนพื้นฐาน",
+                GetTemplateFields("employees")!),
+            new("budgets", "งบประมาณ (Budgets)",
+                "นำเข้างบประมาณรายเดือน (Month1–Month12) ต่อบัญชี",
+                GetTemplateFields("budgets")!),
+            new("documents", "เอกสาร (Documents)",
+                "นำเข้าเอกสารเก่า (Invoice / Receipt / TaxInvoice / ฯลฯ) — 1 แถว = 1 line ของเอกสาร, group ด้วย DocumentNumber",
+                GetTemplateFields("documents")!)
         };
 
         return Task.FromResult(entities);
@@ -1400,6 +1878,94 @@ public class ImportExportService : IImportExportService
                 new("Location", "ตำแหน่ง", "string", false, null, null),
                 new("SerialNumber", "หมายเลขเครื่อง", "string", false, null, null),
             },
+            "payments" => new List<ImportField>
+            {
+                new("DocumentNumber", "เลขเอกสาร", "string", true, "เลขเอกสารที่จะตัดชำระ (Invoice / Bill)", null),
+                new("PaymentDate", "วันที่ชำระ", "date", true, "yyyy-MM-dd", null),
+                new("Amount", "จำนวนเงิน", "decimal", true, null, null),
+                new("PaymentMethod", "วิธีชำระ", "enum", true, null,
+                    new List<string> { "Cash", "BankTransfer", "CreditCard", "Cheque", "PromptPay", "DirectDebit", "EWallet", "Other" }),
+                new("Reference", "อ้างอิง", "string", false, "เลขที่อ้างอิงการโอน/เช็ค", null),
+                new("BankAccount", "บัญชีธนาคาร", "string", false, "ชื่อ/เลขบัญชี — เก็บเป็น text", null),
+                new("Notes", "หมายเหตุ", "string", false, null, null),
+            },
+            "projects" => new List<ImportField>
+            {
+                new("Code", "รหัสโปรเจกต์", "string", true, null, null),
+                new("Name", "ชื่อโปรเจกต์", "string", true, null, null),
+                new("NameEn", "ชื่อ (อังกฤษ)", "string", false, null, null),
+                new("Description", "รายละเอียด", "string", false, null, null),
+                new("CustomerName", "ลูกค้า", "string", false, "ชื่อลูกค้า/นายจ้าง", null),
+                new("ProjectManagerName", "ผู้จัดการโปรเจกต์", "string", false, null, null),
+                new("StartDate", "วันเริ่มต้น", "date", true, "yyyy-MM-dd", null),
+                new("EndDate", "วันสิ้นสุด (แผน)", "date", false, null, null),
+                new("Status", "สถานะ", "enum", false, "default = Active",
+                    new List<string> { "Active", "OnHold", "Completed", "Cancelled" }),
+                new("BudgetAmount", "งบประมาณ", "decimal", false, null, null),
+                new("ContractAmount", "มูลค่าสัญญา", "decimal", false, null, null),
+                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false, "default = FixedPrice",
+                    new List<string> { "FixedPrice", "TimeAndMaterial", "Milestone" }),
+            },
+            "employees" => new List<ImportField>
+            {
+                new("EmployeeCode", "รหัสพนักงาน", "string", true, null, null),
+                new("TitleTh", "คำนำหน้า", "string", false, "นาย / นาง / นางสาว", null),
+                new("FirstNameTh", "ชื่อ", "string", true, null, null),
+                new("LastNameTh", "นามสกุล", "string", true, null, null),
+                new("FirstNameEn", "ชื่อ (อังกฤษ)", "string", false, null, null),
+                new("LastNameEn", "นามสกุล (อังกฤษ)", "string", false, null, null),
+                new("CitizenId", "เลขบัตร ปชช.", "string", false, "13 หลัก", null),
+                new("DateOfBirth", "วันเกิด", "date", false, "yyyy-MM-dd", null),
+                new("Phone", "โทรศัพท์", "string", false, null, null),
+                new("Email", "อีเมล", "string", false, null, null),
+                new("Department", "แผนก", "string", false, null, null),
+                new("Position", "ตำแหน่ง", "string", false, null, null),
+                new("StartDate", "วันเริ่มงาน", "date", true, "yyyy-MM-dd", null),
+                new("BaseSalary", "เงินเดือนพื้นฐาน", "decimal", true, null, null),
+                new("SalaryType", "ประเภทเงินเดือน", "enum", false, "default = Monthly",
+                    new List<string> { "Monthly", "Daily", "Hourly" }),
+                new("BankName", "ธนาคาร", "string", false, null, null),
+                new("BankAccountNumber", "เลขที่บัญชีธนาคาร", "string", false, null, null),
+                new("SocialSecurityNumber", "เลขประกันสังคม", "string", false, null, null),
+            },
+            "budgets" => new List<ImportField>
+            {
+                new("BudgetName", "ชื่องบประมาณ", "string", true, "เช่น 'งบ 2026' — ใช้ group บรรทัดเข้าด้วยกัน", null),
+                new("FiscalYear", "ปีงบประมาณ", "decimal", true, "เช่น 2026", null),
+                new("AccountCode", "รหัสบัญชี", "string", true, "ต้องมีในผังบัญชีแล้ว", null),
+                new("Month1", "ม.ค.", "decimal", false, null, null),
+                new("Month2", "ก.พ.", "decimal", false, null, null),
+                new("Month3", "มี.ค.", "decimal", false, null, null),
+                new("Month4", "เม.ย.", "decimal", false, null, null),
+                new("Month5", "พ.ค.", "decimal", false, null, null),
+                new("Month6", "มิ.ย.", "decimal", false, null, null),
+                new("Month7", "ก.ค.", "decimal", false, null, null),
+                new("Month8", "ส.ค.", "decimal", false, null, null),
+                new("Month9", "ก.ย.", "decimal", false, null, null),
+                new("Month10", "ต.ค.", "decimal", false, null, null),
+                new("Month11", "พ.ย.", "decimal", false, null, null),
+                new("Month12", "ธ.ค.", "decimal", false, null, null),
+            },
+            "documents" => new List<ImportField>
+            {
+                new("DocumentNumber", "เลขเอกสาร", "string", true, "ใช้ group line ต่อเอกสารเดียวกัน", null),
+                new("DocumentType", "ประเภทเอกสาร", "enum", true, null,
+                    new List<string> { "Quotation", "Invoice", "TaxInvoice", "Receipt", "PurchaseInvoice", "PaymentVoucher", "ReceiptVoucher", "Expense" }),
+                new("DocumentDate", "วันที่เอกสาร", "date", true, "yyyy-MM-dd", null),
+                new("DueDate", "วันครบกำหนด", "date", false, null, null),
+                new("ContactName", "ชื่อผู้ติดต่อ", "string", true, "ต้องมีในระบบแล้ว — match ด้วย Contains", null),
+                new("ContactTaxId", "เลขผู้เสียภาษีผู้ติดต่อ", "string", false, "ถ้ามี ใช้จับคู่แม่นกว่าชื่อ", null),
+                new("Reference", "อ้างอิง", "string", false, null, null),
+                new("Notes", "หมายเหตุ", "string", false, null, null),
+                new("LineDescription", "รายละเอียด (line)", "string", true, null, null),
+                new("LineQuantity", "จำนวน", "decimal", true, null, null),
+                new("LineUnitPrice", "ราคา/หน่วย", "decimal", true, null, null),
+                new("LineDiscountPercent", "ส่วนลด %", "decimal", false, "default = 0", null),
+                new("LineVatRate", "VAT %", "decimal", false, "default = 7", null),
+                new("LineWhtRate", "หัก ณ ที่จ่าย %", "decimal", false, "default = 0", null),
+                new("LineProductCode", "รหัสสินค้า", "string", false, null, null),
+                new("LineAccountCode", "รหัสบัญชี", "string", false, null, null),
+            },
             _ => null
         };
     }
@@ -1449,6 +2015,49 @@ public class ImportExportService : IImportExportService
             "AccumulatedDepreciation" => "0",
             "Location" => "สำนักงานใหญ่",
             "SerialNumber" => "SN-12345",
+            "DocumentNumber" => "INV-202601-0001",
+            "PaymentDate" => "2026-01-20",
+            "PaymentMethod" => "BankTransfer",
+            "BankAccount" => "SCB 123-4-56789-0",
+            "CustomerName" => "บริษัท ลูกค้า จำกัด",
+            "ProjectManagerName" => "คุณสมหญิง",
+            "StartDate" => "2026-01-01",
+            "EndDate" => "2026-12-31",
+            "Status" => "Active",
+            "BudgetAmount" => "500000.00",
+            "ContractAmount" => "550000.00",
+            "BillingMethod" => "FixedPrice",
+            "EmployeeCode" => "EMP-001",
+            "TitleTh" => "นาย",
+            "FirstNameTh" => "สมชาย",
+            "LastNameTh" => "ใจดี",
+            "CitizenId" => "1234567890123",
+            "DateOfBirth" => "1990-05-15",
+            "Department" => "ฝ่ายขาย",
+            "Position" => "พนักงานขาย",
+            "BaseSalary" => "25000.00",
+            "SalaryType" => "Monthly",
+            "BankName" => "ธนาคารกสิกรไทย",
+            "BankAccountNumber" => "123-4-56789-0",
+            "SocialSecurityNumber" => "1234567890",
+            "BudgetName" => "งบ 2026",
+            "FiscalYear" => "2026",
+            "Month1" => "10000", "Month2" => "10000", "Month3" => "10000",
+            "Month4" => "12000", "Month5" => "12000", "Month6" => "12000",
+            "Month7" => "12000", "Month8" => "12000", "Month9" => "12000",
+            "Month10" => "15000", "Month11" => "15000", "Month12" => "15000",
+            "DocumentType" => "Invoice",
+            "DocumentDate" => "2026-01-15",
+            "DueDate" => "2026-02-14",
+            "ContactName" => "บริษัท ลูกค้า จำกัด",
+            "ContactTaxId" => "0123456789012",
+            "LineDescription" => "บริการที่ปรึกษา",
+            "LineQuantity" => "1",
+            "LineUnitPrice" => "10000.00",
+            "LineVatRate" => "7",
+            "LineWhtRate" => "3",
+            "LineProductCode" => "P001",
+            "LineAccountCode" => "4100",
             _ => ""
         };
     }

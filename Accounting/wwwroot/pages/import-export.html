@@ -163,11 +163,13 @@ const Page = {
       }
     } catch (err) {
       // Fallback entities if API doesn't return them
-      const defaults = ['contacts','products','chartofaccounts','banktransactions','journal-entries','stock-opening','stock-adjustments','fixed-assets'];
+      const defaults = ['contacts','products','chartofaccounts','banktransactions','journal-entries',
+        'stock-opening','stock-adjustments','fixed-assets','payments','projects','employees','budgets','documents'];
       const labels = {
         'contacts':'ผู้ติดต่อ','products':'สินค้า','chartofaccounts':'ผังบัญชี','banktransactions':'รายการธนาคาร',
         'journal-entries':'บันทึกบัญชี','stock-opening':'สต็อกยกมา','stock-adjustments':'ปรับสต็อก',
-        'fixed-assets':'สินทรัพย์ถาวร','stock-movements':'ประวัติเคลื่อนไหวสต็อก','stock-balances':'ยอดสต็อกคงเหลือ','documents':'เอกสาร'
+        'fixed-assets':'สินทรัพย์ถาวร','stock-movements':'ประวัติเคลื่อนไหวสต็อก','stock-balances':'ยอดสต็อกคงเหลือ',
+        'documents':'เอกสาร','payments':'การชำระเงิน','projects':'โปรเจกต์','employees':'พนักงาน','budgets':'งบประมาณ'
       };
       ['importEntity','exportEntity','smartEntity'].forEach(selId => {
         const sel = document.getElementById(selId);
@@ -203,7 +205,10 @@ const Page = {
       {name:'contacts',displayName:'ผู้ติดต่อ'},{name:'products',displayName:'สินค้า'},
       {name:'chartofaccounts',displayName:'ผังบัญชี'},{name:'banktransactions',displayName:'รายการธนาคาร'},
       {name:'journal-entries',displayName:'บันทึกบัญชี'},{name:'stock-opening',displayName:'สต็อกยกมา'},
-      {name:'stock-adjustments',displayName:'ปรับสต็อก'},{name:'fixed-assets',displayName:'สินทรัพย์ถาวร'}
+      {name:'stock-adjustments',displayName:'ปรับสต็อก'},{name:'fixed-assets',displayName:'สินทรัพย์ถาวร'},
+      {name:'payments',displayName:'การชำระเงิน'},{name:'projects',displayName:'โปรเจกต์'},
+      {name:'employees',displayName:'พนักงาน'},{name:'budgets',displayName:'งบประมาณ'},
+      {name:'documents',displayName:'เอกสาร'}
     ];
     container.innerHTML = entities.map(e => {
       const name = e.name || e.entityType || e;
