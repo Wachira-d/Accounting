@@ -1191,6 +1191,14 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiLastTestStatus" text NULL;
             """,
+            // Tier-aware throttle. Default 1 / 1500ms is safe for F0
+            // (1 TPS analyze, 1 TPS poll). Paid S0 admins bump in UI.
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiMaxConcurrentSubmits" integer NOT NULL DEFAULT 1;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AzureDiPollIntervalMs" integer NOT NULL DEFAULT 1500;
+            """,
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OcrProvider" varchar(20) NULL;
             """,

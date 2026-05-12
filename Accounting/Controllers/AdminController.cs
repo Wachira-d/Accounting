@@ -1126,6 +1126,8 @@ public class AdminController : ControllerBase
             AzureDiHasKey: !string.IsNullOrEmpty(s.AzureDiApiKey),
             AzureDiModelId: s.AzureDiModelId,
             AzureDiApiVersion: s.AzureDiApiVersion,
+            AzureDiMaxConcurrentSubmits: s.AzureDiMaxConcurrentSubmits,
+            AzureDiPollIntervalMs: s.AzureDiPollIntervalMs,
             AzureDiEnabled: s.AzureDiEnabled,
             AzureDiLastTestedAt: s.AzureDiLastTestedAt,
             AzureDiLastTestStatus: s.AzureDiLastTestStatus,
@@ -1163,6 +1165,10 @@ public class AdminController : ControllerBase
         if (!string.IsNullOrEmpty(req.AzureDiApiKey)) s.AzureDiApiKey = req.AzureDiApiKey;
         if (req.AzureDiModelId != null) s.AzureDiModelId = req.AzureDiModelId;
         if (req.AzureDiApiVersion != null) s.AzureDiApiVersion = req.AzureDiApiVersion;
+        if (req.AzureDiMaxConcurrentSubmits.HasValue)
+            s.AzureDiMaxConcurrentSubmits = Math.Max(1, Math.Min(20, req.AzureDiMaxConcurrentSubmits.Value));
+        if (req.AzureDiPollIntervalMs.HasValue)
+            s.AzureDiPollIntervalMs = Math.Max(100, Math.Min(10000, req.AzureDiPollIntervalMs.Value));
         if (req.AzureDiEnabled.HasValue) s.AzureDiEnabled = req.AzureDiEnabled.Value;
         if (req.OcrProvider != null) s.OcrProvider = req.OcrProvider;
         if (req.OcrLocalServiceUrl != null) s.OcrLocalServiceUrl = req.OcrLocalServiceUrl;
@@ -1983,6 +1989,7 @@ public record ToggleAdminRequest(bool IsAdmin);
 
 public record OcrConfigResponse(
     string? AzureDiEndpoint, bool AzureDiHasKey, string? AzureDiModelId, string? AzureDiApiVersion,
+    int AzureDiMaxConcurrentSubmits, int AzureDiPollIntervalMs,
     bool AzureDiEnabled, DateTime? AzureDiLastTestedAt, string? AzureDiLastTestStatus,
     string? OcrProvider, string? OcrLocalServiceUrl,
     decimal OcrAutoCreateThreshold,
@@ -1997,6 +2004,7 @@ public record OcrConfigResponse(
 public record UpdateOcrConfigRequest(
     string? AzureDiEndpoint = null, string? AzureDiApiKey = null,
     string? AzureDiModelId = null, string? AzureDiApiVersion = null,
+    int? AzureDiMaxConcurrentSubmits = null, int? AzureDiPollIntervalMs = null,
     bool? AzureDiEnabled = null,
     string? OcrProvider = null, string? OcrLocalServiceUrl = null,
     decimal? OcrAutoCreateThreshold = null,

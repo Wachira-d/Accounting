@@ -16,18 +16,22 @@ public class AzureDocumentIntelligenceService
     private readonly ILogger<AzureDocumentIntelligenceService> _logger;
 
     // ─── Batch rate-limiting ───
-    // F0 (free) Azure DI pricing tier is capped at 20 transactions/min and
-    // 1 concurrent request. Paid S0 is 15/sec. We cap concurrent submits
-    // at MaxConcurrentSubmits (2 — conservative; one extra above F0's
-    // strict 1 to ride out brief gaps without hammering). Static semaphore
-    // is process-wide so multi-tenant batch uploads share the cap.
+    // Microsoft Document Intelligence quotas (verified May 2026):
+    //   F0 (free):       1 analyze TPS,  1 poll TPS
+    //   S0 (standard):  15 analyze TPS, 50 poll TPS  (adjustable on
+    //                                                  paid via support)
     //
-    // The 429 handler below ALSO honors the Retry-After header / parsed
-    // hint from the error body — so when admin overrides this to 5 for
-    // a paid tier and still occasionally hits the limit, requests back
-    // off instead of failing the whole upload batch.
-    private const int MaxConcurrentSubmits = 2;
-    private static readonly SemaphoreSlim _submitGate = new(MaxConcurrentSubmits, MaxConcurrentSubmits);
+    // The semaphore size is read from SiteSettings.AzureDiMaxConcurrent-
+    // Submits — defaults to 1 (F0-safe). When admin upgrades to S0, they
+    // bump it in the UI to 5–15. The poll interval is similarly read-
+    // from-settings (defaults to 1500ms = 1 TPS).
+    //
+    // Static instance is process-wide so multi-tenant batch uploads share
+    // the cap. Initialized lazily on first AnalyzeAsync call so settings
+    // changes take effect after a process restart.
+    private static SemaphoreSlim? _submitGate;
+    private static int _submitGateSize = 0;
+    private static readonly object _gateInitLock = new();
 
     public AzureDocumentIntelligenceService(
         AccountingDbContext db,
@@ -82,12 +86,12 @@ public class AzureDocumentIntelligenceService
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
             string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
 
-        // Throttle submits to MaxConcurrentSubmits to avoid the F0-tier
-        // 1-concurrent-request limit. Batch uploads of 10 files no longer
-        // burst all at once → no immediate 429 on the back of the queue.
-        // Release as soon as Azure has accepted the submission — polling
-        // doesn't need the submit slot.
-        await _submitGate.WaitAsync(ct);
+        // Throttle submits via the shared semaphore (sized from
+        // AzureDiMaxConcurrentSubmits — 1 for F0, up to 15 for S0).
+        // Slot released as soon as Azure accepts the submission;
+        // polling doesn't need the submit gate.
+        var gate = GetOrCreateSubmitGate(settings.AzureDiMaxConcurrentSubmits);
+        await gate.WaitAsync(ct);
         HttpResponseMessage submitResponse;
         try
         {
@@ -98,7 +102,7 @@ public class AzureDocumentIntelligenceService
         }
         catch (Exception ex)
         {
-            _submitGate.Release();
+            gate.Release();
             _logger.LogError(ex, "Azure DI submit failed");
             return new AzureDiResult { Success = false, ErrorMessage = ex.Message };
         }
@@ -115,9 +119,14 @@ public class AzureDocumentIntelligenceService
         if (string.IsNullOrEmpty(operationLocation))
             return new AzureDiResult { Success = false, ErrorMessage = "Missing Operation-Location header" };
 
+        // Poll interval honors AzureDiPollIntervalMs setting (default 1500ms
+        // = 1 TPS, F0-safe). Paid S0 admins can lower this to ~100ms for
+        // faster results. Doubled after the first 3 attempts to avoid
+        // hammering when the analyze actually takes a while.
+        var pollMs = Math.Max(100, settings.AzureDiPollIntervalMs);
         for (var attempt = 0; attempt < 40; attempt++)
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(attempt < 3 ? 1500 : 3000), ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(attempt < 3 ? pollMs : pollMs * 2), ct);
 
             HttpResponseMessage pollResponse;
             try
@@ -583,6 +592,24 @@ public class AzureDocumentIntelligenceService
         if (f.TryGetProperty("valueNumber", out var n))
             return n.GetDecimal();
         return null;
+    }
+
+    /// <summary>Lazily build (or rebuild) the process-wide submit semaphore
+    /// sized from the admin's AzureDiMaxConcurrentSubmits setting. Rebuilds
+    /// when the setting changes — though in practice settings changes need
+    /// a process restart to fully take effect (in-flight submits hold the
+    /// OLD semaphore until they release, which is fine — short transient).</summary>
+    private static SemaphoreSlim GetOrCreateSubmitGate(int configuredSize)
+    {
+        var size = Math.Max(1, Math.Min(20, configuredSize));    // clamp 1–20
+        if (_submitGate != null && _submitGateSize == size) return _submitGate;
+        lock (_gateInitLock)
+        {
+            if (_submitGate != null && _submitGateSize == size) return _submitGate;
+            _submitGate = new SemaphoreSlim(size, size);
+            _submitGateSize = size;
+            return _submitGate;
+        }
     }
 
     /// <summary>POST the analyze submission with built-in 429 retry. Honors
