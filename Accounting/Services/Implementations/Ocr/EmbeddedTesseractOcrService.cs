@@ -85,7 +85,18 @@ public class EmbeddedTesseractOcrService : IDisposable
         {
             try
             {
-                return new TesseractEngine(_tessdataPath, _languageString, EngineMode.LstmOnly);
+                var engine = new TesseractEngine(_tessdataPath, _languageString, EngineMode.LstmOnly);
+                // ─── Thai-tuned engine variables ───
+                // 1. preserve_interword_spaces=1 keeps the gaps between
+                //    Thai words. Default 0 collapses adjacent characters
+                //    aggressively which mangles Thai vowels/tone marks.
+                // 2. user_defined_dpi=300 — when the input image has no DPI
+                //    metadata Tesseract assumes 70dpi and degrades Thai
+                //    recognition. Forcing 300 matches our preprocessor's
+                //    upscale target.
+                engine.SetVariable("preserve_interword_spaces", "1");
+                engine.SetVariable("user_defined_dpi", "300");
+                return engine;
             }
             catch (Exception ex)
             {
@@ -147,10 +158,30 @@ public class EmbeddedTesseractOcrService : IDisposable
             return await Task.Run(() =>
             {
                 using var pix = Pix.LoadFromMemory(processedPng);
-                using var page = engine.Process(pix);
-                var text = page.GetText() ?? "";
-                var meanConfidence = page.GetMeanConfidence();  // 0-1 already
-                return new EmbeddedOcrResult(true, text.Trim(), (decimal)meanConfidence, null);
+                // First pass: PSM=Auto detects layout + segments paragraphs.
+                // Better than default SingleBlock for receipts (multi-column
+                // header + line-item table + summary block).
+                using var firstPage = engine.Process(pix, PageSegMode.Auto);
+                var text = firstPage.GetText() ?? "";
+                var confidence = firstPage.GetMeanConfidence();
+
+                // Retry with sparse-text PSM when confidence is low or
+                // text came back nearly empty. Receipts with crowded
+                // multi-language layouts (Thai vendor block + English
+                // amounts) sometimes parse better in SparseText mode,
+                // which doesn't assume rectangular regions.
+                if (confidence < 0.55f || text.Trim().Length < 40)
+                {
+                    using var retryPage = engine.Process(pix, PageSegMode.SparseText);
+                    var retryText = retryPage.GetText() ?? "";
+                    var retryConf = retryPage.GetMeanConfidence();
+                    if (retryConf > confidence + 0.05f || retryText.Length > text.Length * 1.3)
+                    {
+                        text = retryText;
+                        confidence = retryConf;
+                    }
+                }
+                return new EmbeddedOcrResult(true, text.Trim(), (decimal)confidence, null);
             });
         }
         catch (Exception ex)
