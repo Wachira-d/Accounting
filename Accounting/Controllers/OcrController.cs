@@ -215,8 +215,9 @@ public class OcrController : ControllerBase
     /// </summary>
     [HttpGet("review-queue")]
     public async Task<ActionResult<ApiResponse<object>>> ReviewQueue(
-        Guid companyId, [FromQuery] int limit = 20,
-        [FromServices] Services.Implementations.Ocr.ActiveLearningRanker ranker)
+        Guid companyId,
+        [FromServices] Services.Implementations.Ocr.ActiveLearningRanker ranker,
+        [FromQuery] int limit = 20)
     {
         var ranked = await ranker.RankAsync(companyId, Math.Clamp(limit, 1, 100));
         // Annotate with letter-grade quality for at-a-glance UI rendering
