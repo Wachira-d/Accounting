@@ -13,6 +13,7 @@ using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SixLabors.ImageSharp.Processing;
 using System.Text.Json;
 
 namespace Accounting.Controllers;
@@ -1719,6 +1720,118 @@ public class AdminController : ControllerBase
             s.AzureDiLastTestStatus = $"Error: {ex.Message}";
             await _db.SaveChangesAsync();
             return Ok(new ApiResponse<object>(false, null, $"เชื่อมต่อไม่สำเร็จ: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// Full end-to-end Azure DI test — generates a small sample image and
+    /// runs it through the exact same AnalyzeAsync pipeline production
+    /// scans use. Catches issues the lightweight /test-azure ping can't
+    /// surface, like:
+    ///   • model + features incompatibility (HTTP 400 keyValuePairs)
+    ///   • api-version mismatches
+    ///   • multipart / content-type problems
+    ///   • timeout / network reachability beyond the info endpoint
+    /// Charges ~1 page against Azure quota when it succeeds. Returns the
+    /// request plan (model, locale, features, query string) + the raw
+    /// extraction so admin can verify exact settings.
+    /// </summary>
+    [HttpPost("ocr-config/test-azure-full")]
+    public async Task<ActionResult<ApiResponse<object>>> TestAzureDiFull(
+        [FromServices] Services.Implementations.Ocr.AzureDocumentIntelligenceService azureDi)
+    {
+        var s = await GetOrCreateSiteSettings();
+        if (string.IsNullOrEmpty(s.AzureDiEndpoint) || string.IsNullOrEmpty(s.AzureDiApiKey))
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณากรอก Azure DI Endpoint และ API Key ก่อน"));
+        if (!s.AzureDiEnabled)
+            return BadRequest(new ApiResponse<object>(false, null, "Azure DI Enabled toggle ปิดอยู่ — เปิดก่อนทดสอบ"));
+
+        // Generate a small synthetic receipt-like image. 400×600 px white
+        // with a few black horizontal bars to look document-shaped to
+        // Azure's preflight (it rejects truly blank inputs as "no
+        // recognizable content"). We don't actually need the OCR to read
+        // anything — the goal is to validate that the analyze endpoint
+        // accepts our model + features + locale combination end-to-end.
+        byte[] sampleBytes;
+        try
+        {
+            using var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(400, 600);
+            img.Mutate(c => c.Fill(SixLabors.ImageSharp.Color.White));
+            // Black horizontal bars at varying widths simulate a receipt
+            // header / body / total layout, enough for Azure's document-
+            // detection to engage.
+            for (int row = 0; row < 600; row++)
+            {
+                if ((row >= 80 && row <= 90) || (row >= 200 && row <= 210)
+                    || (row >= 320 && row <= 330) || (row >= 500 && row <= 515))
+                {
+                    for (int col = 40; col < 360; col++)
+                        img[col, row] = new SixLabors.ImageSharp.PixelFormats.Rgba32(0, 0, 0, 255);
+                }
+            }
+            using var ms = new MemoryStream();
+            await img.SaveAsPngAsync(ms);
+            sampleBytes = ms.ToArray();
+        }
+        catch (Exception ex)
+        {
+            return Ok(new ApiResponse<object>(false, null, $"สร้างภาพทดสอบไม่สำเร็จ: {ex.Message}"));
+        }
+
+        // Build the plan to surface what Azure was asked to do — same
+        // planner the real cascade uses.
+        var plan = Services.Implementations.Ocr.AzureDiRequestPlanner.Build(
+            sampleBytes, "image/png", "test-sample.png", s);
+        var apiVersion = string.IsNullOrEmpty(s.AzureDiApiVersion) ? "2024-11-30" : s.AzureDiApiVersion;
+        var queryString = Services.Implementations.Ocr.AzureDiRequestPlanner.BuildQueryString(plan, apiVersion);
+
+        var startedAt = DateTime.UtcNow;
+        try
+        {
+            var result = await azureDi.AnalyzeAsync(sampleBytes, "image/png", s, "test-sample.png");
+            var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+
+            if (result == null)
+            {
+                return Ok(new ApiResponse<object>(false, new
+                {
+                    plan.ModelId, plan.Locale, plan.Features, QueryString = queryString,
+                    Reasons = plan.Reasons, ElapsedMs = elapsedMs,
+                }, "AnalyzeAsync returned null — ตรวจสอบว่า toggle/endpoint/key ถูกต้อง"));
+            }
+
+            s.AzureDiLastTestedAt = DateTime.UtcNow;
+            s.AzureDiLastTestStatus = $"Full OK ({elapsedMs}ms)";
+            await _db.SaveChangesAsync();
+
+            return Ok(new ApiResponse<object>(true, new
+            {
+                plan.ModelId, plan.Locale, plan.Features, QueryString = queryString,
+                Reasons = plan.Reasons,
+                ElapsedMs = elapsedMs,
+                result.OverallConfidence,
+                Warnings = result.Warnings,
+                TextLength = result.RawText?.Length ?? 0,
+                FoundDocument = result.MultiDocumentCount > 0,
+            }, $"ทดสอบสแกนจริงสำเร็จ — Azure DI ตอบสนองภายใน {elapsedMs}ms (model={plan.ModelId})"));
+        }
+        catch (Exception ex)
+        {
+            var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+            s.AzureDiLastTestedAt = DateTime.UtcNow;
+            s.AzureDiLastTestStatus = $"Full Error: {ex.Message}";
+            await _db.SaveChangesAsync();
+            // Surface the FULL exception text — that's where the
+            // keyValuePairs-class errors live (Azure returns them in the
+            // HTTP 400 response body, our service propagates them).
+            return Ok(new ApiResponse<object>(false, new
+            {
+                plan.ModelId, plan.Locale, plan.Features, QueryString = queryString,
+                Reasons = plan.Reasons,
+                ElapsedMs = elapsedMs,
+                Error = ex.Message,
+                ExceptionType = ex.GetType().Name,
+            }, $"ทดสอบสแกนจริงล้มเหลว: {ex.Message}"));
         }
     }
 

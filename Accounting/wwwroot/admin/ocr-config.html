@@ -228,10 +228,18 @@
             <input type="text" id="azureDiApiVersion" placeholder="2024-11-30">
           </div>
         </div>
-        <div style="display:flex;gap:12px;margin-top:8px">
-          <button class="btn-secondary" onclick="testAzure()">ทดสอบการเชื่อมต่อ</button>
+        <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn-secondary" onclick="testAzure()"
+                  title="ตรวจ endpoint + API key (ฟรี — แค่ ping /info)">
+            ทดสอบการเชื่อมต่อ
+          </button>
+          <button class="btn-secondary" onclick="testAzureFull()"
+                  title="ส่ง sample image ผ่าน analyze pipeline จริง — จับ feature/model mismatch ที่ ping ไม่เห็น (กิน ~1 หน้า quota)">
+            🧪 ทดสอบสแกนจริง (เต็มรูปแบบ)
+          </button>
           <span id="azureTestResult" style="font-size:13px;line-height:40px;color:#64748b"></span>
         </div>
+        <div id="azureTestDetails" style="display:none;margin-top:8px;font-size:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;font-family:monospace;white-space:pre-wrap;max-height:300px;overflow-y:auto"></div>
       </div>
 
       <!-- Tier 3: Embedded Tesseract — always-on in-process fallback -->
@@ -1071,6 +1079,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
 
     async function testAzure() {
       const el = document.getElementById('azureTestResult');
+      const det = document.getElementById('azureTestDetails');
+      det.style.display = 'none';
       el.textContent = 'กำลังทดสอบ...';
       el.style.color = '#64748b';
       try {
@@ -1080,6 +1090,46 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         await loadConfig();
       } catch (err) {
         el.textContent = err.message;
+        el.style.color = '#dc2626';
+      }
+    }
+
+    // Full end-to-end test: generate sample image server-side, push it
+    // through AnalyzeAsync (same code path as production scans), and
+    // surface the request plan + result / error. Catches model/feature
+    // mismatches (the keyValuePairs 400) that the lightweight ping
+    // can't see.
+    async function testAzureFull() {
+      const el = document.getElementById('azureTestResult');
+      const det = document.getElementById('azureTestDetails');
+      el.textContent = 'กำลังทดสอบสแกนจริง (อาจใช้เวลา 10–30 วินาที)...';
+      el.style.color = '#64748b';
+      det.style.display = 'none';
+      try {
+        const res = await AdminAPI.post('/ocr-config/test-azure-full');
+        el.textContent = res.message;
+        el.style.color = res.success ? '#16a34a' : '#dc2626';
+        const d = res.data || {};
+        // Render plan + result/error as a readable diagnostic block so
+        // admin sees exactly what was sent and what came back.
+        const lines = [];
+        if (d.modelId) lines.push(`Model:    ${d.modelId}`);
+        if (d.locale) lines.push(`Locale:   ${d.locale}`);
+        if (d.features?.length) lines.push(`Features: ${d.features.join(', ')}`);
+        if (d.queryString) lines.push(`Query:    ${d.queryString}`);
+        if (d.elapsedMs != null) lines.push(`Elapsed:  ${d.elapsedMs}ms`);
+        if (d.overallConfidence != null) lines.push(`Conf:     ${Math.round(d.overallConfidence * 100)}%`);
+        if (d.foundDocument != null) lines.push(`Found:    ${d.foundDocument ? 'yes' : 'no'}`);
+        if (d.textLength != null) lines.push(`TextLen:  ${d.textLength} chars`);
+        if (d.error) lines.push(`\nError:    ${d.error}`);
+        if (d.exceptionType) lines.push(`ExType:   ${d.exceptionType}`);
+        if (d.warnings?.length) lines.push(`\nWarnings:\n  • ${d.warnings.join('\n  • ')}`);
+        if (d.reasons?.length) lines.push(`\nPlan reasons:\n  • ${d.reasons.join('\n  • ')}`);
+        det.textContent = lines.join('\n');
+        det.style.display = lines.length ? '' : 'none';
+        await loadConfig();
+      } catch (err) {
+        el.textContent = '❌ ' + (err.message || err);
         el.style.color = '#dc2626';
       }
     }
