@@ -1774,7 +1774,11 @@ public class AdminController : ControllerBase
                 }
             }
             using var ms = new MemoryStream();
-            img.SaveAsPng(ms);
+            // Explicit encoder avoids needing the SaveAsPng extension
+            // method (which lives behind a `using SixLabors.ImageSharp;`
+            // directive this controller doesn't pull in to keep its
+            // namespace surface tight).
+            img.Save(ms, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
             sampleBytes = ms.ToArray();
         }
         catch (Exception ex)
