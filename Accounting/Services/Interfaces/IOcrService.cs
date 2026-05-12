@@ -12,4 +12,7 @@ public interface IOcrService
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
     Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false);
+    Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,
+        Controllers.OcrController.RegisterAssetFromScanRequest req,
+        IFixedAssetService assetService, string createdBy);
 }

@@ -1287,10 +1287,10 @@ public class OcrService : IOcrService
         // all three OCR providers and enforces math invariants / tax-id
         // checksum / WHT-rate validity that Azure DI may have missed.
         Ocr.SmartFieldExtractor.Enrich(data, azureResult.RawText ?? "");
-        return new AzureExtractionResult(true, azureResult.RawText, data, null);
+        return new AzureExtractionResult(true, azureResult.RawText ?? "", data, null);
     }
 
-    private async Task<OcrExtractedData> MapAzureDiToExtractedDataAsync(Guid companyId, AzureDiResult azure)
+    private Task<OcrExtractedData> MapAzureDiToExtractedDataAsync(Guid companyId, AzureDiResult azure)
     {
         var data = new OcrExtractedData
         {
@@ -1398,7 +1398,7 @@ public class OcrService : IOcrService
         // OCR providers (local + Azure DI) submit pre-swap data to the gateway —
         // so checksum and math validations are consistent across paths.
 
-        return data;
+        return Task.FromResult(data);
     }
 
     /// <summary>
@@ -1549,7 +1549,7 @@ public class OcrService : IOcrService
         // normalization, date range, doc-number plausibility) — this is the
         // path that benefits most from the smart extractor.
         Ocr.SmartFieldExtractor.Enrich(data, result.Text ?? "");
-        return (result.Text, data);
+        return (result.Text ?? "", data);
     }
 
     private async Task<(string RawText, OcrExtractedData Data)> ExtractWithLocalServiceAsync(FileAttachment file)
@@ -2398,7 +2398,7 @@ public class OcrService : IOcrService
         // of the sequence-number assignment + insert, so concurrent OCR
         // creations don't collide.
         await using var txn = await _db.Database.BeginTransactionAsync();
-        var docNumber = await Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
+        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
         var document = new Document
         {
             CompanyId = companyId,
@@ -2480,7 +2480,7 @@ public class OcrService : IOcrService
         }
 
         await using var txn = await _db.Database.BeginTransactionAsync();
-        var docNumber = await Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
+        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
         var document = new Document
         {
             CompanyId = companyId,
