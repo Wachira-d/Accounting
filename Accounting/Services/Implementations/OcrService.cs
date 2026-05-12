@@ -190,50 +190,19 @@ public class OcrService : IOcrService
             extractedText = "";
             string? lastError = null;
             string? ocrEngineUsed = null;   // surfaced on scanResult.OcrEngine for the debug panel
-
-            // ─── Tier 0: text-born PDF bypass ───
-            // Before paying any OCR cost (Azure billable pages or local
-            // CPU), check whether the file is a digital PDF with an
-            // embedded text layer. Thai e-Tax e-Receipts, cloud-billing
-            // invoices, and any system-generated PDF have a usable text
-            // layer — extracting it directly is free, instant, and
-            // 100% accurate (no OCR errors at all). Image-only PDFs and
-            // sparsely-tagged scans fall through to the normal cascade.
-            if (file.ContentType?.Contains("pdf", StringComparison.OrdinalIgnoreCase) == true
-                || (file.OriginalFileName?.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ?? false))
-            {
-                try
-                {
-                    var pdfBytes = await File.ReadAllBytesAsync(file.StoragePath);
-                    var maxPages = siteSettings?.OcrMaxPagesPerScan ?? 10;
-                    var pdfResult = Ocr.PdfTextLayerExtractor.TryExtract(pdfBytes, maxPages);
-                    if (pdfResult.HasUsableText)
-                    {
-                        // Run the same rule-based ParseThaiDocument + SmartFieldExtractor
-                        // pipeline that the embedded Tesseract path uses, so all
-                        // downstream layers (gateway, role inferrer, category resolver,
-                        // ML stack) work identically on the bypassed text.
-                        var normalized = Ocr.ThaiTextNormalizer.Normalize(pdfResult.Text);
-                        extractedData = ParseThaiDocument(normalized);
-                        extractedText = pdfResult.Text;
-                        // Text-layer extraction is character-perfect — start
-                        // confidence high; gateway can knock it down if math doesn't add up.
-                        extractedData.Confidence = Math.Max(extractedData.Confidence, 0.95m);
-                        Ocr.SmartFieldExtractor.Enrich(extractedData, pdfResult.Text);
-                        ocrEngineUsed = "PdfTextLayer";
-                        extractedData.ReasoningTrace.Insert(0,
-                            $"[PdfTextLayer] bypass OCR — {pdfResult.Reason} ({pdfResult.CharsExtracted} chars)");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "PdfTextLayer bypass failed — falling through to OCR cascade");
-                }
-            }
+            // PDF text-layer side channel — extracted lazily once (when we
+            // need it as a hybrid signal in Tier 3). We no longer use it
+            // as a standalone Tier-0 bypass because (a) it misses table
+            // layout and column alignment on receipts so extraction is
+            // imperfect, and (b) when Azure DI quota exists it's a strict
+            // upgrade. We DO merge it into Tier 3 (Tesseract) so PDF scans
+            // that fall through to local get both signals — clean digital
+            // characters + spatial OCR — fed into ParseThaiDocument.
+            string? pdfTextLayer = null;
+            string? pdfTextLayerReason = null;
 
             // Tier 1: Azure DI — runs whenever the admin has fully configured
             // it (toggle + endpoint + key), regardless of OcrProvider's value.
-            // SKIPPED when Tier 0 (text-layer bypass) already succeeded.
             // Per-engine quota gate: even when Azure DI is enabled +
             // configured, the tenant's subscription may have exhausted
             // its Azure budget this month. When that happens, skip Tier 1
@@ -323,27 +292,83 @@ public class OcrService : IOcrService
                 }
             }
 
-            // Tier 3: Embedded Tesseract (always available, in-process)
+            // Tier 3: Embedded Tesseract (always available, in-process) —
+            // hybrid with PDF text-layer when the input file is a digital
+            // PDF. Strategy: extract the text layer (free, character-
+            // perfect digital text) and concatenate it with Tesseract's
+            // output (noisy but layout-aware). Feed the merged text into
+            // ParseThaiDocument so both signals contribute to extraction.
+            // Tesseract-alone still runs for images and PDFs without a
+            // text layer.
             if (extractedData == null)
             {
                 var embeddedResult = await ExtractWithEmbeddedTesseractAsync(file);
-                extractedText = embeddedResult.RawText;
-                extractedData = embeddedResult.Data;
-                ocrEngineUsed = "EmbeddedTesseract";
+
+                // Try to fold in a PDF text-layer side-channel for digital
+                // PDFs. Cheap (in-memory) so we do it once here even if
+                // the Tier-0 short-circuit is gone.
+                var isPdf = file.ContentType?.Contains("pdf", StringComparison.OrdinalIgnoreCase) == true
+                            || (file.OriginalFileName?.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ?? false);
+                if (isPdf && pdfTextLayer == null)
+                {
+                    try
+                    {
+                        var pdfBytes = await File.ReadAllBytesAsync(file.StoragePath);
+                        var maxPages = siteSettings?.OcrMaxPagesPerScan ?? 10;
+                        var pdfResult = Ocr.PdfTextLayerExtractor.TryExtract(pdfBytes, maxPages);
+                        if (pdfResult.HasUsableText)
+                        {
+                            pdfTextLayer = pdfResult.Text;
+                            pdfTextLayerReason = $"{pdfResult.Reason} ({pdfResult.CharsExtracted} chars)";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "PdfTextLayer extraction failed during Tier-3 merge");
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(pdfTextLayer))
+                {
+                    // Combine both signals before parsing. Order: text-layer
+                    // first (so ParseThaiDocument sees the clean characters)
+                    // then Tesseract output (so any field the text-layer
+                    // missed has a second chance from the OCR).
+                    var combined = pdfTextLayer + "\n\n──── TESSERACT ────\n\n" + (embeddedResult.RawText ?? "");
+                    var normalized = Ocr.ThaiTextNormalizer.Normalize(combined);
+                    extractedData = ParseThaiDocument(normalized);
+                    extractedText = combined;
+                    // Hybrid is more reliable than Tesseract alone but less
+                    // than character-perfect text-layer-only — 0.90 splits
+                    // the difference. Gateway can still knock it down.
+                    extractedData.Confidence = Math.Max(extractedData.Confidence,
+                        Math.Max(0.90m, embeddedResult.Data.Confidence));
+                    Ocr.SmartFieldExtractor.Enrich(extractedData, combined);
+                    ocrEngineUsed = "PdfTextLayer+Tesseract";
+                    extractedData.ReasoningTrace.Insert(0,
+                        $"[Hybrid] รวม PDF text-layer ({pdfTextLayerReason}) + Tesseract OCR เข้าด้วยกัน");
+                }
+                else
+                {
+                    // Image input, or PDF with no extractable text layer
+                    // (image-only scans). Tesseract-alone path.
+                    extractedText = embeddedResult.RawText;
+                    extractedData = embeddedResult.Data;
+                    ocrEngineUsed = "EmbeddedTesseract";
+                }
+
                 await _quota.RecordEngineUsageAsync(companyId, "Local");
                 if (lastError != null)
-                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used Embedded Tesseract");
-                else
-                    extractedData.ReasoningTrace.Insert(0, "[Provider] ใช้ Embedded Tesseract (in-process fallback)");
-                // Tesseract output is the noisiest of the three engines —
-                // run the known-good corrector here too so any prior
-                // Azure-DI scan of this vendor cleans up the obvious
-                // garbling before it reaches the gateway / book.
+                    extractedData.ReasoningTrace.Insert(0, $"[Fallback] tiers above failed ({lastError}) — used local engine");
+                // Tesseract output is the noisiest of the engines — run
+                // the known-good corrector here so any prior Azure-DI scan
+                // of this vendor cleans up the obvious garbling before it
+                // reaches the gateway / book.
                 await _knownGoodCorrector.ApplyAsync(companyId, extractedData);
-                // Always make the Azure-skip reason visible even when embedded ran cleanly.
-                // Surface to ProcessingNotes too so the admin sees it in the scan detail
-                // (ReasoningTrace is in-memory only). Common case: admin tested the
-                // connection but forgot to flip the AzureDiEnabled toggle.
+                // Always make the Azure-skip reason visible even when local ran
+                // cleanly. Surface to ProcessingNotes too (ReasoningTrace is in-
+                // memory only). Common case: admin tested the connection but
+                // forgot to flip the AzureDiEnabled toggle.
                 if (azureSkipReason != null)
                 {
                     extractedData.ReasoningTrace.Add($"[Azure DI] {azureSkipReason}");
