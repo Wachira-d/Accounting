@@ -129,46 +129,10 @@ public class DocumentService : IDocumentService
             }
         }
 
-        var prefix = request.DocumentType switch
-        {
-            DocumentType.Quotation => "QT",
-            DocumentType.Invoice => "INV",
-            DocumentType.Receipt => "REC",
-            DocumentType.TaxInvoice => "TIV",
-            DocumentType.DebitNote => "DN",
-            DocumentType.CreditNote => "CN",
-            DocumentType.DeliveryNote => "DLV",
-            DocumentType.BillingNote => "BN",
-            DocumentType.ReceiptVoucher => "RV",
-            DocumentType.PurchaseRequisition => "PR",
-            DocumentType.PurchaseOrder => "PO",
-            DocumentType.PurchaseInvoice => "PI",
-            DocumentType.Expense => "EXP",
-            DocumentType.PaymentVoucher => "PV",
-            DocumentType.CertificateInLieu => "CIL",
-            _ => "DOC"
-        };
-
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
-
-            var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-            var docPrefix = $"{prefix}-{yearMonth}-";
-            var maxNumber = await _db.Documents
-                .IgnoreQueryFilters()
-                .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
-                .Select(d => d.DocumentNumber)
-                .MaxAsync() as string;
-            var nextSeq = 1;
-            if (maxNumber != null)
-            {
-                var lastPart = maxNumber.Substring(docPrefix.Length);
-                if (int.TryParse(lastPart, out var parsed)) nextSeq = parsed + 1;
-            }
-            var docNumber = $"{docPrefix}{nextSeq:D4}";
+            var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, request.DocumentType);
 
             var doc = new Document
             {

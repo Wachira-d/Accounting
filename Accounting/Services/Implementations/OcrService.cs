@@ -2394,10 +2394,15 @@ public class OcrService : IOcrService
         if (!contactId.HasValue)
             throw new InvalidOperationException("Cannot create document: no contact could be resolved from OCR data.");
 
+        // Transaction holds the per-tenant advisory lock for the duration
+        // of the sequence-number assignment + insert, so concurrent OCR
+        // creations don't collide.
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        var docNumber = await Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
         var document = new Document
         {
             CompanyId = companyId,
-            DocumentNumber = $"OCR-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
             DocumentDate = result.ExtractedDate ?? DateTime.UtcNow.Date,
@@ -2417,6 +2422,7 @@ public class OcrService : IOcrService
         result.MatchedContactId = contactId;
 
         await _db.SaveChangesAsync();
+        await txn.CommitAsync();
 
         // Re-link scanned file to the created document (orphan prevention)
         await RelinkScanFileToDocumentAsync(companyId, result.FileAttachmentId, document.Id);
@@ -2473,10 +2479,12 @@ public class OcrService : IOcrService
             expenseAccountId = account?.Id;
         }
 
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        var docNumber = await Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
         var document = new Document
         {
             CompanyId = companyId,
-            DocumentNumber = $"OCR-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
             DocumentDate = scan.ExtractedDate ?? DateTime.UtcNow.Date,
@@ -2536,6 +2544,7 @@ public class OcrService : IOcrService
         scan.CreatedDocumentId = document.Id;
         scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + " Auto-created document with lines.";
         await _db.SaveChangesAsync();
+        await txn.CommitAsync();
 
         // Re-link the original scanned file to the new Document so users see it as
         // an attachment when they open the document. Without this, the file lives
