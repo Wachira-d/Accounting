@@ -486,6 +486,7 @@ public class DocumentService : IDocumentService
                 }
 
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+                await ApplyProjectBillingAsync(companyId, doc, +1);
 
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
@@ -656,7 +657,13 @@ public class DocumentService : IDocumentService
                 //    the adjustment applied during ApproveDocumentAsync.
                 await RevertSourceDocumentAdjustmentsAsync(companyId, doc);
 
-                // 5) Finally void the document itself
+                // 6) Back out this document's contribution to its project's
+                //    BilledAmount — mirror of the +1 applied at approval.
+                //    Skip Draft docs: never approved, so never billed.
+                if (doc.Status != DocumentStatus.Draft)
+                    await ApplyProjectBillingAsync(companyId, doc, -1);
+
+                // 7) Finally void the document itself
                 doc.Status = DocumentStatus.Voided;
                 doc.UpdatedAt = DateTime.UtcNow;
 
@@ -1203,6 +1210,32 @@ public class DocumentService : IDocumentService
                     : DocumentStatus.PartiallyPaid;
         }
         source.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Roll an approved customer-billing document's value into its linked
+    /// project's BilledAmount — the Documents → Project data flow that was
+    /// missing, leaving project profitability reports showing zero billed.
+    /// <paramref name="sign"/> is +1 on approval, -1 when the document is
+    /// voided. Only Invoice / TaxInvoice / DebitNote count as billing;
+    /// Receipts and purchase-side documents do not represent new billing.
+    /// Caller owns the transaction + SaveChangesAsync.
+    /// </summary>
+    private async Task ApplyProjectBillingAsync(Guid companyId, Document doc, int sign)
+    {
+        if (!doc.ProjectId.HasValue) return;
+
+        var billingTypes = new[] {
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote
+        };
+        if (!billingTypes.Contains(doc.DocumentType)) return;
+
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == doc.ProjectId.Value && p.CompanyId == companyId);
+        if (project == null) return;
+
+        project.BilledAmount = Math.Max(0m, project.BilledAmount + sign * doc.TotalAmount);
+        project.UpdatedAt = DateTime.UtcNow;
     }
 
     /// <summary>
