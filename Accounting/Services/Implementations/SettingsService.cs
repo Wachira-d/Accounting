@@ -36,6 +36,7 @@ public class SettingsService : ISettingsService
         if (request.QuotationNotes != null) settings.QuotationNotes = request.QuotationNotes;
         if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
+        if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
         if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
@@ -384,7 +385,9 @@ public class SettingsService : ISettingsService
         s.LandingContactPhone, s.LandingContactLine, s.LandingContactEmail,
         s.LandingServicesJson,
         // OCR preference
-        s.OcrBuyerInvoiceDefaultTarget);
+        s.OcrBuyerInvoiceDefaultTarget,
+        // Print layout
+        s.ShowGlEntryOnDocument);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

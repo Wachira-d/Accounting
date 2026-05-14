@@ -59,7 +59,10 @@ public record UpdateCompanySettingsRequest(
     // Default PaymentVoucher (13) — see CompanySettings entity for the
     // semantics. Allow null so admins can skip it when updating other
     // fields without overwriting this preference.
-    DocumentType? OcrBuyerInvoiceDefaultTarget = null);
+    DocumentType? OcrBuyerInvoiceDefaultTarget = null,
+
+    // Print the document's posted GL entry (Dr/Cr) as a footer table.
+    bool? ShowGlEntryOnDocument = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -107,7 +110,10 @@ public record CompanySettingsResponse(
     string? LandingServicesJson,
 
     // OCR document-target preference
-    DocumentType OcrBuyerInvoiceDefaultTarget = DocumentType.PaymentVoucher);
+    DocumentType OcrBuyerInvoiceDefaultTarget = DocumentType.PaymentVoucher,
+
+    // Print the document's posted GL entry (Dr/Cr) as a footer table.
+    bool ShowGlEntryOnDocument = false);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

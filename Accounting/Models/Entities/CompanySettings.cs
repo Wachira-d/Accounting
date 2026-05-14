@@ -23,6 +23,13 @@ public class CompanySettings : TenantEntity
     public string? InvoiceFooter { get; set; }
     public string? ReceiptFooter { get; set; }
 
+    // Print Layout
+    // When true, printed documents (Invoice / Receipt / Expense / etc.)
+    // include a compact "GL Posting Summary" (Dr/Cr) table at the very
+    // bottom — an internal-audit footer below the signature area, drawn
+    // from the document's posted Journal Entry.
+    public bool ShowGlEntryOnDocument { get; set; } = false;
+
     // Tax Settings
     public decimal DefaultVatRate { get; set; } = 7;
     public bool VatRegistered { get; set; } = true;

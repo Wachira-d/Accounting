@@ -1817,6 +1817,11 @@ public static class DatabaseMigrationHelper
             END IF;
             END $$;
             """,
+
+            // ===== CompanySettings: show GL posting summary (Dr/Cr) on printed documents =====
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ShowGlEntryOnDocument" boolean NOT NULL DEFAULT false;
+            """,
         };
 
         foreach (var sql in statements)
