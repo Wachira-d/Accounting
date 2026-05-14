@@ -64,6 +64,12 @@ public class Employee : TenantEntity
     public Guid? UserId { get; set; }
     public User? User { get; set; }
 
+    // Accounting payee link — every employee is mirrored as a Contact so
+    // payroll vouchers, advances and reimbursements treat them as a valid
+    // payee in the core accounting system (no separate HR payee list).
+    public Guid? ContactId { get; set; }
+    public Contact? Contact { get; set; }
+
     // Linked account
     public Guid? SalaryExpenseAccountId { get; set; }
     public ChartOfAccount? SalaryExpenseAccount { get; set; }

@@ -179,6 +179,7 @@ public class AccountingDbContext : DbContext
     public DbSet<PayrollDetail> PayrollDetails => Set<PayrollDetail>();
     public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
     public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
+    public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
 
     // Tax Calendar
     public DbSet<TaxCalendarEvent> TaxCalendarEvents => Set<TaxCalendarEvent>();
@@ -902,6 +903,21 @@ public class AccountingDbContext : DbContext
             e.HasOne(ec => ec.SubmittedByUser).WithMany().HasForeignKey(ec => ec.SubmittedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(ec => !ec.IsDeleted);
+        });
+
+        // ===== SalaryAdvance =====
+        modelBuilder.Entity<SalaryAdvance>(e =>
+        {
+            e.HasIndex(sa => new { sa.CompanyId, sa.AdvanceNumber }).IsUnique();
+            e.Property(sa => sa.AdvanceNumber).HasMaxLength(50);
+            e.Property(sa => sa.Amount).HasPrecision(18, 2);
+            e.Property(sa => sa.MonthlyDeduction).HasPrecision(18, 2);
+            e.Property(sa => sa.ClearedAmount).HasPrecision(18, 2);
+            e.Property(sa => sa.OutstandingAmount).HasPrecision(18, 2);
+            e.HasOne(sa => sa.Employee).WithMany().HasForeignKey(sa => sa.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(sa => sa.ApprovedByUser).WithMany().HasForeignKey(sa => sa.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(sa => sa.DisbursementDocument).WithMany().HasForeignKey(sa => sa.DisbursementDocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(sa => !sa.IsDeleted);
         });
 
         // ===== ExpenseClaimLine =====

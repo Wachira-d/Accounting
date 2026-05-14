@@ -1822,6 +1822,51 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ShowGlEntryOnDocument" boolean NOT NULL DEFAULT false;
             """,
+
+            // ===== Employees: accounting payee link (mirror employee as a Contact) =====
+            """
+            ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ContactId" uuid NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Employees_ContactId" ON "Employees" ("ContactId");
+            """,
+
+            // ===== SalaryAdvances: employee salary-advance workflow → posts to central GL =====
+            """
+            CREATE TABLE IF NOT EXISTS "SalaryAdvances" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "AdvanceNumber" varchar(50) NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "RequestDate" timestamp NOT NULL,
+                "Amount" numeric(18,2) NOT NULL DEFAULT 0,
+                "Reason" text NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Draft',
+                "MonthlyDeduction" numeric(18,2) NOT NULL DEFAULT 0,
+                "ClearedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "OutstandingAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "ApprovedByUserId" uuid NULL,
+                "ApprovedAt" timestamp NULL,
+                "ApprovalNotes" text NULL,
+                "RejectionReason" text NULL,
+                "DisbursedAt" timestamp NULL,
+                "DisbursementDocumentId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SalaryAdvances" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SalaryAdvances_CompanyId_AdvanceNumber"
+                ON "SalaryAdvances" ("CompanyId", "AdvanceNumber");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_SalaryAdvances_CompanyId_EmployeeId_Status"
+                ON "SalaryAdvances" ("CompanyId", "EmployeeId", "Status");
+            """,
         };
 
         foreach (var sql in statements)
