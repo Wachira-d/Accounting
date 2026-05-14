@@ -133,6 +133,7 @@ builder.Services.AddScoped<IDimensionalAccountingService, DimensionalAccountingS
 builder.Services.AddScoped<IIntercompanyService, IntercompanyService>();
 builder.Services.AddScoped<IConsolidationService, ConsolidationService>();
 builder.Services.AddScoped<IPayrollService, PayrollService>();
+builder.Services.AddScoped<ISalaryAdvanceService, SalaryAdvanceService>();
 builder.Services.AddScoped<ITaxCalendarService, TaxCalendarService>();
 builder.Services.AddScoped<IAdvancedArApService, AdvancedArApService>();
 
