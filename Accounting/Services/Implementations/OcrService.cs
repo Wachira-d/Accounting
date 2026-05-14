@@ -853,10 +853,58 @@ public class OcrService : IOcrService
             // Match GL accounts from suggestions against company's chart of accounts
             if (!string.IsNullOrEmpty(extractedData.DebitAccountCode))
             {
+                // Resolve the suggested code against the company's actual
+                // Chart of Accounts. Strategy:
+                //   1. Exact match → use it.
+                //   2. Prefix match → tenant uses a sub-coded version
+                //      of the standard account (e.g. 54430 instead of
+                //      5306 — common when CoA was extended for branch /
+                //      cost-center detail). Prefer the active account
+                //      with the longest matching prefix.
+                //   3. Keyword match on account name → handles custom
+                //      CoA where the prefix doesn't follow standard
+                //      Thai SME ranges (e.g. tenant has no 5306-style
+                //      code but their "ค่าซ่อมรถยนต์" account is 6101).
+                // Without this fallback, the resolver suggests a generic
+                // 5306 that doesn't exist in the company's CoA and the
+                // UI dropdown can't auto-select anything.
+                var seeded = extractedData.DebitAccountCode;
                 var debitAccount = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == extractedData.DebitAccountCode && !a.IsDeleted);
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == seeded && !a.IsDeleted);
+                if (debitAccount == null)
+                {
+                    // Prefix match — longest first so 53061 beats 5306x
+                    debitAccount = await _db.ChartOfAccounts
+                        .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                            && a.AccountCode.StartsWith(seeded))
+                        .OrderByDescending(a => a.AccountCode.Length)
+                        .ThenBy(a => a.AccountCode)
+                        .FirstOrDefaultAsync();
+                }
+                if (debitAccount == null && !string.IsNullOrEmpty(extractedData.DebitAccountName))
+                {
+                    // Keyword match on account name — pull the most
+                    // distinctive Thai keyword from the suggested name
+                    // (skip stopword-class words like "ค่า") and look
+                    // for an account whose name contains it.
+                    var name = extractedData.DebitAccountName;
+                    var keyword = ExtractDistinctiveKeyword(name);
+                    if (!string.IsNullOrEmpty(keyword))
+                    {
+                        debitAccount = await _db.ChartOfAccounts
+                            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                                && a.AccountName.Contains(keyword))
+                            .OrderBy(a => a.AccountCode)
+                            .FirstOrDefaultAsync();
+                    }
+                }
                 if (debitAccount != null)
                 {
+                    if (debitAccount.AccountCode != seeded)
+                    {
+                        extractedData.ReasoningTrace.Add(
+                            $"[CoA] {seeded} ไม่มีใน CoA — เลือก {debitAccount.AccountCode} {debitAccount.AccountName} แทน");
+                    }
                     extractedData.DebitAccountCode = debitAccount.AccountCode;
                     extractedData.DebitAccountName = debitAccount.AccountName;
                 }
@@ -1364,6 +1412,61 @@ public class OcrService : IOcrService
             : "";
         var input = $"{vendorKey}|{docKey}|{dateKey}|{amtKey}";
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Pull the most distinctive keyword out of a suggested account name so
+    /// it can be matched against a company's custom Chart of Accounts.
+    /// Thai account names run words together with no spaces, so we:
+    ///   1. drop a leading account code if the caller passed "5306 ค่า…",
+    ///   2. cut at the first conjunction ("และ", "หรือ", "/") so
+    ///      "ค่าซ่อมแซมและบำรุงรักษา" yields "ซ่อมแซม" — a shorter stem
+    ///      matches more CoA variants than the full compound,
+    ///   3. strip shared classifier prefixes ("ค่า", "บัญชี") that nearly
+    ///      every expense account carries and so add no signal,
+    ///   4. fall back to the longest space-separated token for names that
+    ///      do use spaces (English or mixed).
+    /// Returns null when nothing distinctive (≥3 chars) is left.
+    /// </summary>
+    private static string? ExtractDistinctiveKeyword(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var work = name.Trim();
+
+        // Drop a leading account code passed as "5306 ค่า…".
+        work = Regex.Replace(work, @"^\s*\d[\d\-\.]*\s+", "");
+
+        // Cut at the first conjunction / separator — keep the leading concept.
+        foreach (var sep in new[] { "และ", "หรือ", "/", ",", "&" })
+        {
+            var idx = work.IndexOf(sep, StringComparison.Ordinal);
+            if (idx > 2) { work = work[..idx]; break; }
+        }
+
+        // Strip shared classifier prefixes that carry no signal.
+        foreach (var prefix in new[] { "ค่าใช้จ่าย", "ค่า", "บัญชี" })
+        {
+            if (work.StartsWith(prefix, StringComparison.Ordinal) && work.Length > prefix.Length + 2)
+            {
+                work = work[prefix.Length..];
+                break;
+            }
+        }
+
+        work = work.Trim();
+
+        // For space-separated names, take the longest meaningful token.
+        if (work.Contains(' '))
+        {
+            var token = work
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(t => t.Length >= 3)
+                .OrderByDescending(t => t.Length)
+                .FirstOrDefault();
+            if (!string.IsNullOrEmpty(token)) work = token;
+        }
+
+        return work.Length >= 3 ? work : null;
     }
 
     /// <summary>Resolve the active OCR provider name from SiteSettings → appsettings.json
