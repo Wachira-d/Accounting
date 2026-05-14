@@ -17,6 +17,7 @@ public class PayrollService : IPayrollService
     private readonly AccountingDbContext _db;
     private readonly IPdfGenerationService? _pdfService;
     private readonly IAccountingService? _accountingService;
+    private readonly ISalaryAdvanceService? _salaryAdvanceService;
 
     // Thai personal income tax brackets (progressive)
     private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
@@ -36,11 +37,13 @@ public class PayrollService : IPayrollService
     private const decimal SsoMaxBase = 15_000m;     // max salary base per month
     private const decimal SsoMaxContribution = 750m; // max monthly contribution
 
-    public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null, IAccountingService? accountingService = null)
+    public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
+        IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null)
     {
         _db = db;
         _pdfService = pdfService;
         _accountingService = accountingService;
+        _salaryAdvanceService = salaryAdvanceService;
     }
 
     // ===== Employees =====
@@ -501,6 +504,7 @@ public class PayrollService : IPayrollService
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
         var run = await _db.Set<PayrollRun>()
+            .Include(r => r.Details)
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
@@ -603,14 +607,58 @@ public class PayrollService : IPayrollService
                             pvdExpAccount.Id, run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
                 }
 
-                // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ
+                // ── Advance recovery: clear outstanding salary advances ──
+                // For each employee, recover MonthlyDeduction (or the full
+                // outstanding balance when MonthlyDeduction is 0), capped at
+                // that employee's net pay. Credits Advance Receivable and
+                // reduces the cash actually disbursed.
+                decimal totalAdvanceRecovered = 0m;
+                var advanceRepayments = new List<(SalaryAdvance Advance, decimal Amount)>();
+                if (_salaryAdvanceService != null)
+                {
+                    foreach (var detail in run.Details)
+                    {
+                        var employeeRecoverable = detail.NetPay;
+                        var outstanding = await _salaryAdvanceService
+                            .GetOutstandingForEmployeeAsync(companyId, detail.EmployeeId);
+                        foreach (var adv in outstanding)
+                        {
+                            if (employeeRecoverable <= 0) break;
+                            var recover = adv.MonthlyDeduction > 0
+                                ? Math.Min(adv.MonthlyDeduction, adv.OutstandingAmount)
+                                : adv.OutstandingAmount;
+                            recover = Math.Min(recover, employeeRecoverable);
+                            if (recover <= 0) continue;
+                            advanceRepayments.Add((adv, recover));
+                            totalAdvanceRecovered += recover;
+                            employeeRecoverable -= recover;
+                        }
+                    }
+                }
+                if (totalAdvanceRecovered > 0)
+                {
+                    var advanceAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                        && (a.AccountName.Contains("ทดรอง") || a.AccountName.Contains("เงินยืมพนักงาน")))
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                        && a.AccountType == AccountType.Asset && a.AccountCode.StartsWith("115"));
+                    if (advanceAccount == null)
+                        throw new InvalidOperationException(
+                            "มีเงินทดรองค้างชำระแต่ไม่พบบัญชี 'เงินทดรองจ่าย' ในผังบัญชี — กรุณาสร้างบัญชีก่อน");
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        advanceAccount.Id, 0, totalAdvanceRecovered, "หักคืนเงินทดรองจ่ายพนักงาน"));
+                }
+
+                // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ หักเงินทดรองที่เรียกคืน
+                var cashPaid = run.TotalNetPay - totalAdvanceRecovered;
                 var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
                 if (cashAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        cashAccount.Id, 0, run.TotalNetPay, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
+                        cashAccount.Id, 0, cashPaid, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
 
                 if (lines.Count >= 2)
                 {
@@ -624,11 +672,18 @@ public class PayrollService : IPayrollService
                         new Models.DTOs.Accounting.CreateJournalEntryRequest(
                             run.PayDate,
                             $"เงินเดือนประจำเดือน {run.Month}/{run.Year} ({run.EmployeeCount} คน)",
-                            $"PAYROLL-{run.Year}{run.Month:D2}",
+                            $"HR-PR-{run.Year}-{run.Month:D2}",
                             lines, JournalType.General), processedBy);
                     await _accountingService.PostJournalEntryAsync(companyId, entry.Id);
                     var je = await _db.JournalEntries.FindAsync(entry.Id);
                     if (je != null) { je.IsAutoGenerated = true; }
+                    // Link the run to its posted journal entry, then recover
+                    // outstanding advances (entities are tracked on the same
+                    // context — persisted by the SaveChanges below, inside
+                    // the surrounding payTransaction).
+                    run.JournalEntryId = entry.Id;
+                    foreach (var (adv, amount) in advanceRepayments)
+                        _salaryAdvanceService!.ApplyRepayment(adv, amount);
                     await _db.SaveChangesAsync();
                 }
             }
