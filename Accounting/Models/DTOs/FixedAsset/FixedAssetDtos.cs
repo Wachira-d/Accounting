@@ -16,7 +16,12 @@ public record CreateFixedAssetRequest(
     DepreciationMethod DepreciationMethod = DepreciationMethod.StraightLine,
     Guid? AssetAccountId = null,
     Guid? DepreciationExpenseAccountId = null,
-    Guid? AccumulatedDepreciationAccountId = null);
+    Guid? AccumulatedDepreciationAccountId = null,
+    // When true, CreateAsync posts an acquisition entry Dr Asset / Cr
+    // CreditAccountId (cash or A/P). The OCR "Register Asset" path posts
+    // its own entry and leaves this false to avoid a double post.
+    bool PostAcquisitionJournalEntry = false,
+    Guid? CreditAccountId = null);
 
 public record UpdateFixedAssetRequest(
     string? Name,
@@ -46,7 +51,10 @@ public record FixedAssetResponse(
     AssetStatus Status,
     DateTime? DisposalDate,
     decimal? DisposalAmount,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? AssetAccountId = null,
+    Guid? DepreciationExpenseAccountId = null,
+    Guid? AccumulatedDepreciationAccountId = null);
 
 public record DepreciationResponse(
     Guid Id,

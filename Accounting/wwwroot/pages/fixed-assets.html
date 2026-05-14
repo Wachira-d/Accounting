@@ -68,6 +68,28 @@
             </div>
             <div class="form-group"><label class="form-label">หมายเลขเครื่อง</label><input type="text" class="form-input" id="fSerial"></div>
           </div>
+          <div style="border-top:1px solid var(--gray-200);margin:10px 0 4px;padding-top:10px">
+            <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การบันทึกบัญชี (ผังบัญชี)</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">บัญชีสินทรัพย์</label>
+                <select class="form-select" id="fAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+              <div class="form-group"><label class="form-label">บัญชีค่าเสื่อมราคา (ค่าใช้จ่าย)</label>
+                <select class="form-select" id="fDepExpAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">บัญชีค่าเสื่อมราคาสะสม</label>
+                <select class="form-select" id="fAccumAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+              <div class="form-group"><label class="form-label">&nbsp;</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:8px">
+                  <input type="checkbox" id="fPostAcq" onchange="Page.toggleAcqRow()"> บันทึกบัญชีตอนซื้อ (Dr สินทรัพย์ / Cr เงินสด-เจ้าหนี้)
+                </label></div>
+            </div>
+            <div class="form-row" id="fCreditAcctRow" style="display:none">
+              <div class="form-group"><label class="form-label">บัญชีเครดิต — เงินสด / เจ้าหนี้ *</label>
+                <select class="form-select" id="fCreditAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+              <div class="form-group"></div>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -196,11 +218,33 @@
     const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ' };
     const statusMap = { Active:'ใช้งาน', Disposed:'จำหน่าย', FullyDepreciated:'หมดค่าเสื่อม', WrittenOff:'ตัดจำหน่าย' };
     const Page = {
-      page: 1, allAssets: [], _currentAsset: null,
+      page: 1, allAssets: [], _currentAsset: null, _accounts: [],
       async init() {
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('สินทรัพย์ถาวร');
-        await this.load();
+        await Promise.all([this.load(), this.loadAccounts()]);
+      },
+      async loadAccounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts('?pageSize=1000');
+          const list = res.data?.items || res.data || [];
+          this._accounts = list.filter(a => a.isActive !== false);
+          this._fillAccountSelects();
+        } catch (e) { console.warn('โหลดผังบัญชีไม่สำเร็จ', e); }
+      },
+      _fillAccountSelects() {
+        const opts = '<option value="">-- เลือกบัญชี --</option>' +
+          (this._accounts || []).map(a =>
+            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+        for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct']) {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = opts;
+        }
+      },
+      toggleAcqRow() {
+        const checked = document.getElementById('fPostAcq').checked;
+        document.getElementById('fCreditAcctRow').style.display = checked ? '' : 'none';
       },
       async load() {
         const api = Layout.api(); if (!api) return;
@@ -247,6 +291,9 @@
         document.getElementById('fLife').value = '60';
         document.getElementById('fMethod').value = 'StraightLine';
         document.getElementById('fSerial').value = '';
+        for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct']) document.getElementById(id).value = '';
+        document.getElementById('fPostAcq').checked = false;
+        this.toggleAcqRow();
         Layout.openModal('formModal');
       },
       async openEdit(id) {
@@ -265,12 +312,26 @@
           document.getElementById('fLife').value = a.usefulLifeMonths;
           document.getElementById('fMethod').value = a.depreciationMethod;
           document.getElementById('fSerial').value = a.serialNumber || '';
+          document.getElementById('fAssetAcct').value = a.assetAccountId || '';
+          document.getElementById('fDepExpAcct').value = a.depreciationExpenseAccountId || '';
+          document.getElementById('fAccumAcct').value = a.accumulatedDepreciationAccountId || '';
+          // Acquisition entry only applies at registration time.
+          document.getElementById('fPostAcq').checked = false;
+          document.getElementById('fCreditAcct').value = '';
+          this.toggleAcqRow();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async save() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('fId').value;
+        const postAcq = document.getElementById('fPostAcq').checked;
+        const assetAcct = document.getElementById('fAssetAcct').value || null;
+        const creditAcct = document.getElementById('fCreditAcct').value || null;
+        if (!id && postAcq && (!assetAcct || !creditAcct)) {
+          Layout.toast('ต้องเลือกบัญชีสินทรัพย์และบัญชีเครดิตเพื่อบันทึกบัญชีตอนซื้อ', 'error');
+          return;
+        }
         const data = {
           assetCode: document.getElementById('fCode').value,
           name: document.getElementById('fName').value,
@@ -282,10 +343,17 @@
           salvageValue: parseFloat(document.getElementById('fSalvage').value) || 0,
           usefulLifeMonths: parseInt(document.getElementById('fLife').value),
           depreciationMethod: document.getElementById('fMethod').value,
+          assetAccountId: assetAcct,
+          depreciationExpenseAccountId: document.getElementById('fDepExpAcct').value || null,
+          accumulatedDepreciationAccountId: document.getElementById('fAccumAcct').value || null,
+          postAcquisitionJournalEntry: postAcq,
+          creditAccountId: creditAcct,
         };
         try {
           if (id) { await api.updateAsset(id, data); } else { await api.createAsset(data); }
-          Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มสินทรัพย์สำเร็จ'); await this.load();
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขสำเร็จ' : (postAcq ? 'เพิ่มสินทรัพย์และบันทึกบัญชีสำเร็จ' : 'เพิ่มสินทรัพย์สำเร็จ'));
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async viewDetail(id) {
