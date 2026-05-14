@@ -1589,23 +1589,34 @@
         Expense:          ['PaymentVoucher']
         // Terminal: Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
       },
-      openConvert(id) {
+      async openConvert(id) {
         document.getElementById('convertDocId').value = id;
         const doc = this._currentDoc;
         const select = document.getElementById('convertTarget');
-        if (doc && select) {
-          const allowed = this._validConversions[doc.documentType] || [];
-          let firstVisible = null;
-          Array.from(select.options).forEach(opt => {
-            // Hide if not in allowed list, or matches source (no-op convert)
-            opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
-            if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
-          });
-          if (firstVisible) select.value = firstVisible;
-          if (!allowed.length) {
-            Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
-            return;
+        if (!doc || !select) { Layout.openModal('convertModal'); return; }
+
+        // Prefer the server's authoritative target list (single source of
+        // truth — DocumentService.ValidConversions). Fall back to the
+        // built-in map only if the request fails (offline / older backend).
+        let allowed = this._validConversions[doc.documentType] || [];
+        try {
+          const api = Layout.api();
+          if (api) {
+            const res = await api.getConversionTargets(id);
+            if (Array.isArray(res.data)) allowed = res.data;
           }
+        } catch { /* keep the offline fallback */ }
+
+        let firstVisible = null;
+        Array.from(select.options).forEach(opt => {
+          // Hide if not in allowed list, or matches source (no-op convert)
+          opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
+          if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
+        });
+        if (firstVisible) select.value = firstVisible;
+        if (!allowed.length) {
+          Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
+          return;
         }
         Layout.openModal('convertModal');
       },

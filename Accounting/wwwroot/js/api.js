@@ -171,6 +171,7 @@ const API = {
       purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
+      getConversionTargets: (id) => API.get(`${base}/document/${id}/conversion-targets`),
       batchConvertDocuments: (ids, t) => API.post(`${base}/document/batch-convert/${t}`, { documentIds: ids }),
       createInvoiceFromObligation: (obligationId) => API.post(`${base}/document/from-obligation/${obligationId}`),
       writeOffBadDebt: (id, reason) => API.post(`${base}/document/${id}/write-off-bad-debt`, { reason }),
