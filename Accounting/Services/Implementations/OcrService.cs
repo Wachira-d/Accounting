@@ -833,15 +833,6 @@ public class OcrService : IOcrService
                 }
             }
 
-            if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
-            {
-                scanResult.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    extractedData.DebitAccountCode, extractedData.DebitAccountName,
-                    extractedData.CreditAccountCode, extractedData.CreditAccountName,
-                    extractedData.VatAccountCode, extractedData.VatAccountName,
-                });
-            }
             // Re-sync ExpenseCategory after the resolver / vendor-intel /
             // basket-rule miners have all written to extractedData. The
             // earlier sync at line ~477 ran BEFORE the resolver, leaving
@@ -918,6 +909,21 @@ public class OcrService : IOcrService
                     extractedData.CreditAccountCode = creditAccount.AccountCode;
                     extractedData.CreditAccountName = creditAccount.AccountName;
                 }
+            }
+
+            // Serialise the suggestion AFTER all CoA resolution above so the
+            // UI receives the company's real account codes — not the generic
+            // 5306-style codes the category resolver seeds. Serialising
+            // earlier (before the exact→prefix→keyword pass) was the reason
+            // "AI แนะนำ 5306" still showed even though 54430 exists in the CoA.
+            if (extractedData.DebitAccountCode != null || extractedData.CreditAccountCode != null)
+            {
+                scanResult.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    extractedData.DebitAccountCode, extractedData.DebitAccountName,
+                    extractedData.CreditAccountCode, extractedData.CreditAccountName,
+                    extractedData.VatAccountCode, extractedData.VatAccountName,
+                });
             }
 
             // ───── CONTENT FINGERPRINT (cross-format dedup) ─────
