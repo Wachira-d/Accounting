@@ -67,6 +67,70 @@ public class LineNotifyService : ILineNotifyService
         }
     }
 
+    /// <summary>Push a personalised text message to one user. Used by
+    /// the NotificationEngine when a recipient has a bound LineUserId.
+    /// No-op when LINE is not configured (no token) or the userId is
+    /// empty so the engine can fall back to System / Email cleanly.</summary>
+    public async Task PushToUserAsync(string lineUserId, string message)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return;
+        var token = _configuration["Line:ChannelAccessToken"];
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            _logger.LogWarning("LINE Messaging API not configured — falling back silently.");
+            return;
+        }
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var payload = new
+            {
+                to = lineUserId,
+                messages = new[] { new { type = "text", text = message } }
+            };
+            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            var resp = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogError("LINE push to {UserId} failed: {Status} {Body}",
+                    lineUserId, resp.StatusCode, await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { _logger.LogError(ex, "LINE push to {UserId} threw", lineUserId); }
+    }
+
+    public async Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return;
+        var token = _configuration["Line:ChannelAccessToken"];
+        if (string.IsNullOrWhiteSpace(token)) { _logger.LogWarning("LINE not configured."); return; }
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var payload = new
+            {
+                to = lineUserId,
+                messages = new[]
+                {
+                    new
+                    {
+                        type = "flex",
+                        altText = string.IsNullOrEmpty(altText) ? "การแจ้งเตือนจาก NextAcc" : altText,
+                        contents = flexContents
+                    }
+                }
+            };
+            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            var resp = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogError("LINE flex push to {UserId} failed: {Status} {Body}",
+                    lineUserId, resp.StatusCode, await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { _logger.LogError(ex, "LINE flex push to {UserId} threw", lineUserId); }
+    }
+
     public async Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount)
     {
         var msg = $"✅ เอกสารอนุมัติแล้ว\n📄 {documentNumber}\n👤 {contactName}\n💰 {amount:N2} บาท";
