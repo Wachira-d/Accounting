@@ -304,8 +304,23 @@
         try {
           const res = await api.getSalaryAdvance(id);
           const a = res.data; this._current = a;
+
+          // Resolve Level-1 approver (direct manager) for the requesting
+          // employee. Surfaced only while the advance is awaiting approval
+          // so reviewers know who should sign off.
+          let mgrLine = '';
+          if (a.status === 'Submitted' || a.status === 'Draft') {
+            try {
+              const mgrRes = await api.getDirectManager(a.employeeId);
+              const m = mgrRes?.data;
+              if (m && (m.managerName || m.departmentHeadName)) {
+                mgrLine = `<div style="background:#eef2ff;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px;color:#312e81">👤 <strong>ผู้อนุมัติระดับ 1 (Direct Manager):</strong> ${m.managerName ? Layout.esc(m.managerName) : '<em>—</em>'}${m.departmentHeadName && !m.managerName ? ' (สำรอง: หัวหน้าแผนก ' + Layout.esc(m.departmentHeadName) + ')' : ''}</div>`;
+              }
+            } catch (e) { /* ignore */ }
+          }
+
           document.getElementById('detailTitle').textContent = `${a.advanceNumber} — ${a.employeeName || ''}`;
-          document.getElementById('detailBody').innerHTML = `
+          document.getElementById('detailBody').innerHTML = mgrLine + `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${a.advanceNumber}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${statusBadge(a.status)}</div></div>

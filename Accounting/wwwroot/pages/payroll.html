@@ -266,13 +266,15 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const tbody = document.getElementById('empBody');
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีพนักงาน</td></tr>'; return; }
-      tbody.innerHTML = items.map(e => `<tr>
+      tbody.innerHTML = items.map(e => `<tr ${e.isActive === false ? 'style="opacity:.5"' : ''}>
         <td><span class="font-medium">${e.employeeCode || e.code || '-'}</span></td>
-        <td>${e.firstName || ''} ${e.lastName || ''}</td>
-        <td>${e.position || '-'}</td>
-        <td>${e.department || '-'}</td>
-        <td class="text-right">${Layout.money(e.salary || e.baseSalary)}</td>
-        <td>${Layout.statusBadge(e.status || 'Active')}</td>
+        <td>${Layout.esc((e.firstNameTh || e.firstName || '') + ' ' + (e.lastNameTh || e.lastName || ''))}${e.directManagerName ? '<div style="font-size:11px;color:#64748b">↑ ' + Layout.esc(e.directManagerName) + '</div>' : ''}</td>
+        <td>${Layout.esc(e.positionTitle || e.position || '-')}</td>
+        <td>${Layout.esc(e.departmentName || e.department || '-')}</td>
+        <td class="text-right">${Layout.money(e.baseSalary || e.salary)}</td>
+        <td>${e.isActive === false
+            ? '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">Offboarded</span>'
+            : '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">Active</span>'}</td>
         <td><button class="btn btn-sm btn-secondary" onclick="Page.editEmployee('${e.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
       const totalPages = res.data?.totalPages || 1;
@@ -560,11 +562,19 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     try {
       const year = new Date().getFullYear();
-      const res = await api.getLeaveBalance(empId, year);
-      const balances = res.data?.balances || [];
+      const [balanceRes, managerRes] = await Promise.all([
+        api.getLeaveBalance(empId, year),
+        api.getDirectManager(empId).catch(() => null),
+      ]);
+      const balances = balanceRes.data?.balances || [];
       const typeMap = { Sick: 'ลาป่วย', Annual: 'ลาพักร้อน', Personal: 'ลากิจ', Maternity: 'ลาคลอด', Other: 'อื่นๆ' };
-      box.innerHTML = `<strong>สิทธิ์วันลาคงเหลือ ปี ${year}:</strong> ` +
+      const balanceLine = `<strong>สิทธิ์วันลาคงเหลือ ปี ${year}:</strong> ` +
         balances.map(b => `${typeMap[b.leaveType] || b.leaveType}: <strong>${b.remainingDays}</strong> / ${b.allocatedDays} วัน${b.usedDays > 0 ? ' (ใช้ไป ' + b.usedDays + ')' : ''}`).join(' · ');
+      const mgr = managerRes?.data;
+      const approverLine = (mgr && (mgr.managerName || mgr.departmentHeadName))
+        ? `<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #bae6fd">👤 <strong>ผู้อนุมัติระดับ 1 (Direct Manager):</strong> ${mgr.managerName ? Layout.esc(mgr.managerName) : '<em>ไม่มี</em>'}${mgr.departmentHeadName && !mgr.managerName ? ' — สำรอง: หัวหน้าแผนก ' + Layout.esc(mgr.departmentHeadName) : ''}</div>`
+        : '';
+      box.innerHTML = balanceLine + approverLine;
       box.style.display = 'block';
     } catch (err) { box.style.display = 'none'; }
   },

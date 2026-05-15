@@ -763,7 +763,8 @@ public class PayrollService : IPayrollService
     public async Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId)
     {
         var detail = await _db.Set<PayrollDetail>()
-            .Include(d => d.Employee)
+            .Include(d => d.Employee).ThenInclude(e => e.DepartmentRef)
+            .Include(d => d.Employee).ThenInclude(e => e.PositionRef)
             .Include(d => d.PayrollRun)
             .FirstOrDefaultAsync(d => d.PayrollRunId == payrollRunId
                 && d.EmployeeId == employeeId
@@ -786,8 +787,13 @@ public class PayrollService : IPayrollService
         // Employee info
         sb.AppendLine("<table><tr><td><strong>รหัส:</strong> " + emp.EmployeeCode + "</td>");
         sb.AppendLine($"<td><strong>ชื่อ:</strong> {employeeName}</td></tr>");
-        sb.AppendLine($"<tr><td><strong>แผนก:</strong> {emp.Department ?? "-"}</td>");
-        sb.AppendLine($"<td><strong>ตำแหน่ง:</strong> {emp.Position ?? "-"}</td></tr></table>");
+        // Prefer the org-structure FK names; fall back to the legacy
+        // string fields so old employees without a Department/Position
+        // reference still print correctly.
+        var deptDisplay = emp.DepartmentRef?.Name ?? emp.Department ?? "-";
+        var posDisplay = emp.PositionRef?.Title ?? emp.Position ?? "-";
+        sb.AppendLine($"<tr><td><strong>แผนก:</strong> {deptDisplay}</td>");
+        sb.AppendLine($"<td><strong>ตำแหน่ง:</strong> {posDisplay}</td></tr></table>");
 
         // Earnings & Deductions side by side
         sb.AppendLine("<table><thead><tr><th colspan='2'>รายได้ (Earnings)</th><th colspan='2'>รายการหัก (Deductions)</th></tr></thead><tbody>");
