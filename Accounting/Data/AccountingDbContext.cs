@@ -180,6 +180,8 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
     public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
     public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<Position> Positions => Set<Position>();
 
     // Tax Calendar
     public DbSet<TaxCalendarEvent> TaxCalendarEvents => Set<TaxCalendarEvent>();
@@ -904,6 +906,38 @@ public class AccountingDbContext : DbContext
             e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.PaymentVoucherDocument).WithMany().HasForeignKey(ec => ec.PaymentVoucherDocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(ec => !ec.IsDeleted);
+        });
+
+        // ===== Department =====
+        modelBuilder.Entity<Department>(e =>
+        {
+            e.HasIndex(d => new { d.CompanyId, d.Code }).IsUnique();
+            e.Property(d => d.Code).HasMaxLength(50);
+            e.Property(d => d.Name).HasMaxLength(200);
+            e.HasOne(d => d.ParentDepartment).WithMany().HasForeignKey(d => d.ParentDepartmentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(d => d.Branch).WithMany().HasForeignKey(d => d.BranchId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(d => d.Dimension).WithMany().HasForeignKey(d => d.DimensionId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(d => d.DefaultExpenseAccount).WithMany().HasForeignKey(d => d.DefaultExpenseAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(d => !d.IsDeleted);
+        });
+
+        // ===== Position =====
+        modelBuilder.Entity<Position>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.Code }).IsUnique();
+            e.Property(p => p.Code).HasMaxLength(50);
+            e.Property(p => p.Title).HasMaxLength(200);
+            e.Property(p => p.MinSalary).HasPrecision(18, 2);
+            e.Property(p => p.MaxSalary).HasPrecision(18, 2);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        // ===== Employee org-structure FKs (additive — string fields retained) =====
+        modelBuilder.Entity<Employee>(e =>
+        {
+            e.HasOne(emp => emp.DepartmentRef).WithMany().HasForeignKey(emp => emp.DepartmentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(emp => emp.PositionRef).WithMany().HasForeignKey(emp => emp.PositionId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(emp => emp.DirectManager).WithMany().HasForeignKey(emp => emp.DirectManagerId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== SalaryAdvance =====

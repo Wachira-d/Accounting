@@ -40,6 +40,20 @@ public class Employee : TenantEntity
     public Guid? DimensionId { get; set; }               // Cost Center / Department
     public AccountingDimension? Dimension { get; set; }
 
+    // === Organisation structure (Department/Position entities replace
+    // the legacy string fields above; the strings are retained for
+    // historical / payslip-display continuity and migration). ===
+    public Guid? DepartmentId { get; set; }
+    public Models.Entities.Department? DepartmentRef { get; set; }
+    public Guid? PositionId { get; set; }
+    public Models.Entities.Position? PositionRef { get; set; }
+
+    // Direct reporting line — Level 1 approver for Leave / Advance / Claim.
+    // Self-reference on the same Employee table. Top of the chain (CEO) is
+    // null. ApprovalWorkflowResolver walks this chain to identify approvers.
+    public Guid? DirectManagerId { get; set; }
+    public Employee? DirectManager { get; set; }
+
     // Compensation
     public decimal BaseSalary { get; set; }
     public string SalaryType { get; set; } = "Monthly";  // Monthly, Daily, Hourly

@@ -1882,6 +1882,83 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_SalaryAdvances_CompanyId_EmployeeId_Status"
                 ON "SalaryAdvances" ("CompanyId", "EmployeeId", "Status");
             """,
+
+            // ===== Departments: first-class org-structure table (replaces
+            //                    Employee.Department string + maps to AccountingDimension) =====
+            """
+            CREATE TABLE IF NOT EXISTS "Departments" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Code" varchar(50) NOT NULL,
+                "Name" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "Description" text NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "ParentDepartmentId" uuid NULL,
+                "BranchId" uuid NULL,
+                "DimensionId" uuid NULL,
+                "DefaultExpenseAccountId" uuid NULL,
+                "ManagerEmployeeId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_Departments" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_Departments_CompanyId_Code"
+                ON "Departments" ("CompanyId", "Code");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Departments_DimensionId" ON "Departments" ("DimensionId");
+            """,
+
+            // ===== Positions / Job titles =====
+            """
+            CREATE TABLE IF NOT EXISTS "Positions" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Code" varchar(50) NOT NULL,
+                "Title" varchar(200) NOT NULL,
+                "TitleEn" varchar(200) NULL,
+                "Description" text NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "Band" varchar(50) NULL,
+                "MinSalary" numeric(18,2) NULL,
+                "MaxSalary" numeric(18,2) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_Positions" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_Positions_CompanyId_Code"
+                ON "Positions" ("CompanyId", "Code");
+            """,
+
+            // ===== Employees: org-structure FKs (additive; legacy string
+            //                  Department / Position fields preserved for
+            //                  back-compat + historical payslip display) =====
+            """
+            ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "DepartmentId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "PositionId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "DirectManagerId" uuid NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Employees_DepartmentId" ON "Employees" ("DepartmentId");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Employees_DirectManagerId" ON "Employees" ("DirectManagerId");
+            """,
         };
 
         foreach (var sql in statements)
