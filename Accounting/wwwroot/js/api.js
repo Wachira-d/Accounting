@@ -69,12 +69,19 @@ const API = {
         console.warn('Rate limited:', url);
         return { success: false, data: null, message: this._t('api.rateLimited', 'กรุณารอสักครู่') };
       }
-      // Check content-type to avoid parsing HTML as JSON
+      // Check content-type to avoid parsing HTML as JSON. Accept both the
+      // standard "application/json" and ASP.NET Core's ProblemDetails variant
+      // "application/problem+json" — both are valid JSON the JS side can read.
       const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
+      const isJson = ct.includes('application/json') || ct.includes('+json');
+      if (!isJson) {
+        // Read the body as text so the error message can include what the
+        // server actually said (often a useful single-line clue).
+        let bodyText = '';
+        try { bodyText = (await res.text()).slice(0, 300); } catch (_) {}
         const errMsg = `Server returned non-JSON (HTTP ${res.status}) for ${method} ${url}`;
-        API._logError(method, url, res.status, errMsg);
-        throw new Error(errMsg + '. ' + this._t('api.serverNonJson', 'กรุณา restart server'));
+        API._logError(method, url, res.status, errMsg + (bodyText ? ' · ' + bodyText : ''));
+        throw new Error(errMsg + (bodyText ? '\n' + bodyText : '') + '. ' + this._t('api.serverNonJson', 'กรุณา restart server'));
       }
       const json = await res.json();
       if (!res.ok) {

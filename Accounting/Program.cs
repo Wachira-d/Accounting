@@ -250,6 +250,26 @@ builder.Services.AddControllers(options =>
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
     });
 
+// Raise the global request body limit so large bank-statement / attachment
+// uploads don't fail with an opaque 400 before reaching the controller.
+// Default Kestrel limit is 30MB; 100MB covers year-long statements (.xlsx
+// base64-encoded inside JSON adds ~33% overhead). Individual endpoints can
+// override further via [RequestSizeLimit].
+builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(o =>
+{
+    o.Limits.MaxRequestBodySize = 100_000_000;
+});
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = 100_000_000;
+    o.ValueLengthLimit = 100_000_000;
+    o.MemoryBufferThreshold = 1_000_000;
+});
+builder.Services.Configure<Microsoft.AspNetCore.Builder.IISServerOptions>(o =>
+{
+    o.MaxRequestBodySize = 100_000_000;
+});
+
 // ===== Swagger =====
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>

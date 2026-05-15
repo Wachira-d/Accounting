@@ -87,14 +87,23 @@ public static class BankExcelParser
 
         try
         {
-            // Real DateTime cells → ISO so the date parser doesn't have to
-            // guess DD/MM vs MM/DD. Time-of-day preserved when present.
+            // Real DateTime cells → render in Excel-display order (M/d/yyyy)
+            // — NOT ISO. ISO would force a literal Gregorian reading and
+            // mis-handle a class of bank exports (KBank in particular) that
+            // store the day-of-month in the underlying serial's MONTH slot:
+            // Excel "1/4/2026" displays the same way for both US (MM/DD =
+            // Jan 4) and Thai (DD/MM = Apr 1) readers, but the underlying
+            // serial is Jan 4. Letting the downstream DetectDateOrder pass
+            // (which inspects ALL date strings including text dates like
+            // "13-04-26") classify the file means a Thai-readable serial
+            // stays Thai-readable end-to-end, while a genuine US file
+            // stays US.
             if (cell.DataType == XLDataType.DateTime)
             {
                 var dt = cell.GetDateTime();
                 return dt.TimeOfDay == TimeSpan.Zero
-                    ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
-                    : dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    ? dt.ToString("M/d/yyyy", CultureInfo.InvariantCulture)
+                    : dt.ToString("M/d/yyyy H:mm:ss", CultureInfo.InvariantCulture);
             }
             // Numbers → invariant string so amount parsing isn't fooled by the
             // user's locale thousand separator.
