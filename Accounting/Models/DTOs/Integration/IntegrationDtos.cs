@@ -197,6 +197,19 @@ public record InboundReverseJournalRequest(
     DateTime? ReversalDate,
     string? Description);
 
+/// <summary>
+/// ยกเลิกเอกสาร (Receipt / Invoice / TaxInvoice / PaymentVoucher ฯลฯ) จากระบบ
+/// ภายนอก — รองรับกรณีเช่น TaketTime / booking ที่ออกใบเสร็จมัดจำมาแล้ว ต่อมา
+/// ต้องการยกเลิกใบเดิมเพื่อออกใบรายรับเต็มเมื่อลูกค้าเข้าพักจริง. ระบบจะค้น
+/// เอกสารด้วย ExternalRef (preferred) หรือ ExternalId แล้วเรียก VoidDocumentAsync
+/// ที่ cascade ครบ: reverse Posted JE, void Payments ที่ผูก, ตัด bank match.
+/// </summary>
+public record InboundVoidDocumentRequest(
+    string? ExternalId,
+    string? ExternalRef,
+    Guid? DocumentId,        // ทางเลือก: ส่ง internal Id โดยตรงก็ได้
+    string? Reason);
+
 /// <summary>Batch import — ส่งข้อมูลหลายรายการพร้อมกัน (สูงสุด 500 รายการต่อประเภท)</summary>
 public record InboundBatchRequest(
     [property: MaxLength(500)] List<InboundCustomerRequest>? Customers,

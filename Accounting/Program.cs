@@ -258,7 +258,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Accounting Platform API",
         Version = "v1",
-        Description = "ระบบบัญชี SaaS Platform ที่ดีที่สุด - 46 Services, 40+ Controllers | Core Accounting, Tax, Documents, Payroll, Multi-Branch, Cost Center, Intercompany, Consolidation, AR/AP, Project Accounting, Warehouse, Revenue Recognition (TFRS15), Loan, Commission, AI Auto-Categorization, OCR, Report Builder, Customer Portal, FP&A, Open Banking, Compliance, Time & Billing, Webhooks, Mobile API"
+        Description = "ระบบบัญชี SaaS Platform - 115+ Services, 70+ Controllers | Core Accounting, Tax (ภพ.30/ภงด./e-Tax), Document Engine, Payroll + Leave + Salary Advance + Expense Claim, Multi-Branch / Cost Center, Intercompany & Consolidation, AR/AP, Project Accounting, Warehouse, Revenue Recognition (TFRS15), Loan, Commission, AI Auto-Categorization, OCR, Report Builder, Customer Portal, FP&A, Open Banking, Compliance, Time & Billing, Webhooks, Mobile API, CMS Multi-Site, Configurable Omnichannel Notification Engine, Organization Structure & Granular RBAC"
     });
 
     // JWT Bearer Auth

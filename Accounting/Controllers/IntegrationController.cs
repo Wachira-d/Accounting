@@ -359,6 +359,22 @@ public class ExternalIntegrationController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    /// <summary>
+    /// Void a document the integration pushed earlier — Receipt, TaxInvoice,
+    /// PaymentVoucher, etc. Cascade ครบ (reverse posted JE, void linked payments
+    /// with their JE reversals, unmatch bank). Idempotent on already-voided docs.
+    /// ใช้ตอน booking system ต้องการยกเลิกใบเสร็จมัดจำเพื่อออกใบเสร็จเต็ม.
+    /// </summary>
+    [HttpPost("documents/void")]
+    public async Task<ActionResult<InboundSyncResponse>> VoidDocument([FromBody] InboundVoidDocumentRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.VoidDocumentByExternalRefAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("daily-summary")]
     public async Task<ActionResult<InboundSyncResponse>> DailySummary([FromBody] InboundDailySummaryRequest request)
     {

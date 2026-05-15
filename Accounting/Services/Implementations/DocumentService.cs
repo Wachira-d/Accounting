@@ -653,7 +653,8 @@ public class DocumentService : IDocumentService
                 {
                     await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
                         reversalDate: DateTime.UtcNow.Date,
-                        description: $"ยกเลิกเอกสาร {doc.DocumentNumber}");
+                        description: $"ยกเลิกเอกสาร {doc.DocumentNumber}",
+                        systemTriggered: true);
                 }
 
                 // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status)
@@ -1090,7 +1091,8 @@ public class DocumentService : IDocumentService
         {
             await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
                 reversalDate: DateTime.UtcNow.Date,
-                description: $"{reason} - {payment.PaymentNumber}");
+                description: $"{reason} - {payment.PaymentNumber}",
+                systemTriggered: true);
         }
 
         // Reverse bank balance

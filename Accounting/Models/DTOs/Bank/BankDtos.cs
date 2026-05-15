@@ -245,3 +245,99 @@ public record BankTransactionDetailResponse(
     string? MatchedJournalNumber,
     DateTime? ReconciledAt,
     string? ReconciledBy);
+
+// ===== Reconciliation Group (M:N + net-off) =====
+
+/// <summary>
+/// Request to create a reconciliation group. Mix bank-transaction IDs with
+/// match items (Payment / JournalEntry / Document); each item carries a
+/// signed AllocatedAmount so the engine can net-off receipts vs payment
+/// vouchers and confirm the group balances.
+/// </summary>
+public record CreateReconciliationGroupRequest(
+    Guid BankAccountId,
+    DateTime ReconciledDate,
+    List<ReconciliationGroupItemRequest> BankTransactions,   // ItemType implicit = BankTransaction
+    List<ReconciliationGroupItemRequest> MatchItems,         // Payment / JournalEntry / Document
+    string? Notes = null,
+    decimal Tolerance = 0.01m);
+
+public record ReconciliationGroupItemRequest(
+    string ItemType,         // "BankTransaction" / "Payment" / "JournalEntry" / "Document"
+    Guid ItemId,
+    decimal AllocatedAmount, // signed: + inflow, - outflow
+    string? Notes = null);
+
+public record ReconciliationGroupResponse(
+    Guid Id,
+    Guid BankAccountId,
+    string GroupNumber,
+    DateTime ReconciledDate,
+    decimal TotalBankAmount,
+    decimal TotalMatchedAmount,
+    decimal Difference,
+    bool IsBalanced,
+    string? Notes,
+    string? CreatedBy,
+    DateTime CreatedAt,
+    List<ReconciliationGroupItemResponse> Items);
+
+public record ReconciliationGroupItemResponse(
+    Guid Id,
+    string ItemType,
+    Guid ItemId,
+    string? ItemNumber,         // e.g. PaymentNumber / EntryNumber / DocumentNumber
+    string? ItemDescription,
+    DateTime? ItemDate,
+    decimal AllocatedAmount,
+    string? Notes);
+
+public record ReconciliationGroupListItem(
+    Guid Id,
+    string GroupNumber,
+    DateTime ReconciledDate,
+    int BankTransactionCount,
+    int MatchItemCount,
+    decimal TotalBankAmount,
+    decimal TotalMatchedAmount,
+    bool IsBalanced);
+
+/// <summary>
+/// Flat list of every Payment + JournalEntry + Document that's eligible to be
+/// pulled into a reconciliation group — i.e. NOT already bound to any of the
+/// legacy 1:1 / M:1 fields AND NOT in any existing ReconciliationGroup. Used
+/// by the M:N workbench so the operator can see the whole pool, not just
+/// candidates near a single bank transaction.
+/// </summary>
+public record UnmatchedItemsResponse(
+    List<UnmatchedItem> Payments,
+    List<UnmatchedItem> JournalEntries,
+    List<UnmatchedItem> Documents);
+
+public record UnmatchedItem(
+    string ItemType,        // "Payment" / "JournalEntry" / "Document"
+    Guid Id,
+    string Number,
+    DateTime Date,
+    string? Description,
+    decimal Amount,         // unsigned magnitude; sign convention up to the workbench
+    string? ContactName);
+
+// ===== Learning-backed suggestion =====
+
+public record LearnedSuggestion(
+    string ItemType,
+    Guid Id,
+    string Number,
+    DateTime Date,
+    string? Description,
+    decimal Amount,
+    string? ContactName,
+    double Confidence,           // 0..1
+    string Reason);              // human-readable, e.g. "พบรูปแบบนี้ 3 ครั้ง · ใช้ล่าสุด 12/04/2025"
+
+public record LearnedSuggestionsResponse(
+    List<LearnedSuggestion> Suggestions,
+    string Signature,
+    string AmountBucket,
+    int CandidatePatternCount);

@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Bank;
 using Accounting.Services.Interfaces;
@@ -164,5 +165,93 @@ public class BankController : ControllerBase
     {
         var count = await _bankService.DeleteTransactionsAsync(companyId, request);
         return Ok(new ApiResponse<int>(true, count, $"ลบ {count} รายการสำเร็จ"));
+    }
+
+    // ===== M:N reconciliation + net-off (Receipt − PaymentVoucher = bank line) =====
+
+    /// <summary>
+    /// Create a reconciliation group that binds N bank transactions to M match items
+    /// (Payments / Journal Entries / Documents). Each side carries a signed
+    /// AllocatedAmount so net-off cases (เช่น Receipt + Payment Voucher = ยอดธนาคาร
+    /// รายการเดียว) work without splitting into two reconciliations.
+    /// </summary>
+    [HttpPost("reconciliation-groups")]
+    public async Task<ActionResult<ApiResponse<ReconciliationGroupResponse>>> CreateReconciliationGroup(
+        Guid companyId, [FromBody] CreateReconciliationGroupRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bankService.CreateReconciliationGroupAsync(companyId, request, userId);
+        return Ok(new ApiResponse<ReconciliationGroupResponse>(true, result,
+            result.IsBalanced ? "กระทบยอดสำเร็จ" : "บันทึกกลุ่มแล้ว — ยังไม่สมดุล กรุณาตรวจสอบ"));
+    }
+
+    [HttpGet("reconciliation-groups/{groupId:guid}")]
+    public async Task<ActionResult<ApiResponse<ReconciliationGroupResponse>>> GetReconciliationGroup(
+        Guid companyId, Guid groupId)
+    {
+        var result = await _bankService.GetReconciliationGroupAsync(companyId, groupId);
+        return Ok(new ApiResponse<ReconciliationGroupResponse>(true, result));
+    }
+
+    [HttpGet("accounts/{accountId:guid}/reconciliation-groups")]
+    public async Task<ActionResult<ApiResponse<PagedResponse<ReconciliationGroupListItem>>>> ListReconciliationGroups(
+        Guid companyId, Guid accountId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var result = await _bankService.GetReconciliationGroupsAsync(companyId, accountId, new PagedRequest(page, pageSize));
+        return Ok(new ApiResponse<PagedResponse<ReconciliationGroupListItem>>(true, result));
+    }
+
+    [HttpDelete("reconciliation-groups/{groupId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> UnreconcileGroup(Guid companyId, Guid groupId)
+    {
+        await _bankService.UnreconcileGroupAsync(companyId, groupId);
+        return Ok(new ApiResponse<string>(true, null, "ยกเลิกกลุ่มกระทบยอดสำเร็จ"));
+    }
+
+    /// <summary>
+    /// Full pool of unmatched items (Payment / JournalEntry / Document) for an
+    /// account — feeds the M:N workbench so the operator can see everything,
+    /// not just candidates near a single bank transaction. Optional date range
+    /// (defaults to trailing 6 months) and free-text filter.
+    /// </summary>
+    [HttpGet("accounts/{accountId:guid}/unmatched-items")]
+    public async Task<ActionResult<ApiResponse<UnmatchedItemsResponse>>> GetUnmatchedItems(
+        Guid companyId, Guid accountId,
+        [FromQuery] string? search = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null)
+    {
+        var result = await _bankService.GetUnmatchedItemsAsync(companyId, accountId, search, fromDate, toDate);
+        return Ok(new ApiResponse<UnmatchedItemsResponse>(true, result));
+    }
+
+    /// <summary>
+    /// AI suggestions backed by learned patterns — for an unmatched bank
+    /// transaction, returns items ranked by the company's historical
+    /// reconciliation history. Confidence 0..1 with a human reason string.
+    /// Complements the heuristic AI suggest endpoint (amount/date/payee
+    /// scoring) by leaning on what the operator has actually confirmed in
+    /// the past.
+    /// </summary>
+    [HttpGet("transactions/{transactionId:guid}/learned-suggestions")]
+    public async Task<ActionResult<ApiResponse<LearnedSuggestionsResponse>>> GetLearnedSuggestions(
+        Guid companyId, Guid transactionId)
+    {
+        var result = await _bankService.GetLearnedSuggestionsAsync(companyId, transactionId);
+        return Ok(new ApiResponse<LearnedSuggestionsResponse>(true, result));
+    }
+
+    /// <summary>
+    /// Excel export of reconciliation state — Transactions / Groups / Group Items / Summary.
+    /// Date range defaults to last 3 months when not specified.
+    /// </summary>
+    [HttpGet("accounts/{accountId:guid}/reconciliation-report.xlsx")]
+    public async Task<IActionResult> ExportReconciliationReport(
+        Guid companyId, Guid accountId,
+        [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+    {
+        var bytes = await _bankService.ExportReconciliationReportAsync(companyId, accountId, fromDate, toDate);
+        var fileName = $"reconciliation-{accountId:N}-{DateTime.UtcNow:yyyyMMdd}.xlsx";
+        return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
 }

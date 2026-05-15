@@ -116,6 +116,15 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<JournalEntryResponse>(true, result, "Post ใบสำคัญสำเร็จ"));
     }
 
+    [HttpPut("journals/{entryId:guid}")]
+    public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> UpdateJournalEntry(
+        Guid companyId, Guid entryId, [FromBody] UpdateJournalEntryRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _accountingService.UpdateJournalEntryAsync(companyId, entryId, request, userId);
+        return Ok(new ApiResponse<JournalEntryResponse>(true, result, "อัปเดตใบสำคัญสำเร็จ"));
+    }
+
     [HttpPost("journals/{entryId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> VoidJournalEntry(Guid companyId, Guid entryId)
     {
