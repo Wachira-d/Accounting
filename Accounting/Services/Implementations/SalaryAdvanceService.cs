@@ -23,14 +23,35 @@ public class SalaryAdvanceService : ISalaryAdvanceService
     private readonly IDocumentService _documentService;
     private readonly IOrganizationService? _organizationService;
     private readonly IPermissionService? _permissionService;
+    private readonly INotificationEngine? _notify;
 
     public SalaryAdvanceService(AccountingDbContext db, IDocumentService documentService,
-        IOrganizationService? organizationService = null, IPermissionService? permissionService = null)
+        IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _documentService = documentService;
         _organizationService = organizationService;
         _permissionService = permissionService;
+        _notify = notify;
+    }
+
+    /// <summary>Fire-and-forget helper — swallows any dispatch error so a
+    /// notification mishap never rolls back the surrounding HR transaction.</summary>
+    private async Task NotifyAsync(Guid companyId, string eventKey, Guid employeeId, Guid? actorUserId,
+        string title, string message, Guid entityId, string entityType, string actionUrl)
+    {
+        if (_notify == null) return;
+        await _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title,
+            Message = message,
+            ActionUrl = actionUrl,
+            EntityType = entityType,
+            EntityId = entityId,
+            RequesterEmployeeId = employeeId,
+            ActorUserId = actorUserId,
+        });
     }
 
     /// <summary>HR enforcement gate — when CompanySettings.EnforceManagerApproval
@@ -179,6 +200,14 @@ public class SalaryAdvanceService : ISalaryAdvanceService
 
         advance.Status = "Submitted";
         await _db.SaveChangesAsync();
+
+        await NotifyAsync(companyId, NotificationEvents.AdvanceSubmitted,
+            advance.EmployeeId, actorUserId: null,
+            title: $"คำขอเงินทดรอง {advance.AdvanceNumber} รอการอนุมัติ",
+            message: $"จำนวน {advance.Amount:N2} บาท — {advance.Reason ?? "ไม่ระบุเหตุผล"}",
+            entityId: advance.Id, entityType: "SalaryAdvance",
+            actionUrl: "/pages/salary-advance.html");
+
         return await GetByIdAsync(companyId, advance.Id);
     }
 
@@ -198,6 +227,14 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         advance.ApprovedAt = DateTime.UtcNow;
         advance.ApprovalNotes = request.Notes;
         await _db.SaveChangesAsync();
+
+        await NotifyAsync(companyId, NotificationEvents.AdvanceApproved,
+            advance.EmployeeId, actorUserId: approverUserId,
+            title: $"เงินทดรอง {advance.AdvanceNumber} ได้รับอนุมัติแล้ว",
+            message: $"จำนวน {advance.Amount:N2} บาท — รอการจ่ายเงิน",
+            entityId: advance.Id, entityType: "SalaryAdvance",
+            actionUrl: "/pages/salary-advance.html");
+
         return await GetByIdAsync(companyId, advance.Id);
     }
 
@@ -217,6 +254,14 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         advance.ApprovedAt = DateTime.UtcNow;
         advance.RejectionReason = request.Reason;
         await _db.SaveChangesAsync();
+
+        await NotifyAsync(companyId, NotificationEvents.AdvanceRejected,
+            advance.EmployeeId, actorUserId: approverUserId,
+            title: $"คำขอเงินทดรอง {advance.AdvanceNumber} ถูกปฏิเสธ",
+            message: $"เหตุผล: {request.Reason}",
+            entityId: advance.Id, entityType: "SalaryAdvance",
+            actionUrl: "/pages/salary-advance.html");
+
         return await GetByIdAsync(companyId, advance.Id);
     }
 
@@ -273,6 +318,13 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         advance.UpdatedBy = disbursedBy;
         advance.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        await NotifyAsync(companyId, NotificationEvents.AdvanceDisbursed,
+            advance.EmployeeId, actorUserId: null,
+            title: $"จ่ายเงินทดรอง {advance.AdvanceNumber} เรียบร้อย",
+            message: $"จำนวน {advance.Amount:N2} บาท — ใบสำคัญจ่าย {doc.DocumentNumber}",
+            entityId: advance.Id, entityType: "SalaryAdvance",
+            actionUrl: "/pages/documents.html#doc=" + doc.Id);
 
         return await GetByIdAsync(companyId, advance.Id);
     }

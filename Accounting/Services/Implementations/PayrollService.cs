@@ -21,6 +21,7 @@ public class PayrollService : IPayrollService
     private readonly ISalaryAdvanceService? _salaryAdvanceService;
     private readonly IOrganizationService? _organizationService;
     private readonly IPermissionService? _permissionService;
+    private readonly INotificationEngine? _notify;
 
     // Thai personal income tax brackets (progressive)
     private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
@@ -42,7 +43,8 @@ public class PayrollService : IPayrollService
 
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
-        IOrganizationService? organizationService = null, IPermissionService? permissionService = null)
+        IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _pdfService = pdfService;
@@ -50,7 +52,18 @@ public class PayrollService : IPayrollService
         _salaryAdvanceService = salaryAdvanceService;
         _organizationService = organizationService;
         _permissionService = permissionService;
+        _notify = notify;
     }
+
+    /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
+    private Task NotifyHrAsync(Guid companyId, string eventKey, Guid employeeId, Guid? actorUserId,
+        string title, string message, Guid entityId, string entityType, string actionUrl) =>
+        _notify == null ? Task.CompletedTask : _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title, Message = message, ActionUrl = actionUrl,
+            EntityType = entityType, EntityId = entityId,
+            RequesterEmployeeId = employeeId, ActorUserId = actorUserId,
+        });
 
     /// <summary>True when HR enforcement is configured on for the company.
     /// Cached fetch — small CompanySettings row, used in hot HR paths.</summary>
@@ -996,6 +1009,14 @@ public class PayrollService : IPayrollService
         _db.Set<EmployeeLeave>().Add(leave);
         await _db.SaveChangesAsync();
 
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveSubmitted,
+            employee.Id, actorUserId: null,
+            title: $"คำขอลาใหม่จาก {employee.FirstNameTh} {employee.LastNameTh}",
+            message: $"{leave.LeaveType} · {leave.StartDate:dd/MM/yyyy} – {leave.EndDate:dd/MM/yyyy} ({leave.TotalDays} วัน)" +
+                     (string.IsNullOrWhiteSpace(leave.Reason) ? "" : $"\nเหตุผล: {leave.Reason}"),
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
         return MapToLeaveResponse(leave, employee);
     }
 
@@ -1024,6 +1045,13 @@ public class PayrollService : IPayrollService
         leave.ApprovedBy = approverName;
         await _db.SaveChangesAsync();
 
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveApproved,
+            leave.EmployeeId, actorUserId: approverUserId,
+            title: $"คำขอลา {leave.StartDate:dd/MM} – {leave.EndDate:dd/MM} ได้รับอนุมัติ",
+            message: $"{leave.LeaveType} · อนุมัติโดย {approverName}",
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
         return MapToLeaveResponse(leave, leave.Employee);
     }
 
@@ -1047,6 +1075,13 @@ public class PayrollService : IPayrollService
         leave.RejectionReason = request.Reason;
         await _db.SaveChangesAsync();
 
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveRejected,
+            leave.EmployeeId, actorUserId: rejectorUserId,
+            title: $"คำขอลา {leave.StartDate:dd/MM} – {leave.EndDate:dd/MM} ถูกปฏิเสธ",
+            message: $"เหตุผล: {request.Reason}",
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
         return MapToLeaveResponse(leave, leave.Employee);
     }
 
@@ -1065,6 +1100,13 @@ public class PayrollService : IPayrollService
 
         leave.Status = "Cancelled";
         await _db.SaveChangesAsync();
+
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveCancelled,
+            leave.EmployeeId, actorUserId: null,
+            title: $"คำขอลา {leave.StartDate:dd/MM} – {leave.EndDate:dd/MM} ถูกยกเลิก",
+            message: $"{leave.LeaveType}",
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
 
         return MapToLeaveResponse(leave, leave.Employee);
     }

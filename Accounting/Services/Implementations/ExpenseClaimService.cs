@@ -15,13 +15,37 @@ public class ExpenseClaimService : IExpenseClaimService
     private readonly AccountingDbContext _db;
     private readonly IAccountingService? _accountingService;
     private readonly IDocumentService? _documentService;
+    private readonly INotificationEngine? _notify;
 
     public ExpenseClaimService(AccountingDbContext db, IAccountingService? accountingService = null,
-        IDocumentService? documentService = null)
+        IDocumentService? documentService = null, INotificationEngine? notify = null)
     {
         _db = db;
         _accountingService = accountingService;
         _documentService = documentService;
+        _notify = notify;
+    }
+
+    /// <summary>Fire-and-forget HR notification. Resolves the claim
+    /// submitter's Employee record (if any) so the engine can route to
+    /// DirectManager / DepartmentHead — falls back gracefully when the
+    /// user has no employee record (e.g. external accountant).</summary>
+    private async Task NotifyClaimEventAsync(Guid companyId, string eventKey, ExpenseClaim claim,
+        Guid? actorUserId, string title, string message)
+    {
+        if (_notify == null) return;
+        var employeeId = await _db.Employees
+            .Where(e => e.CompanyId == companyId && e.UserId == claim.SubmittedByUserId && !e.IsDeleted)
+            .Select(e => (Guid?)e.Id)
+            .FirstOrDefaultAsync();
+        await _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title, Message = message,
+            ActionUrl = "/pages/expense.html",
+            EntityType = "ExpenseClaim", EntityId = claim.Id,
+            RequesterEmployeeId = employeeId,
+            ActorUserId = actorUserId,
+        });
     }
 
     public async Task<ExpenseClaimResponse> CreateAsync(Guid companyId, CreateExpenseClaimRequest request, Guid submittedByUserId)
@@ -180,6 +204,12 @@ public class ExpenseClaimService : IExpenseClaimService
 
         claim.Status = ExpenseClaimStatus.Submitted;
         await _db.SaveChangesAsync();
+
+        await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseSubmitted, claim,
+            actorUserId: null,
+            title: $"ใบเบิกค่าใช้จ่ายใหม่ {claim.ClaimNumber}",
+            message: $"{claim.Title} · {claim.TotalAmount:N2} บาท");
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -196,6 +226,12 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.ApprovedAt = DateTime.UtcNow;
         claim.ApprovalNotes = request.Notes;
         await _db.SaveChangesAsync();
+
+        await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseApproved, claim,
+            actorUserId: approverUserId,
+            title: $"ใบเบิก {claim.ClaimNumber} ได้รับอนุมัติ",
+            message: $"{claim.Title} · {claim.TotalAmount:N2} บาท — รอจ่ายเงิน");
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -212,6 +248,12 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.ApprovedAt = DateTime.UtcNow;
         claim.RejectionReason = request.Reason;
         await _db.SaveChangesAsync();
+
+        await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseRejected, claim,
+            actorUserId: approverUserId,
+            title: $"ใบเบิก {claim.ClaimNumber} ถูกปฏิเสธ",
+            message: $"เหตุผล: {request.Reason}");
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -264,6 +306,12 @@ public class ExpenseClaimService : IExpenseClaimService
             claim.PaidMethod = request.PaymentMethod;
             claim.PaidReference = request.Reference;
             await _db.SaveChangesAsync();
+
+            await NotifyClaimEventAsync(companyId, NotificationEvents.ExpensePaid, claim,
+                actorUserId: null,
+                title: $"จ่ายเงินใบเบิก {claim.ClaimNumber} แล้ว",
+                message: $"{claim.Title} · {claim.TotalAmount:N2} บาท · ใบสำคัญจ่าย {doc.DocumentNumber}");
+
             return await GetByIdAsync(companyId, claim.Id);
         }
 
