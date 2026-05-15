@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Accounting.Data;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.DTOs.Payroll;
@@ -19,6 +20,7 @@ public class PayrollService : IPayrollService
     private readonly IAccountingService? _accountingService;
     private readonly ISalaryAdvanceService? _salaryAdvanceService;
     private readonly IOrganizationService? _organizationService;
+    private readonly IPermissionService? _permissionService;
 
     // Thai personal income tax brackets (progressive)
     private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
@@ -40,13 +42,14 @@ public class PayrollService : IPayrollService
 
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
-        IOrganizationService? organizationService = null)
+        IOrganizationService? organizationService = null, IPermissionService? permissionService = null)
     {
         _db = db;
         _pdfService = pdfService;
         _accountingService = accountingService;
         _salaryAdvanceService = salaryAdvanceService;
         _organizationService = organizationService;
+        _permissionService = permissionService;
     }
 
     /// <summary>True when HR enforcement is configured on for the company.
@@ -72,10 +75,12 @@ public class PayrollService : IPayrollService
     }
 
     /// <summary>Check the approver against the leave/advance's requesting
-    /// employee's direct manager (with department-head fallback). Throws
-    /// a clear error when EnforceManagerApproval is on and neither match
-    /// applies. No-op when enforcement is off.</summary>
-    private async Task EnsureCanApproveAsync(Guid companyId, Guid requestingEmployeeId, Guid approverUserId, string actionLabel)
+    /// employee's direct manager (with department-head fallback) — plus
+    /// the Owner / SystemAdmin and granular-permission overrides. Throws
+    /// a clear error when EnforceManagerApproval is on and no path
+    /// authorises the user. No-op when enforcement is off.</summary>
+    private async Task EnsureCanApproveAsync(Guid companyId, Guid requestingEmployeeId, Guid approverUserId,
+        string actionLabel, string? overridePermissionKey = null)
     {
         if (!await IsManagerApprovalEnforcedAsync(companyId)) return;
         if (_organizationService == null) return;
@@ -87,10 +92,15 @@ public class PayrollService : IPayrollService
                 && e.UserId == approverUserId);
         if (isManager || isDeptHeadFallback) return;
         if (await IsPrivilegedHrApproverAsync(companyId, approverUserId)) return;
+        // Granular-permission override — admins can grant the specific
+        // permission key to any company role.
+        if (!string.IsNullOrEmpty(overridePermissionKey) && _permissionService != null
+            && await _permissionService.HasPermissionAsync(companyId, approverUserId, overridePermissionKey))
+            return;
 
         var approver = info.ManagerName ?? info.DepartmentHeadName ?? "หัวหน้าโดยตรง";
         throw new InvalidOperationException(
-            $"ไม่มีสิทธิ์{actionLabel} — ระบบกำหนดให้เฉพาะ {approver} (หรือเจ้าของบริษัท) เท่านั้นที่ทำได้");
+            $"ไม่มีสิทธิ์{actionLabel} — ระบบกำหนดให้เฉพาะ {approver} (หรือเจ้าของบริษัท / ผู้ที่ได้รับสิทธิ์) เท่านั้นที่ทำได้");
     }
 
     // ===== Employees =====
@@ -1008,7 +1018,7 @@ public class PayrollService : IPayrollService
         if (leave.Status != "Pending")
             throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะรายการที่รอดำเนินการ");
 
-        await EnsureCanApproveAsync(companyId, leave.EmployeeId, approverUserId, "อนุมัติคำขอลา");
+        await EnsureCanApproveAsync(companyId, leave.EmployeeId, approverUserId, "อนุมัติคำขอลา", PermissionKeys.LeaveApprove);
 
         leave.Status = "Approved";
         leave.ApprovedBy = approverName;
@@ -1030,7 +1040,7 @@ public class PayrollService : IPayrollService
         if (leave.Status != "Pending")
             throw new InvalidOperationException("สามารถปฏิเสธได้เฉพาะรายการที่รอดำเนินการ");
 
-        await EnsureCanApproveAsync(companyId, leave.EmployeeId, rejectorUserId, "ปฏิเสธคำขอลา");
+        await EnsureCanApproveAsync(companyId, leave.EmployeeId, rejectorUserId, "ปฏิเสธคำขอลา", PermissionKeys.LeaveReject);
 
         leave.Status = "Rejected";
         leave.ApprovedBy = rejectorName;

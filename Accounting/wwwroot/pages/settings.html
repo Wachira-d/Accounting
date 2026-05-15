@@ -239,6 +239,15 @@
           <textarea class="form-textarea" id="sReceiptFooter" rows="3" placeholder="เช่น ขอบคุณที่ใช้บริการ..."></textarea>
         </div>
         <div class="form-group" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sEnforceManagerApproval" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">บังคับให้เฉพาะหัวหน้าโดยตรงอนุมัติคำขอ HR (Leave / Salary Advance)</span>
+              <span style="display:block;font-size:11px;color:#78350f;margin-top:2px;line-height:1.5">เมื่อเปิด — เฉพาะ Direct Manager (หรือหัวหน้าแผนกถ้าไม่มี / Owner เท่านั้น) จึงจะอนุมัติ-ปฏิเสธใบลาและเงินทดรองได้ ค่าเริ่มต้นปิดไว้เพื่อให้บริษัทที่ใช้งานอยู่ยังทำงานเหมือนเดิม</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group" style="grid-column:1/3">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
             <input type="checkbox" id="sShowGlEntryOnDocument" style="margin-top:3px">
             <span>
@@ -1127,6 +1136,7 @@
           document.getElementById('sInvoiceFooter').value = s.invoiceFooter || '';
           document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
           document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
+          document.getElementById('sEnforceManagerApproval').checked = !!s.enforceManagerApproval;
           // Email
           document.getElementById('sEmailFromName').value = s.emailFromName || '';
           document.getElementById('sEmailReplyTo').value = s.emailReplyTo || '';
@@ -1220,6 +1230,7 @@
             invoiceFooter: document.getElementById('sInvoiceFooter').value || null,
             receiptFooter: document.getElementById('sReceiptFooter').value || null,
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
+            enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
             // Email
             emailFromName: document.getElementById('sEmailFromName').value || null,
             emailReplyTo: document.getElementById('sEmailReplyTo').value || null,

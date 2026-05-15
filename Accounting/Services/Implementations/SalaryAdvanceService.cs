@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
 using Accounting.Models.DTOs.Payroll;
@@ -21,19 +22,22 @@ public class SalaryAdvanceService : ISalaryAdvanceService
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _documentService;
     private readonly IOrganizationService? _organizationService;
+    private readonly IPermissionService? _permissionService;
 
     public SalaryAdvanceService(AccountingDbContext db, IDocumentService documentService,
-        IOrganizationService? organizationService = null)
+        IOrganizationService? organizationService = null, IPermissionService? permissionService = null)
     {
         _db = db;
         _documentService = documentService;
         _organizationService = organizationService;
+        _permissionService = permissionService;
     }
 
     /// <summary>HR enforcement gate — when CompanySettings.EnforceManagerApproval
     /// is on, restrict Approve/Reject to the requester's direct manager
-    /// (or Owner / SystemAdmin). No-op when the flag is off.</summary>
-    private async Task EnsureCanApproveAsync(Guid companyId, Guid requestingEmployeeId, Guid approverUserId, string actionLabel)
+    /// (or Owner / SystemAdmin / granular permission grant). No-op when
+    /// the flag is off.</summary>
+    private async Task EnsureCanApproveAsync(Guid companyId, Guid requestingEmployeeId, Guid approverUserId, string actionLabel, string? overridePermissionKey = null)
     {
         var enforced = await _db.Set<CompanySettings>()
             .AsNoTracking()
@@ -58,9 +62,14 @@ public class SalaryAdvanceService : ISalaryAdvanceService
             .FirstOrDefaultAsync();
         if (role == UserRole.Owner || role == UserRole.SystemAdmin) return;
 
+        // Granular-permission override
+        if (!string.IsNullOrEmpty(overridePermissionKey) && _permissionService != null
+            && await _permissionService.HasPermissionAsync(companyId, approverUserId, overridePermissionKey))
+            return;
+
         var approver = info.ManagerName ?? info.DepartmentHeadName ?? "หัวหน้าโดยตรง";
         throw new InvalidOperationException(
-            $"ไม่มีสิทธิ์{actionLabel} — ระบบกำหนดให้เฉพาะ {approver} (หรือเจ้าของบริษัท) เท่านั้นที่ทำได้");
+            $"ไม่มีสิทธิ์{actionLabel} — ระบบกำหนดให้เฉพาะ {approver} (หรือเจ้าของบริษัท / ผู้ที่ได้รับสิทธิ์) เท่านั้นที่ทำได้");
     }
 
     public async Task<SalaryAdvanceResponse> CreateAsync(Guid companyId, CreateSalaryAdvanceRequest request, string createdBy)
@@ -182,7 +191,7 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         if (advance.Status != "Submitted")
             throw new InvalidOperationException("อนุมัติได้เฉพาะรายการที่ Submitted");
 
-        await EnsureCanApproveAsync(companyId, advance.EmployeeId, approverUserId, "อนุมัติเงินทดรองจ่าย");
+        await EnsureCanApproveAsync(companyId, advance.EmployeeId, approverUserId, "อนุมัติเงินทดรองจ่าย", PermissionKeys.AdvanceApprove);
 
         advance.Status = "Approved";
         advance.ApprovedByUserId = approverUserId;
@@ -201,7 +210,7 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         if (advance.Status != "Submitted")
             throw new InvalidOperationException("ปฏิเสธได้เฉพาะรายการที่ Submitted");
 
-        await EnsureCanApproveAsync(companyId, advance.EmployeeId, approverUserId, "ปฏิเสธเงินทดรองจ่าย");
+        await EnsureCanApproveAsync(companyId, advance.EmployeeId, approverUserId, "ปฏิเสธเงินทดรองจ่าย", PermissionKeys.AdvanceReject);
 
         advance.Status = "Rejected";
         advance.ApprovedByUserId = approverUserId;
