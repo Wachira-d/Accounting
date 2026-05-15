@@ -18,11 +18,13 @@ namespace Accounting.Middleware;
 public class CmsSiteRoutingMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly ILogger<CmsSiteRoutingMiddleware> _logger;
     private static readonly FileExtensionContentTypeProvider _ctp = new();
 
-    public CmsSiteRoutingMiddleware(RequestDelegate next)
+    public CmsSiteRoutingMiddleware(RequestDelegate next, ILogger<CmsSiteRoutingMiddleware> logger)
     {
         _next = next;
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context, AccountingDbContext db)
@@ -74,6 +76,8 @@ public class CmsSiteRoutingMiddleware
                     context.Items["CmsSiteSubdomain"] = string.IsNullOrEmpty(site.Subdomain) ? site.Slug : site.Subdomain;
                     context.Items["CmsPathBased"] = true;
                     context.Request.Path = "/storefront.html";
+                    context.Response.Headers["X-CMS-Site-Match"] = $"path:{key} → siteId:{site.Id} status:{site.Status}";
+                    _logger.LogInformation("CmsSiteRouting matched path /{Key} → site {SiteId} (status={Status}), rewrote to /storefront.html", key, site.Id, site.Status);
                     await _next(context);
                     return;
                 }
@@ -87,6 +91,8 @@ public class CmsSiteRoutingMiddleware
                 context.Items["CmsPathBased"] = true;
                 context.Items["CmsRequestedKey"] = key;
                 context.Request.Path = "/storefront.html";
+                context.Response.Headers["X-CMS-Site-Match"] = $"path:{key} → no-site-found, served 404 page";
+                _logger.LogWarning("CmsSiteRouting found no site for path /{Key}, rewrote to /storefront.html for 404 render", key);
                 await _next(context);
                 return;
             }
@@ -111,6 +117,7 @@ public class CmsSiteRoutingMiddleware
         context.Items["CmsSiteId"] = hostSite.Id;
         context.Items["CmsCompanyId"] = hostSite.CompanyId;
         context.Items["CmsSiteSubdomain"] = hostSite.Subdomain;
+        context.Response.Headers["X-CMS-Site-Match"] = $"host:{host} → siteId:{hostSite.Id}";
 
         context.Request.Path = "/storefront.html";
         await _next(context);
