@@ -15,14 +15,17 @@ public class IntegrationService : IIntegrationService
     private readonly ISettingsService _settingsService;
     private readonly ILogger<IntegrationService> _logger;
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
+    private readonly IDocumentService? _documentService;
 
     public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
-        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        IDocumentService? documentService = null)
     {
         _db = db;
         _settingsService = settingsService;
         _logger = logger;
         _vendorIntel = vendorIntel;
+        _documentService = documentService;
     }
 
     // ===== Helper: Atomic Journal Entry Number =====
@@ -1965,6 +1968,78 @@ public class IntegrationService : IIntegrationService
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true, "Journal entry reversed", null, null, reversal.Id, null, reversal.EntryNumber);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    /// <summary>
+    /// Void a document pushed earlier by the integration. Looks up by
+    /// ExternalRef (matched against Document.Reference) → ExternalId →
+    /// DocumentId in that order, then delegates to DocumentService.VoidDocumentAsync
+    /// which cascades: reverses Posted JE (systemTriggered), voids linked
+    /// Payments + their JEs, unmatches bank transactions, restores any source
+    /// document's balance.
+    ///
+    /// Typical workflow: booking system pushes a deposit Receipt, then on
+    /// check-in pushes a void of the same ExternalRef and a new full-revenue
+    /// Receipt with RelatedDocumentNumber pointing back to the deposit.
+    /// </summary>
+    public async Task<InboundSyncResponse> VoidDocumentByExternalRefAsync(Guid companyId, Guid integrationId, InboundVoidDocumentRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "document.voided", request.ExternalId, request.ExternalRef);
+
+        try
+        {
+            if (_documentService == null)
+                throw new InvalidOperationException("DocumentService not available");
+
+            Document? doc = null;
+            if (request.DocumentId.HasValue)
+            {
+                doc = await _db.Documents
+                    .FirstOrDefaultAsync(d => d.Id == request.DocumentId.Value && d.CompanyId == companyId && !d.IsDeleted);
+            }
+            if (doc == null && !string.IsNullOrWhiteSpace(request.ExternalRef))
+            {
+                doc = await _db.Documents
+                    .FirstOrDefaultAsync(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef
+                        && !d.IsDeleted);
+            }
+            if (doc == null && !string.IsNullOrWhiteSpace(request.ExternalId))
+            {
+                // ExternalId may have been stored in DocumentNumber or Notes for older integrations.
+                doc = await _db.Documents
+                    .FirstOrDefaultAsync(d => d.CompanyId == companyId
+                        && (d.DocumentNumber == request.ExternalId
+                            || (d.Notes != null && d.Notes.Contains(request.ExternalId)))
+                        && !d.IsDeleted);
+            }
+            if (doc == null)
+                throw new InvalidOperationException("ไม่พบเอกสารตามที่ระบุ — กรุณาตรวจสอบ ExternalRef / ExternalId / DocumentId");
+
+            if (doc.Status == DocumentStatus.Voided)
+            {
+                // Idempotency: a re-sent void on an already-voided document is a no-op.
+                log.Status = "Skipped";
+                log.CreatedDocumentId = doc.Id;
+                log.ErrorMessage = "Document already voided (idempotent skip)";
+                log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                await SaveSyncLog(log, integrationId);
+                return new InboundSyncResponse(true, "Document already voided", doc.Id, doc.ContactId, null, null, doc.DocumentNumber);
+            }
+
+            await _documentService.VoidDocumentAsync(companyId, doc.Id);
+
+            log.Status = "Success";
+            log.CreatedDocumentId = doc.Id;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+            return new InboundSyncResponse(true, "Document voided " + (request.Reason ?? ""), doc.Id, doc.ContactId, null, null, doc.DocumentNumber);
         }
         catch (Exception ex)
         {
