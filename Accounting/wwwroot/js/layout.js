@@ -395,6 +395,8 @@ const Layout = {
     { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance' },
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission' },
 
+    { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications' },
+
     { section: 'รายงาน' },
     { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔', href: '/pages/executive-reports.html', feature: 'AdvancedReporting', _i18nKey: 'nav.executiveReports' },
     { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html', feature: 'BasicAccounting', _i18nKey: 'nav.reports' },

@@ -137,6 +137,7 @@ builder.Services.AddScoped<ISalaryAdvanceService, SalaryAdvanceService>();
 builder.Services.AddScoped<IOrganizationService, OrganizationService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<INotificationEngine, NotificationEngine>();
+builder.Services.AddScoped<INotificationConfigService, NotificationConfigService>();
 builder.Services.AddScoped<ITaxCalendarService, TaxCalendarService>();
 builder.Services.AddScoped<IAdvancedArApService, AdvancedArApService>();
 

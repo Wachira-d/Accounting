@@ -529,6 +529,15 @@ const API = {
       getOrgChart: () => API.get(`${base}/organization/chart`),
       getDirectManager: (employeeId) => API.get(`${base}/organization/employees/${employeeId}/direct-manager`),
       getDirectManagerByUser: (userId) => API.get(`${base}/organization/users/${userId}/direct-manager`),
+      // Notification engine config
+      getNotificationCatalog: () => API.get(`${base}/notifications/config/catalog`),
+      getNotificationSettings: () => API.get(`${base}/notifications/config/settings`),
+      bulkUpsertNotificationSettings: (d) => API.put(`${base}/notifications/config/settings`, d),
+      getMyNotificationPreferences: () => API.get(`${base}/notifications/config/preferences/me`),
+      upsertMyNotificationPreferences: (d) => API.put(`${base}/notifications/config/preferences/me`, d),
+      getMyLineBinding: () => API.get(`${base}/notifications/config/line-binding/me`),
+      setMyLineBinding: (d) => API.put(`${base}/notifications/config/line-binding/me`, d),
+      clearMyLineBinding: () => API.del(`${base}/notifications/config/line-binding/me`),
       // Tax Calendar
       getTaxEvents: (q = '') => API.get(`${base}/tax-calendar${q}`),
       getTaxEvent: (id) => API.get(`${base}/tax-calendar/${id}`),
