@@ -259,7 +259,14 @@
       }
     };
 
-    const STATUS_LABEL = { 0: ['ร่าง','draft'], 1: ['เผยแพร่','published'], 2: ['ปรับปรุง','maintenance'], 3: ['ระงับ','maintenance'] };
+    // Accept both numeric (legacy) and enum-name (JsonStringEnumConverter) status values.
+    const STATUS_LABEL = {
+      'Draft':     ['ร่าง','draft'],     0: ['ร่าง','draft'],
+      'Published': ['เผยแพร่','published'], 1: ['เผยแพร่','published'],
+      'Maintenance':['ปรับปรุง','maintenance'], 2: ['ปรับปรุง','maintenance'],
+      'Suspended': ['ระงับ','maintenance'], 3: ['ระงับ','maintenance'],
+    };
+    const isSitePublished = (s) => s === 1 || s === 'Published' || s === 'published';
     const TYPE_LABEL = { 1: 'เว็บบริษัท', 2: 'ร้านค้าออนไลน์', 3: 'จองนัดหมาย', 4: 'แค็ตตาล็อกบริการ', 5: 'ผสม' };
 
     const Page = {
@@ -296,7 +303,7 @@
           const typeLabel = TYPE_LABEL[s.siteType] || '-';
           const pathUrl = `/site/${s.subdomain}`;
           const displayUrl = `${location.origin}/site/${s.subdomain}`;
-          const isPublished = s.status === 1;
+          const isPublished = isSitePublished(s.status);
           return `
             <div class="site-card">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">

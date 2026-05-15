@@ -224,6 +224,24 @@ public class CmsSiteService : ICmsSiteService
         site.Status = SiteStatus.Published;
         site.PublishedAt ??= DateTime.UtcNow;
         site.UpdatedBy = userId;
+
+        // Cascade-publish every Draft page so the storefront can actually render
+        // them. RenderPageAsync filters by PageStatus.Published — without this
+        // cascade, "publish site" makes Site.Status=Published but every page
+        // stays Draft, so visitors hit a 404 on the home page and the action
+        // appears to have done nothing.
+        var draftPages = await _db.SitePages
+            .Where(p => p.SiteId == siteId && p.CompanyId == companyId
+                && p.Status == PageStatus.Draft && !p.IsDeleted)
+            .ToListAsync();
+        var now = DateTime.UtcNow;
+        foreach (var page in draftPages)
+        {
+            page.Status = PageStatus.Published;
+            page.PublishedAt ??= now;
+            page.UpdatedBy = userId;
+        }
+
         await _db.SaveChangesAsync();
 
         return await GetSiteAsync(companyId, siteId) ?? throw new InvalidOperationException("Failed to retrieve published site.");
