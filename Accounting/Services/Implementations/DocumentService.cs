@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
 using Accounting.Models.DTOs.DocumentTemplate;
@@ -21,13 +22,15 @@ public class DocumentService : IDocumentService
     private readonly ILineNotifyService _lineNotify;
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
     private readonly CrossTenantWorkflowService _crossTenantWorkflow;
+    private readonly INotificationEngine? _notify;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
         ILineNotifyService lineNotify,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
-        CrossTenantWorkflowService crossTenantWorkflow)
+        CrossTenantWorkflowService crossTenantWorkflow,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -38,6 +41,7 @@ public class DocumentService : IDocumentService
         _lineNotify = lineNotify;
         _vendorIntel = vendorIntel;
         _crossTenantWorkflow = crossTenantWorkflow;
+        _notify = notify;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -518,13 +522,40 @@ public class DocumentService : IDocumentService
         // generate the e-Tax manually from the detail modal.
         await TryAutoGenerateEtaxAsync(companyId, doc);
 
-        // LINE notification (best-effort)
+        // LINE notification (best-effort) — keeps the legacy broadcast room
+        // hook for companies wired to a single LINE Notify channel.
+        var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
         try
         {
-            var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
             await _lineNotify.NotifyDocumentApprovedAsync(companyId, doc.DocumentNumber, contactName, doc.TotalAmount);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "LINE notification failed for document {DocNum}", doc.DocumentNumber); }
+
+        // New per-user / per-channel dispatch via the notification engine —
+        // resolves Accounting / Owner recipients per the configured matrix.
+        if (_notify != null)
+        {
+            await _notify.DispatchAsync(companyId, NotificationEvents.DocumentApproved, new NotificationContext
+            {
+                Title = $"อนุมัติเอกสาร {doc.DocumentNumber}",
+                Message = $"{doc.DocumentType} · {contactName} · ยอดรวม {doc.TotalAmount:N2} บาท",
+                ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                EntityType = "Document", EntityId = doc.Id,
+            });
+
+            // PaymentVoucher is a specialised approved-document subtype — fire
+            // its dedicated event so accounting can have a separate matrix row.
+            if (doc.DocumentType == DocumentType.PaymentVoucher)
+            {
+                await _notify.DispatchAsync(companyId, NotificationEvents.PaymentVoucherGenerated, new NotificationContext
+                {
+                    Title = $"ใบสำคัญจ่าย {doc.DocumentNumber}",
+                    Message = $"{contactName} · ยอดรวม {doc.TotalAmount:N2} บาท",
+                    ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                    EntityType = "Document", EntityId = doc.Id,
+                });
+            }
+        }
 
         return await GetDocumentAsync(companyId, documentId);
     }

@@ -26,6 +26,8 @@ public interface ISalaryAdvanceService
 
     /// <summary>Apply a payroll-driven repayment against an advance. Mutates the
     /// tracked entity (ClearedAmount / OutstandingAmount / Status) but does NOT
-    /// SaveChanges — the caller (payroll run) owns the surrounding transaction.</summary>
-    void ApplyRepayment(SalaryAdvance advance, decimal amount);
+    /// SaveChanges — the caller (payroll run) owns the surrounding transaction.
+    /// Returns true when this repayment caused the advance to flip to "Cleared"
+    /// — the caller can then dispatch the AdvanceCleared event after commit.</summary>
+    bool ApplyRepayment(SalaryAdvance advance, decimal amount);
 }

@@ -65,6 +65,18 @@ public class PayrollService : IPayrollService
             RequesterEmployeeId = employeeId, ActorUserId = actorUserId,
         });
 
+    /// <summary>Payroll-run-level events have no individual requester —
+    /// recipients resolve to HR / Accounting / Owner only.</summary>
+    private Task NotifyRunAsync(Guid companyId, string eventKey, Guid? actorUserId,
+        string title, string message, Guid entityId) =>
+        _notify == null ? Task.CompletedTask : _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title, Message = message,
+            ActionUrl = "/pages/payroll.html#tab=runs",
+            EntityType = "PayrollRun", EntityId = entityId,
+            ActorUserId = actorUserId,
+        });
+
     /// <summary>True when HR enforcement is configured on for the company.
     /// Cached fetch — small CompanySettings row, used in hot HR paths.</summary>
     private async Task<bool> IsManagerApprovalEnforcedAsync(Guid companyId) =>
@@ -596,6 +608,11 @@ public class PayrollService : IPayrollService
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
 
+            await NotifyRunAsync(companyId, NotificationEvents.PayrollGenerated, actorUserId: null,
+                title: $"คำนวณรอบเงินเดือน {run.Month:D2}/{run.Year} เสร็จสิ้น",
+                message: $"พนักงาน {run.EmployeeCount} คน · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+                entityId: run.Id);
+
             return MapToPayrollRunResponse(run);
         }
         catch
@@ -619,6 +636,11 @@ public class PayrollService : IPayrollService
         run.ApprovedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollApproved, actorUserId: null,
+            title: $"อนุมัติรอบเงินเดือน {run.Month:D2}/{run.Year}",
+            message: $"อนุมัติโดย {approvedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+            entityId: run.Id);
+
         return MapToPayrollRunResponse(run);
     }
 
@@ -639,6 +661,7 @@ public class PayrollService : IPayrollService
         if (alreadyPaid)
             throw new InvalidOperationException($"รอบจ่ายเงินเดือน {run.Year}/{run.Month:D2} ถูกจ่ายไปแล้ว");
 
+        var clearedAdvances = new List<SalaryAdvance>();
         await using var payTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -831,7 +854,10 @@ public class PayrollService : IPayrollService
                     // the surrounding payTransaction).
                     run.JournalEntryId = entry.Id;
                     foreach (var (adv, amount) in advanceRepayments)
-                        _salaryAdvanceService!.ApplyRepayment(adv, amount);
+                    {
+                        if (_salaryAdvanceService!.ApplyRepayment(adv, amount))
+                            clearedAdvances.Add(adv);
+                    }
                     await _db.SaveChangesAsync();
                 }
             }
@@ -849,6 +875,22 @@ public class PayrollService : IPayrollService
         {
             await payTransaction.RollbackAsync();
             throw;
+        }
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"จ่ายเงินเดือน {run.Month:D2}/{run.Year} เรียบร้อย",
+            message: $"ดำเนินการโดย {processedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+            entityId: run.Id);
+
+        // Notify each employee whose advance was fully repaid by this run.
+        foreach (var adv in clearedAdvances)
+        {
+            await NotifyHrAsync(companyId, NotificationEvents.AdvanceCleared,
+                adv.EmployeeId, actorUserId: null,
+                title: "เงินทดรองของคุณเคลียร์ครบแล้ว",
+                message: $"ยอดรวม {adv.Amount:N2} บาท ถูกหักคืนครบทั้งจำนวนจากเงินเดือน {run.Month:D2}/{run.Year}",
+                entityId: adv.Id, entityType: "SalaryAdvance",
+                actionUrl: "/pages/salary-advance.html");
         }
 
         return MapToPayrollRunResponse(run);

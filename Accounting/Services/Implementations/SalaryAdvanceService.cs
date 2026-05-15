@@ -355,18 +355,21 @@ public class SalaryAdvanceService : ISalaryAdvanceService
             .ToListAsync();
     }
 
-    public void ApplyRepayment(SalaryAdvance advance, decimal amount)
+    public bool ApplyRepayment(SalaryAdvance advance, decimal amount)
     {
-        if (amount <= 0) return;
+        if (amount <= 0) return false;
         var applied = Math.Min(amount, advance.OutstandingAmount);
         advance.ClearedAmount += applied;
         advance.OutstandingAmount -= applied;
-        if (advance.OutstandingAmount <= 0.009m)
+        var justCleared = false;
+        if (advance.OutstandingAmount <= 0.009m && advance.Status != "Cleared")
         {
             advance.OutstandingAmount = 0m;
             advance.Status = "Cleared";
+            justCleared = true;
         }
         advance.UpdatedAt = DateTime.UtcNow;
+        return justCleared;
     }
 
     // ===== Helpers =====
