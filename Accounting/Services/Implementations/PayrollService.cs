@@ -98,18 +98,24 @@ public class PayrollService : IPayrollService
             ProvidentFundEmployeePercent = request.ProvidentFundEmployeePercent,
             ProvidentFundEmployerPercent = request.ProvidentFundEmployerPercent,
             BranchId = request.BranchId,
-            DimensionId = request.DimensionId
+            DimensionId = request.DimensionId,
+            DepartmentId = request.DepartmentId,
+            PositionId = request.PositionId,
+            DirectManagerId = request.DirectManagerId
         };
 
         _db.Set<Employee>().Add(employee);
         await _db.SaveChangesAsync();
 
-        return MapToEmployeeResponse(employee);
+        return await GetEmployeeAsync(companyId, employee.Id);
     }
 
     public async Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId)
     {
         var employee = await _db.Set<Employee>()
+            .Include(e => e.DepartmentRef)
+            .Include(e => e.PositionRef)
+            .Include(e => e.DirectManager)
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
 
@@ -119,6 +125,9 @@ public class PayrollService : IPayrollService
     public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request)
     {
         var query = _db.Set<Employee>()
+            .Include(e => e.DepartmentRef)
+            .Include(e => e.PositionRef)
+            .Include(e => e.DirectManager)
             .Where(e => e.CompanyId == companyId && !e.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
@@ -162,11 +171,22 @@ public class PayrollService : IPayrollService
         if (request.ProvidentFundEmployerPercent.HasValue) employee.ProvidentFundEmployerPercent = request.ProvidentFundEmployerPercent.Value;
         if (request.BranchId.HasValue) employee.BranchId = request.BranchId.Value;
         if (request.DimensionId.HasValue) employee.DimensionId = request.DimensionId.Value;
+        // Org structure (preferred over the legacy string Department/Position)
+        if (request.DepartmentId.HasValue) employee.DepartmentId = request.DepartmentId.Value;
+        if (request.PositionId.HasValue) employee.PositionId = request.PositionId.Value;
+        if (request.DirectManagerId.HasValue)
+        {
+            if (request.DirectManagerId.Value == employeeId)
+                throw new InvalidOperationException("พนักงานไม่สามารถเป็นหัวหน้าของตัวเองได้");
+            employee.DirectManagerId = request.DirectManagerId.Value;
+        }
+        // Onboarding / offboarding (preserves all historical HR + GL records)
+        if (request.IsActive.HasValue) employee.IsActive = request.IsActive.Value;
 
         employee.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return MapToEmployeeResponse(employee);
+        return await GetEmployeeAsync(companyId, employee.Id);
     }
 
     public async Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate)
@@ -1170,7 +1190,14 @@ public class PayrollService : IPayrollService
         new(e.Id, e.EmployeeCode, e.TitleTh, e.FirstNameTh, e.LastNameTh,
             e.FirstNameEn, e.LastNameEn, e.CitizenId, e.Department, e.Position,
             e.EmploymentType, e.StartDate, e.EndDate, e.BaseSalary,
-            e.SalaryType, e.IsActive, e.CreatedAt);
+            e.SalaryType, e.IsActive, e.CreatedAt,
+            e.DepartmentId, e.DepartmentRef?.Name,
+            e.PositionId, e.PositionRef?.Title,
+            e.DirectManagerId,
+            e.DirectManager != null
+                ? $"{e.DirectManager.TitleTh}{e.DirectManager.FirstNameTh} {e.DirectManager.LastNameTh}".Trim()
+                : null,
+            e.ContactId);
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,
