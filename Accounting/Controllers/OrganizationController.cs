@@ -91,6 +91,14 @@ public class OrganizationController : ControllerBase
         => Ok(new ApiResponse<DirectManagerInfo>(true,
             await _service.GetDirectManagerInfoAsync(companyId, employeeId)));
 
+    /// <summary>Resolve the direct manager of the Employee linked to a
+    /// User account — used by flows whose subject is a User (e.g.
+    /// ExpenseClaim.SubmittedByUserId) rather than an Employee.</summary>
+    [HttpGet("users/{userId:guid}/direct-manager")]
+    public async Task<ActionResult<ApiResponse<DirectManagerInfo?>>> GetDirectManagerByUser(Guid companyId, Guid userId)
+        => Ok(new ApiResponse<DirectManagerInfo?>(true,
+            await _service.GetDirectManagerByUserIdAsync(companyId, userId)));
+
     // ===== Org chart =====
 
     [HttpGet("chart")]

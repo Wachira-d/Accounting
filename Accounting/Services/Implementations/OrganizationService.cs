@@ -264,6 +264,16 @@ public class OrganizationService : IOrganizationService
             deptHeadEmployeeId, deptHeadName);
     }
 
+    public async Task<DirectManagerInfo?> GetDirectManagerByUserIdAsync(Guid companyId, Guid userId)
+    {
+        var employeeId = await _db.Employees
+            .Where(e => e.CompanyId == companyId && e.UserId == userId && !e.IsDeleted)
+            .Select(e => (Guid?)e.Id)
+            .FirstOrDefaultAsync();
+        if (employeeId == null) return null;
+        return await GetDirectManagerInfoAsync(companyId, employeeId.Value);
+    }
+
     public async Task<List<OrgChartNode>> GetOrgChartAsync(Guid companyId)
     {
         var allEmployees = await _db.Employees

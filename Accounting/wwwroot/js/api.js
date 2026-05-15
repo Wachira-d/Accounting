@@ -528,6 +528,7 @@ const API = {
       deletePosition: (id) => API.del(`${base}/organization/positions/${id}`),
       getOrgChart: () => API.get(`${base}/organization/chart`),
       getDirectManager: (employeeId) => API.get(`${base}/organization/employees/${employeeId}/direct-manager`),
+      getDirectManagerByUser: (userId) => API.get(`${base}/organization/users/${userId}/direct-manager`),
       // Tax Calendar
       getTaxEvents: (q = '') => API.get(`${base}/tax-calendar${q}`),
       getTaxEvent: (id) => API.get(`${base}/tax-calendar/${id}`),

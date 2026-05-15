@@ -39,6 +39,12 @@ public interface IOrganizationService
     /// direct manager is set.</summary>
     Task<DirectManagerInfo> GetDirectManagerInfoAsync(Guid companyId, Guid employeeId);
 
+    /// <summary>User-facing convenience: resolve the direct manager of
+    /// the Employee linked to the given UserId. Returns null when the
+    /// user has no Employee record (e.g. accountants who are CompanyUsers
+    /// but not employees).</summary>
+    Task<DirectManagerInfo?> GetDirectManagerByUserIdAsync(Guid companyId, Guid userId);
+
     /// <summary>Build the full org-chart tree rooted at employees with no
     /// direct manager. Used by the org-structure UI.</summary>
     Task<List<OrgChartNode>> GetOrgChartAsync(Guid companyId);
