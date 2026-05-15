@@ -301,3 +301,24 @@ public record ReconciliationGroupListItem(
     decimal TotalBankAmount,
     decimal TotalMatchedAmount,
     bool IsBalanced);
+
+/// <summary>
+/// Flat list of every Payment + JournalEntry + Document that's eligible to be
+/// pulled into a reconciliation group — i.e. NOT already bound to any of the
+/// legacy 1:1 / M:1 fields AND NOT in any existing ReconciliationGroup. Used
+/// by the M:N workbench so the operator can see the whole pool, not just
+/// candidates near a single bank transaction.
+/// </summary>
+public record UnmatchedItemsResponse(
+    List<UnmatchedItem> Payments,
+    List<UnmatchedItem> JournalEntries,
+    List<UnmatchedItem> Documents);
+
+public record UnmatchedItem(
+    string ItemType,        // "Payment" / "JournalEntry" / "Document"
+    Guid Id,
+    string Number,
+    DateTime Date,
+    string? Description,
+    decimal Amount,         // unsigned magnitude; sign convention up to the workbench
+    string? ContactName);

@@ -389,6 +389,127 @@ public partial class BankService
                 && i.Group.CompanyId == companyId);
     }
 
+    /// <summary>
+    /// Build the pool of items that haven't been reconciled yet anywhere in the
+    /// system — across both legacy 1:1 / M:1 fields and the new
+    /// ReconciliationGroup. Filtered to the bank account's linked GL account
+    /// when possible so the M:N workbench only surfaces relevant payments / JEs.
+    /// </summary>
+    public async Task<UnmatchedItemsResponse> GetUnmatchedItemsAsync(
+        Guid companyId, Guid bankAccountId, string? search, DateTime? fromDate, DateTime? toDate)
+    {
+        var account = await _db.Set<BankAccount>().AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+
+        var from = fromDate?.Date ?? DateTime.UtcNow.Date.AddMonths(-6);
+        var to = toDate?.Date.AddDays(1) ?? DateTime.UtcNow.Date.AddDays(1);
+        var q = (search ?? "").Trim().ToLowerInvariant();
+
+        // ----- Exclusion sets: already matched legacy-style OR in a group -----
+        var legacyMatched = await _db.Set<BankTransaction>().AsNoTracking()
+            .Where(t => t.CompanyId == companyId
+                && (t.MatchedPaymentId != null || t.MatchedJournalEntryId != null
+                    || t.MatchedEntryIdsJson != null || t.MatchGroupId != null))
+            .Select(t => new { t.MatchedPaymentId, t.MatchedJournalEntryId, t.MatchedEntryIdsJson })
+            .ToListAsync();
+        var usedPaymentIds = new HashSet<Guid>();
+        var usedJeIds = new HashSet<Guid>();
+        foreach (var t in legacyMatched)
+        {
+            if (t.MatchedPaymentId.HasValue) usedPaymentIds.Add(t.MatchedPaymentId.Value);
+            if (t.MatchedJournalEntryId.HasValue) usedJeIds.Add(t.MatchedJournalEntryId.Value);
+            if (string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson)) continue;
+            try
+            {
+                var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!);
+                if (ids != null) foreach (var id in ids) { usedPaymentIds.Add(id); usedJeIds.Add(id); }
+            }
+            catch { /* malformed; ignore */ }
+        }
+
+        // Items already inside any ReconciliationGroup for the company.
+        var inGroupItems = await _db.ReconciliationGroupItems.AsNoTracking()
+            .Where(i => i.Group.CompanyId == companyId
+                && i.ItemType != ReconciliationItemType.BankTransaction)
+            .Select(i => new { i.ItemType, i.ItemId })
+            .ToListAsync();
+        foreach (var i in inGroupItems)
+        {
+            if (i.ItemType == ReconciliationItemType.Payment) usedPaymentIds.Add(i.ItemId);
+            else if (i.ItemType == ReconciliationItemType.JournalEntry) usedJeIds.Add(i.ItemId);
+        }
+        var usedDocIds = inGroupItems
+            .Where(i => i.ItemType == ReconciliationItemType.Document)
+            .Select(i => i.ItemId).ToHashSet();
+
+        // ----- Payments -----
+        var paymentExclude = usedPaymentIds.ToList();
+        var paymentsQuery = _db.Set<Payment>().AsNoTracking()
+            .Include(p => p.Document).ThenInclude(d => d.Contact)
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.PaymentDate >= from && p.PaymentDate < to
+                && p.Document.Status != DocumentStatus.Voided
+                && !paymentExclude.Contains(p.Id));
+        if (!string.IsNullOrWhiteSpace(q))
+            paymentsQuery = paymentsQuery.Where(p =>
+                p.PaymentNumber.ToLower().Contains(q)
+                || (p.Notes != null && p.Notes.ToLower().Contains(q))
+                || (p.Document.Contact != null && p.Document.Contact.Name.ToLower().Contains(q)));
+        var payments = await paymentsQuery
+            .OrderByDescending(p => p.PaymentDate).Take(200)
+            .Select(p => new UnmatchedItem(
+                "Payment", p.Id, p.PaymentNumber, p.PaymentDate,
+                p.Notes ?? p.Document.DocumentNumber, p.Amount,
+                p.Document.Contact != null ? p.Document.Contact.Name : null))
+            .ToListAsync();
+
+        // ----- Journal Entries (Posted, not auto-doc-twin) -----
+        var jeExclude = usedJeIds.ToList();
+        var jesQuery = _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= from && j.EntryDate < to
+                && !jeExclude.Contains(j.Id));
+        if (!string.IsNullOrWhiteSpace(q))
+            jesQuery = jesQuery.Where(j =>
+                j.EntryNumber.ToLower().Contains(q)
+                || (j.Description != null && j.Description.ToLower().Contains(q))
+                || (j.Reference != null && j.Reference.ToLower().Contains(q)));
+        var jes = await jesQuery
+            .OrderByDescending(j => j.EntryDate).Take(200)
+            .Select(j => new UnmatchedItem(
+                "JournalEntry", j.Id, j.EntryNumber, j.EntryDate,
+                j.Description, j.TotalDebit, null))
+            .ToListAsync();
+
+        // ----- Documents (Approved receipts / payment vouchers without payment record yet) -----
+        var docExclude = usedDocIds.ToList();
+        var docsQuery = _db.Documents.AsNoTracking()
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Status == DocumentStatus.Approved
+                && d.DocumentDate >= from && d.DocumentDate < to
+                && (d.DocumentType == DocumentType.Receipt
+                    || d.DocumentType == DocumentType.PaymentVoucher
+                    || d.DocumentType == DocumentType.ReceiptVoucher)
+                && !docExclude.Contains(d.Id));
+        if (!string.IsNullOrWhiteSpace(q))
+            docsQuery = docsQuery.Where(d =>
+                d.DocumentNumber.ToLower().Contains(q)
+                || (d.Contact != null && d.Contact.Name.ToLower().Contains(q)));
+        var docs = await docsQuery
+            .OrderByDescending(d => d.DocumentDate).Take(200)
+            .Select(d => new UnmatchedItem(
+                "Document", d.Id, d.DocumentNumber, d.DocumentDate,
+                d.DocumentType + " · " + (d.Contact != null ? d.Contact.Name : ""),
+                d.TotalAmount,
+                d.Contact != null ? d.Contact.Name : null))
+            .ToListAsync();
+
+        return new UnmatchedItemsResponse(payments, jes, docs);
+    }
+
     private async Task<ReconciliationGroupResponse> BuildGroupResponseAsync(Guid companyId, Guid groupId)
     {
         var group = await _db.ReconciliationGroups

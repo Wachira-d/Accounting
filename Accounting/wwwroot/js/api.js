@@ -276,6 +276,7 @@ const API = {
       getReconciliationGroup: (id) => API.get(`${base}/bank/reconciliation-groups/${id}`),
       listReconciliationGroups: (accId, q = '') => API.get(`${base}/bank/accounts/${accId}/reconciliation-groups${q}`),
       unreconcileGroup: (id) => API.del(`${base}/bank/reconciliation-groups/${id}`),
+      getUnmatchedItems: (accId, q = '') => API.get(`${base}/bank/accounts/${accId}/unmatched-items${q}`),
       // Open Banking
       getConnections: () => API.get(`${base}/open-banking/connections`),
       createConnection: (d) => API.post(`${base}/open-banking/connections`, d),

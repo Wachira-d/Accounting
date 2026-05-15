@@ -191,6 +191,17 @@
           </div>
         </div>
       </div>
+
+      <!-- Reconciliation Groups history -->
+      <div class="card" style="margin-top:20px">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <h3>📚 ประวัติการกระทบยอดแบบกลุ่ม (M:N)</h3>
+          <button class="btn btn-sm btn-secondary" onclick="GroupHistory.reload()">🔄 รีเฟรช</button>
+        </div>
+        <div id="reconGroupHistory" style="padding:0">
+          <div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">เลือกบัญชีจากรายการบัญชีก่อนเพื่อดูประวัติกลุ่มกระทบยอด</div>
+        </div>
+      </div>
     </div>
 
     <!-- Open Banking Tab -->
@@ -469,6 +480,21 @@
       </div>
     </div>
 
+    <!-- Group Detail Modal (read-only viewer + unmatch action) -->
+    <div class="modal-overlay" id="groupDetailModal">
+      <div class="modal" style="max-width:780px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="gdTitle">รายละเอียดกลุ่มกระทบยอด</h3>
+          <button class="modal-close" onclick="Layout.closeModal('groupDetailModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="gdBody">กำลังโหลด...</div>
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-danger" id="gdUnmatchBtn" onclick="GroupHistory.unmatchCurrent()">🔓 ยกเลิกกลุ่มนี้</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('groupDetailModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Group Reconciliation Modal (M:N + Net-off) -->
     <div class="modal-overlay" id="groupReconcileModal">
       <div class="modal" style="max-width:1100px">
@@ -552,7 +578,7 @@
         document.getElementById('tabAccounts').style.display = tab === 'accounts' ? '' : 'none';
         document.getElementById('tabReconcile').style.display = tab === 'reconcile' ? '' : 'none';
         document.getElementById('tabConnections').style.display = tab === 'connections' ? '' : 'none';
-        if (tab === 'reconcile') { this.loadReconciliationSummary(); this.loadUnreconciled(); }
+        if (tab === 'reconcile') { this.loadReconciliationSummary(); this.loadUnreconciled(); GroupHistory.reload(); }
         if (tab === 'connections') this.loadConnections();
       },
       // === ACCOUNTS ===
@@ -1797,24 +1823,18 @@
             _selected: false,
             _alloc: t.transactionType === 'Deposit' ? t.amount : -t.amount,
           }));
-          // 2. Match candidates — reuse existing endpoint via FIRST bank txn if any,
-          //    otherwise fetch an empty placeholder.
-          let candidates = { payments: [], journalEntries: [] };
-          if (this.bankTxns[0]) {
-            const c = await api.getMatchCandidates(this.bankTxns[0].id);
-            candidates = c?.data || candidates;
-          }
-          const payItems = (candidates.payments || []).map(p => ({
-            type: 'Payment', id: p.id, number: p.paymentNumber, date: p.paymentDate,
-            description: p.contactName || p.notes || '', defaultAmount: p.amount,
-            _selected: false, _alloc: p.amount,
+          // 2. Full pool of unmatched items for the account (Payment / JE / Document)
+          //    — not tied to a single bank transaction so the workbench can mix
+          //    items from across the whole pool.
+          const u = await api.getUnmatchedItems(this.accountId);
+          const data = u?.data || { payments: [], journalEntries: [], documents: [] };
+          const map = arr => arr.map(it => ({
+            type: it.itemType, id: it.id, number: it.number,
+            date: it.date, description: it.description || it.contactName || '',
+            defaultAmount: it.amount,
+            _selected: false, _alloc: it.amount,
           }));
-          const jeItems = (candidates.journalEntries || []).map(j => ({
-            type: 'JournalEntry', id: j.id, number: j.entryNumber, date: j.entryDate,
-            description: j.description || '', defaultAmount: j.amount,
-            _selected: false, _alloc: j.amount,
-          }));
-          this.items = [...payItems, ...jeItems];
+          this.items = [...map(data.payments || []), ...map(data.journalEntries || []), ...map(data.documents || [])];
           this.renderBank();
           this.renderItems();
           this.recalc();
@@ -1922,6 +1942,109 @@
           if (typeof Page.loadTransactions === 'function' && Page.selectedAccountId) await Page.loadTransactions();
         } catch (e) { Layout.toast(e.message, 'error'); }
         finally { btn.disabled = false; btn.innerHTML = '✓ ยืนยันการกระทบยอด <span id="grConfirmCounts" style="font-weight:400;font-size:12px"></span>'; }
+      },
+    };
+
+    // ===== Reconciliation Group History viewer =====
+    const GroupHistory = {
+      currentDetailId: null,
+      async reload() {
+        const accId = Page.selectedAccountId || Page.accounts?.[0]?.id;
+        const container = document.getElementById('reconGroupHistory');
+        if (!accId) {
+          container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">เลือกบัญชีก่อนเพื่อดูประวัติ</div>';
+          return;
+        }
+        container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px">กำลังโหลด...</div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.listReconciliationGroups(accId, '?page=1&pageSize=50');
+          const items = res?.data?.items || [];
+          if (items.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">ยังไม่เคยสร้างกลุ่มกระทบยอด — กด "🔗 กลุ่มกระทบยอด" ด้านบนเพื่อเริ่ม</div>';
+            return;
+          }
+          container.innerHTML = `
+            <table class="table" style="margin:0">
+              <thead><tr>
+                <th>เลขกลุ่ม</th><th>วันที่</th><th class="text-center">Bank txns</th><th class="text-center">รายการ</th>
+                <th class="text-right">Bank รวม</th><th class="text-right">รายการรวม</th><th class="text-center">สมดุล</th><th></th>
+              </tr></thead>
+              <tbody>${items.map(g => `
+                <tr>
+                  <td><strong>${Layout.esc(g.groupNumber)}</strong></td>
+                  <td>${new Date(g.reconciledDate).toLocaleDateString('th-TH')}</td>
+                  <td class="text-center">${g.bankTransactionCount}</td>
+                  <td class="text-center">${g.matchItemCount}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(g.totalBankAmount)}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(g.totalMatchedAmount)}</td>
+                  <td class="text-center">${g.isBalanced ? '<span style="color:#059669">✓</span>' : '<span style="color:#dc2626">✗</span>'}</td>
+                  <td class="text-right"><button class="btn btn-sm btn-ghost" onclick="GroupHistory.viewDetail('${g.id}')">รายละเอียด</button></td>
+                </tr>`).join('')}</tbody>
+            </table>`;
+        } catch (e) {
+          container.innerHTML = `<div style="text-align:center;color:#dc2626;padding:24px;font-size:13px">${e.message}</div>`;
+        }
+      },
+      async viewDetail(id) {
+        this.currentDetailId = id;
+        document.getElementById('gdTitle').textContent = 'รายละเอียดกลุ่มกระทบยอด';
+        document.getElementById('gdBody').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px">กำลังโหลด...</div>';
+        Layout.openModal('groupDetailModal');
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getReconciliationGroup(id);
+          const g = res?.data;
+          if (!g) throw new Error('ไม่พบกลุ่ม');
+          document.getElementById('gdTitle').textContent = `กลุ่ม ${g.groupNumber}`;
+          const banks = g.items.filter(i => i.itemType === 'BankTransaction');
+          const matches = g.items.filter(i => i.itemType !== 'BankTransaction');
+          const fmt = a => (a < 0 ? '−' : '') + '฿' + Math.abs(a).toLocaleString('en-US', { minimumFractionDigits: 2 });
+          document.getElementById('gdBody').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;font-size:13px">
+              <div><span style="color:#64748b">วันที่</span><br><strong>${new Date(g.reconciledDate).toLocaleDateString('th-TH')}</strong></div>
+              <div><span style="color:#64748b">ผู้ทำรายการ</span><br><strong>${Layout.esc(g.createdBy || '-')}</strong></div>
+              <div><span style="color:#64748b">สถานะ</span><br><strong style="color:${g.isBalanced ? '#059669' : '#dc2626'}">${g.isBalanced ? '✓ สมดุล' : '✗ ไม่สมดุล'}</strong></div>
+            </div>
+            ${g.notes ? `<div style="background:#fffbeb;border:1px solid #fef3c7;padding:8px;border-radius:6px;margin-bottom:12px;font-size:13px">📝 ${Layout.esc(g.notes)}</div>` : ''}
+            <div style="margin-bottom:12px"><strong>🏦 ฝั่งธนาคาร (${banks.length})</strong></div>
+            <table class="table table-sm" style="margin-bottom:16px">
+              <thead><tr><th>วันที่</th><th>รายละเอียด</th><th class="text-right">จำนวน</th></tr></thead>
+              <tbody>${banks.map(b => `<tr>
+                <td>${b.itemDate ? new Date(b.itemDate).toLocaleDateString('th-TH') : '-'}</td>
+                <td>${Layout.esc(b.itemDescription || '-')}</td>
+                <td class="text-right" style="color:${b.allocatedAmount < 0 ? '#dc2626' : '#059669'};font-variant-numeric:tabular-nums">${fmt(b.allocatedAmount)}</td>
+              </tr>`).join('')}</tbody>
+              <tfoot><tr style="background:#f1f5f9"><td colspan="2"><strong>รวมฝั่งธนาคาร</strong></td><td class="text-right"><strong>${fmt(g.totalBankAmount)}</strong></td></tr></tfoot>
+            </table>
+            <div style="margin-bottom:12px"><strong>📄 ฝั่งรายการ (${matches.length})</strong></div>
+            <table class="table table-sm">
+              <thead><tr><th>ประเภท</th><th>เลข</th><th>วันที่</th><th>รายละเอียด</th><th class="text-right">จำนวน</th></tr></thead>
+              <tbody>${matches.map(m => `<tr>
+                <td><span class="badge">${m.itemType}</span></td>
+                <td>${Layout.esc(m.itemNumber || '-')}</td>
+                <td>${m.itemDate ? new Date(m.itemDate).toLocaleDateString('th-TH') : '-'}</td>
+                <td>${Layout.esc(m.itemDescription || '-')}</td>
+                <td class="text-right" style="color:${m.allocatedAmount < 0 ? '#dc2626' : '#059669'};font-variant-numeric:tabular-nums">${fmt(m.allocatedAmount)}</td>
+              </tr>`).join('')}</tbody>
+              <tfoot><tr style="background:#f1f5f9"><td colspan="4"><strong>รวมฝั่งรายการ</strong></td><td class="text-right"><strong>${fmt(g.totalMatchedAmount)}</strong></td></tr>
+                <tr style="background:${g.isBalanced ? '#d1fae5' : '#fee2e2'}"><td colspan="4"><strong>ผลต่าง</strong></td><td class="text-right"><strong>${fmt(g.difference)}</strong></td></tr>
+              </tfoot>
+            </table>`;
+        } catch (e) { document.getElementById('gdBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`; }
+      },
+      async unmatchCurrent() {
+        if (!this.currentDetailId) return;
+        if (!confirm('ยกเลิกการกระทบยอดของกลุ่มนี้? รายการธนาคารและเอกสารจะกลับสู่สถานะยังไม่กระทบยอด')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.unreconcileGroup(this.currentDetailId);
+          Layout.toast('ยกเลิกกลุ่มสำเร็จ');
+          Layout.closeModal('groupDetailModal');
+          this.currentDetailId = null;
+          await this.reload();
+          if (typeof Page.loadTransactions === 'function') await Page.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
     };
 

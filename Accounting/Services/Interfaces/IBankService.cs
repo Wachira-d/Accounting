@@ -41,6 +41,7 @@ public interface IBankService
     Task<ReconciliationGroupResponse> GetReconciliationGroupAsync(Guid companyId, Guid groupId);
     Task<PagedResponse<ReconciliationGroupListItem>> GetReconciliationGroupsAsync(Guid companyId, Guid bankAccountId, PagedRequest request);
     Task UnreconcileGroupAsync(Guid companyId, Guid groupId);
+    Task<UnmatchedItemsResponse> GetUnmatchedItemsAsync(Guid companyId, Guid bankAccountId, string? search, DateTime? fromDate, DateTime? toDate);
 
     // Reconciliation report — Excel export
     Task<byte[]> ExportReconciliationReportAsync(Guid companyId, Guid bankAccountId, DateTime? fromDate, DateTime? toDate);

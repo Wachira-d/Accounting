@@ -209,6 +209,23 @@ public class BankController : ControllerBase
     }
 
     /// <summary>
+    /// Full pool of unmatched items (Payment / JournalEntry / Document) for an
+    /// account — feeds the M:N workbench so the operator can see everything,
+    /// not just candidates near a single bank transaction. Optional date range
+    /// (defaults to trailing 6 months) and free-text filter.
+    /// </summary>
+    [HttpGet("accounts/{accountId:guid}/unmatched-items")]
+    public async Task<ActionResult<ApiResponse<UnmatchedItemsResponse>>> GetUnmatchedItems(
+        Guid companyId, Guid accountId,
+        [FromQuery] string? search = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null)
+    {
+        var result = await _bankService.GetUnmatchedItemsAsync(companyId, accountId, search, fromDate, toDate);
+        return Ok(new ApiResponse<UnmatchedItemsResponse>(true, result));
+    }
+
+    /// <summary>
     /// Excel export of reconciliation state — Transactions / Groups / Group Items / Summary.
     /// Date range defaults to last 3 months when not specified.
     /// </summary>
