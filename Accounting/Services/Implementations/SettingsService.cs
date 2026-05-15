@@ -37,6 +37,7 @@ public class SettingsService : ISettingsService
         if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
+        if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
         if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
@@ -387,7 +388,9 @@ public class SettingsService : ISettingsService
         // OCR preference
         s.OcrBuyerInvoiceDefaultTarget,
         // Print layout
-        s.ShowGlEntryOnDocument);
+        s.ShowGlEntryOnDocument,
+        // HR
+        s.LeaveQuotasJson);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

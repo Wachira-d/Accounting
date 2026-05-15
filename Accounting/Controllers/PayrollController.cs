@@ -102,6 +102,12 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<LeaveResponse>>>> GetLeaves(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] int? year)
         => Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
 
+    [HttpGet("leaves/balance")]
+    public async Task<ActionResult<ApiResponse<LeaveBalanceResponse>>> GetLeaveBalance(
+        Guid companyId, [FromQuery] Guid employeeId, [FromQuery] int? year)
+        => Ok(new ApiResponse<LeaveBalanceResponse>(true,
+            await _service.GetLeaveBalanceAsync(companyId, employeeId, year ?? DateTime.UtcNow.Year)));
+
     [HttpPost("runs/{runId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
     { await _service.VoidPayrollAsync(companyId, runId); return Ok(new ApiResponse<bool>(true, true)); }

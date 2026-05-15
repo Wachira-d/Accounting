@@ -223,7 +223,8 @@
                 <td class="text-right font-semibold">${Layout.money(l.netAmount)}</td>
               </tr>`).join('')}</tbody>
             </table></div>
-            ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${Layout.esc(e.rejectionReason)}</div></div>` : ''}`;
+            ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${Layout.esc(e.rejectionReason)}</div></div>` : ''}
+            ${e.paymentVoucherDocumentId ? `<div style="margin-top:12px;padding:12px;background:#EFF6FF;border-radius:8px;display:flex;align-items:center;justify-content:space-between"><div><div class="text-xs" style="color:#1e40af">📄 ใบสำคัญจ่ายที่สร้างอัตโนมัติ</div><div style="font-size:11px;color:#64748b;margin-top:2px">${e.paidAt ? 'จ่ายเมื่อ ' + Layout.date(e.paidAt) : ''} ${e.paidReference ? '· อ้างอิง ' + Layout.esc(e.paidReference) : ''}</div></div><a href="/pages/documents.html#doc=${e.paymentVoucherDocumentId}" class="btn btn-sm btn-secondary">ดูใบสำคัญจ่าย</a></div>` : ''}`;
 
           // Actions based on status
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';

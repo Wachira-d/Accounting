@@ -1841,6 +1841,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "PaymentVoucherDocumentId" uuid NULL;
             """,
 
+            // ===== CompanySettings: per-company annual leave quotas (JSON by LeaveType) =====
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LeaveQuotasJson" text NULL;
+            """,
+
             // ===== SalaryAdvances: employee salary-advance workflow → posts to central GL =====
             """
             CREATE TABLE IF NOT EXISTS "SalaryAdvances" (

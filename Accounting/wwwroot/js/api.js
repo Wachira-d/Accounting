@@ -502,6 +502,7 @@ const API = {
       approveLeave: (id) => API.post(`${base}/payroll/leaves/${id}/approve`),
       rejectLeave: (id, d) => API.post(`${base}/payroll/leaves/${id}/reject`, d),
       cancelLeave: (id) => API.post(`${base}/payroll/leaves/${id}/cancel`),
+      getLeaveBalance: (employeeId, year) => API.get(`${base}/payroll/leaves/balance?employeeId=${employeeId}${year ? '&year=' + year : ''}`),
       getPnd1: (y, m) => API.get(`${base}/payroll/pnd1/${y}/${m}`),
       getSso: (y, m) => API.get(`${base}/payroll/sso/${y}/${m}`),
       // Salary Advance

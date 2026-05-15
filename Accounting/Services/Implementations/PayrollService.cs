@@ -820,6 +820,26 @@ public class PayrollService : IPayrollService
         if (overlapping)
             throw new InvalidOperationException("มีรายการลาที่ทับซ้อนกันในช่วงเวลาเดียวกัน");
 
+        // Quota check — count Approved + Pending leaves of the same type
+        // for the start year. Resolved quotas merge per-company overrides
+        // (CompanySettings.LeaveQuotasJson) with Thai labor-law defaults.
+        var quotas = await ResolveLeaveQuotasAsync(companyId);
+        if (quotas.TryGetValue(request.LeaveType, out var allocated) && allocated > 0)
+        {
+            var leaveYear = request.StartDate.Year;
+            var usedThisYear = await _db.Set<EmployeeLeave>()
+                .Where(l => l.CompanyId == companyId
+                    && l.EmployeeId == request.EmployeeId
+                    && l.LeaveType == request.LeaveType
+                    && l.StartDate.Year == leaveYear
+                    && (l.Status == "Approved" || l.Status == "Pending")
+                    && !l.IsDeleted)
+                .SumAsync(l => (decimal?)l.TotalDays) ?? 0m;
+            if (usedThisYear + request.TotalDays > allocated)
+                throw new InvalidOperationException(
+                    $"จำนวนวันลาเกินโควต้า — {request.LeaveType} ปี {leaveYear} สิทธิ์ {allocated:0.#} วัน ใช้ไปแล้ว {usedThisYear:0.#} วัน ขอเพิ่ม {request.TotalDays:0.#} วัน");
+        }
+
         var leave = new EmployeeLeave
         {
             CompanyId = companyId,
@@ -902,6 +922,69 @@ public class PayrollService : IPayrollService
         await _db.SaveChangesAsync();
 
         return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    // Thai labor-law defaults — used when CompanySettings.LeaveQuotasJson
+    // is not set. Annual: 6d (พ.ร.บ.คุ้มครองแรงงาน), Sick: 30d/yr (paid
+    // ceiling), Personal: 3d, Maternity: 98d.
+    private static readonly Dictionary<string, decimal> DefaultLeaveQuotas = new()
+    {
+        ["Annual"] = 6m,
+        ["Sick"] = 30m,
+        ["Personal"] = 3m,
+        ["Maternity"] = 98m,
+        ["Other"] = 0m,
+    };
+
+    private async Task<Dictionary<string, decimal>> ResolveLeaveQuotasAsync(Guid companyId)
+    {
+        var settings = await _db.Set<CompanySettings>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (string.IsNullOrWhiteSpace(settings?.LeaveQuotasJson))
+            return new Dictionary<string, decimal>(DefaultLeaveQuotas);
+        try
+        {
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, decimal>>(settings.LeaveQuotasJson);
+            if (parsed == null) return new Dictionary<string, decimal>(DefaultLeaveQuotas);
+            // Merge: tenant overrides win, defaults fill the gaps.
+            var merged = new Dictionary<string, decimal>(DefaultLeaveQuotas);
+            foreach (var kvp in parsed) merged[kvp.Key] = kvp.Value;
+            return merged;
+        }
+        catch { return new Dictionary<string, decimal>(DefaultLeaveQuotas); }
+    }
+
+    public async Task<LeaveBalanceResponse> GetLeaveBalanceAsync(Guid companyId, Guid employeeId, int year)
+    {
+        var employee = await _db.Set<Employee>()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        var quotas = await ResolveLeaveQuotasAsync(companyId);
+
+        // "Used" counts Approved + Pending leaves (Pending reserves the
+        // quota so two overlapping requests can't both eat the same days).
+        // Rejected / Cancelled leaves don't count.
+        var leaves = await _db.Set<EmployeeLeave>()
+            .Where(l => l.CompanyId == companyId
+                && l.EmployeeId == employeeId
+                && l.StartDate.Year == year
+                && (l.Status == "Approved" || l.Status == "Pending")
+                && !l.IsDeleted)
+            .ToListAsync();
+
+        var balances = quotas.Select(q =>
+        {
+            var used = leaves.Where(l => l.LeaveType == q.Key).Sum(l => l.TotalDays);
+            return new LeaveBalanceItem(q.Key, q.Value, used, Math.Max(0m, q.Value - used));
+        }).OrderBy(b => b.LeaveType).ToList();
+
+        return new LeaveBalanceResponse(
+            employeeId,
+            $"{employee.FirstNameTh} {employee.LastNameTh}".Trim(),
+            year,
+            balances);
     }
 
     public async Task<List<LeaveResponse>> GetLeavesAsync(Guid companyId, Guid? employeeId, int? year)

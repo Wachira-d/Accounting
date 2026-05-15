@@ -81,3 +81,15 @@ public record LeaveResponse(
     string? RejectionReason = null);
 
 public record RejectLeaveRequest(string Reason);
+
+public record LeaveBalanceItem(
+    string LeaveType,
+    decimal AllocatedDays,
+    decimal UsedDays,           // counts Approved + Pending requests for the year
+    decimal RemainingDays);
+
+public record LeaveBalanceResponse(
+    Guid EmployeeId,
+    string EmployeeName,
+    int Year,
+    List<LeaveBalanceItem> Balances);

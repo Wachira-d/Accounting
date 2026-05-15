@@ -62,7 +62,12 @@ public record UpdateCompanySettingsRequest(
     DocumentType? OcrBuyerInvoiceDefaultTarget = null,
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
-    bool? ShowGlEntryOnDocument = null);
+    bool? ShowGlEntryOnDocument = null,
+
+    // Annual leave quotas per LeaveType — JSON e.g.
+    //   {"Annual":6,"Sick":30,"Personal":3,"Maternity":98}
+    // Missing keys fall back to Thai labor-law defaults.
+    string? LeaveQuotasJson = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -113,7 +118,10 @@ public record CompanySettingsResponse(
     DocumentType OcrBuyerInvoiceDefaultTarget = DocumentType.PaymentVoucher,
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
-    bool ShowGlEntryOnDocument = false);
+    bool ShowGlEntryOnDocument = false,
+
+    // Per-company annual leave quota override (JSON by LeaveType).
+    string? LeaveQuotasJson = null);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

@@ -34,6 +34,7 @@ public interface IPayrollService
     Task<LeaveResponse> RejectLeaveAsync(Guid companyId, Guid leaveId, string rejectedBy, RejectLeaveRequest request);
     Task<LeaveResponse> CancelLeaveAsync(Guid companyId, Guid leaveId);
     Task<List<LeaveResponse>> GetLeavesAsync(Guid companyId, Guid? employeeId, int? year);
+    Task<LeaveBalanceResponse> GetLeaveBalanceAsync(Guid companyId, Guid employeeId, int year);
 
     // Tax: ภ.ง.ด.1 generation
     Task<object> GeneratePnd1Async(Guid companyId, int year, int month);

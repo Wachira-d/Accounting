@@ -30,6 +30,12 @@ public class CompanySettings : TenantEntity
     // from the document's posted Journal Entry.
     public bool ShowGlEntryOnDocument { get; set; } = false;
 
+    // HR — annual leave quota per LeaveType, stored as JSON:
+    //   {"Annual": 6, "Sick": 30, "Personal": 3, "Maternity": 98}
+    // Null / missing keys fall back to the Thai labor-law minimums in
+    // PayrollService.DefaultLeaveQuotas.
+    public string? LeaveQuotasJson { get; set; }
+
     // Tax Settings
     public decimal DefaultVatRate { get; set; } = 7;
     public bool VatRegistered { get; set; } = true;

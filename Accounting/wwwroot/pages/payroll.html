@@ -165,12 +165,13 @@
       <div class="modal" style="max-width:550px">
         <div class="modal-header"><h3 class="modal-title">สร้างคำขอลา</h3><button class="modal-close" onclick="Layout.closeModal('leaveModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="leaveEmpId"></select></div>
+          <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="leaveEmpId" onchange="Page.refreshLeaveBalance()"></select></div>
           <div class="form-group"><label class="form-label">ประเภทลา *</label>
             <select class="form-select" id="leaveType">
               <option value="Sick">ลาป่วย</option><option value="Annual">ลาพักร้อน</option><option value="Personal">ลากิจ</option><option value="Maternity">ลาคลอด</option><option value="Other">อื่นๆ</option>
             </select>
           </div>
+          <div id="leaveBalanceBox" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;padding:8px 10px;border-radius:6px;font-size:12px;color:#0c4a6e;margin-bottom:10px"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="leaveStart"></div>
             <div class="form-group"><label class="form-label">วันสิ้นสุด *</label><input type="date" class="form-input" id="leaveEnd"></div>
@@ -470,6 +471,7 @@ const Page = {
 
   openCreateLeave() {
     this.loadEmployeeSelect();
+    document.getElementById('leaveBalanceBox').style.display = 'none';
     Layout.openModal('leaveModal');
   },
 
@@ -481,6 +483,25 @@ const Page = {
       const sel = document.getElementById('leaveEmpId');
       sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
     } catch (err) { /* ignore */ }
+  },
+
+  // Show this year's leave balance per type when an employee is picked
+  // — uses the central /payroll/leaves/balance endpoint which merges
+  // Thai labor-law defaults with the company's LeaveQuotasJson override.
+  async refreshLeaveBalance() {
+    const box = document.getElementById('leaveBalanceBox');
+    const empId = document.getElementById('leaveEmpId').value;
+    if (!empId) { box.style.display = 'none'; return; }
+    const api = Layout.api(); if (!api) return;
+    try {
+      const year = new Date().getFullYear();
+      const res = await api.getLeaveBalance(empId, year);
+      const balances = res.data?.balances || [];
+      const typeMap = { Sick: 'ลาป่วย', Annual: 'ลาพักร้อน', Personal: 'ลากิจ', Maternity: 'ลาคลอด', Other: 'อื่นๆ' };
+      box.innerHTML = `<strong>สิทธิ์วันลาคงเหลือ ปี ${year}:</strong> ` +
+        balances.map(b => `${typeMap[b.leaveType] || b.leaveType}: <strong>${b.remainingDays}</strong> / ${b.allocatedDays} วัน${b.usedDays > 0 ? ' (ใช้ไป ' + b.usedDays + ')' : ''}`).join(' · ');
+      box.style.display = 'block';
+    } catch (err) { box.style.display = 'none'; }
   },
 
   async saveLeave() {
