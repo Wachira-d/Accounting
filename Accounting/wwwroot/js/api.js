@@ -141,6 +141,7 @@ const API = {
       getJournals: (q = '') => API.get(`${base}/accounting/journals${q}`),
       getJournal: (id) => API.get(`${base}/accounting/journals/${id}`),
       createJournal: (d) => API.post(`${base}/accounting/journals`, d),
+      updateJournal: (id, d) => API.put(`${base}/accounting/journals/${id}`, d),
       postJournal: (id) => API.post(`${base}/accounting/journals/${id}/post`),
       voidJournal: (id) => API.post(`${base}/accounting/journals/${id}/void`),
       deleteJournal: (id) => API.del(`${base}/accounting/journals/${id}`),

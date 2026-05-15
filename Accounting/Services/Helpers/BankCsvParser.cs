@@ -279,21 +279,31 @@ public static class BankCsvParser
 
     /// <summary>
     /// Inspect every date string from the file to decide whether the format is
-    /// DD/MM (Thai/European, the default) or MM/DD (US). The classification is:
-    ///   - If any first component is > 12, the file is DD/MM (the first slot
-    ///     can only be a day).
-    ///   - If any first component is ≤ 12 AND the second component is > 12,
-    ///     the file is MM/DD.
-    ///   - When every row is ambiguous (both ≤ 12), default to DD/MM — that's
-    ///     the format Thai banks (BBL/KBank/SCB/KTB/BAY/TTB) export.
-    /// Same comparison is applied to dash- and dot-separated dates. ISO
-    /// (yyyy-MM-dd) and Thai-month-name strings ignore this and parse natively.
+    /// DD/MM (Thai/European, the default) or MM/DD (US). Two-stage classifier:
+    ///
+    ///   Stage 1 — unambiguous component check. If any first component is &gt; 12
+    ///   the file must be DD/MM; if any second component is &gt; 12 it must be
+    ///   MM/DD. Conflicting signals fall through to stage 2.
+    ///
+    ///   Stage 2 — frequency analysis. A monthly bank statement covers a
+    ///   single calendar month, so one of the two components stays constant
+    ///   while the other ranges over the day-of-month. If the FIRST slot is
+    ///   constant across rows but the SECOND varies, the file is MM/DD; the
+    ///   constant must be the month. The mirror image flags DD/MM. This
+    ///   catches the bug where every row has day ≤ 12 (e.g. a statement of
+    ///   "04/01, 04/02, ..., 04/12" which has no &gt;12 signal at all).
+    ///
+    /// Last resort is the Thai-bank default of DD/MM.
     /// </summary>
     public static DateOrder DetectDateOrder(IEnumerable<string> dateStrings)
     {
         var slashRx = new Regex(@"^\s*(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})\s*$");
         bool sawDayFirstSignal = false;
         bool sawMonthFirstSignal = false;
+        var firsts = new HashSet<int>();
+        var seconds = new HashSet<int>();
+        int sampleCount = 0;
+
         foreach (var s in dateStrings)
         {
             if (string.IsNullOrWhiteSpace(s)) continue;
@@ -301,14 +311,32 @@ public static class BankCsvParser
             if (!m.Success) continue;
             if (!int.TryParse(m.Groups[1].Value, out var a)) continue;
             if (!int.TryParse(m.Groups[2].Value, out var b)) continue;
+
             if (a > 12 && b <= 12) sawDayFirstSignal = true;
             else if (b > 12 && a <= 12) sawMonthFirstSignal = true;
-            // a == b or both > 12 → ambiguous / invalid; ignore.
+
+            firsts.Add(a);
+            seconds.Add(b);
+            sampleCount++;
         }
+
+        // Stage 1 — unambiguous signals win.
         if (sawMonthFirstSignal && !sawDayFirstSignal) return DateOrder.MonthFirst;
         if (sawDayFirstSignal && !sawMonthFirstSignal) return DateOrder.DayFirst;
-        // Both signals present (corrupt file) or no signal at all — default to
-        // DD/MM since Thai bank exports overwhelmingly use that layout.
+
+        // Stage 2 — constant-month heuristic. Need a meaningful sample size
+        // (a 2-row file shouldn't be classified by this) and a clear pattern:
+        // exactly one of the two components is constant across all rows.
+        if (sampleCount >= 4)
+        {
+            var firstConstant = firsts.Count == 1;
+            var secondConstant = seconds.Count == 1;
+            if (firstConstant && !secondConstant) return DateOrder.MonthFirst;
+            if (secondConstant && !firstConstant) return DateOrder.DayFirst;
+        }
+
+        // No signal at all (or both signals present in a corrupt file) — fall
+        // back to the Thai-bank export convention.
         return DateOrder.DayFirst;
     }
 

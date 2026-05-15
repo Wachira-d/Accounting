@@ -510,6 +510,7 @@
         document.getElementById('balanceWarning').classList.toggle('hidden', Math.abs(d - c) < 0.01);
       },
       async openCreate() {
+        this.editingId = null;
         document.getElementById('formTitle').textContent = 'บันทึกรายการใหม่';
         document.getElementById('fType').value = this.currentType || 'General';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
@@ -538,6 +539,49 @@
         this.calcTotals();
         Layout.openModal('formModal');
       },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getJournal(id);
+          const j = res.data;
+          this.editingId = id;
+          document.getElementById('formTitle').textContent = `แก้ไขใบสำคัญ ${j.entryNumber || ''}`;
+          document.getElementById('fType').value = j.journalType || 'General';
+          document.getElementById('fDate').value = Layout.toDateInput(j.entryDate);
+          document.getElementById('fRef').value = j.reference || '';
+          document.getElementById('fDesc').value = j.description || '';
+          document.getElementById('fTags').value = j.tags || '';
+          document.getElementById('fNote').value = j.note || '';
+          const srcEl = document.getElementById('fSrcDocNumber'); if (srcEl) srcEl.value = j.sourceDocumentNumber || '';
+          // Populate projects then preselect
+          try {
+            const pr = await api.getActiveProjects?.();
+            const projects = pr?.data?.items || pr?.data || [];
+            const sel = document.getElementById('fProject');
+            sel.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
+              projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
+            if (j.projectId) sel.value = j.projectId;
+          } catch (_) {}
+          // Rebuild lines from the existing entry — pre-fill account, debit,
+          // credit and per-line description so the user can tweak any field.
+          document.getElementById('linesBody').innerHTML = '';
+          this.lineCount = 0;
+          (j.lines || []).forEach(l => {
+            this.addLine();
+            const row = document.getElementById('linesBody').lastElementChild;
+            const sel = row.querySelector('select');
+            if (sel) sel.value = l.accountId || '';
+            row.querySelector('.line-debit').value = l.debitAmount || 0;
+            row.querySelector('.line-credit').value = l.creditAmount || 0;
+            const desc = row.querySelector('input[type="text"]');
+            if (desc) desc.value = l.description || '';
+          });
+          if ((j.lines || []).length === 0) { this.addLine(); this.addLine(); }
+          this.calcTotals();
+          Layout.closeModal('detailModal');
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
       async save() {
         const api = Layout.api(); if (!api) return;
         const rows = document.querySelectorAll('#linesBody tr');
@@ -558,20 +602,27 @@
         const totalD = lines.reduce((s, l) => s + l.debitAmount, 0);
         const totalC = lines.reduce((s, l) => s + l.creditAmount, 0);
         if (Math.abs(totalD - totalC) >= 0.01) { Layout.toast('ยอดเดบิตและเครดิตไม่เท่ากัน', 'error'); return; }
+        const payload = {
+          entryDate: document.getElementById('fDate').value,
+          description: document.getElementById('fDesc').value || null,
+          reference: document.getElementById('fRef').value || null,
+          journalType: document.getElementById('fType').value,
+          projectId: document.getElementById('fProject').value || null,
+          note: document.getElementById('fNote').value || null,
+          tags: document.getElementById('fTags').value || null,
+          sourceDocumentNumber: document.getElementById('fSrcDocNumber').value || null,
+          lines
+        };
         try {
-          await api.createJournal({
-            entryDate: document.getElementById('fDate').value,
-            description: document.getElementById('fDesc').value || null,
-            reference: document.getElementById('fRef').value || null,
-            journalType: document.getElementById('fType').value,
-            projectId: document.getElementById('fProject').value || null,
-            note: document.getElementById('fNote').value || null,
-            tags: document.getElementById('fTags').value || null,
-            sourceDocumentNumber: document.getElementById('fSrcDocNumber').value || null,
-            lines
-          });
+          if (this.editingId) {
+            await api.updateJournal(this.editingId, payload);
+            Layout.toast('แก้ไขรายการสำเร็จ');
+          } else {
+            await api.createJournal(payload);
+            Layout.toast('บันทึกรายการสำเร็จ');
+          }
+          this.editingId = null;
           Layout.closeModal('formModal');
-          Layout.toast('บันทึกรายการสำเร็จ');
           await this.load();
           this.loadCounts();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -614,6 +665,12 @@
               </table>
             </div>`;
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          // Direct edit — works in any status; backend blocks only auto-generated
+          // (document-sourced) entries. For audit-safe edits on Posted, the
+          // existing "แก้ไข (กลับรายการ)" button still uses Reverse+Draft.
+          if (!j.sourceDocumentId) {
+            actions += ` <button class="btn btn-primary" onclick="Page.openEdit('${j.id}')">✏️ แก้ไขตัวเลข/ผังบัญชี</button>`;
+          }
           if (j.status === 'Draft') {
             actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
           }
@@ -621,9 +678,8 @@
             actions += ` <button class="btn btn-warning" onclick="Page.correctEntry('${j.id}')">แก้ไข (กลับรายการ)</button>`;
             actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">กลับรายการ</button>`;
           }
-          if (j.status !== 'Reversed') {
-            actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" data-i18n="common.delete">ลบ</button>`;
-          }
+          // Delete is now allowed in any status (backend soft-deletes).
+          actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" data-i18n="common.delete">ลบ</button>`;
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
