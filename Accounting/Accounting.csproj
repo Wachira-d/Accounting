@@ -44,6 +44,13 @@
          0.102.3 is the long-term-stable line — works on .NET 8 / Linux containers
          without native deps. -->
     <PackageReference Include="ClosedXML" Version="0.102.3" />
+    <!-- Pin ClosedXML's transitive OpenXml dependency explicitly so the deploy
+         pipeline restores DocumentFormat.OpenXml.Framework.dll alongside the
+         main assembly — observed missing in production with the error
+         "Could not load file or assembly 'DocumentFormat.OpenXml.Framework,
+         Version=3.1.1.0, ...'". Without this explicit reference some
+         publish-trim / single-file pipelines skip the transitive. -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.1" />
   </ItemGroup>
 
   <ItemGroup>
