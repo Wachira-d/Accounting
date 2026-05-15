@@ -226,6 +226,22 @@ public class BankController : ControllerBase
     }
 
     /// <summary>
+    /// AI suggestions backed by learned patterns — for an unmatched bank
+    /// transaction, returns items ranked by the company's historical
+    /// reconciliation history. Confidence 0..1 with a human reason string.
+    /// Complements the heuristic AI suggest endpoint (amount/date/payee
+    /// scoring) by leaning on what the operator has actually confirmed in
+    /// the past.
+    /// </summary>
+    [HttpGet("transactions/{transactionId:guid}/learned-suggestions")]
+    public async Task<ActionResult<ApiResponse<LearnedSuggestionsResponse>>> GetLearnedSuggestions(
+        Guid companyId, Guid transactionId)
+    {
+        var result = await _bankService.GetLearnedSuggestionsAsync(companyId, transactionId);
+        return Ok(new ApiResponse<LearnedSuggestionsResponse>(true, result));
+    }
+
+    /// <summary>
     /// Excel export of reconciliation state — Transactions / Groups / Group Items / Summary.
     /// Date range defaults to last 3 months when not specified.
     /// </summary>

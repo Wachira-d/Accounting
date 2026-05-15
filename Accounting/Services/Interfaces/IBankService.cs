@@ -43,6 +43,10 @@ public interface IBankService
     Task UnreconcileGroupAsync(Guid companyId, Guid groupId);
     Task<UnmatchedItemsResponse> GetUnmatchedItemsAsync(Guid companyId, Guid bankAccountId, string? search, DateTime? fromDate, DateTime? toDate);
 
+    // AI learning — pattern memory built from confirmed reconciliations
+    Task<LearnedSuggestionsResponse> GetLearnedSuggestionsAsync(Guid companyId, Guid bankTransactionId);
+    Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId);
+
     // Reconciliation report — Excel export
     Task<byte[]> ExportReconciliationReportAsync(Guid companyId, Guid bankAccountId, DateTime? fromDate, DateTime? toDate);
 }

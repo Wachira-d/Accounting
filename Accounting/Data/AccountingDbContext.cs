@@ -73,6 +73,7 @@ public class AccountingDbContext : DbContext
     public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
     public DbSet<ReconciliationGroup> ReconciliationGroups => Set<ReconciliationGroup>();
     public DbSet<ReconciliationGroupItem> ReconciliationGroupItems => Set<ReconciliationGroupItem>();
+    public DbSet<BankReconciliationPattern> BankReconciliationPatterns => Set<BankReconciliationPattern>();
 
     // Recurring
     public DbSet<RecurringTransaction> RecurringTransactions => Set<RecurringTransaction>();
@@ -724,6 +725,19 @@ public class AccountingDbContext : DbContext
             e.Property(i => i.AllocatedAmount).HasPrecision(18, 2);
             e.HasOne(i => i.Group).WithMany(g => g.Items).HasForeignKey(i => i.GroupId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(i => new { i.ItemType, i.ItemId });
+        });
+
+        modelBuilder.Entity<BankReconciliationPattern>(e =>
+        {
+            e.Property(p => p.DescriptionSignature).HasMaxLength(500);
+            e.Property(p => p.AmountBucket).HasMaxLength(20);
+            e.Property(p => p.TargetAccountCode).HasMaxLength(20);
+            e.Property(p => p.AvgAmount).HasPrecision(18, 2);
+            e.Property(p => p.MinAmount).HasPrecision(18, 2);
+            e.Property(p => p.MaxAmount).HasPrecision(18, 2);
+            e.HasIndex(p => new { p.CompanyId, p.BankAccountId, p.DescriptionSignature, p.AmountBucket })
+                .HasDatabaseName("IX_BankReconciliationPatterns_Lookup");
+            e.HasQueryFilter(p => !p.IsDeleted);
         });
 
         // ===== RecurringTransaction =====

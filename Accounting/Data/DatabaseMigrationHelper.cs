@@ -743,6 +743,33 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_ReconciliationGroupItems_ItemType_ItemId"
                 ON "ReconciliationGroupItems" ("ItemType", "ItemId");
             """,
+            // ===== BankReconciliationPatterns: AI learning store =====
+            """
+            CREATE TABLE IF NOT EXISTS "BankReconciliationPatterns" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "BankAccountId" uuid NOT NULL,
+                "DescriptionSignature" varchar(500) NOT NULL,
+                "AmountBucket" varchar(20) NOT NULL,
+                "TargetType" int NOT NULL,
+                "ContactId" uuid NULL,
+                "TargetAccountCode" varchar(20) NULL,
+                "TimesConfirmed" int NOT NULL DEFAULT 1,
+                "LastUsedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "AvgAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "MinAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "MaxAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_BankReconciliationPatterns_Lookup"
+                ON "BankReconciliationPatterns" ("CompanyId", "BankAccountId", "DescriptionSignature", "AmountBucket");
+            """,
 
             // ===== CompanySettings: e-Tax mode + by-email registration columns =====
             """

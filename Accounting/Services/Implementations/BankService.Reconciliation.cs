@@ -147,6 +147,9 @@ public partial class BankService
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 
+            // Best-effort learning capture — failures don't roll back the confirmed match.
+            await RecordReconciliationPatternsAsync(companyId, group.Id);
+
             return await BuildGroupResponseAsync(companyId, group.Id);
         }
         catch

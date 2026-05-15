@@ -322,3 +322,22 @@ public record UnmatchedItem(
     string? Description,
     decimal Amount,         // unsigned magnitude; sign convention up to the workbench
     string? ContactName);
+
+// ===== Learning-backed suggestion =====
+
+public record LearnedSuggestion(
+    string ItemType,
+    Guid Id,
+    string Number,
+    DateTime Date,
+    string? Description,
+    decimal Amount,
+    string? ContactName,
+    double Confidence,           // 0..1
+    string Reason);              // human-readable, e.g. "พบรูปแบบนี้ 3 ครั้ง · ใช้ล่าสุด 12/04/2025"
+
+public record LearnedSuggestionsResponse(
+    List<LearnedSuggestion> Suggestions,
+    string Signature,
+    string AmountBucket,
+    int CandidatePatternCount);
