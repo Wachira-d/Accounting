@@ -1836,6 +1836,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "RejectionReason" text NULL;
             """,
 
+            // ===== ExpenseClaims: link to the auto-generated PaymentVoucher document =====
+            """
+            ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "PaymentVoucherDocumentId" uuid NULL;
+            """,
+
             // ===== SalaryAdvances: employee salary-advance workflow → posts to central GL =====
             """
             CREATE TABLE IF NOT EXISTS "SalaryAdvances" (

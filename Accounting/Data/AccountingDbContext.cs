@@ -902,6 +902,7 @@ public class AccountingDbContext : DbContext
             e.Property(ec => ec.TotalAmount).HasPrecision(18, 2);
             e.HasOne(ec => ec.SubmittedByUser).WithMany().HasForeignKey(ec => ec.SubmittedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(ec => ec.PaymentVoucherDocument).WithMany().HasForeignKey(ec => ec.PaymentVoucherDocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(ec => !ec.IsDeleted);
         });
 
