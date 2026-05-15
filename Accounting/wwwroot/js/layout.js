@@ -391,6 +391,7 @@ const Layout = {
 
     { section: 'เงินเดือน' },
     { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll', _i18nKey: 'nav.payroll' },
+    { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance' },
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission' },
 
     { section: 'รายงาน' },

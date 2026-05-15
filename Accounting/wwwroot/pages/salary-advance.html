@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เงินทดรองจ่ายพนักงาน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เงินทดรองจ่ายพนักงาน</h2>
+        <p class="page-subtitle">ขอ-อนุมัติ-จ่ายเงินทดรองล่วงหน้า — ระบบสร้างใบสำคัญจ่าย (PV) อัตโนมัติ และเรียกคืนผ่านเงินเดือน</p>
+      </div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ ขอเงินทดรอง</button>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Draft">ร่าง</option>
+        <option value="Submitted">ส่งอนุมัติ</option>
+        <option value="Approved">อนุมัติ</option>
+        <option value="Disbursed">จ่ายแล้ว</option>
+        <option value="Cleared">ชำระคืนครบ</option>
+        <option value="Rejected">ปฏิเสธ</option>
+        <option value="Voided">ยกเลิก</option>
+      </select>
+      <select class="filter-select" id="employeeFilter" onchange="Page.load()">
+        <option value="">พนักงานทั้งหมด</option>
+      </select>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>เลขที่</th>
+            <th>พนักงาน</th>
+            <th>วันที่ขอ</th>
+            <th class="text-right">จำนวนเงิน</th>
+            <th class="text-right">หักต่อเดือน</th>
+            <th class="text-right">คงค้าง</th>
+            <th>สถานะ</th>
+            <th>เอกสารบัญชี</th>
+            <th data-i18n="common.manage">จัดการ</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create / Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="formTitle">ขอเงินทดรองจ่าย</h3>
+          <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-group">
+            <label class="form-label">พนักงาน *</label>
+            <select class="form-select" id="fEmpId"></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">วันที่ขอ *</label>
+              <input type="date" class="form-input" id="fDate">
+            </div>
+            <div class="form-group">
+              <label class="form-label">จำนวนเงิน (บาท) *</label>
+              <input type="number" class="form-input" id="fAmount" step="0.01" min="0">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">หักต่อเดือน (บาท)</label>
+            <input type="number" class="form-input" id="fMonthly" step="0.01" min="0" value="0">
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+              0 = หักคืนทั้งจำนวนในรอบจ่ายเงินเดือนถัดไป — ระบุยอด หากต้องการแบ่งจ่ายเป็นงวด
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เหตุผล</label>
+            <textarea class="form-textarea" id="fReason" rows="2" placeholder="เช่น ค่าเดินทางไปต่างจังหวัด, ฉุกเฉินครอบครัว"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="detailTitle">รายละเอียดเงินทดรองจ่าย</h3>
+          <button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="detailBody"></div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+
+    <!-- Reject Modal -->
+    <div class="modal-overlay" id="rejectModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header">
+          <h3 class="modal-title">ปฏิเสธคำขอ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('rejectModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="rjId">
+          <div class="form-group">
+            <label class="form-label">เหตุผลในการปฏิเสธ *</label>
+            <textarea class="form-textarea" id="rjReason" rows="3" placeholder="ระบุเหตุผล"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('rejectModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.confirmReject()">ปฏิเสธ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Disburse Modal -->
+    <div class="modal-overlay" id="disburseModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header">
+          <h3 class="modal-title">จ่ายเงินทดรอง</h3>
+          <button class="modal-close" onclick="Layout.closeModal('disburseModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="dsId">
+          <p style="background:#fffbeb;border-left:3px solid #f59e0b;padding:8px 12px;font-size:12px;color:#78350f;border-radius:4px">
+            ระบบจะสร้างใบสำคัญจ่าย (PV) อัตโนมัติ พร้อมลงบัญชี <strong>เดบิต เงินทดรองจ่าย</strong> / <strong>เครดิต เงินสด/ธนาคาร</strong>
+          </p>
+          <div class="form-group">
+            <label class="form-label">วันที่จ่าย *</label>
+            <input type="date" class="form-input" id="dsDate">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('disburseModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.confirmDisburse()">จ่ายเงิน + สร้างใบสำคัญจ่าย</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const statusBadge = (s) => {
+      const map = {
+        Draft: ['ร่าง', '#94a3b8'],
+        Submitted: ['ส่งอนุมัติ', '#3b82f6'],
+        Approved: ['อนุมัติ', '#10b981'],
+        Disbursed: ['จ่ายแล้ว', '#0ea5e9'],
+        Cleared: ['ชำระคืนครบ', '#6366f1'],
+        Rejected: ['ปฏิเสธ', '#ef4444'],
+        Voided: ['ยกเลิก', '#9ca3af'],
+      };
+      const [label, color] = map[s] || [s, '#64748b'];
+      return `<span style="background:${color};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">${label}</span>`;
+    };
+
+    const Page = {
+      page: 1, _employees: [], _current: null,
+      async init() {
+        if (!Layout.init('salary-advance')) return;
+        Layout.setTitle('เงินทดรองจ่ายพนักงาน');
+        await Promise.all([this.loadEmployees(), this.load()]);
+      },
+      async loadEmployees() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getEmployees('?pageSize=500');
+          const items = res.data?.items || res.data || [];
+          this._employees = items;
+          const opts = '<option value="">-- เลือกพนักงาน --</option>' +
+            items.map(e => `<option value="${e.id}">${Layout.esc(e.employeeCode)} - ${Layout.esc(e.fullName || (e.firstNameTh + ' ' + e.lastNameTh))}</option>`).join('');
+          document.getElementById('fEmpId').innerHTML = opts;
+          // Filter employee dropdown — same options minus the placeholder label
+          const filterOpts = '<option value="">พนักงานทั้งหมด</option>' +
+            items.map(e => `<option value="${e.id}">${Layout.esc(e.employeeCode)} - ${Layout.esc(e.fullName || (e.firstNameTh + ' ' + e.lastNameTh))}</option>`).join('');
+          document.getElementById('employeeFilter').innerHTML = filterOpts;
+        } catch (e) { console.warn('โหลดพนักงานไม่สำเร็จ:', e); }
+      },
+      _empName(empId) {
+        const e = this._employees.find(x => x.id === empId);
+        if (!e) return empId;
+        return (e.fullName || (e.firstNameTh + ' ' + e.lastNameTh)) + ' (' + e.employeeCode + ')';
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value;
+        const status = document.getElementById('statusFilter').value;
+        const employeeId = document.getElementById('employeeFilter').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (status) q += `&status=${status}`;
+        if (employeeId) q += `&employeeId=${employeeId}`;
+        try {
+          const res = await api.getSalaryAdvances(q);
+          const data = res.data; const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = items.map(a => `<tr>
+            <td class="font-medium">${a.advanceNumber}</td>
+            <td>${Layout.esc(a.employeeName || '')} <span style="color:#94a3b8;font-size:11px">${Layout.esc(a.employeeCode || '')}</span></td>
+            <td>${Layout.date(a.requestDate)}</td>
+            <td class="text-right">${Layout.money(a.amount)}</td>
+            <td class="text-right">${a.monthlyDeduction > 0 ? Layout.money(a.monthlyDeduction) : '<span style="color:#94a3b8">เต็มจำนวน</span>'}</td>
+            <td class="text-right ${a.outstandingAmount > 0 ? 'font-semibold' : 'text-gray-400'}">${Layout.money(a.outstandingAmount)}</td>
+            <td>${statusBadge(a.status)}</td>
+            <td>${a.disbursementDocumentId ? '📄 PV ออกแล้ว' : '<span style="color:#94a3b8">-</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button></td>
+          </tr>`).join('');
+          const totalPages = data?.totalPages || 1;
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'ขอเงินทดรองจ่าย';
+        document.getElementById('fId').value = '';
+        document.getElementById('fEmpId').value = '';
+        document.getElementById('fEmpId').disabled = false;
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
+        document.getElementById('fAmount').value = '';
+        document.getElementById('fMonthly').value = '0';
+        document.getElementById('fReason').value = '';
+        Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getSalaryAdvance(id);
+          const a = res.data;
+          if (a.status !== 'Draft') {
+            Layout.toast('แก้ไขได้เฉพาะรายการที่เป็น Draft เท่านั้น', 'error');
+            return;
+          }
+          document.getElementById('formTitle').textContent = 'แก้ไขเงินทดรองจ่าย';
+          document.getElementById('fId').value = a.id;
+          document.getElementById('fEmpId').value = a.employeeId;
+          document.getElementById('fEmpId').disabled = true;
+          document.getElementById('fDate').value = Layout.dateInput(a.requestDate);
+          document.getElementById('fAmount').value = a.amount;
+          document.getElementById('fMonthly').value = a.monthlyDeduction || 0;
+          document.getElementById('fReason').value = a.reason || '';
+          Layout.closeModal('detailModal');
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const empId = document.getElementById('fEmpId').value;
+        const amount = parseFloat(document.getElementById('fAmount').value);
+        if (!empId) { Layout.toast('กรุณาเลือกพนักงาน', 'error'); return; }
+        if (!(amount > 0)) { Layout.toast('จำนวนเงินต้องมากกว่า 0', 'error'); return; }
+        const data = {
+          employeeId: empId,
+          requestDate: document.getElementById('fDate').value,
+          amount,
+          monthlyDeduction: parseFloat(document.getElementById('fMonthly').value) || 0,
+          reason: document.getElementById('fReason').value || null,
+        };
+        try {
+          if (id) {
+            await api.updateSalaryAdvance(id, {
+              requestDate: data.requestDate,
+              amount: data.amount,
+              monthlyDeduction: data.monthlyDeduction,
+              reason: data.reason,
+            });
+          } else {
+            await api.createSalaryAdvance(data);
+          }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างคำขอสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async viewDetail(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getSalaryAdvance(id);
+          const a = res.data; this._current = a;
+          document.getElementById('detailTitle').textContent = `${a.advanceNumber} — ${a.employeeName || ''}`;
+          document.getElementById('detailBody').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+              <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${a.advanceNumber}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${statusBadge(a.status)}</div></div>
+              <div><div class="text-xs text-gray-500">พนักงาน</div><div>${Layout.esc(a.employeeName || '')} <span style="color:#94a3b8;font-size:11px">${Layout.esc(a.employeeCode || '')}</span></div></div>
+              <div><div class="text-xs text-gray-500">วันที่ขอ</div><div>${Layout.date(a.requestDate)}</div></div>
+              <div><div class="text-xs text-gray-500">จำนวนเงิน</div><div class="font-semibold">${Layout.money(a.amount)}</div></div>
+              <div><div class="text-xs text-gray-500">หักต่อเดือน</div><div>${a.monthlyDeduction > 0 ? Layout.money(a.monthlyDeduction) + ' / เดือน' : 'หักเต็มจำนวนรอบถัดไป'}</div></div>
+              <div><div class="text-xs text-gray-500">ชำระคืนแล้ว</div><div>${Layout.money(a.clearedAmount)}</div></div>
+              <div><div class="text-xs text-gray-500">คงค้าง</div><div class="font-semibold ${a.outstandingAmount > 0 ? 'text-warning' : 'text-success'}">${Layout.money(a.outstandingAmount)}</div></div>
+            </div>
+            ${a.reason ? `<div style="margin-bottom:10px"><div class="text-xs text-gray-500">เหตุผล</div><div>${Layout.esc(a.reason)}</div></div>` : ''}
+            ${a.approvedAt ? `<div style="background:#f0fdf4;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px">✓ อนุมัติเมื่อ ${Layout.date(a.approvedAt)} โดย ${Layout.esc(a.approvedByName || '-')} ${a.approvalNotes ? '<br><span style="color:#64748b">' + Layout.esc(a.approvalNotes) + '</span>' : ''}</div>` : ''}
+            ${a.rejectionReason ? `<div style="background:#fef2f2;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px;color:#991b1b">✕ ปฏิเสธ: ${Layout.esc(a.rejectionReason)}</div>` : ''}
+            ${a.disbursedAt ? `<div style="background:#eff6ff;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px">💸 จ่ายเงินเมื่อ ${Layout.date(a.disbursedAt)} ${a.disbursementDocumentId ? '— ใบสำคัญจ่าย <a href="/pages/documents.html#doc=' + a.disbursementDocumentId + '" style="color:#0ea5e9">ดูเอกสาร</a>' : ''}</div>` : ''}`;
+
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          if (a.status === 'Draft') {
+            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>`;
+            actions += ` <button class="btn btn-primary" onclick="Page.submit('${a.id}')">ส่งอนุมัติ</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.void('${a.id}')">ยกเลิก</button>`;
+          } else if (a.status === 'Submitted') {
+            actions += ` <button class="btn btn-success" onclick="Page.approve('${a.id}')">อนุมัติ</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.openReject('${a.id}')">ปฏิเสธ</button>`;
+          } else if (a.status === 'Approved') {
+            actions += ` <button class="btn btn-primary" onclick="Page.openDisburse('${a.id}')">💸 จ่ายเงิน + สร้าง PV</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.void('${a.id}')">ยกเลิก</button>`;
+          }
+          document.getElementById('detailFooter').innerHTML = actions;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async submit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.submitSalaryAdvance(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ส่งอนุมัติสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async approve(id) {
+        if (!confirm('ยืนยันอนุมัติคำขอเงินทดรอง?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.approveSalaryAdvance(id, { notes: null });
+          Layout.closeModal('detailModal');
+          Layout.toast('อนุมัติสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openReject(id) {
+        document.getElementById('rjId').value = id;
+        document.getElementById('rjReason').value = '';
+        Layout.closeModal('detailModal');
+        Layout.openModal('rejectModal');
+      },
+      async confirmReject() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('rjId').value;
+        const reason = document.getElementById('rjReason').value.trim();
+        if (!reason) { Layout.toast('กรุณาระบุเหตุผล', 'error'); return; }
+        try {
+          await api.rejectSalaryAdvance(id, { reason });
+          Layout.closeModal('rejectModal');
+          Layout.toast('ปฏิเสธคำขอแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openDisburse(id) {
+        document.getElementById('dsId').value = id;
+        document.getElementById('dsDate').value = Layout.toDateInput(new Date());
+        Layout.closeModal('detailModal');
+        Layout.openModal('disburseModal');
+      },
+      async confirmDisburse() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('dsId').value;
+        try {
+          await api.disburseSalaryAdvance(id, {
+            disbursementDate: document.getElementById('dsDate').value || null,
+            bankAccountId: null,
+          });
+          Layout.closeModal('disburseModal');
+          Layout.toast('จ่ายเงินทดรองและสร้างใบสำคัญจ่ายสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async void(id) {
+        if (!confirm('ยืนยันยกเลิกคำขอเงินทดรอง?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.voidSalaryAdvance(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('ยกเลิกแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

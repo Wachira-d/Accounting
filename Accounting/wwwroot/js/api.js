@@ -501,6 +501,16 @@ const API = {
       approveLeave: (id) => API.post(`${base}/payroll/leaves/${id}/approve`),
       getPnd1: (y, m) => API.get(`${base}/payroll/pnd1/${y}/${m}`),
       getSso: (y, m) => API.get(`${base}/payroll/sso/${y}/${m}`),
+      // Salary Advance
+      getSalaryAdvances: (q = '') => API.get(`${base}/salary-advances${q}`),
+      getSalaryAdvance: (id) => API.get(`${base}/salary-advances/${id}`),
+      createSalaryAdvance: (d) => API.post(`${base}/salary-advances`, d),
+      updateSalaryAdvance: (id, d) => API.put(`${base}/salary-advances/${id}`, d),
+      submitSalaryAdvance: (id) => API.post(`${base}/salary-advances/${id}/submit`),
+      approveSalaryAdvance: (id, d) => API.post(`${base}/salary-advances/${id}/approve`, d || {}),
+      rejectSalaryAdvance: (id, d) => API.post(`${base}/salary-advances/${id}/reject`, d),
+      disburseSalaryAdvance: (id, d) => API.post(`${base}/salary-advances/${id}/disburse`, d || {}),
+      voidSalaryAdvance: (id) => API.post(`${base}/salary-advances/${id}/void`),
       // Tax Calendar
       getTaxEvents: (q = '') => API.get(`${base}/tax-calendar${q}`),
       getTaxEvent: (id) => API.get(`${base}/tax-calendar/${id}`),
