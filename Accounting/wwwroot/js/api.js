@@ -271,6 +271,11 @@ const API = {
       getMatchCandidates: (txnId) => API.get(`${base}/bank/transactions/${txnId}/match-candidates`),
       aiSuggestMatch: (txnId) => API.get(`${base}/bank/transactions/${txnId}/ai-suggest-match`),
       bulkDeleteBankTransactions: (d) => API.post(`${base}/bank/transactions/bulk-delete`, d),
+      // Reconciliation Group (M:N + Net-off)
+      createReconciliationGroup: (d) => API.post(`${base}/bank/reconciliation-groups`, d),
+      getReconciliationGroup: (id) => API.get(`${base}/bank/reconciliation-groups/${id}`),
+      listReconciliationGroups: (accId, q = '') => API.get(`${base}/bank/accounts/${accId}/reconciliation-groups${q}`),
+      unreconcileGroup: (id) => API.del(`${base}/bank/reconciliation-groups/${id}`),
       // Open Banking
       getConnections: () => API.get(`${base}/open-banking/connections`),
       createConnection: (d) => API.post(`${base}/open-banking/connections`, d),
