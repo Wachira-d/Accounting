@@ -57,13 +57,23 @@ public static class BankCsvParser
     public static (List<Row> rows, List<string> skipped) ParseRows(List<List<string>> rawRows, string sourceLabel = "ไฟล์")
     {
         if (rawRows.Count < 2)
-            throw new ArgumentException($"{sourceLabel}ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 รายการ");
+            throw new ArgumentException($"{sourceLabel}ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 รายการ (พบ {rawRows.Count} แถว)");
 
         var (headerIdx, map) = DetectHeader(rawRows);
         if (headerIdx < 0)
+        {
+            // Build a helpful diagnostic: surface the first 3 rows so the operator
+            // can see what the parser saw — typical fixes are (a) merged-cell
+            // header that ClosedXML couldn't split, (b) a cover sheet with text
+            // banners, (c) extra rows above the real table.
+            var preview = string.Join("\n", rawRows.Take(3).Select((r, idx) =>
+                $"   แถว {idx + 1}: " + string.Join(" | ", r.Take(8).Select(c => string.IsNullOrWhiteSpace(c) ? "(ว่าง)" : c.Trim()))));
             throw new ArgumentException(
-                $"ไม่พบหัวคอลัมน์ที่รองรับใน{sourceLabel} " +
-                "(ต้องมีคอลัมน์ที่มีคำว่า: วันที่/Date, ฝาก/Deposit หรือ ถอน/Withdrawal, ยอดคงเหลือ/Balance)");
+                $"ไม่พบหัวคอลัมน์ที่รองรับใน{sourceLabel} — ต้องมีคอลัมน์ที่มีคำว่า: " +
+                "วันที่/Date, ฝาก/Deposit หรือ ถอน/Withdrawal, ยอดคงเหลือ/Balance.\n" +
+                $"สิ่งที่ระบบเห็น (3 แถวแรก):\n{preview}\n" +
+                "💡 ลองลบแถวบนๆ ที่เป็นคำอธิบายธนาคารทิ้ง หรือ ตัด merged cells ออกก่อนนำเข้า");
+        }
 
         // ── Pass 1: collect every date string in the file and detect the
         // canonical day/month order so all rows parse with the same orientation.
