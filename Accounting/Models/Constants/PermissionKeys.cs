@@ -13,6 +13,12 @@ public static class PermissionKeys
 {
     private const string P = "perm:";
 
+    // Broad recipient-resolution keys — consumed by NotificationEngine
+    // to find HR / Accounting users when a notification is configured
+    // for those logical roles.
+    public const string HrAdmin        = P + "HR.Admin";
+    public const string AccountingView = P + "Accounting.View";
+
     // HR
     public const string LeaveApprove   = P + "Leave.Approve";
     public const string LeaveReject    = P + "Leave.Reject";
