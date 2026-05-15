@@ -514,6 +514,20 @@ app.MapFallback(context =>
         context.Response.ContentType = "application/json";
         return context.Response.WriteAsJsonAsync(new { success = false, message = "API endpoint not found: " + path });
     }
+    // CMS storefront safety-net: if a /site/{key} URL slips through to the
+    // fallback (typically because CmsSiteRoutingMiddleware didn't run — a
+    // mis-ordered pipeline or a stale deploy), serve storefront.html directly
+    // so the public viewer at least renders its own 404 instead of the main
+    // marketing landing page. The JS in storefront.html re-parses the path
+    // and calls /api/cms/resolve to fetch the site.
+    if (path.StartsWith("/site/", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.Headers["X-CMS-Site-Match"] = "fallback:storefront.html (middleware did not rewrite)";
+        return Results.File(
+            Path.Combine(app.Environment.WebRootPath, "storefront.html"),
+            "text/html"
+        ).ExecuteAsync(context);
+    }
     // Non-API routes: serve index.html for SPA client-side routing
     return Results.File(
         Path.Combine(app.Environment.WebRootPath, "index.html"),
