@@ -182,6 +182,8 @@ public class AccountingDbContext : DbContext
     public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Position> Positions => Set<Position>();
+    public DbSet<NotificationSetting> NotificationSettings => Set<NotificationSetting>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
 
     // Tax Calendar
     public DbSet<TaxCalendarEvent> TaxCalendarEvents => Set<TaxCalendarEvent>();
@@ -906,6 +908,24 @@ public class AccountingDbContext : DbContext
             e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.PaymentVoucherDocument).WithMany().HasForeignKey(ec => ec.PaymentVoucherDocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(ec => !ec.IsDeleted);
+        });
+
+        // ===== NotificationSetting =====
+        modelBuilder.Entity<NotificationSetting>(e =>
+        {
+            e.HasIndex(n => new { n.CompanyId, n.EventKey, n.RecipientRole }).IsUnique();
+            e.Property(n => n.EventKey).HasMaxLength(80);
+            e.Property(n => n.RecipientRole).HasMaxLength(50);
+            e.HasQueryFilter(n => !n.IsDeleted);
+        });
+
+        // ===== NotificationPreference =====
+        modelBuilder.Entity<NotificationPreference>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.UserId, p.EventKey }).IsUnique();
+            e.Property(p => p.EventKey).HasMaxLength(80);
+            e.HasOne(p => p.User).WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(p => !p.IsDeleted);
         });
 
         // ===== Department =====

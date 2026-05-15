@@ -1964,6 +1964,57 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceManagerApproval" boolean NOT NULL DEFAULT false;
             """,
+
+            // ===== Users: LINE Messaging API binding (per-user push) =====
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "LineUserId" varchar(64) NULL;
+            """,
+
+            // ===== NotificationSettings: per-company event × recipient × channel matrix =====
+            """
+            CREATE TABLE IF NOT EXISTS "NotificationSettings" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "EventKey" varchar(80) NOT NULL,
+                "RecipientRole" varchar(50) NOT NULL,
+                "EnableSystem" boolean NOT NULL DEFAULT false,
+                "EnableEmail" boolean NOT NULL DEFAULT false,
+                "EnableLine" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_NotificationSettings" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_NotificationSettings_CompanyId_EventKey_RecipientRole"
+                ON "NotificationSettings" ("CompanyId", "EventKey", "RecipientRole");
+            """,
+
+            // ===== NotificationPreferences: per-user suppression overrides =====
+            """
+            CREATE TABLE IF NOT EXISTS "NotificationPreferences" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "UserId" uuid NOT NULL,
+                "EventKey" varchar(80) NOT NULL,
+                "SuppressSystem" boolean NOT NULL DEFAULT false,
+                "SuppressEmail" boolean NOT NULL DEFAULT false,
+                "SuppressLine" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_NotificationPreferences" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_NotificationPreferences_CompanyId_UserId_EventKey"
+                ON "NotificationPreferences" ("CompanyId", "UserId", "EventKey");
+            """,
         };
 
         foreach (var sql in statements)
