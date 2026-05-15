@@ -111,8 +111,34 @@
             <div class="form-group"><label class="form-label">วันเริ่มงาน *</label><input type="date" class="form-input" id="empStartDate"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ตำแหน่ง</label><input type="text" class="form-input" id="empPosition"></div>
-            <div class="form-group"><label class="form-label">แผนก</label><input type="text" class="form-input" id="empDepartment"></div>
+            <div class="form-group"><label class="form-label">ตำแหน่ง (ข้อความ — สำหรับ payslip)</label><input type="text" class="form-input" id="empPosition"></div>
+            <div class="form-group"><label class="form-label">แผนก (ข้อความ — สำหรับ payslip)</label><input type="text" class="form-input" id="empDepartment"></div>
+          </div>
+          <!-- Org-structure FKs (preferred — drive cost-centre & approval routing).
+               The text fields above are kept for legacy payslip display. -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">แผนก (อ้างอิงจากผังองค์กร)</label>
+              <select class="form-select" id="empDepartmentRef"><option value="">— ไม่ระบุ —</option></select>
+              <div style="font-size:11px;color:#94a3b8;margin-top:3px">ระบบใช้ Cost Center / GL ของแผนกนี้ตอนสร้าง Payroll Voucher</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">ตำแหน่ง (อ้างอิงจากผังองค์กร)</label>
+              <select class="form-select" id="empPositionRef"><option value="">— ไม่ระบุ —</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">หัวหน้าโดยตรง (Direct Manager)</label>
+              <select class="form-select" id="empDirectManager"><option value="">— ไม่มี (Top-level) —</option></select>
+              <div style="font-size:11px;color:#94a3b8;margin-top:3px">ใช้เป็นผู้อนุมัติระดับ 1 อัตโนมัติสำหรับใบลา / ใบเบิก / เงินทดรอง</div>
+            </div>
+            <div class="form-group" id="empActiveRow" style="display:none">
+              <label class="form-label">สถานะ (Onboarding / Offboarding)</label>
+              <label style="display:inline-flex;align-items:center;gap:6px;padding-top:8px">
+                <input type="checkbox" id="empActive" checked> ใช้งาน — เก็บประวัติ HR/บัญชีไว้ครบ
+              </label>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">เงินเดือน *</label><input type="number" class="form-input" id="empSalary" step="0.01"></div>
@@ -165,12 +191,13 @@
       <div class="modal" style="max-width:550px">
         <div class="modal-header"><h3 class="modal-title">สร้างคำขอลา</h3><button class="modal-close" onclick="Layout.closeModal('leaveModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="leaveEmpId"></select></div>
+          <div class="form-group"><label class="form-label">พนักงาน *</label><select class="form-select" id="leaveEmpId" onchange="Page.refreshLeaveBalance()"></select></div>
           <div class="form-group"><label class="form-label">ประเภทลา *</label>
             <select class="form-select" id="leaveType">
               <option value="Sick">ลาป่วย</option><option value="Annual">ลาพักร้อน</option><option value="Personal">ลากิจ</option><option value="Maternity">ลาคลอด</option><option value="Other">อื่นๆ</option>
             </select>
           </div>
+          <div id="leaveBalanceBox" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;padding:8px 10px;border-radius:6px;font-size:12px;color:#0c4a6e;margin-bottom:10px"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="leaveStart"></div>
             <div class="form-group"><label class="form-label">วันสิ้นสุด *</label><input type="date" class="form-input" id="leaveEnd"></div>
@@ -239,13 +266,15 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const tbody = document.getElementById('empBody');
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีพนักงาน</td></tr>'; return; }
-      tbody.innerHTML = items.map(e => `<tr>
+      tbody.innerHTML = items.map(e => `<tr ${e.isActive === false ? 'style="opacity:.5"' : ''}>
         <td><span class="font-medium">${e.employeeCode || e.code || '-'}</span></td>
-        <td>${e.firstName || ''} ${e.lastName || ''}</td>
-        <td>${e.position || '-'}</td>
-        <td>${e.department || '-'}</td>
-        <td class="text-right">${Layout.money(e.salary || e.baseSalary)}</td>
-        <td>${Layout.statusBadge(e.status || 'Active')}</td>
+        <td>${Layout.esc((e.firstNameTh || e.firstName || '') + ' ' + (e.lastNameTh || e.lastName || ''))}${e.directManagerName ? '<div style="font-size:11px;color:#64748b">↑ ' + Layout.esc(e.directManagerName) + '</div>' : ''}</td>
+        <td>${Layout.esc(e.positionTitle || e.position || '-')}</td>
+        <td>${Layout.esc(e.departmentName || e.department || '-')}</td>
+        <td class="text-right">${Layout.money(e.baseSalary || e.salary)}</td>
+        <td>${e.isActive === false
+            ? '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">Offboarded</span>'
+            : '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">Active</span>'}</td>
         <td><button class="btn btn-sm btn-secondary" onclick="Page.editEmployee('${e.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
       const totalPages = res.data?.totalPages || 1;
@@ -255,11 +284,38 @@ const Page = {
 
   gotoEmpPage(p) { Page.empPage = p; Page.loadEmployees(); },
 
-  openCreateEmployee() {
+  // Load departments / positions / employees into the org-structure
+  // dropdowns lazily — single shared fetch, refreshed each time the
+  // employee modal opens so admins see fresh data.
+  async _loadOrgDropdowns(currentEmployeeId) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const [deptRes, posRes, empRes] = await Promise.all([
+        api.getDepartments(false),
+        api.getPositions(false),
+        api.getEmployees('?pageSize=500'),
+      ]);
+      const depts = deptRes.data || [];
+      const positions = posRes.data || [];
+      const emps = empRes.data?.items || empRes.data || [];
+      document.getElementById('empDepartmentRef').innerHTML = '<option value="">— ไม่ระบุ —</option>' +
+        depts.map(d => `<option value="${d.id}">${Layout.esc(d.code + ' · ' + d.name)}</option>`).join('');
+      document.getElementById('empPositionRef').innerHTML = '<option value="">— ไม่ระบุ —</option>' +
+        positions.map(p => `<option value="${p.id}">${Layout.esc(p.code + ' · ' + p.title)}</option>`).join('');
+      document.getElementById('empDirectManager').innerHTML = '<option value="">— ไม่มี (Top-level) —</option>' +
+        emps.filter(e => e.id !== currentEmployeeId)
+          .map(e => `<option value="${e.id}">${Layout.esc((e.firstNameTh || e.firstName || '') + ' ' + (e.lastNameTh || e.lastName || ''))} (${Layout.esc(e.employeeCode)})</option>`).join('');
+    } catch (e) { /* ignore — fields just stay empty */ }
+  },
+
+  async openCreateEmployee() {
     document.getElementById('empModalTitle').textContent = 'เพิ่มพนักงาน';
     document.getElementById('empId').value = '';
+    document.getElementById('empActiveRow').style.display = 'none';
     ['empCode','empFirstName','empLastName','empIdCard','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('empStartDate').value = Layout.dateInput(new Date());
+    await this._loadOrgDropdowns(null);
+    ['empDepartmentRef','empPositionRef','empDirectManager'].forEach(id => document.getElementById(id).value = '');
     Layout.openModal('empModal');
   },
 
@@ -271,16 +327,23 @@ const Page = {
       document.getElementById('empModalTitle').textContent = 'แก้ไขพนักงาน';
       document.getElementById('empId').value = e.id;
       document.getElementById('empCode').value = e.employeeCode || e.code || '';
-      document.getElementById('empFirstName').value = e.firstName || '';
-      document.getElementById('empLastName').value = e.lastName || '';
-      document.getElementById('empIdCard').value = e.idCardNumber || e.nationalId || '';
+      document.getElementById('empFirstName').value = e.firstNameTh || e.firstName || '';
+      document.getElementById('empLastName').value = e.lastNameTh || e.lastName || '';
+      document.getElementById('empIdCard').value = e.citizenId || e.idCardNumber || e.nationalId || '';
       document.getElementById('empStartDate').value = Layout.dateInput(e.startDate || e.hireDate);
       document.getElementById('empPosition').value = e.position || '';
       document.getElementById('empDepartment').value = e.department || '';
-      document.getElementById('empSalary').value = e.salary || e.baseSalary || '';
-      document.getElementById('empBankAccount').value = e.bankAccount || '';
+      document.getElementById('empSalary').value = e.baseSalary || e.salary || '';
+      document.getElementById('empBankAccount').value = e.bankAccount || e.bankAccountNumber || '';
       document.getElementById('empEmail').value = e.email || '';
       document.getElementById('empPhone').value = e.phone || '';
+      // Onboarding/offboarding visible only on edit.
+      document.getElementById('empActiveRow').style.display = 'block';
+      document.getElementById('empActive').checked = e.isActive !== false;
+      await this._loadOrgDropdowns(e.id);
+      document.getElementById('empDepartmentRef').value = e.departmentId || '';
+      document.getElementById('empPositionRef').value = e.positionId || '';
+      document.getElementById('empDirectManager').value = e.directManagerId || '';
       Layout.openModal('empModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
@@ -290,19 +353,24 @@ const Page = {
     const id = document.getElementById('empId').value;
     const data = {
       employeeCode: document.getElementById('empCode').value,
-      title: document.getElementById('empTitle').value,
-      firstName: document.getElementById('empFirstName').value,
-      lastName: document.getElementById('empLastName').value,
-      idCardNumber: document.getElementById('empIdCard').value,
+      titleTh: document.getElementById('empTitle').value,
+      firstNameTh: document.getElementById('empFirstName').value,
+      lastNameTh: document.getElementById('empLastName').value,
+      citizenId: document.getElementById('empIdCard').value || null,
       startDate: document.getElementById('empStartDate').value,
-      position: document.getElementById('empPosition').value,
-      department: document.getElementById('empDepartment').value,
-      salary: parseFloat(document.getElementById('empSalary').value) || 0,
-      bankAccount: document.getElementById('empBankAccount').value,
-      email: document.getElementById('empEmail').value,
-      phone: document.getElementById('empPhone').value,
+      position: document.getElementById('empPosition').value || null,
+      department: document.getElementById('empDepartment').value || null,
+      baseSalary: parseFloat(document.getElementById('empSalary').value) || 0,
+      bankAccountNumber: document.getElementById('empBankAccount').value || null,
+      email: document.getElementById('empEmail').value || null,
+      phone: document.getElementById('empPhone').value || null,
+      // Org structure (preferred — drives cost-centre + approval routing)
+      departmentId: document.getElementById('empDepartmentRef').value || null,
+      positionId: document.getElementById('empPositionRef').value || null,
+      directManagerId: document.getElementById('empDirectManager').value || null,
     };
-    if (!data.firstName || !data.lastName) { Layout.toast('กรุณากรอกชื่อ-สกุล', 'error'); return; }
+    if (id) data.isActive = document.getElementById('empActive').checked;
+    if (!data.firstNameTh || !data.lastNameTh) { Layout.toast('กรุณากรอกชื่อ-สกุล', 'error'); return; }
     try {
       if (id) await api.updateEmployee(id, data);
       else await api.createEmployee(data);
@@ -455,8 +523,14 @@ const Page = {
           <td>${Layout.date(l.endDate)}</td>
           <td class="text-right">${l.days || l.totalDays || '-'}</td>
           <td>${l.reason || '-'}</td>
-          <td>${Layout.statusBadge(l.status || 'Pending')}</td>
-          <td>${l.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.approveLeave('${l.id}')">อนุมัติ</button>` : ''}</td>
+          <td>${Layout.statusBadge(l.status || 'Pending')}${l.rejectionReason ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">✕ ${l.rejectionReason}</div>` : ''}</td>
+          <td>${l.status === 'Pending'
+              ? `<button class="btn btn-sm btn-success" onclick="Page.approveLeave('${l.id}')">อนุมัติ</button>
+                 <button class="btn btn-sm btn-danger" onclick="Page.rejectLeave('${l.id}')">ปฏิเสธ</button>
+                 <button class="btn btn-sm btn-ghost" onclick="Page.cancelLeave('${l.id}')">ยกเลิก</button>`
+              : (l.status === 'Approved'
+                  ? `<button class="btn btn-sm btn-ghost" onclick="Page.cancelLeave('${l.id}')">ยกเลิก</button>`
+                  : '')}</td>
         </tr>`;
       }).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -464,6 +538,7 @@ const Page = {
 
   openCreateLeave() {
     this.loadEmployeeSelect();
+    document.getElementById('leaveBalanceBox').style.display = 'none';
     Layout.openModal('leaveModal');
   },
 
@@ -475,6 +550,33 @@ const Page = {
       const sel = document.getElementById('leaveEmpId');
       sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
     } catch (err) { /* ignore */ }
+  },
+
+  // Show this year's leave balance per type when an employee is picked
+  // — uses the central /payroll/leaves/balance endpoint which merges
+  // Thai labor-law defaults with the company's LeaveQuotasJson override.
+  async refreshLeaveBalance() {
+    const box = document.getElementById('leaveBalanceBox');
+    const empId = document.getElementById('leaveEmpId').value;
+    if (!empId) { box.style.display = 'none'; return; }
+    const api = Layout.api(); if (!api) return;
+    try {
+      const year = new Date().getFullYear();
+      const [balanceRes, managerRes] = await Promise.all([
+        api.getLeaveBalance(empId, year),
+        api.getDirectManager(empId).catch(() => null),
+      ]);
+      const balances = balanceRes.data?.balances || [];
+      const typeMap = { Sick: 'ลาป่วย', Annual: 'ลาพักร้อน', Personal: 'ลากิจ', Maternity: 'ลาคลอด', Other: 'อื่นๆ' };
+      const balanceLine = `<strong>สิทธิ์วันลาคงเหลือ ปี ${year}:</strong> ` +
+        balances.map(b => `${typeMap[b.leaveType] || b.leaveType}: <strong>${b.remainingDays}</strong> / ${b.allocatedDays} วัน${b.usedDays > 0 ? ' (ใช้ไป ' + b.usedDays + ')' : ''}`).join(' · ');
+      const mgr = managerRes?.data;
+      const approverLine = (mgr && (mgr.managerName || mgr.departmentHeadName))
+        ? `<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #bae6fd">👤 <strong>ผู้อนุมัติระดับ 1 (Direct Manager):</strong> ${mgr.managerName ? Layout.esc(mgr.managerName) : '<em>ไม่มี</em>'}${mgr.departmentHeadName && !mgr.managerName ? ' — สำรอง: หัวหน้าแผนก ' + Layout.esc(mgr.departmentHeadName) : ''}</div>`
+        : '';
+      box.innerHTML = balanceLine + approverLine;
+      box.style.display = 'block';
+    } catch (err) { box.style.display = 'none'; }
   },
 
   async saveLeave() {
@@ -496,10 +598,32 @@ const Page = {
   },
 
   async approveLeave(id) {
+    if (!confirm('ยืนยันอนุมัติคำขอลา?')) return;
     const api = Layout.api(); if (!api) return;
     try {
       await api.approveLeave(id);
       Layout.toast('อนุมัติลาสำเร็จ');
+      this.loadLeaves();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async rejectLeave(id) {
+    const reason = prompt('ระบุเหตุผลในการปฏิเสธคำขอลา:');
+    if (!reason || !reason.trim()) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.rejectLeave(id, { reason: reason.trim() });
+      Layout.toast('ปฏิเสธคำขอลาแล้ว');
+      this.loadLeaves();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async cancelLeave(id) {
+    if (!confirm('ยืนยันยกเลิกคำขอลา?')) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.cancelLeave(id);
+      Layout.toast('ยกเลิกคำขอลาแล้ว');
       this.loadLeaves();
     } catch (err) { Layout.toast(err.message, 'error'); }
   },

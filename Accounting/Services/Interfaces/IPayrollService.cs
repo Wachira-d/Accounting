@@ -29,8 +29,12 @@ public interface IPayrollService
 
     // Leave
     Task<LeaveResponse> CreateLeaveAsync(Guid companyId, CreateLeaveRequest request);
-    Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, string approvedBy);
+    Task<LeaveResponse> GetLeaveAsync(Guid companyId, Guid leaveId);
+    Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, Guid approverUserId, string approverName);
+    Task<LeaveResponse> RejectLeaveAsync(Guid companyId, Guid leaveId, Guid rejectorUserId, string rejectorName, RejectLeaveRequest request);
+    Task<LeaveResponse> CancelLeaveAsync(Guid companyId, Guid leaveId);
     Task<List<LeaveResponse>> GetLeavesAsync(Guid companyId, Guid? employeeId, int? year);
+    Task<LeaveBalanceResponse> GetLeaveBalanceAsync(Guid companyId, Guid employeeId, int year);
 
     // Tax: ภ.ง.ด.1 generation
     Task<object> GeneratePnd1Async(Guid companyId, int year, int month);

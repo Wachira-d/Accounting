@@ -212,6 +212,39 @@
     ]},
   ];
 
+  // Granular permission keys (perm:* in CompanyRolePermission.MenuItemId).
+  // Stored alongside menu IDs but used by services for action-level gating
+  // (approval rights, payroll runs, etc.) and by the notification engine
+  // for HR / Accounting recipient resolution.
+  const PERMISSION_SECTIONS = [
+    { section: 'สิทธิ์กว้าง (สำหรับการแจ้งเตือน)', items: [
+      { id: 'perm:HR.Admin',         label: 'ผู้ดูแล HR — รับแจ้งเตือนคำขอลา/เบิก/เงินเดือนทั้งหมด', icon: '🛡️' },
+      { id: 'perm:Accounting.View',  label: 'ฝ่ายบัญชี — รับแจ้งเตือนเอกสารอนุมัติ/ใบสำคัญจ่าย', icon: '📒' },
+    ]},
+    { section: 'สิทธิ์ระบบลา', items: [
+      { id: 'perm:Leave.Approve',   label: 'อนุมัติคำขอลา', icon: '✅' },
+      { id: 'perm:Leave.Reject',    label: 'ปฏิเสธคำขอลา', icon: '🚫' },
+    ]},
+    { section: 'สิทธิ์เงินทดรอง', items: [
+      { id: 'perm:Advance.Approve',  label: 'อนุมัติเงินทดรอง', icon: '✅' },
+      { id: 'perm:Advance.Reject',   label: 'ปฏิเสธเงินทดรอง', icon: '🚫' },
+      { id: 'perm:Advance.Disburse', label: 'จ่ายเงินทดรอง', icon: '💸' },
+    ]},
+    { section: 'สิทธิ์เงินเดือน', items: [
+      { id: 'perm:Payroll.Run',     label: 'คำนวณรอบเงินเดือน', icon: '🧮' },
+      { id: 'perm:Payroll.Approve', label: 'อนุมัติรอบเงินเดือน', icon: '✅' },
+      { id: 'perm:Payroll.Pay',     label: 'จ่ายเงินเดือน', icon: '💵' },
+    ]},
+    { section: 'สิทธิ์ใบเบิก', items: [
+      { id: 'perm:Expense.Approve', label: 'อนุมัติใบเบิก', icon: '✅' },
+      { id: 'perm:Expense.Reject',  label: 'ปฏิเสธใบเบิก', icon: '🚫' },
+      { id: 'perm:Expense.Pay',     label: 'จ่ายใบเบิก', icon: '💸' },
+    ]},
+    { section: 'สิทธิ์โครงสร้างองค์กร', items: [
+      { id: 'perm:Organization.Manage', label: 'จัดการแผนก/ตำแหน่ง/ผู้บังคับบัญชา', icon: '🏢' },
+    ]},
+  ];
+
   const Page = {
     roles: [],
     editingRoleId: null,
@@ -295,6 +328,28 @@
         html += `<div class="perm-section">
           <div class="perm-section-title">${sec.section}</div>
           <div class="perm-items">`;
+        sec.items.forEach(item => {
+          const checked = set.has(item.id) ? 'checked' : '';
+          html += `<label class="perm-item">
+            <input type="checkbox" value="${item.id}" ${checked} class="perm-cb">
+            <span class="perm-icon">${item.icon}</span>
+            ${item.label}
+          </label>`;
+        });
+        html += '</div></div>';
+      });
+
+      // Action-level permission keys (perm:*) — same column, same API,
+      // grouped under a separate header so admins can see what extra
+      // privileges they're granting beyond menu access.
+      html += `<div class="perm-section" style="margin-top:24px;border-top:2px solid #e2e8f0;padding-top:16px">
+        <div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:8px">🔐 สิทธิ์การดำเนินการ (Action Permissions)</div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:12px">สิทธิ์เฉพาะสำหรับการอนุมัติ/ดำเนินการ — มอบให้ Role ใดก็ได้นอกเหนือจากผู้บังคับบัญชาตรง</div>
+      </div>`;
+      PERMISSION_SECTIONS.forEach(sec => {
+        html += `<div class="perm-section">
+          <div class="perm-section-title">${sec.section}</div>
+          <div class="perm-items" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr))">`;
         sec.items.forEach(item => {
           const checked = set.has(item.id) ? 'checked' : '';
           html += `<label class="perm-item">

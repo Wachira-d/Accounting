@@ -12,7 +12,10 @@ public record CreateEmployeeRequest(
     string? SocialSecurityHospital, bool IsSubjectToSocialSecurity,
     bool HasProvidentFund, decimal ProvidentFundEmployeePercent,
     decimal ProvidentFundEmployerPercent,
-    Guid? BranchId, Guid? DimensionId);
+    Guid? BranchId, Guid? DimensionId,
+    // Org structure (preferred over the legacy string Department/Position)
+    Guid? DepartmentId = null, Guid? PositionId = null,
+    Guid? DirectManagerId = null);
 
 public record UpdateEmployeeRequest(
     string? Position, string? Department, string? Phone,
@@ -21,7 +24,12 @@ public record UpdateEmployeeRequest(
     bool? HasProvidentFund,
     decimal? ProvidentFundEmployeePercent,
     decimal? ProvidentFundEmployerPercent,
-    Guid? BranchId, Guid? DimensionId);
+    Guid? BranchId, Guid? DimensionId,
+    Guid? DepartmentId = null, Guid? PositionId = null,
+    Guid? DirectManagerId = null,
+    // Onboarding / offboarding toggle (preserves all historical HR + GL
+    // records — does NOT delete the employee).
+    bool? IsActive = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -30,7 +38,11 @@ public record EmployeeResponse(
     string? CitizenId, string? Department, string? Position,
     string? EmploymentType, DateTime StartDate, DateTime? EndDate,
     decimal BaseSalary, string SalaryType, bool IsActive,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? DepartmentId = null, string? DepartmentName = null,
+    Guid? PositionId = null, string? PositionTitle = null,
+    Guid? DirectManagerId = null, string? DirectManagerName = null,
+    Guid? ContactId = null);
 
 public record CreatePayrollItemRequest(
     string Code, string Name, string? NameEn,
@@ -76,4 +88,20 @@ public record CreateLeaveRequest(
 public record LeaveResponse(
     Guid Id, Guid EmployeeId, string EmployeeName,
     string LeaveType, DateTime StartDate, DateTime EndDate,
-    decimal TotalDays, string Status, string? Reason);
+    decimal TotalDays, string Status, string? Reason,
+    string? ApprovedBy = null,
+    string? RejectionReason = null);
+
+public record RejectLeaveRequest(string Reason);
+
+public record LeaveBalanceItem(
+    string LeaveType,
+    decimal AllocatedDays,
+    decimal UsedDays,           // counts Approved + Pending requests for the year
+    decimal RemainingDays);
+
+public record LeaveBalanceResponse(
+    Guid EmployeeId,
+    string EmployeeName,
+    int Year,
+    List<LeaveBalanceItem> Balances);

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>การแจ้งเตือน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .matrix-table { font-size:12px; border-collapse:collapse; width:100%; }
+    .matrix-table th, .matrix-table td { padding:5px 6px; border:1px solid #e2e8f0; text-align:center; vertical-align:middle }
+    .matrix-table th.event { text-align:left; min-width:220px; background:#f8fafc; font-weight:600 }
+    .matrix-table td.event { text-align:left; background:#fafafa; font-weight:500 }
+    .matrix-table th.role { background:#eef2ff; color:#312e81; font-weight:600 }
+    .matrix-table th.domain { background:#e0f2fe; color:#0c4a6e; text-align:left; padding:8px 6px; font-size:11px; letter-spacing:.5px }
+    .channel-cell { display:inline-flex; gap:6px; align-items:center; justify-content:center }
+    .channel-cell label { display:inline-flex; flex-direction:column; align-items:center; gap:2px; font-size:10px; color:#64748b; cursor:pointer }
+    .channel-cell input { margin:0 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">การแจ้งเตือน</h2>
+        <p class="page-subtitle">Notification Engine — ตั้งค่าใครได้รับแจ้งเตือนผ่าน System / Email / LINE สำหรับเหตุการณ์ใด</p>
+      </div>
+    </div>
+
+    <div class="tabs" style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:16px">
+      <button class="tab tab-active" id="tabMatrix" onclick="Page.switchTab('matrix')">⚙️ ตั้งค่าทั้งบริษัท (Admin)</button>
+      <button class="tab" id="tabPrefs" onclick="Page.switchTab('prefs')">👤 ของฉัน (ปิดแจ้งเตือนบางช่อง)</button>
+      <button class="tab" id="tabLine" onclick="Page.switchTab('line')">📱 เชื่อมต่อ LINE</button>
+    </div>
+
+    <!-- ===== Admin Matrix ===== -->
+    <div id="paneMatrix" class="tab-pane">
+      <div style="background:#fef3c7;border:1px solid #fcd34d;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#78350f">
+        <strong>Default-deny:</strong> ทุกช่องเริ่มจาก "ปิด" — ติ๊กเฉพาะ event × ผู้รับ × ช่องทาง ที่ต้องการให้แจ้งจริง ๆ
+      </div>
+      <div id="matrixContainer" style="overflow-x:auto;background:#fff;border-radius:6px"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-primary" onclick="Page.saveMatrix()">💾 บันทึกตั้งค่าทั้งหมด</button>
+      </div>
+    </div>
+
+    <!-- ===== Personal Preferences ===== -->
+    <div id="panePrefs" class="tab-pane hidden">
+      <div style="background:#eff6ff;border:1px solid #bae6fd;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#0c4a6e">
+        ที่นี่คุณ <strong>ปิด</strong> ช่องทางแจ้งเตือนของตัวเองได้ (เช่น "ไม่อยากรับ Email สำหรับเหตุการณ์ลา ใช้ LINE อย่างเดียวพอ"). ไม่สามารถ <em>เปิด</em> ช่องที่บริษัทยังไม่ได้เปิดให้ — ติดต่อ Admin
+      </div>
+      <div id="prefsContainer"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-primary" onclick="Page.savePrefs()">💾 บันทึกการตั้งค่าส่วนตัว</button>
+      </div>
+    </div>
+
+    <!-- ===== LINE Binding ===== -->
+    <div id="paneLine" class="tab-pane hidden">
+      <div style="max-width:560px">
+        <div style="background:#f0fdf4;border:1px solid #86efac;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:13px;color:#14532d">
+          ผูก LINE User ID ของคุณ → ระบบจะ push แจ้งเตือนเข้า LINE ส่วนตัว (ไม่ใช่ group). ถ้ายังไม่ผูก ระบบจะ fallback ไป System / Email อัตโนมัติ
+        </div>
+        <div class="form-group">
+          <label class="form-label">LINE User ID</label>
+          <input type="text" class="form-input" id="lineUid" placeholder="U1234abcd..." maxlength="64">
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+            หา ID ได้จาก: เพิ่มบอทเป็นเพื่อน → ทักไปบอท → admin webhook จะ log ID ให้ (หรือใช้ <a href="https://developers.line.biz/console/" target="_blank" style="color:#0ea5e9">LINE Developers Console</a>)
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="Page.saveLine()">บันทึก</button>
+          <button class="btn btn-danger" onclick="Page.clearLine()">ยกเลิกการเชื่อมต่อ</button>
+        </div>
+        <div id="lineStatus" style="margin-top:12px;font-size:13px"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const roleLabels = {
+      Requester: 'ผู้ขอ', DirectManager: 'หัวหน้าตรง', DepartmentHead: 'หัวหน้าแผนก',
+      HR_Admin: 'HR Admin', Accounting: 'ฝ่ายบัญชี', Owner: 'เจ้าของบริษัท'
+    };
+
+    const Page = {
+      _catalog: null, _matrix: {}, _prefs: {},
+      async init() {
+        if (!Layout.init('notifications')) return;
+        Layout.setTitle('การแจ้งเตือน (Notification Engine)');
+        await Promise.all([this.loadMatrix(), this.loadLine()]);
+      },
+      switchTab(t) {
+        ['matrix', 'prefs', 'line'].forEach(x => {
+          document.getElementById('tab' + x.charAt(0).toUpperCase() + x.slice(1)).classList.toggle('tab-active', x === t);
+          document.getElementById('pane' + x.charAt(0).toUpperCase() + x.slice(1)).classList.toggle('hidden', x !== t);
+        });
+        if (t === 'prefs' && Object.keys(this._prefs).length === 0) this.loadPrefs();
+      },
+
+      // ===== Admin Matrix =====
+      async loadMatrix() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [cat, settings] = await Promise.all([
+            api.getNotificationCatalog(),
+            api.getNotificationSettings(),
+          ]);
+          this._catalog = cat.data;
+          this._matrix = {};
+          (settings.data || []).forEach(s => {
+            this._matrix[s.eventKey + '|' + s.recipientRole] = s;
+          });
+          this.renderMatrix();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      renderMatrix() {
+        const cat = this._catalog; if (!cat) return;
+        const roles = cat.recipientRoles;
+        const groups = {};
+        cat.events.forEach(e => { (groups[e.domain] ||= []).push(e); });
+        let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th>';
+        roles.forEach(r => { html += `<th class="role" colspan="3">${roleLabels[r] || r}</th>`; });
+        html += '</tr><tr><th></th>';
+        roles.forEach(() => { html += '<th class="role" style="font-size:10px;font-weight:400">Sys / Email / LINE</th>'; });
+        html += '</tr></thead><tbody>';
+        Object.keys(groups).forEach(domain => {
+          html += `<tr><th class="domain" colspan="${1 + roles.length}">${Layout.esc(domain)}</th></tr>`;
+          groups[domain].forEach(ev => {
+            html += `<tr><td class="event"><div style="font-weight:600">${Layout.esc(ev.label)}</div><div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}</div></td>`;
+            roles.forEach(role => {
+              const key = ev.key + '|' + role;
+              const s = this._matrix[key] || { enableSystem: false, enableEmail: false, enableLine: false };
+              html += `<td><div class="channel-cell">
+                <label><input type="checkbox" data-k="${key}" data-c="sys" ${s.enableSystem ? 'checked' : ''}>Sys</label>
+                <label><input type="checkbox" data-k="${key}" data-c="email" ${s.enableEmail ? 'checked' : ''}>Mail</label>
+                <label><input type="checkbox" data-k="${key}" data-c="line" ${s.enableLine ? 'checked' : ''}>LINE</label>
+              </div></td>`;
+            });
+            html += '</tr>';
+          });
+        });
+        html += '</tbody></table>';
+        document.getElementById('matrixContainer').innerHTML = html;
+      },
+      async saveMatrix() {
+        const api = Layout.api(); if (!api) return;
+        const settings = [];
+        document.querySelectorAll('#matrixContainer input[type=checkbox]').forEach(cb => {
+          const [eventKey, role] = cb.dataset.k.split('|');
+          let row = settings.find(s => s.eventKey === eventKey && s.recipientRole === role);
+          if (!row) { row = { eventKey, recipientRole: role, enableSystem: false, enableEmail: false, enableLine: false }; settings.push(row); }
+          if (cb.dataset.c === 'sys') row.enableSystem = cb.checked;
+          if (cb.dataset.c === 'email') row.enableEmail = cb.checked;
+          if (cb.dataset.c === 'line') row.enableLine = cb.checked;
+        });
+        try {
+          await api.bulkUpsertNotificationSettings({ settings });
+          Layout.toast('บันทึกสำเร็จ');
+          await this.loadMatrix();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Personal Preferences =====
+      async loadPrefs() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          if (!this._catalog) {
+            const cat = await api.getNotificationCatalog();
+            this._catalog = cat.data;
+          }
+          const prefs = await api.getMyNotificationPreferences();
+          this._prefs = {};
+          (prefs.data || []).forEach(p => { this._prefs[p.eventKey] = p; });
+          this.renderPrefs();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      renderPrefs() {
+        const groups = {};
+        this._catalog.events.forEach(e => { (groups[e.domain] ||= []).push(e); });
+        let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th><th class="role">ปิด System</th><th class="role">ปิด Email</th><th class="role">ปิด LINE</th></tr></thead><tbody>';
+        Object.keys(groups).forEach(domain => {
+          html += `<tr><th class="domain" colspan="4">${Layout.esc(domain)}</th></tr>`;
+          groups[domain].forEach(ev => {
+            const p = this._prefs[ev.key] || { suppressSystem: false, suppressEmail: false, suppressLine: false };
+            html += `<tr><td class="event">${Layout.esc(ev.label)}<div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}</div></td>
+              <td><input type="checkbox" data-pe="${ev.key}" data-pc="sys" ${p.suppressSystem ? 'checked' : ''}></td>
+              <td><input type="checkbox" data-pe="${ev.key}" data-pc="email" ${p.suppressEmail ? 'checked' : ''}></td>
+              <td><input type="checkbox" data-pe="${ev.key}" data-pc="line" ${p.suppressLine ? 'checked' : ''}></td>
+            </tr>`;
+          });
+        });
+        html += '</tbody></table>';
+        document.getElementById('prefsContainer').innerHTML = html;
+      },
+      async savePrefs() {
+        const api = Layout.api(); if (!api) return;
+        const preferences = [];
+        document.querySelectorAll('#prefsContainer input[type=checkbox]').forEach(cb => {
+          const eventKey = cb.dataset.pe;
+          let row = preferences.find(p => p.eventKey === eventKey);
+          if (!row) { row = { eventKey, suppressSystem: false, suppressEmail: false, suppressLine: false }; preferences.push(row); }
+          if (cb.dataset.pc === 'sys') row.suppressSystem = cb.checked;
+          if (cb.dataset.pc === 'email') row.suppressEmail = cb.checked;
+          if (cb.dataset.pc === 'line') row.suppressLine = cb.checked;
+        });
+        try {
+          await api.upsertMyNotificationPreferences({ preferences });
+          Layout.toast('บันทึกสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== LINE Binding =====
+      async loadLine() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getMyLineBinding();
+          const d = res.data || {};
+          document.getElementById('lineUid').value = d.lineUserId || '';
+          document.getElementById('lineStatus').innerHTML = d.isBound
+            ? '<span style="color:#059669">✓ เชื่อมต่อ LINE แล้ว — ระบบจะ push เข้า LINE ส่วนตัวของคุณ</span>'
+            : '<span style="color:#94a3b8">ยังไม่ได้เชื่อมต่อ — ระบบจะ fallback ไป System / Email</span>';
+        } catch (_) { /* ignore */ }
+      },
+      async saveLine() {
+        const api = Layout.api(); if (!api) return;
+        const val = document.getElementById('lineUid').value.trim();
+        if (!val) { Layout.toast('กรุณาระบุ LINE User ID', 'error'); return; }
+        try {
+          await api.setMyLineBinding({ lineUserId: val });
+          Layout.toast('บันทึกการเชื่อมต่อสำเร็จ');
+          await this.loadLine();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async clearLine() {
+        if (!confirm('ยืนยันยกเลิกการเชื่อมต่อ LINE?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.clearMyLineBinding();
+          Layout.toast('ยกเลิกแล้ว');
+          await this.loadLine();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

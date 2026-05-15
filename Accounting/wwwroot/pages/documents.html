@@ -1589,23 +1589,34 @@
         Expense:          ['PaymentVoucher']
         // Terminal: Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
       },
-      openConvert(id) {
+      async openConvert(id) {
         document.getElementById('convertDocId').value = id;
         const doc = this._currentDoc;
         const select = document.getElementById('convertTarget');
-        if (doc && select) {
-          const allowed = this._validConversions[doc.documentType] || [];
-          let firstVisible = null;
-          Array.from(select.options).forEach(opt => {
-            // Hide if not in allowed list, or matches source (no-op convert)
-            opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
-            if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
-          });
-          if (firstVisible) select.value = firstVisible;
-          if (!allowed.length) {
-            Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
-            return;
+        if (!doc || !select) { Layout.openModal('convertModal'); return; }
+
+        // Prefer the server's authoritative target list (single source of
+        // truth — DocumentService.ValidConversions). Fall back to the
+        // built-in map only if the request fails (offline / older backend).
+        let allowed = this._validConversions[doc.documentType] || [];
+        try {
+          const api = Layout.api();
+          if (api) {
+            const res = await api.getConversionTargets(id);
+            if (Array.isArray(res.data)) allowed = res.data;
           }
+        } catch { /* keep the offline fallback */ }
+
+        let firstVisible = null;
+        Array.from(select.options).forEach(opt => {
+          // Hide if not in allowed list, or matches source (no-op convert)
+          opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
+          if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
+        });
+        if (firstVisible) select.value = firstVisible;
+        if (!allowed.length) {
+          Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
+          return;
         }
         Layout.openModal('convertModal');
       },
@@ -1641,8 +1652,20 @@
             signature.name = p.signatureName || p.fullName || '';
             signature.title = p.signatureTitle || '';
           } catch (e) { console.warn('Failed to load signature for document print:', e); }
+          // GL posting summary — only fetched when the company has enabled
+          // "แสดงการลงบัญชีท้ายเอกสาร". Prefer the document's posted journal
+          // entry; fall back to the most recent one if none is posted yet.
+          let glEntry = null;
+          try {
+            const setRes = await api.getSettings();
+            if (setRes?.data?.showGlEntryOnDocument) {
+              const jRes = await api.getJournals(`?sourceDocumentId=${id}&pageSize=5`);
+              const entries = jRes?.data?.items || jRes?.data || [];
+              glEntry = entries.find(e => e.status === 'Posted') || entries[0] || null;
+            }
+          } catch (e) { console.warn('Failed to load GL entry for document print:', e); }
           document.getElementById('pdfTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
-          document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo, signature);
+          document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo, signature, glEntry);
           // Toggle etax-only UI: download button + green banner appear only when this
           // document has an associated EtaxInvoice (i.e. its XML has been generated).
           // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.
@@ -1709,9 +1732,15 @@
         setTimeout(() => URL.revokeObjectURL(u), 1000);
         Layout.toast('ดาวน์โหลด HTML สำเร็จ — เปิดด้วย browser แล้วกดพิมพ์เลือก "Save as PDF" ได้');
       },
-      generatePdfHtml(d, company, signature) {
+      generatePdfHtml(d, company, signature, glEntry) {
         const docTitle = Layout.docTypeLabel(d.documentType);
         const isTaxInvoice = d.documentType === 'TaxInvoice' || d.documentType === 'Invoice';
+        // VAT visibility is driven by whether the document actually carries
+        // VAT — NOT by document type. Expense-side docs (PurchaseInvoice /
+        // Expense / PaymentVoucher) frequently have BOTH VAT and WHT; gating
+        // the VAT rows on isTaxInvoice made VAT vanish from those documents
+        // whenever WHT was present. hasVat is independent of hasWht.
+        const hasVat = Number(d.vatAmount || 0) > 0;
         signature = signature || { image: '', name: '', title: '' };
         // Document is "approved" when status indicates the approval flow has
         // completed (Approved / Issued / Sent / Posted / Paid). Draft/Pending
@@ -1771,7 +1800,7 @@
                 <th style="padding:10px 8px;text-align:left;font-size:13px" data-i18n="common.detail">รายละเอียด</th>
                 <th style="padding:10px 8px;text-align:right;font-size:13px">จำนวน</th>
                 <th style="padding:10px 8px;text-align:right;font-size:13px">ราคา/หน่วย</th>
-                ${isTaxInvoice ? '<th style="padding:10px 8px;text-align:right;font-size:13px">VAT</th>' : ''}
+                ${hasVat ? '<th style="padding:10px 8px;text-align:right;font-size:13px">VAT</th>' : ''}
                 <th style="padding:10px 8px;text-align:right;font-size:13px;border-radius:0 6px 0 0" data-i18n="common.amount">จำนวนเงิน</th>
               </tr>
             </thead>
@@ -1781,7 +1810,7 @@
                 <td style="padding:10px 8px;font-size:13px">${l.description}</td>
                 <td style="padding:10px 8px;text-align:right;font-size:13px">${l.quantity}</td>
                 <td style="padding:10px 8px;text-align:right;font-size:13px">${Layout.money(l.unitPrice)}</td>
-                ${isTaxInvoice ? `<td style="padding:10px 8px;text-align:right;font-size:13px">${Layout.money(l.vatAmount||0)}</td>` : ''}
+                ${hasVat ? `<td style="padding:10px 8px;text-align:right;font-size:13px">${Layout.money(l.vatAmount||0)}</td>` : ''}
                 <td style="padding:10px 8px;text-align:right;font-size:13px;font-weight:600">${Layout.money(l.amount)}</td>
               </tr>`).join('')}
             </tbody>
@@ -1792,8 +1821,8 @@
           <div style="display:flex;justify-content:flex-end">
             <div style="width:100%;max-width:300px">
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ยอดรวมก่อนภาษี</span><span>${Layout.money(d.subTotal)}</span></div>
-              ${isTaxInvoice ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
-              ${d.withholdingTaxAmount > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>หัก ณ ที่จ่าย</span><span>-${Layout.money(d.withholdingTaxAmount)}</span></div>` : ''}
+              ${hasVat ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
+              ${Number(d.withholdingTaxAmount || 0) > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>หัก ณ ที่จ่าย</span><span>-${Layout.money(d.withholdingTaxAmount)}</span></div>` : ''}
               <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:700;border-top:2px solid #4F46E5;margin-top:4px"><span>ยอดสุทธิ</span><span style="color:#4F46E5">${Layout.money(d.totalAmount)}</span></div>
             </div>
           </div>
@@ -1822,6 +1851,53 @@
               <div style="font-size:11px;color:#999;margin-top:2px">วันที่ ____/____/____</div>
             </div>
           </div>
+
+          ${this._glSummaryHtml(glEntry)}
+        </div>`;
+      },
+      /**
+       * Compact "GL Posting Summary" (Dr/Cr) footer table — rendered below the
+       * signature area only when the company enabled ShowGlEntryOnDocument and
+       * the document actually has a journal entry. Designed as a small internal
+       * -audit footer: 9px text, minimal padding, kept on one page via
+       * page-break-inside:avoid so it never splits across pages.
+       */
+      _glSummaryHtml(glEntry) {
+        if (!glEntry || !Array.isArray(glEntry.lines) || glEntry.lines.length === 0) return '';
+        const cell = 'padding:3px 6px;border-bottom:1px solid #E5E7EB';
+        const amt = (v) => Number(v || 0) > 0 ? Layout.money(v) : '';
+        const rows = glEntry.lines.slice()
+          .sort((a, b) => (a.lineOrder || 0) - (b.lineOrder || 0))
+          .map(l => `<tr>
+            <td style="${cell}">${Layout.esc(l.accountCode || '')} ${Layout.esc(l.accountName || '')}</td>
+            <td style="${cell};text-align:right">${amt(l.debitAmount)}</td>
+            <td style="${cell};text-align:right">${amt(l.creditAmount)}</td>
+          </tr>`).join('');
+        const totalDr = glEntry.totalDebit != null ? glEntry.totalDebit
+          : glEntry.lines.reduce((s, l) => s + Number(l.debitAmount || 0), 0);
+        const totalCr = glEntry.totalCredit != null ? glEntry.totalCredit
+          : glEntry.lines.reduce((s, l) => s + Number(l.creditAmount || 0), 0);
+        return `<div style="margin-top:28px;padding-top:10px;border-top:1px dashed #9CA3AF;page-break-inside:avoid;font-size:9px;color:#374151">
+          <div style="font-size:9px;color:#6B7280;font-weight:600;margin-bottom:4px;letter-spacing:.3px">
+            การลงบัญชี · GL POSTING SUMMARY <span style="font-weight:400">(สำหรับตรวจสอบภายใน)</span>${glEntry.entryNumber ? ` · เลขที่ ${Layout.esc(glEntry.entryNumber)}` : ''}
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:9px">
+            <thead>
+              <tr style="background:#F3F4F6;color:#374151">
+                <th style="padding:3px 6px;text-align:left;font-weight:600">รหัส / ชื่อบัญชี</th>
+                <th style="padding:3px 6px;text-align:right;font-weight:600;width:96px">เดบิต</th>
+                <th style="padding:3px 6px;text-align:right;font-weight:600;width:96px">เครดิต</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+            <tfoot>
+              <tr style="font-weight:700">
+                <td style="padding:4px 6px;text-align:right;border-top:1px solid #9CA3AF">รวม</td>
+                <td style="padding:4px 6px;text-align:right;border-top:1px solid #9CA3AF">${Layout.money(totalDr)}</td>
+                <td style="padding:4px 6px;text-align:right;border-top:1px solid #9CA3AF">${Layout.money(totalCr)}</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>`;
       },
       printPdf() {

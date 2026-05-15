@@ -390,8 +390,12 @@ const Layout = {
     { id: 'tax-export', label: 'Export ยื่นภาษี/ประกันสังคม', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement', _i18nKey: 'nav.taxExport' },
 
     { section: 'เงินเดือน' },
+    { id: 'organization', label: 'โครงสร้างองค์กร', icon: '🏢', href: '/pages/organization.html', feature: 'Payroll', _i18nKey: 'nav.organization' },
     { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll', _i18nKey: 'nav.payroll' },
+    { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance' },
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission' },
+
+    { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications' },
 
     { section: 'รายงาน' },
     { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔', href: '/pages/executive-reports.html', feature: 'AdvancedReporting', _i18nKey: 'nav.executiveReports' },

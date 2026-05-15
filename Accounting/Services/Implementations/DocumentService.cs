@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
 using Accounting.Models.DTOs.DocumentTemplate;
@@ -21,13 +22,15 @@ public class DocumentService : IDocumentService
     private readonly ILineNotifyService _lineNotify;
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
     private readonly CrossTenantWorkflowService _crossTenantWorkflow;
+    private readonly INotificationEngine? _notify;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
         ILineNotifyService lineNotify,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
-        CrossTenantWorkflowService crossTenantWorkflow)
+        CrossTenantWorkflowService crossTenantWorkflow,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -38,6 +41,7 @@ public class DocumentService : IDocumentService
         _lineNotify = lineNotify;
         _vendorIntel = vendorIntel;
         _crossTenantWorkflow = crossTenantWorkflow;
+        _notify = notify;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -486,6 +490,7 @@ public class DocumentService : IDocumentService
                 }
 
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+                await ApplyProjectBillingAsync(companyId, doc, +1);
 
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
@@ -517,13 +522,40 @@ public class DocumentService : IDocumentService
         // generate the e-Tax manually from the detail modal.
         await TryAutoGenerateEtaxAsync(companyId, doc);
 
-        // LINE notification (best-effort)
+        // LINE notification (best-effort) — keeps the legacy broadcast room
+        // hook for companies wired to a single LINE Notify channel.
+        var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
         try
         {
-            var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
             await _lineNotify.NotifyDocumentApprovedAsync(companyId, doc.DocumentNumber, contactName, doc.TotalAmount);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "LINE notification failed for document {DocNum}", doc.DocumentNumber); }
+
+        // New per-user / per-channel dispatch via the notification engine —
+        // resolves Accounting / Owner recipients per the configured matrix.
+        if (_notify != null)
+        {
+            await _notify.DispatchAsync(companyId, NotificationEvents.DocumentApproved, new NotificationContext
+            {
+                Title = $"อนุมัติเอกสาร {doc.DocumentNumber}",
+                Message = $"{doc.DocumentType} · {contactName} · ยอดรวม {doc.TotalAmount:N2} บาท",
+                ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                EntityType = "Document", EntityId = doc.Id,
+            });
+
+            // PaymentVoucher is a specialised approved-document subtype — fire
+            // its dedicated event so accounting can have a separate matrix row.
+            if (doc.DocumentType == DocumentType.PaymentVoucher)
+            {
+                await _notify.DispatchAsync(companyId, NotificationEvents.PaymentVoucherGenerated, new NotificationContext
+                {
+                    Title = $"ใบสำคัญจ่าย {doc.DocumentNumber}",
+                    Message = $"{contactName} · ยอดรวม {doc.TotalAmount:N2} บาท",
+                    ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                    EntityType = "Document", EntityId = doc.Id,
+                });
+            }
+        }
 
         return await GetDocumentAsync(companyId, documentId);
     }
@@ -656,7 +688,13 @@ public class DocumentService : IDocumentService
                 //    the adjustment applied during ApproveDocumentAsync.
                 await RevertSourceDocumentAdjustmentsAsync(companyId, doc);
 
-                // 5) Finally void the document itself
+                // 6) Back out this document's contribution to its project's
+                //    BilledAmount — mirror of the +1 applied at approval.
+                //    Skip Draft docs: never approved, so never billed.
+                if (doc.Status != DocumentStatus.Draft)
+                    await ApplyProjectBillingAsync(companyId, doc, -1);
+
+                // 7) Finally void the document itself
                 doc.Status = DocumentStatus.Voided;
                 doc.UpdatedAt = DateTime.UtcNow;
 
@@ -1203,6 +1241,32 @@ public class DocumentService : IDocumentService
                     : DocumentStatus.PartiallyPaid;
         }
         source.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Roll an approved customer-billing document's value into its linked
+    /// project's BilledAmount — the Documents → Project data flow that was
+    /// missing, leaving project profitability reports showing zero billed.
+    /// <paramref name="sign"/> is +1 on approval, -1 when the document is
+    /// voided. Only Invoice / TaxInvoice / DebitNote count as billing;
+    /// Receipts and purchase-side documents do not represent new billing.
+    /// Caller owns the transaction + SaveChangesAsync.
+    /// </summary>
+    private async Task ApplyProjectBillingAsync(Guid companyId, Document doc, int sign)
+    {
+        if (!doc.ProjectId.HasValue) return;
+
+        var billingTypes = new[] {
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote
+        };
+        if (!billingTypes.Contains(doc.DocumentType)) return;
+
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == doc.ProjectId.Value && p.CompanyId == companyId);
+        if (project == null) return;
+
+        project.BilledAmount = Math.Max(0m, project.BilledAmount + sign * doc.TotalAmount);
+        project.UpdatedAt = DateTime.UtcNow;
     }
 
     /// <summary>

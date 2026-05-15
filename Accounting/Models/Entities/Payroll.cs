@@ -40,6 +40,20 @@ public class Employee : TenantEntity
     public Guid? DimensionId { get; set; }               // Cost Center / Department
     public AccountingDimension? Dimension { get; set; }
 
+    // === Organisation structure (Department/Position entities replace
+    // the legacy string fields above; the strings are retained for
+    // historical / payslip-display continuity and migration). ===
+    public Guid? DepartmentId { get; set; }
+    public Models.Entities.Department? DepartmentRef { get; set; }
+    public Guid? PositionId { get; set; }
+    public Models.Entities.Position? PositionRef { get; set; }
+
+    // Direct reporting line — Level 1 approver for Leave / Advance / Claim.
+    // Self-reference on the same Employee table. Top of the chain (CEO) is
+    // null. ApprovalWorkflowResolver walks this chain to identify approvers.
+    public Guid? DirectManagerId { get; set; }
+    public Employee? DirectManager { get; set; }
+
     // Compensation
     public decimal BaseSalary { get; set; }
     public string SalaryType { get; set; } = "Monthly";  // Monthly, Daily, Hourly
@@ -63,6 +77,12 @@ public class Employee : TenantEntity
     // User link (optional)
     public Guid? UserId { get; set; }
     public User? User { get; set; }
+
+    // Accounting payee link — every employee is mirrored as a Contact so
+    // payroll vouchers, advances and reimbursements treat them as a valid
+    // payee in the core accounting system (no separate HR payee list).
+    public Guid? ContactId { get; set; }
+    public Contact? Contact { get; set; }
 
     // Linked account
     public Guid? SalaryExpenseAccountId { get; set; }
@@ -167,6 +187,7 @@ public class EmployeeLeave : TenantEntity
     public string? Reason { get; set; }
     public string Status { get; set; } = "Pending";      // Pending, Approved, Rejected, Cancelled
     public string? ApprovedBy { get; set; }
+    public string? RejectionReason { get; set; }         // Filled when Status = Rejected
 }
 
 /// <summary>

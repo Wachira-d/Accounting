@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
+using Accounting.Models.DTOs.Document;
 using Accounting.Models.DTOs.Expense;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -13,11 +14,38 @@ public class ExpenseClaimService : IExpenseClaimService
 {
     private readonly AccountingDbContext _db;
     private readonly IAccountingService? _accountingService;
+    private readonly IDocumentService? _documentService;
+    private readonly INotificationEngine? _notify;
 
-    public ExpenseClaimService(AccountingDbContext db, IAccountingService? accountingService = null)
+    public ExpenseClaimService(AccountingDbContext db, IAccountingService? accountingService = null,
+        IDocumentService? documentService = null, INotificationEngine? notify = null)
     {
         _db = db;
         _accountingService = accountingService;
+        _documentService = documentService;
+        _notify = notify;
+    }
+
+    /// <summary>Fire-and-forget HR notification. Resolves the claim
+    /// submitter's Employee record (if any) so the engine can route to
+    /// DirectManager / DepartmentHead — falls back gracefully when the
+    /// user has no employee record (e.g. external accountant).</summary>
+    private async Task NotifyClaimEventAsync(Guid companyId, string eventKey, ExpenseClaim claim,
+        Guid? actorUserId, string title, string message)
+    {
+        if (_notify == null) return;
+        var employeeId = await _db.Employees
+            .Where(e => e.CompanyId == companyId && e.UserId == claim.SubmittedByUserId && !e.IsDeleted)
+            .Select(e => (Guid?)e.Id)
+            .FirstOrDefaultAsync();
+        await _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title, Message = message,
+            ActionUrl = "/pages/expense.html",
+            EntityType = "ExpenseClaim", EntityId = claim.Id,
+            RequesterEmployeeId = employeeId,
+            ActorUserId = actorUserId,
+        });
     }
 
     public async Task<ExpenseClaimResponse> CreateAsync(Guid companyId, CreateExpenseClaimRequest request, Guid submittedByUserId)
@@ -176,6 +204,12 @@ public class ExpenseClaimService : IExpenseClaimService
 
         claim.Status = ExpenseClaimStatus.Submitted;
         await _db.SaveChangesAsync();
+
+        await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseSubmitted, claim,
+            actorUserId: null,
+            title: $"ใบเบิกค่าใช้จ่ายใหม่ {claim.ClaimNumber}",
+            message: $"{claim.Title} · {claim.TotalAmount:N2} บาท");
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -192,6 +226,12 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.ApprovedAt = DateTime.UtcNow;
         claim.ApprovalNotes = request.Notes;
         await _db.SaveChangesAsync();
+
+        await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseApproved, claim,
+            actorUserId: approverUserId,
+            title: $"ใบเบิก {claim.ClaimNumber} ได้รับอนุมัติ",
+            message: $"{claim.Title} · {claim.TotalAmount:N2} บาท — รอจ่ายเงิน");
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -208,6 +248,12 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.ApprovedAt = DateTime.UtcNow;
         claim.RejectionReason = request.Reason;
         await _db.SaveChangesAsync();
+
+        await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseRejected, claim,
+            actorUserId: approverUserId,
+            title: $"ใบเบิก {claim.ClaimNumber} ถูกปฏิเสธ",
+            message: $"เหตุผล: {request.Reason}");
+
         return await GetByIdAsync(companyId, claim.Id);
     }
 
@@ -215,12 +261,62 @@ public class ExpenseClaimService : IExpenseClaimService
     {
         var claim = await _db.ExpenseClaims
             .Include(e => e.Lines).ThenInclude(l => l.Account)
+            .Include(e => e.SubmittedByUser)
             .FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 
         if (claim.Status != ExpenseClaimStatus.Approved)
             throw new InvalidOperationException("สามารถจ่ายเงินได้เฉพาะใบเบิกที่ Approved");
 
+        // Preferred path: generate a standard PaymentVoucher Document via
+        // the central DocumentService, which auto-posts Dr Expense +
+        // Dr VAT input / Cr Cash + Cr WHT payable through the same flow
+        // every other payment uses (so claims show up as standard PVs
+        // with the standard PDF/UI). No outer transaction here:
+        // ApproveDocumentAsync owns its own execution-strategy transaction
+        // and nesting would throw.
+        if (_documentService != null)
+        {
+            if (claim.SubmittedByUser == null)
+                throw new InvalidOperationException(
+                    "ไม่พบข้อมูลผู้เบิก (อาจถูกลบไปแล้ว) — ไม่สามารถสร้างใบสำคัญจ่ายอัตโนมัติได้");
+            var contactId = await EnsurePayeeContactAsync(
+                companyId, claim.SubmittedByUserId, claim.SubmittedByUser);
+
+            var docLines = claim.Lines.OrderBy(l => l.LineOrder).Select(l =>
+                new DocumentLineRequest(
+                    l.Description, 1m, null, l.Amount, 0m,
+                    l.VatRate, l.WithholdingTaxRate, l.AccountId)).ToList();
+
+            var createReq = new CreateDocumentRequest(
+                DocumentType.PaymentVoucher,
+                DateTime.UtcNow.Date,
+                null,
+                contactId,
+                claim.ClaimNumber,
+                $"เบิกค่าใช้จ่ายพนักงาน — {claim.Title}",
+                docLines);
+
+            var doc = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
+            await _documentService.ApproveDocumentAsync(companyId, doc.Id, "system:expense-claim");
+
+            claim.PaymentVoucherDocumentId = doc.Id;
+            claim.Status = ExpenseClaimStatus.Paid;
+            claim.PaidAt = DateTime.UtcNow;
+            claim.PaidMethod = request.PaymentMethod;
+            claim.PaidReference = request.Reference;
+            await _db.SaveChangesAsync();
+
+            await NotifyClaimEventAsync(companyId, NotificationEvents.ExpensePaid, claim,
+                actorUserId: null,
+                title: $"จ่ายเงินใบเบิก {claim.ClaimNumber} แล้ว",
+                message: $"{claim.Title} · {claim.TotalAmount:N2} บาท · ใบสำคัญจ่าย {doc.DocumentNumber}");
+
+            return await GetByIdAsync(companyId, claim.Id);
+        }
+
+        // Legacy fallback when DocumentService is not wired (e.g. test
+        // harness without DI): post the JE directly in an outer transaction.
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -228,23 +324,70 @@ public class ExpenseClaimService : IExpenseClaimService
             claim.PaidAt = DateTime.UtcNow;
             claim.PaidMethod = request.PaymentMethod;
             claim.PaidReference = request.Reference;
-
-            // Create PV journal entry: Dr Expense accounts, Cr Cash
             if (_accountingService != null)
-            {
                 await CreateExpenseClaimJournalAsync(companyId, claim);
-            }
-
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
         }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        catch { await transaction.RollbackAsync(); throw; }
 
         return await GetByIdAsync(companyId, claim.Id);
+    }
+
+    /// <summary>Mirror an ExpenseClaim's submitter as a Contact so the
+    /// generated PaymentVoucher treats them as a valid accounting payee.
+    /// Prefers the Employee record linked to the User (and that employee's
+    /// Contact); falls back to a Contact created directly from the user
+    /// profile when no Employee record exists.</summary>
+    private async Task<Guid> EnsurePayeeContactAsync(Guid companyId, Guid userId, User submittedBy)
+    {
+        var employee = await _db.Employees
+            .FirstOrDefaultAsync(e => e.CompanyId == companyId && e.UserId == userId && !e.IsDeleted);
+        if (employee != null)
+        {
+            if (employee.ContactId.HasValue)
+            {
+                var existing = await _db.Set<Contact>()
+                    .AnyAsync(c => c.Id == employee.ContactId.Value && c.CompanyId == companyId);
+                if (existing) return employee.ContactId.Value;
+            }
+            var fullName = $"{employee.TitleTh}{employee.FirstNameTh} {employee.LastNameTh}".Trim();
+            var empContact = new Contact
+            {
+                CompanyId = companyId,
+                Name = string.IsNullOrWhiteSpace(fullName) ? employee.EmployeeCode : fullName,
+                TaxId = employee.TaxId ?? employee.CitizenId,
+                ContactType = ContactType.Individual,
+                IsSupplier = true,
+                IsCustomer = false,
+                Address = employee.Address,
+                Phone = employee.Phone,
+                Email = employee.Email,
+                IsActive = true,
+                CreatedBy = "system:expense-claim"
+            };
+            _db.Set<Contact>().Add(empContact);
+            employee.ContactId = empContact.Id;
+            await _db.SaveChangesAsync();
+            return empContact.Id;
+        }
+
+        var userContact = new Contact
+        {
+            CompanyId = companyId,
+            Name = !string.IsNullOrWhiteSpace(submittedBy.FullName)
+                ? submittedBy.FullName
+                : (submittedBy.Email ?? "พนักงาน"),
+            ContactType = ContactType.Individual,
+            IsSupplier = true,
+            IsCustomer = false,
+            Email = submittedBy.Email,
+            IsActive = true,
+            CreatedBy = "system:expense-claim"
+        };
+        _db.Set<Contact>().Add(userContact);
+        await _db.SaveChangesAsync();
+        return userContact.Id;
     }
 
     public async Task VoidAsync(Guid companyId, Guid claimId)
@@ -412,5 +555,6 @@ public class ExpenseClaimService : IExpenseClaimService
             l.Id, l.Description, l.Amount, l.VatRate, l.VatAmount,
             l.WithholdingTaxRate, l.WithholdingTaxAmount, l.NetAmount,
             l.AccountId, l.Account?.AccountName, l.Category, l.Reference)).ToList(),
-        e.CreatedAt);
+        e.CreatedAt,
+        e.PaymentVoucherDocumentId);
 }

@@ -30,6 +30,13 @@ public class ExpenseClaim : TenantEntity
     public Guid? JournalEntryId { get; set; }
     public JournalEntry? JournalEntry { get; set; }
 
+    // Auto-generated PaymentVoucher Document — created when MarkAsPaidAsync
+    // runs. The Document owns the GL posting via the central DocumentService,
+    // so claims show up as standard PVs (with the same PDF and UI) instead
+    // of a raw journal entry.
+    public Guid? PaymentVoucherDocumentId { get; set; }
+    public Document? PaymentVoucherDocument { get; set; }
+
     public ICollection<ExpenseClaimLine> Lines { get; set; } = new List<ExpenseClaimLine>();
 }
 

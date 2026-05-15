@@ -45,6 +45,12 @@ public class User : BaseEntity
     /// <summary>Job title shown under the signature name (e.g. "ผู้จัดการ").</summary>
     public string? SignatureTitle { get; set; }
 
+    /// <summary>LINE user ID (the "U" prefix one) from the LINE Login /
+    /// Messaging API webhook binding. Set when the user links their LINE
+    /// account; used by the notification engine to push personalised
+    /// alerts. Null means "LINE channel falls back to System / Email".</summary>
+    public string? LineUserId { get; set; }
+
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();
 }

@@ -1621,17 +1621,24 @@
           const debitSel = document.getElementById('revDebitAccount');
           const creditSel = document.getElementById('revCreditAccount');
 
+          // Cache the full list on the page object so the category-change
+          // handler — and _resolveCoaCode below — can work without another
+          // HTTP roundtrip. Must run BEFORE initialDebit resolution.
+          this._allAccounts = accounts;
+
           // Preferred starting point: whatever the OCR + Learner already
-          // suggested. The category-change handler below may override the
-          // debit selection when the user picks a different expense category.
-          const initialDebit = scan.suggestedAccounts?.debitAccountCode
+          // suggested, resolved against the company's actual CoA so a
+          // generic "5306" suggestion still selects their real "54430".
+          // The category-change handler below may override the debit
+          // selection when the user picks a different expense category.
+          const initialDebit = this._resolveCoaCode(
+              scan.suggestedAccounts?.debitAccountCode,
+              scan.suggestedAccounts?.debitAccountName)
             || this._mapCategoryToAccountCode(scan.expenseCategory)
             || '';
-          const initialCredit = scan.suggestedAccounts?.creditAccountCode || '';
-
-          // Cache the full list on the page object so the category-change
-          // handler can re-render without another HTTP roundtrip.
-          this._allAccounts = accounts;
+          const initialCredit = this._resolveCoaCode(
+              scan.suggestedAccounts?.creditAccountCode,
+              scan.suggestedAccounts?.creditAccountName) || '';
 
           const buildOptions = (selected) => {
             let html = '<option value="">-- เลือกบัญชี --</option>';
@@ -1655,12 +1662,11 @@
             catSel.addEventListener('change', () => {
               const code = this._mapCategoryToAccountCode(catSel.value);
               if (!code) return;
-              // Find first exact OR prefix-matching account in the
-              // company's CoA — handles 5306, 53060, 54430 (custom
-              // codes ผู้ใช้ extend จาก base code) etc.
-              const acct = (this._allAccounts || []).find(a => a.accountCode === code)
-                ?? (this._allAccounts || []).find(a => a.accountCode.startsWith(code));
-              if (acct) debitSel2.value = acct.accountCode;
+              // Resolve the base category code against the company's
+              // actual CoA — handles 5306, 53060, 54430 (custom codes
+              // ผู้ใช้ extend จาก base code) etc.
+              const resolved = this._resolveCoaCode(code, null);
+              if (resolved) debitSel2.value = resolved;
             });
           }
           if (debitSel2 && !debitSel2.dataset.wired) {
@@ -1687,6 +1693,59 @@
           const d = document.getElementById('revDebitAccount'); if (d) d.innerHTML = fallback;
           const c = document.getElementById('revCreditAccount'); if (c) c.innerHTML = fallback;
         }
+      },
+
+      // Resolve a suggested account code/name against the company's actual
+      // Chart of Accounts. The backend already does this, but a scan row
+      // produced before the CoA-resolution pass — or a fully custom CoA —
+      // can still carry a generic code. Strategy mirrors the backend:
+      // exact → longest prefix → distinctive keyword on the account name,
+      // so a generic "5306 ค่าซ่อมแซม" still picks the company's real
+      // "54430 ค่าซ่อมแซมและบำรุงรักษา".
+      _resolveCoaCode(code, name) {
+        const list = this._allAccounts || [];
+        if (!list.length) return code || '';
+        if (code) {
+          const exact = list.find(a => a.accountCode === code);
+          if (exact) return exact.accountCode;
+          const prefix = list
+            .filter(a => a.accountCode.startsWith(code))
+            .sort((a, b) => b.accountCode.length - a.accountCode.length
+              || a.accountCode.localeCompare(b.accountCode))[0];
+          if (prefix) return prefix.accountCode;
+        }
+        if (name) {
+          const kw = this._distinctiveKeyword(name);
+          if (kw) {
+            const byName = list
+              .filter(a => (a.accountName || '').includes(kw))
+              .sort((a, b) => a.accountCode.localeCompare(b.accountCode))[0];
+            if (byName) return byName.accountCode;
+          }
+        }
+        return code || '';
+      },
+
+      // Pull the most distinctive keyword out of a suggested account name.
+      // Thai account names run words together with no spaces, so we cut at
+      // the first conjunction and strip shared classifier prefixes ("ค่า",
+      // "บัญชี"). Mirrors OcrService.ExtractDistinctiveKeyword on the server.
+      _distinctiveKeyword(name) {
+        if (!name) return '';
+        let work = String(name).trim().replace(/^\s*\d[\d\-.]*\s+/, '');
+        for (const sep of ['และ', 'หรือ', '/', ',', '&']) {
+          const idx = work.indexOf(sep);
+          if (idx > 2) { work = work.slice(0, idx); break; }
+        }
+        for (const p of ['ค่าใช้จ่าย', 'ค่า', 'บัญชี']) {
+          if (work.startsWith(p) && work.length > p.length + 2) { work = work.slice(p.length); break; }
+        }
+        work = work.trim();
+        if (work.includes(' ')) {
+          const tok = work.split(/\s+/).filter(t => t.length >= 3).sort((a, b) => b.length - a.length)[0];
+          if (tok) work = tok;
+        }
+        return work.length >= 3 ? work : '';
       },
 
       // Map the Thai expense-category dropdown values to the most likely Thai

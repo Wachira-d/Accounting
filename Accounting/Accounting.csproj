@@ -43,6 +43,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Expose internal types (e.g. ExpenseCategoryResolver) to the test project. -->
+    <InternalsVisibleTo Include="Accounting.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Thai administrative codes (TISI 1099) for ETDA e-Tax XML -->
     <EmbeddedResource Include="Resources\ThaiAdmin.csv" />
     <!-- Tesseract language data files — copied to output so they ship with the app -->

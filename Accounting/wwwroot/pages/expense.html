@@ -203,7 +203,22 @@
         try {
           const res = await api.getExpenseClaim(id);
           const e = res.data;
-          document.getElementById('detailContent').innerHTML = `
+
+          // Surface the Level-1 approver hint while the claim is awaiting
+          // sign-off. The claim's subject is a User (not an Employee) so
+          // we use the user→employee→manager resolver.
+          let mgrLine = '';
+          if (e.status === 'Submitted' || e.status === 'Draft') {
+            try {
+              const mgrRes = await api.getDirectManagerByUser(e.submittedByUserId);
+              const m = mgrRes?.data;
+              if (m && (m.managerName || m.departmentHeadName)) {
+                mgrLine = `<div style="background:#eef2ff;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#312e81">👤 <strong>ผู้อนุมัติระดับ 1 (Direct Manager):</strong> ${m.managerName ? Layout.esc(m.managerName) : '<em>—</em>'}${m.departmentHeadName && !m.managerName ? ' (สำรอง: หัวหน้าแผนก ' + Layout.esc(m.departmentHeadName) + ')' : ''}</div>`;
+              }
+            } catch (_) { /* ignore — silent if no employee record */ }
+          }
+
+          document.getElementById('detailContent').innerHTML = mgrLine + `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${Layout.esc(e.claimNumber)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(e.status)}</div></div>
@@ -223,7 +238,8 @@
                 <td class="text-right font-semibold">${Layout.money(l.netAmount)}</td>
               </tr>`).join('')}</tbody>
             </table></div>
-            ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${Layout.esc(e.rejectionReason)}</div></div>` : ''}`;
+            ${e.rejectionReason ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border-radius:8px"><div class="text-xs text-danger">เหตุผลที่ปฏิเสธ</div><div>${Layout.esc(e.rejectionReason)}</div></div>` : ''}
+            ${e.paymentVoucherDocumentId ? `<div style="margin-top:12px;padding:12px;background:#EFF6FF;border-radius:8px;display:flex;align-items:center;justify-content:space-between"><div><div class="text-xs" style="color:#1e40af">📄 ใบสำคัญจ่ายที่สร้างอัตโนมัติ</div><div style="font-size:11px;color:#64748b;margin-top:2px">${e.paidAt ? 'จ่ายเมื่อ ' + Layout.date(e.paidAt) : ''} ${e.paidReference ? '· อ้างอิง ' + Layout.esc(e.paidReference) : ''}</div></div><a href="/pages/documents.html#doc=${e.paymentVoucherDocumentId}" class="btn btn-sm btn-secondary">ดูใบสำคัญจ่าย</a></div>` : ''}`;
 
           // Actions based on status
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';

@@ -45,7 +45,8 @@ public record ExpenseClaimResponse(
     DateTime? PaidAt,
     string? PaidReference,
     List<ExpenseClaimLineResponse> Lines,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? PaymentVoucherDocumentId = null);
 
 public record ExpenseClaimLineResponse(
     Guid Id,

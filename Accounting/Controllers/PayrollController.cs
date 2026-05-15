@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Payroll;
 using Accounting.Services.Interfaces;
@@ -82,13 +83,39 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CreateLeave(Guid companyId, [FromBody] CreateLeaveRequest request)
         => StatusCode(201, new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
 
+    [HttpGet("leaves/{leaveId:guid}")]
+    public async Task<ActionResult<ApiResponse<LeaveResponse>>> GetLeave(Guid companyId, Guid leaveId)
+        => Ok(new ApiResponse<LeaveResponse>(true, await _service.GetLeaveAsync(companyId, leaveId)));
+
     [HttpPost("leaves/{leaveId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> ApproveLeave(Guid companyId, Guid leaveId)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.ApproveLeaveAsync(companyId, leaveId, User.Identity?.Name ?? "")));
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var name = User.Identity?.Name ?? "";
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.ApproveLeaveAsync(companyId, leaveId, userId, name)));
+    }
+
+    [HttpPost("leaves/{leaveId:guid}/reject")]
+    public async Task<ActionResult<ApiResponse<LeaveResponse>>> RejectLeave(Guid companyId, Guid leaveId, [FromBody] RejectLeaveRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var name = User.Identity?.Name ?? "";
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.RejectLeaveAsync(companyId, leaveId, userId, name, request)));
+    }
+
+    [HttpPost("leaves/{leaveId:guid}/cancel")]
+    public async Task<ActionResult<ApiResponse<LeaveResponse>>> CancelLeave(Guid companyId, Guid leaveId)
+        => Ok(new ApiResponse<LeaveResponse>(true, await _service.CancelLeaveAsync(companyId, leaveId)));
 
     [HttpGet("leaves")]
     public async Task<ActionResult<ApiResponse<List<LeaveResponse>>>> GetLeaves(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] int? year)
         => Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
+
+    [HttpGet("leaves/balance")]
+    public async Task<ActionResult<ApiResponse<LeaveBalanceResponse>>> GetLeaveBalance(
+        Guid companyId, [FromQuery] Guid employeeId, [FromQuery] int? year)
+        => Ok(new ApiResponse<LeaveBalanceResponse>(true,
+            await _service.GetLeaveBalanceAsync(companyId, employeeId, year ?? DateTime.UtcNow.Year)));
 
     [HttpPost("runs/{runId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)

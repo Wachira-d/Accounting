@@ -23,6 +23,26 @@ public class CompanySettings : TenantEntity
     public string? InvoiceFooter { get; set; }
     public string? ReceiptFooter { get; set; }
 
+    // Print Layout
+    // When true, printed documents (Invoice / Receipt / Expense / etc.)
+    // include a compact "GL Posting Summary" (Dr/Cr) table at the very
+    // bottom — an internal-audit footer below the signature area, drawn
+    // from the document's posted Journal Entry.
+    public bool ShowGlEntryOnDocument { get; set; } = false;
+
+    // HR — annual leave quota per LeaveType, stored as JSON:
+    //   {"Annual": 6, "Sick": 30, "Personal": 3, "Maternity": 98}
+    // Null / missing keys fall back to the Thai labor-law minimums in
+    // PayrollService.DefaultLeaveQuotas.
+    public string? LeaveQuotasJson { get; set; }
+
+    // HR approval enforcement — when true, Approve / Reject on leaves
+    // and salary advances is restricted to the requester's direct manager
+    // (resolved via Employee.DirectManagerId) OR users holding a
+    // privileged company-role (Owner / SystemAdmin). Default false to
+    // preserve the historical "anyone can approve" behaviour.
+    public bool EnforceManagerApproval { get; set; } = false;
+
     // Tax Settings
     public decimal DefaultVatRate { get; set; } = 7;
     public bool VatRegistered { get; set; } = true;

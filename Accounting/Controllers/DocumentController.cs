@@ -163,6 +163,27 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารสำเร็จ"));
     }
 
+    /// <summary>
+    /// Valid conversion targets for a document, per the Thai accounting
+    /// workflow rules in DocumentService.ValidConversions. The convert UI
+    /// calls this so it never offers an option the backend would reject —
+    /// a single source of truth instead of a duplicated client-side map.
+    /// </summary>
+    [HttpGet("{documentId:guid}/conversion-targets")]
+    public async Task<ActionResult<ApiResponse<List<DocumentType>>>> GetConversionTargets(
+        Guid companyId, Guid documentId)
+    {
+        var docType = await _db.Documents
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        if (docType == null)
+            return NotFound(new ApiResponse<List<DocumentType>>(false, null, "ไม่พบเอกสาร"));
+
+        var targets = DocumentService.GetValidConversionTargets(docType.Value).ToList();
+        return Ok(new ApiResponse<List<DocumentType>>(true, targets));
+    }
+
     [HttpPost("batch-convert/{targetType}")]
     public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> BatchConvert(
         Guid companyId, DocumentType targetType, [FromBody] BatchConvertRequest request)

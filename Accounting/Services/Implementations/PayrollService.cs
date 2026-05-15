@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Accounting.Data;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.DTOs.Payroll;
@@ -17,6 +18,10 @@ public class PayrollService : IPayrollService
     private readonly AccountingDbContext _db;
     private readonly IPdfGenerationService? _pdfService;
     private readonly IAccountingService? _accountingService;
+    private readonly ISalaryAdvanceService? _salaryAdvanceService;
+    private readonly IOrganizationService? _organizationService;
+    private readonly IPermissionService? _permissionService;
+    private readonly INotificationEngine? _notify;
 
     // Thai personal income tax brackets (progressive)
     private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
@@ -36,11 +41,91 @@ public class PayrollService : IPayrollService
     private const decimal SsoMaxBase = 15_000m;     // max salary base per month
     private const decimal SsoMaxContribution = 750m; // max monthly contribution
 
-    public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null, IAccountingService? accountingService = null)
+    public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
+        IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
+        IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _pdfService = pdfService;
         _accountingService = accountingService;
+        _salaryAdvanceService = salaryAdvanceService;
+        _organizationService = organizationService;
+        _permissionService = permissionService;
+        _notify = notify;
+    }
+
+    /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
+    private Task NotifyHrAsync(Guid companyId, string eventKey, Guid employeeId, Guid? actorUserId,
+        string title, string message, Guid entityId, string entityType, string actionUrl) =>
+        _notify == null ? Task.CompletedTask : _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title, Message = message, ActionUrl = actionUrl,
+            EntityType = entityType, EntityId = entityId,
+            RequesterEmployeeId = employeeId, ActorUserId = actorUserId,
+        });
+
+    /// <summary>Payroll-run-level events have no individual requester —
+    /// recipients resolve to HR / Accounting / Owner only.</summary>
+    private Task NotifyRunAsync(Guid companyId, string eventKey, Guid? actorUserId,
+        string title, string message, Guid entityId) =>
+        _notify == null ? Task.CompletedTask : _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+        {
+            Title = title, Message = message,
+            ActionUrl = "/pages/payroll.html#tab=runs",
+            EntityType = "PayrollRun", EntityId = entityId,
+            ActorUserId = actorUserId,
+        });
+
+    /// <summary>True when HR enforcement is configured on for the company.
+    /// Cached fetch — small CompanySettings row, used in hot HR paths.</summary>
+    private async Task<bool> IsManagerApprovalEnforcedAsync(Guid companyId) =>
+        await _db.Set<CompanySettings>()
+            .AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.EnforceManagerApproval)
+            .FirstOrDefaultAsync();
+
+    /// <summary>Allow approval when the user is an Owner / SystemAdmin
+    /// of the company (the documented HR override) — applied alongside
+    /// the direct-manager check when EnforceManagerApproval is on.</summary>
+    private async Task<bool> IsPrivilegedHrApproverAsync(Guid companyId, Guid userId)
+    {
+        var role = await _db.Set<CompanyUser>()
+            .AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => (UserRole?)cu.Role)
+            .FirstOrDefaultAsync();
+        return role == UserRole.Owner || role == UserRole.SystemAdmin;
+    }
+
+    /// <summary>Check the approver against the leave/advance's requesting
+    /// employee's direct manager (with department-head fallback) — plus
+    /// the Owner / SystemAdmin and granular-permission overrides. Throws
+    /// a clear error when EnforceManagerApproval is on and no path
+    /// authorises the user. No-op when enforcement is off.</summary>
+    private async Task EnsureCanApproveAsync(Guid companyId, Guid requestingEmployeeId, Guid approverUserId,
+        string actionLabel, string? overridePermissionKey = null)
+    {
+        if (!await IsManagerApprovalEnforcedAsync(companyId)) return;
+        if (_organizationService == null) return;
+
+        var info = await _organizationService.GetDirectManagerInfoAsync(companyId, requestingEmployeeId);
+        var isManager = info.ManagerUserId == approverUserId;
+        var isDeptHeadFallback = info.ManagerUserId == null && info.DepartmentHeadEmployeeId.HasValue
+            && await _db.Employees.AnyAsync(e => e.Id == info.DepartmentHeadEmployeeId.Value
+                && e.UserId == approverUserId);
+        if (isManager || isDeptHeadFallback) return;
+        if (await IsPrivilegedHrApproverAsync(companyId, approverUserId)) return;
+        // Granular-permission override — admins can grant the specific
+        // permission key to any company role.
+        if (!string.IsNullOrEmpty(overridePermissionKey) && _permissionService != null
+            && await _permissionService.HasPermissionAsync(companyId, approverUserId, overridePermissionKey))
+            return;
+
+        var approver = info.ManagerName ?? info.DepartmentHeadName ?? "หัวหน้าโดยตรง";
+        throw new InvalidOperationException(
+            $"ไม่มีสิทธิ์{actionLabel} — ระบบกำหนดให้เฉพาะ {approver} (หรือเจ้าของบริษัท / ผู้ที่ได้รับสิทธิ์) เท่านั้นที่ทำได้");
     }
 
     // ===== Employees =====
@@ -95,18 +180,24 @@ public class PayrollService : IPayrollService
             ProvidentFundEmployeePercent = request.ProvidentFundEmployeePercent,
             ProvidentFundEmployerPercent = request.ProvidentFundEmployerPercent,
             BranchId = request.BranchId,
-            DimensionId = request.DimensionId
+            DimensionId = request.DimensionId,
+            DepartmentId = request.DepartmentId,
+            PositionId = request.PositionId,
+            DirectManagerId = request.DirectManagerId
         };
 
         _db.Set<Employee>().Add(employee);
         await _db.SaveChangesAsync();
 
-        return MapToEmployeeResponse(employee);
+        return await GetEmployeeAsync(companyId, employee.Id);
     }
 
     public async Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId)
     {
         var employee = await _db.Set<Employee>()
+            .Include(e => e.DepartmentRef)
+            .Include(e => e.PositionRef)
+            .Include(e => e.DirectManager)
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
 
@@ -116,6 +207,9 @@ public class PayrollService : IPayrollService
     public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request)
     {
         var query = _db.Set<Employee>()
+            .Include(e => e.DepartmentRef)
+            .Include(e => e.PositionRef)
+            .Include(e => e.DirectManager)
             .Where(e => e.CompanyId == companyId && !e.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
@@ -159,11 +253,41 @@ public class PayrollService : IPayrollService
         if (request.ProvidentFundEmployerPercent.HasValue) employee.ProvidentFundEmployerPercent = request.ProvidentFundEmployerPercent.Value;
         if (request.BranchId.HasValue) employee.BranchId = request.BranchId.Value;
         if (request.DimensionId.HasValue) employee.DimensionId = request.DimensionId.Value;
+        // Org structure (preferred over the legacy string Department/Position)
+        if (request.DepartmentId.HasValue) employee.DepartmentId = request.DepartmentId.Value;
+        if (request.PositionId.HasValue) employee.PositionId = request.PositionId.Value;
+        if (request.DirectManagerId.HasValue)
+        {
+            if (request.DirectManagerId.Value == employeeId)
+                throw new InvalidOperationException("พนักงานไม่สามารถเป็นหัวหน้าของตัวเองได้");
+            employee.DirectManagerId = request.DirectManagerId.Value;
+        }
+        // Onboarding / offboarding (preserves all historical HR + GL records).
+        // When an Employee is offboarded we ALSO mirror it onto the linked
+        // User.Status so app access (login + LIFF) is disabled — the
+        // employee record itself stays for audit. Re-onboarding restores
+        // Active. Only mirrored when the User isn't already in a stricter
+        // state (Suspended, PendingVerification) which is admin-managed.
+        if (request.IsActive.HasValue)
+        {
+            employee.IsActive = request.IsActive.Value;
+            if (employee.UserId.HasValue)
+            {
+                var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == employee.UserId.Value);
+                if (user != null)
+                {
+                    if (!request.IsActive.Value && user.Status == UserStatus.Active)
+                        user.Status = UserStatus.Inactive;
+                    else if (request.IsActive.Value && user.Status == UserStatus.Inactive)
+                        user.Status = UserStatus.Active;
+                }
+            }
+        }
 
         employee.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return MapToEmployeeResponse(employee);
+        return await GetEmployeeAsync(companyId, employee.Id);
     }
 
     public async Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate)
@@ -175,6 +299,18 @@ public class PayrollService : IPayrollService
         employee.EndDate = endDate;
         employee.IsActive = false;
         employee.UpdatedAt = DateTime.UtcNow;
+
+        // Mirror offboarding to the linked User so app access (login +
+        // LIFF) is disabled. Same conservative rule as the IsActive
+        // toggle above — only flip Active → Inactive, never override
+        // stricter admin-managed states (Suspended / PendingVerification).
+        if (employee.UserId.HasValue)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == employee.UserId.Value);
+            if (user != null && user.Status == UserStatus.Active)
+                user.Status = UserStatus.Inactive;
+        }
+
         await _db.SaveChangesAsync();
     }
 
@@ -472,6 +608,11 @@ public class PayrollService : IPayrollService
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
 
+            await NotifyRunAsync(companyId, NotificationEvents.PayrollGenerated, actorUserId: null,
+                title: $"คำนวณรอบเงินเดือน {run.Month:D2}/{run.Year} เสร็จสิ้น",
+                message: $"พนักงาน {run.EmployeeCount} คน · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+                entityId: run.Id);
+
             return MapToPayrollRunResponse(run);
         }
         catch
@@ -495,12 +636,18 @@ public class PayrollService : IPayrollService
         run.ApprovedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollApproved, actorUserId: null,
+            title: $"อนุมัติรอบเงินเดือน {run.Month:D2}/{run.Year}",
+            message: $"อนุมัติโดย {approvedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+            entityId: run.Id);
+
         return MapToPayrollRunResponse(run);
     }
 
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
         var run = await _db.Set<PayrollRun>()
+            .Include(r => r.Details).ThenInclude(d => d.Employee).ThenInclude(e => e.DepartmentRef)
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
@@ -514,6 +661,7 @@ public class PayrollService : IPayrollService
         if (alreadyPaid)
             throw new InvalidOperationException($"รอบจ่ายเงินเดือน {run.Year}/{run.Month:D2} ถูกจ่ายไปแล้ว");
 
+        var clearedAdvances = new List<SalaryAdvance>();
         await using var payTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -527,14 +675,41 @@ public class PayrollService : IPayrollService
                 {
                 var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
-                // Dr: เงินเดือนและค่าจ้าง (541 - ค่าใช้จ่ายบุคลากร)
+                // Dr: เงินเดือนและค่าจ้าง (541 - ค่าใช้จ่ายบุคลากร).
+                // Split the salary debit by department cost-centre so each
+                // department's expense lands on its own dimension on the
+                // GL — prefer Employee.DepartmentRef.DimensionId (the new
+                // org-structure linkage) and fall back to the employee's
+                // own DimensionId, then to null. Companies that haven't
+                // configured departments still produce a single line.
                 var salaryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "54111" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4);
                 if (salaryAccount != null)
-                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        salaryAccount.Id, run.TotalGrossSalary, 0, $"เงินเดือน {run.Month}/{run.Year}"));
+                {
+                    var byDim = run.Details
+                        .GroupBy(d => d.Employee.DepartmentRef?.DimensionId ?? d.Employee.DimensionId)
+                        .Select(g => new { DimensionId = g.Key, Total = g.Sum(d => d.GrossIncome) })
+                        .Where(x => x.Total > 0)
+                        .ToList();
+                    if (byDim.Count <= 1)
+                    {
+                        var single = byDim.FirstOrDefault();
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            salaryAccount.Id, run.TotalGrossSalary, 0,
+                            $"เงินเดือน {run.Month}/{run.Year}",
+                            DimensionId: single?.DimensionId));
+                    }
+                    else
+                    {
+                        foreach (var grp in byDim)
+                            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                                salaryAccount.Id, grp.Total, 0,
+                                $"เงินเดือน {run.Month}/{run.Year}" + (grp.DimensionId.HasValue ? "" : " (ไม่ระบุ cost center)"),
+                                DimensionId: grp.DimensionId));
+                    }
+                }
 
                 // Dr: ประกันสังคมส่วนนายจ้าง (54120)
                 if (run.TotalSocialSecurityEmployer > 0)
@@ -603,14 +778,58 @@ public class PayrollService : IPayrollService
                             pvdExpAccount.Id, run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
                 }
 
-                // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ
+                // ── Advance recovery: clear outstanding salary advances ──
+                // For each employee, recover MonthlyDeduction (or the full
+                // outstanding balance when MonthlyDeduction is 0), capped at
+                // that employee's net pay. Credits Advance Receivable and
+                // reduces the cash actually disbursed.
+                decimal totalAdvanceRecovered = 0m;
+                var advanceRepayments = new List<(SalaryAdvance Advance, decimal Amount)>();
+                if (_salaryAdvanceService != null)
+                {
+                    foreach (var detail in run.Details)
+                    {
+                        var employeeRecoverable = detail.NetPay;
+                        var outstanding = await _salaryAdvanceService
+                            .GetOutstandingForEmployeeAsync(companyId, detail.EmployeeId);
+                        foreach (var adv in outstanding)
+                        {
+                            if (employeeRecoverable <= 0) break;
+                            var recover = adv.MonthlyDeduction > 0
+                                ? Math.Min(adv.MonthlyDeduction, adv.OutstandingAmount)
+                                : adv.OutstandingAmount;
+                            recover = Math.Min(recover, employeeRecoverable);
+                            if (recover <= 0) continue;
+                            advanceRepayments.Add((adv, recover));
+                            totalAdvanceRecovered += recover;
+                            employeeRecoverable -= recover;
+                        }
+                    }
+                }
+                if (totalAdvanceRecovered > 0)
+                {
+                    var advanceAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                        && (a.AccountName.Contains("ทดรอง") || a.AccountName.Contains("เงินยืมพนักงาน")))
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                        && a.AccountType == AccountType.Asset && a.AccountCode.StartsWith("115"));
+                    if (advanceAccount == null)
+                        throw new InvalidOperationException(
+                            "มีเงินทดรองค้างชำระแต่ไม่พบบัญชี 'เงินทดรองจ่าย' ในผังบัญชี — กรุณาสร้างบัญชีก่อน");
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        advanceAccount.Id, 0, totalAdvanceRecovered, "หักคืนเงินทดรองจ่ายพนักงาน"));
+                }
+
+                // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ หักเงินทดรองที่เรียกคืน
+                var cashPaid = run.TotalNetPay - totalAdvanceRecovered;
                 var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
                 if (cashAccount != null)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        cashAccount.Id, 0, run.TotalNetPay, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
+                        cashAccount.Id, 0, cashPaid, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
 
                 if (lines.Count >= 2)
                 {
@@ -624,11 +843,21 @@ public class PayrollService : IPayrollService
                         new Models.DTOs.Accounting.CreateJournalEntryRequest(
                             run.PayDate,
                             $"เงินเดือนประจำเดือน {run.Month}/{run.Year} ({run.EmployeeCount} คน)",
-                            $"PAYROLL-{run.Year}{run.Month:D2}",
+                            $"HR-PR-{run.Year}-{run.Month:D2}",
                             lines, JournalType.General), processedBy);
                     await _accountingService.PostJournalEntryAsync(companyId, entry.Id);
                     var je = await _db.JournalEntries.FindAsync(entry.Id);
                     if (je != null) { je.IsAutoGenerated = true; }
+                    // Link the run to its posted journal entry, then recover
+                    // outstanding advances (entities are tracked on the same
+                    // context — persisted by the SaveChanges below, inside
+                    // the surrounding payTransaction).
+                    run.JournalEntryId = entry.Id;
+                    foreach (var (adv, amount) in advanceRepayments)
+                    {
+                        if (_salaryAdvanceService!.ApplyRepayment(adv, amount))
+                            clearedAdvances.Add(adv);
+                    }
                     await _db.SaveChangesAsync();
                 }
             }
@@ -646,6 +875,22 @@ public class PayrollService : IPayrollService
         {
             await payTransaction.RollbackAsync();
             throw;
+        }
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"จ่ายเงินเดือน {run.Month:D2}/{run.Year} เรียบร้อย",
+            message: $"ดำเนินการโดย {processedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+            entityId: run.Id);
+
+        // Notify each employee whose advance was fully repaid by this run.
+        foreach (var adv in clearedAdvances)
+        {
+            await NotifyHrAsync(companyId, NotificationEvents.AdvanceCleared,
+                adv.EmployeeId, actorUserId: null,
+                title: "เงินทดรองของคุณเคลียร์ครบแล้ว",
+                message: $"ยอดรวม {adv.Amount:N2} บาท ถูกหักคืนครบทั้งจำนวนจากเงินเดือน {run.Month:D2}/{run.Year}",
+                entityId: adv.Id, entityType: "SalaryAdvance",
+                actionUrl: "/pages/salary-advance.html");
         }
 
         return MapToPayrollRunResponse(run);
@@ -688,7 +933,8 @@ public class PayrollService : IPayrollService
     public async Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId)
     {
         var detail = await _db.Set<PayrollDetail>()
-            .Include(d => d.Employee)
+            .Include(d => d.Employee).ThenInclude(e => e.DepartmentRef)
+            .Include(d => d.Employee).ThenInclude(e => e.PositionRef)
             .Include(d => d.PayrollRun)
             .FirstOrDefaultAsync(d => d.PayrollRunId == payrollRunId
                 && d.EmployeeId == employeeId
@@ -711,8 +957,13 @@ public class PayrollService : IPayrollService
         // Employee info
         sb.AppendLine("<table><tr><td><strong>รหัส:</strong> " + emp.EmployeeCode + "</td>");
         sb.AppendLine($"<td><strong>ชื่อ:</strong> {employeeName}</td></tr>");
-        sb.AppendLine($"<tr><td><strong>แผนก:</strong> {emp.Department ?? "-"}</td>");
-        sb.AppendLine($"<td><strong>ตำแหน่ง:</strong> {emp.Position ?? "-"}</td></tr></table>");
+        // Prefer the org-structure FK names; fall back to the legacy
+        // string fields so old employees without a Department/Position
+        // reference still print correctly.
+        var deptDisplay = emp.DepartmentRef?.Name ?? emp.Department ?? "-";
+        var posDisplay = emp.PositionRef?.Title ?? emp.Position ?? "-";
+        sb.AppendLine($"<tr><td><strong>แผนก:</strong> {deptDisplay}</td>");
+        sb.AppendLine($"<td><strong>ตำแหน่ง:</strong> {posDisplay}</td></tr></table>");
 
         // Earnings & Deductions side by side
         sb.AppendLine("<table><thead><tr><th colspan='2'>รายได้ (Earnings)</th><th colspan='2'>รายการหัก (Deductions)</th></tr></thead><tbody>");
@@ -765,6 +1016,26 @@ public class PayrollService : IPayrollService
         if (overlapping)
             throw new InvalidOperationException("มีรายการลาที่ทับซ้อนกันในช่วงเวลาเดียวกัน");
 
+        // Quota check — count Approved + Pending leaves of the same type
+        // for the start year. Resolved quotas merge per-company overrides
+        // (CompanySettings.LeaveQuotasJson) with Thai labor-law defaults.
+        var quotas = await ResolveLeaveQuotasAsync(companyId);
+        if (quotas.TryGetValue(request.LeaveType, out var allocated) && allocated > 0)
+        {
+            var leaveYear = request.StartDate.Year;
+            var usedThisYear = await _db.Set<EmployeeLeave>()
+                .Where(l => l.CompanyId == companyId
+                    && l.EmployeeId == request.EmployeeId
+                    && l.LeaveType == request.LeaveType
+                    && l.StartDate.Year == leaveYear
+                    && (l.Status == "Approved" || l.Status == "Pending")
+                    && !l.IsDeleted)
+                .SumAsync(l => (decimal?)l.TotalDays) ?? 0m;
+            if (usedThisYear + request.TotalDays > allocated)
+                throw new InvalidOperationException(
+                    $"จำนวนวันลาเกินโควต้า — {request.LeaveType} ปี {leaveYear} สิทธิ์ {allocated:0.#} วัน ใช้ไปแล้ว {usedThisYear:0.#} วัน ขอเพิ่ม {request.TotalDays:0.#} วัน");
+        }
+
         var leave = new EmployeeLeave
         {
             CompanyId = companyId,
@@ -780,10 +1051,27 @@ public class PayrollService : IPayrollService
         _db.Set<EmployeeLeave>().Add(leave);
         await _db.SaveChangesAsync();
 
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveSubmitted,
+            employee.Id, actorUserId: null,
+            title: $"คำขอลาใหม่จาก {employee.FirstNameTh} {employee.LastNameTh}",
+            message: $"{leave.LeaveType} · {leave.StartDate:dd/MM/yyyy} – {leave.EndDate:dd/MM/yyyy} ({leave.TotalDays} วัน)" +
+                     (string.IsNullOrWhiteSpace(leave.Reason) ? "" : $"\nเหตุผล: {leave.Reason}"),
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
         return MapToLeaveResponse(leave, employee);
     }
 
-    public async Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, string approvedBy)
+    public async Task<LeaveResponse> GetLeaveAsync(Guid companyId, Guid leaveId)
+    {
+        var leave = await _db.Set<EmployeeLeave>()
+            .Include(l => l.Employee)
+            .FirstOrDefaultAsync(l => l.Id == leaveId && l.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการลา");
+        return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    public async Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, Guid approverUserId, string approverName)
     {
         var leave = await _db.Set<EmployeeLeave>()
             .Include(l => l.Employee)
@@ -793,11 +1081,139 @@ public class PayrollService : IPayrollService
         if (leave.Status != "Pending")
             throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะรายการที่รอดำเนินการ");
 
+        await EnsureCanApproveAsync(companyId, leave.EmployeeId, approverUserId, "อนุมัติคำขอลา", PermissionKeys.LeaveApprove);
+
         leave.Status = "Approved";
-        leave.ApprovedBy = approvedBy;
+        leave.ApprovedBy = approverName;
         await _db.SaveChangesAsync();
 
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveApproved,
+            leave.EmployeeId, actorUserId: approverUserId,
+            title: $"คำขอลา {leave.StartDate:dd/MM} – {leave.EndDate:dd/MM} ได้รับอนุมัติ",
+            message: $"{leave.LeaveType} · อนุมัติโดย {approverName}",
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
         return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    public async Task<LeaveResponse> RejectLeaveAsync(Guid companyId, Guid leaveId, Guid rejectorUserId, string rejectorName, RejectLeaveRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new InvalidOperationException("กรุณาระบุเหตุผลในการปฏิเสธ");
+
+        var leave = await _db.Set<EmployeeLeave>()
+            .Include(l => l.Employee)
+            .FirstOrDefaultAsync(l => l.Id == leaveId && l.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการลา");
+
+        if (leave.Status != "Pending")
+            throw new InvalidOperationException("สามารถปฏิเสธได้เฉพาะรายการที่รอดำเนินการ");
+
+        await EnsureCanApproveAsync(companyId, leave.EmployeeId, rejectorUserId, "ปฏิเสธคำขอลา", PermissionKeys.LeaveReject);
+
+        leave.Status = "Rejected";
+        leave.ApprovedBy = rejectorName;
+        leave.RejectionReason = request.Reason;
+        await _db.SaveChangesAsync();
+
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveRejected,
+            leave.EmployeeId, actorUserId: rejectorUserId,
+            title: $"คำขอลา {leave.StartDate:dd/MM} – {leave.EndDate:dd/MM} ถูกปฏิเสธ",
+            message: $"เหตุผล: {request.Reason}",
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
+        return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    public async Task<LeaveResponse> CancelLeaveAsync(Guid companyId, Guid leaveId)
+    {
+        var leave = await _db.Set<EmployeeLeave>()
+            .Include(l => l.Employee)
+            .FirstOrDefaultAsync(l => l.Id == leaveId && l.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการลา");
+
+        // Only Pending or Approved leaves can be cancelled. Rejected/Cancelled
+        // leaves are terminal — and a cancelled approved leave that was already
+        // counted by a posted payroll run should not be silently undone here.
+        if (leave.Status != "Pending" && leave.Status != "Approved")
+            throw new InvalidOperationException("ยกเลิกได้เฉพาะรายการที่ยังรอดำเนินการหรืออนุมัติแล้ว");
+
+        leave.Status = "Cancelled";
+        await _db.SaveChangesAsync();
+
+        await NotifyHrAsync(companyId, NotificationEvents.LeaveCancelled,
+            leave.EmployeeId, actorUserId: null,
+            title: $"คำขอลา {leave.StartDate:dd/MM} – {leave.EndDate:dd/MM} ถูกยกเลิก",
+            message: $"{leave.LeaveType}",
+            entityId: leave.Id, entityType: "EmployeeLeave",
+            actionUrl: "/pages/payroll.html#tab=leaves");
+
+        return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    // Thai labor-law defaults — used when CompanySettings.LeaveQuotasJson
+    // is not set. Annual: 6d (พ.ร.บ.คุ้มครองแรงงาน), Sick: 30d/yr (paid
+    // ceiling), Personal: 3d, Maternity: 98d.
+    private static readonly Dictionary<string, decimal> DefaultLeaveQuotas = new()
+    {
+        ["Annual"] = 6m,
+        ["Sick"] = 30m,
+        ["Personal"] = 3m,
+        ["Maternity"] = 98m,
+        ["Other"] = 0m,
+    };
+
+    private async Task<Dictionary<string, decimal>> ResolveLeaveQuotasAsync(Guid companyId)
+    {
+        var settings = await _db.Set<CompanySettings>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (string.IsNullOrWhiteSpace(settings?.LeaveQuotasJson))
+            return new Dictionary<string, decimal>(DefaultLeaveQuotas);
+        try
+        {
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, decimal>>(settings.LeaveQuotasJson);
+            if (parsed == null) return new Dictionary<string, decimal>(DefaultLeaveQuotas);
+            // Merge: tenant overrides win, defaults fill the gaps.
+            var merged = new Dictionary<string, decimal>(DefaultLeaveQuotas);
+            foreach (var kvp in parsed) merged[kvp.Key] = kvp.Value;
+            return merged;
+        }
+        catch { return new Dictionary<string, decimal>(DefaultLeaveQuotas); }
+    }
+
+    public async Task<LeaveBalanceResponse> GetLeaveBalanceAsync(Guid companyId, Guid employeeId, int year)
+    {
+        var employee = await _db.Set<Employee>()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        var quotas = await ResolveLeaveQuotasAsync(companyId);
+
+        // "Used" counts Approved + Pending leaves (Pending reserves the
+        // quota so two overlapping requests can't both eat the same days).
+        // Rejected / Cancelled leaves don't count.
+        var leaves = await _db.Set<EmployeeLeave>()
+            .Where(l => l.CompanyId == companyId
+                && l.EmployeeId == employeeId
+                && l.StartDate.Year == year
+                && (l.Status == "Approved" || l.Status == "Pending")
+                && !l.IsDeleted)
+            .ToListAsync();
+
+        var balances = quotas.Select(q =>
+        {
+            var used = leaves.Where(l => l.LeaveType == q.Key).Sum(l => l.TotalDays);
+            return new LeaveBalanceItem(q.Key, q.Value, used, Math.Max(0m, q.Value - used));
+        }).OrderBy(b => b.LeaveType).ToList();
+
+        return new LeaveBalanceResponse(
+            employeeId,
+            $"{employee.FirstNameTh} {employee.LastNameTh}".Trim(),
+            year,
+            balances);
     }
 
     public async Task<List<LeaveResponse>> GetLeavesAsync(Guid companyId, Guid? employeeId, int? year)
@@ -983,7 +1399,14 @@ public class PayrollService : IPayrollService
         new(e.Id, e.EmployeeCode, e.TitleTh, e.FirstNameTh, e.LastNameTh,
             e.FirstNameEn, e.LastNameEn, e.CitizenId, e.Department, e.Position,
             e.EmploymentType, e.StartDate, e.EndDate, e.BaseSalary,
-            e.SalaryType, e.IsActive, e.CreatedAt);
+            e.SalaryType, e.IsActive, e.CreatedAt,
+            e.DepartmentId, e.DepartmentRef?.Name,
+            e.PositionId, e.PositionRef?.Title,
+            e.DirectManagerId,
+            e.DirectManager != null
+                ? $"{e.DirectManager.TitleTh}{e.DirectManager.FirstNameTh} {e.DirectManager.LastNameTh}".Trim()
+                : null,
+            e.ContactId);
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,
@@ -997,5 +1420,6 @@ public class PayrollService : IPayrollService
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",
-            l.LeaveType, l.StartDate, l.EndDate, l.TotalDays, l.Status, l.Reason);
+            l.LeaveType, l.StartDate, l.EndDate, l.TotalDays, l.Status, l.Reason,
+            l.ApprovedBy, l.RejectionReason);
 }
