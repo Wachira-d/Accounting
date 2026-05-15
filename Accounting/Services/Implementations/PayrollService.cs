@@ -838,6 +838,15 @@ public class PayrollService : IPayrollService
         return MapToLeaveResponse(leave, employee);
     }
 
+    public async Task<LeaveResponse> GetLeaveAsync(Guid companyId, Guid leaveId)
+    {
+        var leave = await _db.Set<EmployeeLeave>()
+            .Include(l => l.Employee)
+            .FirstOrDefaultAsync(l => l.Id == leaveId && l.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการลา");
+        return MapToLeaveResponse(leave, leave.Employee);
+    }
+
     public async Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, string approvedBy)
     {
         var leave = await _db.Set<EmployeeLeave>()
@@ -850,6 +859,46 @@ public class PayrollService : IPayrollService
 
         leave.Status = "Approved";
         leave.ApprovedBy = approvedBy;
+        await _db.SaveChangesAsync();
+
+        return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    public async Task<LeaveResponse> RejectLeaveAsync(Guid companyId, Guid leaveId, string rejectedBy, RejectLeaveRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new InvalidOperationException("กรุณาระบุเหตุผลในการปฏิเสธ");
+
+        var leave = await _db.Set<EmployeeLeave>()
+            .Include(l => l.Employee)
+            .FirstOrDefaultAsync(l => l.Id == leaveId && l.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการลา");
+
+        if (leave.Status != "Pending")
+            throw new InvalidOperationException("สามารถปฏิเสธได้เฉพาะรายการที่รอดำเนินการ");
+
+        leave.Status = "Rejected";
+        leave.ApprovedBy = rejectedBy;
+        leave.RejectionReason = request.Reason;
+        await _db.SaveChangesAsync();
+
+        return MapToLeaveResponse(leave, leave.Employee);
+    }
+
+    public async Task<LeaveResponse> CancelLeaveAsync(Guid companyId, Guid leaveId)
+    {
+        var leave = await _db.Set<EmployeeLeave>()
+            .Include(l => l.Employee)
+            .FirstOrDefaultAsync(l => l.Id == leaveId && l.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการลา");
+
+        // Only Pending or Approved leaves can be cancelled. Rejected/Cancelled
+        // leaves are terminal — and a cancelled approved leave that was already
+        // counted by a posted payroll run should not be silently undone here.
+        if (leave.Status != "Pending" && leave.Status != "Approved")
+            throw new InvalidOperationException("ยกเลิกได้เฉพาะรายการที่ยังรอดำเนินการหรืออนุมัติแล้ว");
+
+        leave.Status = "Cancelled";
         await _db.SaveChangesAsync();
 
         return MapToLeaveResponse(leave, leave.Employee);
@@ -1052,5 +1101,6 @@ public class PayrollService : IPayrollService
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",
-            l.LeaveType, l.StartDate, l.EndDate, l.TotalDays, l.Status, l.Reason);
+            l.LeaveType, l.StartDate, l.EndDate, l.TotalDays, l.Status, l.Reason,
+            l.ApprovedBy, l.RejectionReason);
 }

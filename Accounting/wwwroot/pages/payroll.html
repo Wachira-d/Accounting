@@ -455,8 +455,14 @@ const Page = {
           <td>${Layout.date(l.endDate)}</td>
           <td class="text-right">${l.days || l.totalDays || '-'}</td>
           <td>${l.reason || '-'}</td>
-          <td>${Layout.statusBadge(l.status || 'Pending')}</td>
-          <td>${l.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.approveLeave('${l.id}')">อนุมัติ</button>` : ''}</td>
+          <td>${Layout.statusBadge(l.status || 'Pending')}${l.rejectionReason ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">✕ ${l.rejectionReason}</div>` : ''}</td>
+          <td>${l.status === 'Pending'
+              ? `<button class="btn btn-sm btn-success" onclick="Page.approveLeave('${l.id}')">อนุมัติ</button>
+                 <button class="btn btn-sm btn-danger" onclick="Page.rejectLeave('${l.id}')">ปฏิเสธ</button>
+                 <button class="btn btn-sm btn-ghost" onclick="Page.cancelLeave('${l.id}')">ยกเลิก</button>`
+              : (l.status === 'Approved'
+                  ? `<button class="btn btn-sm btn-ghost" onclick="Page.cancelLeave('${l.id}')">ยกเลิก</button>`
+                  : '')}</td>
         </tr>`;
       }).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -496,10 +502,32 @@ const Page = {
   },
 
   async approveLeave(id) {
+    if (!confirm('ยืนยันอนุมัติคำขอลา?')) return;
     const api = Layout.api(); if (!api) return;
     try {
       await api.approveLeave(id);
       Layout.toast('อนุมัติลาสำเร็จ');
+      this.loadLeaves();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async rejectLeave(id) {
+    const reason = prompt('ระบุเหตุผลในการปฏิเสธคำขอลา:');
+    if (!reason || !reason.trim()) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.rejectLeave(id, { reason: reason.trim() });
+      Layout.toast('ปฏิเสธคำขอลาแล้ว');
+      this.loadLeaves();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async cancelLeave(id) {
+    if (!confirm('ยืนยันยกเลิกคำขอลา?')) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.cancelLeave(id);
+      Layout.toast('ยกเลิกคำขอลาแล้ว');
       this.loadLeaves();
     } catch (err) { Layout.toast(err.message, 'error'); }
   },

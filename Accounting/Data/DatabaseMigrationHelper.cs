@@ -1831,6 +1831,11 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_Employees_ContactId" ON "Employees" ("ContactId");
             """,
 
+            // ===== EmployeeLeaves: rejection reason for the reject workflow =====
+            """
+            ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "RejectionReason" text NULL;
+            """,
+
             // ===== SalaryAdvances: employee salary-advance workflow → posts to central GL =====
             """
             CREATE TABLE IF NOT EXISTS "SalaryAdvances" (

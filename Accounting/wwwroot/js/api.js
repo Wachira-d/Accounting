@@ -497,8 +497,11 @@ const API = {
       getPayrollItems: () => API.get(`${base}/payroll/items`),
       createPayrollItem: (d) => API.post(`${base}/payroll/items`, d),
       getLeaves: (q = '') => API.get(`${base}/payroll/leaves${q}`),
+      getLeave: (id) => API.get(`${base}/payroll/leaves/${id}`),
       createLeave: (d) => API.post(`${base}/payroll/leaves`, d),
       approveLeave: (id) => API.post(`${base}/payroll/leaves/${id}/approve`),
+      rejectLeave: (id, d) => API.post(`${base}/payroll/leaves/${id}/reject`, d),
+      cancelLeave: (id) => API.post(`${base}/payroll/leaves/${id}/cancel`),
       getPnd1: (y, m) => API.get(`${base}/payroll/pnd1/${y}/${m}`),
       getSso: (y, m) => API.get(`${base}/payroll/sso/${y}/${m}`),
       // Salary Advance

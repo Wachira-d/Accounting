@@ -76,4 +76,8 @@ public record CreateLeaveRequest(
 public record LeaveResponse(
     Guid Id, Guid EmployeeId, string EmployeeName,
     string LeaveType, DateTime StartDate, DateTime EndDate,
-    decimal TotalDays, string Status, string? Reason);
+    decimal TotalDays, string Status, string? Reason,
+    string? ApprovedBy = null,
+    string? RejectionReason = null);
+
+public record RejectLeaveRequest(string Reason);

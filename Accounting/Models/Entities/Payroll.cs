@@ -173,6 +173,7 @@ public class EmployeeLeave : TenantEntity
     public string? Reason { get; set; }
     public string Status { get; set; } = "Pending";      // Pending, Approved, Rejected, Cancelled
     public string? ApprovedBy { get; set; }
+    public string? RejectionReason { get; set; }         // Filled when Status = Rejected
 }
 
 /// <summary>
