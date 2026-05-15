@@ -18,6 +18,7 @@ public class PayrollService : IPayrollService
     private readonly IPdfGenerationService? _pdfService;
     private readonly IAccountingService? _accountingService;
     private readonly ISalaryAdvanceService? _salaryAdvanceService;
+    private readonly IOrganizationService? _organizationService;
 
     // Thai personal income tax brackets (progressive)
     private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
@@ -38,12 +39,58 @@ public class PayrollService : IPayrollService
     private const decimal SsoMaxContribution = 750m; // max monthly contribution
 
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
-        IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null)
+        IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
+        IOrganizationService? organizationService = null)
     {
         _db = db;
         _pdfService = pdfService;
         _accountingService = accountingService;
         _salaryAdvanceService = salaryAdvanceService;
+        _organizationService = organizationService;
+    }
+
+    /// <summary>True when HR enforcement is configured on for the company.
+    /// Cached fetch — small CompanySettings row, used in hot HR paths.</summary>
+    private async Task<bool> IsManagerApprovalEnforcedAsync(Guid companyId) =>
+        await _db.Set<CompanySettings>()
+            .AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.EnforceManagerApproval)
+            .FirstOrDefaultAsync();
+
+    /// <summary>Allow approval when the user is an Owner / SystemAdmin
+    /// of the company (the documented HR override) — applied alongside
+    /// the direct-manager check when EnforceManagerApproval is on.</summary>
+    private async Task<bool> IsPrivilegedHrApproverAsync(Guid companyId, Guid userId)
+    {
+        var role = await _db.Set<CompanyUser>()
+            .AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => (UserRole?)cu.Role)
+            .FirstOrDefaultAsync();
+        return role == UserRole.Owner || role == UserRole.SystemAdmin;
+    }
+
+    /// <summary>Check the approver against the leave/advance's requesting
+    /// employee's direct manager (with department-head fallback). Throws
+    /// a clear error when EnforceManagerApproval is on and neither match
+    /// applies. No-op when enforcement is off.</summary>
+    private async Task EnsureCanApproveAsync(Guid companyId, Guid requestingEmployeeId, Guid approverUserId, string actionLabel)
+    {
+        if (!await IsManagerApprovalEnforcedAsync(companyId)) return;
+        if (_organizationService == null) return;
+
+        var info = await _organizationService.GetDirectManagerInfoAsync(companyId, requestingEmployeeId);
+        var isManager = info.ManagerUserId == approverUserId;
+        var isDeptHeadFallback = info.ManagerUserId == null && info.DepartmentHeadEmployeeId.HasValue
+            && await _db.Employees.AnyAsync(e => e.Id == info.DepartmentHeadEmployeeId.Value
+                && e.UserId == approverUserId);
+        if (isManager || isDeptHeadFallback) return;
+        if (await IsPrivilegedHrApproverAsync(companyId, approverUserId)) return;
+
+        var approver = info.ManagerName ?? info.DepartmentHeadName ?? "หัวหน้าโดยตรง";
+        throw new InvalidOperationException(
+            $"ไม่มีสิทธิ์{actionLabel} — ระบบกำหนดให้เฉพาะ {approver} (หรือเจ้าของบริษัท) เท่านั้นที่ทำได้");
     }
 
     // ===== Employees =====
@@ -180,8 +227,27 @@ public class PayrollService : IPayrollService
                 throw new InvalidOperationException("พนักงานไม่สามารถเป็นหัวหน้าของตัวเองได้");
             employee.DirectManagerId = request.DirectManagerId.Value;
         }
-        // Onboarding / offboarding (preserves all historical HR + GL records)
-        if (request.IsActive.HasValue) employee.IsActive = request.IsActive.Value;
+        // Onboarding / offboarding (preserves all historical HR + GL records).
+        // When an Employee is offboarded we ALSO mirror it onto the linked
+        // User.Status so app access (login + LIFF) is disabled — the
+        // employee record itself stays for audit. Re-onboarding restores
+        // Active. Only mirrored when the User isn't already in a stricter
+        // state (Suspended, PendingVerification) which is admin-managed.
+        if (request.IsActive.HasValue)
+        {
+            employee.IsActive = request.IsActive.Value;
+            if (employee.UserId.HasValue)
+            {
+                var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == employee.UserId.Value);
+                if (user != null)
+                {
+                    if (!request.IsActive.Value && user.Status == UserStatus.Active)
+                        user.Status = UserStatus.Inactive;
+                    else if (request.IsActive.Value && user.Status == UserStatus.Inactive)
+                        user.Status = UserStatus.Active;
+                }
+            }
+        }
 
         employee.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
@@ -198,6 +264,18 @@ public class PayrollService : IPayrollService
         employee.EndDate = endDate;
         employee.IsActive = false;
         employee.UpdatedAt = DateTime.UtcNow;
+
+        // Mirror offboarding to the linked User so app access (login +
+        // LIFF) is disabled. Same conservative rule as the IsActive
+        // toggle above — only flip Active → Inactive, never override
+        // stricter admin-managed states (Suspended / PendingVerification).
+        if (employee.UserId.HasValue)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == employee.UserId.Value);
+            if (user != null && user.Status == UserStatus.Active)
+                user.Status = UserStatus.Inactive;
+        }
+
         await _db.SaveChangesAsync();
     }
 
@@ -524,7 +602,7 @@ public class PayrollService : IPayrollService
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
         var run = await _db.Set<PayrollRun>()
-            .Include(r => r.Details)
+            .Include(r => r.Details).ThenInclude(d => d.Employee).ThenInclude(e => e.DepartmentRef)
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
@@ -551,14 +629,41 @@ public class PayrollService : IPayrollService
                 {
                 var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
-                // Dr: เงินเดือนและค่าจ้าง (541 - ค่าใช้จ่ายบุคลากร)
+                // Dr: เงินเดือนและค่าจ้าง (541 - ค่าใช้จ่ายบุคลากร).
+                // Split the salary debit by department cost-centre so each
+                // department's expense lands on its own dimension on the
+                // GL — prefer Employee.DepartmentRef.DimensionId (the new
+                // org-structure linkage) and fall back to the employee's
+                // own DimensionId, then to null. Companies that haven't
+                // configured departments still produce a single line.
                 var salaryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "54111" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4);
                 if (salaryAccount != null)
-                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        salaryAccount.Id, run.TotalGrossSalary, 0, $"เงินเดือน {run.Month}/{run.Year}"));
+                {
+                    var byDim = run.Details
+                        .GroupBy(d => d.Employee.DepartmentRef?.DimensionId ?? d.Employee.DimensionId)
+                        .Select(g => new { DimensionId = g.Key, Total = g.Sum(d => d.GrossIncome) })
+                        .Where(x => x.Total > 0)
+                        .ToList();
+                    if (byDim.Count <= 1)
+                    {
+                        var single = byDim.FirstOrDefault();
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            salaryAccount.Id, run.TotalGrossSalary, 0,
+                            $"เงินเดือน {run.Month}/{run.Year}",
+                            DimensionId: single?.DimensionId));
+                    }
+                    else
+                    {
+                        foreach (var grp in byDim)
+                            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                                salaryAccount.Id, grp.Total, 0,
+                                $"เงินเดือน {run.Month}/{run.Year}" + (grp.DimensionId.HasValue ? "" : " (ไม่ระบุ cost center)"),
+                                DimensionId: grp.DimensionId));
+                    }
+                }
 
                 // Dr: ประกันสังคมส่วนนายจ้าง (54120)
                 if (run.TotalSocialSecurityEmployer > 0)
@@ -893,7 +998,7 @@ public class PayrollService : IPayrollService
         return MapToLeaveResponse(leave, leave.Employee);
     }
 
-    public async Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, string approvedBy)
+    public async Task<LeaveResponse> ApproveLeaveAsync(Guid companyId, Guid leaveId, Guid approverUserId, string approverName)
     {
         var leave = await _db.Set<EmployeeLeave>()
             .Include(l => l.Employee)
@@ -903,14 +1008,16 @@ public class PayrollService : IPayrollService
         if (leave.Status != "Pending")
             throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะรายการที่รอดำเนินการ");
 
+        await EnsureCanApproveAsync(companyId, leave.EmployeeId, approverUserId, "อนุมัติคำขอลา");
+
         leave.Status = "Approved";
-        leave.ApprovedBy = approvedBy;
+        leave.ApprovedBy = approverName;
         await _db.SaveChangesAsync();
 
         return MapToLeaveResponse(leave, leave.Employee);
     }
 
-    public async Task<LeaveResponse> RejectLeaveAsync(Guid companyId, Guid leaveId, string rejectedBy, RejectLeaveRequest request)
+    public async Task<LeaveResponse> RejectLeaveAsync(Guid companyId, Guid leaveId, Guid rejectorUserId, string rejectorName, RejectLeaveRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Reason))
             throw new InvalidOperationException("กรุณาระบุเหตุผลในการปฏิเสธ");
@@ -923,8 +1030,10 @@ public class PayrollService : IPayrollService
         if (leave.Status != "Pending")
             throw new InvalidOperationException("สามารถปฏิเสธได้เฉพาะรายการที่รอดำเนินการ");
 
+        await EnsureCanApproveAsync(companyId, leave.EmployeeId, rejectorUserId, "ปฏิเสธคำขอลา");
+
         leave.Status = "Rejected";
-        leave.ApprovedBy = rejectedBy;
+        leave.ApprovedBy = rejectorName;
         leave.RejectionReason = request.Reason;
         await _db.SaveChangesAsync();
 
