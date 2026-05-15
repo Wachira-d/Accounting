@@ -152,13 +152,13 @@ public class NotificationEngine : INotificationEngine
                         .ToListAsync();
 
                 case NotificationRecipientRoles.HrAdmin:
-                    // Granted via a CompanyRolePermission row with "perm:HR.Admin",
+                    // Granted via a CompanyRolePermission row with perm:HR.Admin,
                     // or anyone with UserRole.SystemAdmin in this tenant.
-                    return await ResolveByPermissionOrRoleAsync(companyId, "perm:HR.Admin",
+                    return await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin,
                         UserRole.SystemAdmin);
 
                 case NotificationRecipientRoles.Accounting:
-                    return await ResolveByPermissionOrRoleAsync(companyId, "perm:Accounting.View",
+                    return await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.AccountingView,
                         UserRole.Accountant);
 
                 default:
