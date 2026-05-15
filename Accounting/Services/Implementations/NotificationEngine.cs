@@ -62,7 +62,7 @@ public class NotificationEngine : INotificationEngine
                 foreach (var uid in userIds)
                 {
                     if (context.ActorUserId == uid) continue;  // never notify the actor
-                    var prev = effective.TryGetValue(uid, out var v) ? v : (false, false, false);
+                    var prev = effective.TryGetValue(uid, out var v) ? v : (Sys: false, Email: false, Line: false);
                     effective[uid] = (
                         prev.Sys   || s.EnableSystem,
                         prev.Email || s.EnableEmail,
