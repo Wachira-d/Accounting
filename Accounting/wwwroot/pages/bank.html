@@ -280,21 +280,28 @@
             <select class="form-select" id="impAccount"></select>
           </div>
           <div class="form-group"><label class="form-label">รูปแบบไฟล์ *</label>
-            <select class="form-select" id="impFormat"><option value="CSV">CSV</option><option value="OFX">OFX</option><option value="QIF">QIF</option><option value="MT940">MT940</option></select>
+            <select class="form-select" id="impFormat">
+              <option value="CSV">CSV (.csv)</option>
+              <option value="EXCEL">Excel (.xlsx)</option>
+              <option value="OFX">OFX</option>
+              <option value="QIF">QIF</option>
+              <option value="MT940">MT940</option>
+            </select>
           </div>
           <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
-            <input type="file" class="form-input" id="impFile" accept=".csv,.ofx,.qif,.mt940,.txt">
+            <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.ofx,.qif,.mt940,.txt">
           </div>
           <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
-            <strong>📌 รูปแบบ CSV ที่รองรับ:</strong><br>
+            <strong>📌 รูปแบบที่รองรับ:</strong><br>
             ระบบจะตรวจหาคอลัมน์อัตโนมัติ — ไฟล์ต้องมีหัวคอลัมน์ที่มีคำว่า:<br>
-            • <strong data-i18n="common.date">วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
+            • <strong data-i18n="common.date">วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, MM/dd/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
             • <strong>ฝากเงิน/ถอนเงิน</strong> หรือ Deposit/Withdrawal (หรือคอลัมน์ Amount เดียวที่มีเครื่องหมาย +/-)<br>
             • <strong>ยอดคงเหลือ</strong> หรือ Balance<br>
             • (option) เวลา, รายการ, ช่องทาง, รายละเอียด, เลขอ้างอิง<br>
-            ✅ รองรับ Statement จาก KBank, SCB, BBL, KTB, BAY, TTB และอื่นๆ<br>
+            ✅ รองรับ Statement จาก KBank, SCB, BBL, KTB, BAY, TTB และอื่นๆ (CSV / Excel .xlsx)<br>
             ✅ รองรับตัวเลขที่มี comma (5,998.50) และยอดติดลบในวงเล็บ<br>
-            ⚠️ บันทึกไฟล์เป็น <strong>UTF-8</strong> เพื่อให้แสดงภาษาไทยถูกต้อง
+            ✅ ตรวจจับรูปแบบวันที่อัตโนมัติ — ป้องกันการสลับ วัน↔เดือน เมื่อใช้ statement แบบ US (MM/DD)<br>
+            ⚠️ CSV ต้องบันทึกเป็น <strong>UTF-8</strong> เพื่อให้แสดงภาษาไทยถูกต้อง
           </div>
         </div>
         <div class="modal-footer">
@@ -1505,9 +1512,19 @@
       async doImport() {
         const api = Layout.api(); if (!api) return;
         const accountId = document.getElementById('impAccount').value;
-        const format = document.getElementById('impFormat').value;
         const file = document.getElementById('impFile').files[0];
         if (!accountId || !file) { Layout.toast('กรุณาเลือกบัญชีและไฟล์', 'error'); return; }
+        // Auto-correct the format dropdown based on the actual file extension —
+        // users frequently leave the default "CSV" selected but pick an .xlsx
+        // file. Excel and CSV use different parsers; the extension is the
+        // authoritative signal so we override the dropdown silently.
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        let format = document.getElementById('impFormat').value;
+        if (ext === 'xlsx' || ext === 'xls') format = 'EXCEL';
+        else if (ext === 'csv' || ext === 'txt') format = 'CSV';
+        else if (ext === 'ofx') format = 'OFX';
+        else if (ext === 'qif') format = 'QIF';
+        document.getElementById('impFormat').value = format;
         try {
           const reader = new FileReader();
           reader.onload = async (e) => {

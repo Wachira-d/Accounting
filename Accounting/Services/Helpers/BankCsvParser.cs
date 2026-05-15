@@ -41,16 +41,43 @@ public static class BankCsvParser
     {
         // Try UTF-8 first (with BOM detection); fallback to Windows-874 (TIS-620)
         string content = TryDecode(fileBytes);
-
         var rawRows = ParseCsvCells(content);
+        return ParseRows(rawRows, "CSV");
+    }
+
+    /// <summary>
+    /// Shared row-loop used by both the CSV and the Excel entry points. Takes a
+    /// pre-parsed 2D cell grid, detects the header row + column layout, then
+    /// extracts one Row per data line. Performs a two-pass date scan first so
+    /// the day/month order is locked across the entire file — otherwise a
+    /// statement that uses MM/DD/YYYY would silently flip to DD/MM/YYYY on
+    /// dates where the day happens to be ≤ 12 (the bug that turned an April
+    /// statement into a Sep/Oct/Nov/Dec spread).
+    /// </summary>
+    public static (List<Row> rows, List<string> skipped) ParseRows(List<List<string>> rawRows, string sourceLabel = "ไฟล์")
+    {
         if (rawRows.Count < 2)
-            throw new ArgumentException("ไฟล์ CSV ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 รายการ");
+            throw new ArgumentException($"{sourceLabel}ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 รายการ");
 
         var (headerIdx, map) = DetectHeader(rawRows);
         if (headerIdx < 0)
             throw new ArgumentException(
-                "ไม่พบหัวคอลัมน์ที่รองรับในไฟล์ CSV " +
+                $"ไม่พบหัวคอลัมน์ที่รองรับใน{sourceLabel} " +
                 "(ต้องมีคอลัมน์ที่มีคำว่า: วันที่/Date, ฝาก/Deposit หรือ ถอน/Withdrawal, ยอดคงเหลือ/Balance)");
+
+        // ── Pass 1: collect every date string in the file and detect the
+        // canonical day/month order so all rows parse with the same orientation.
+        var dateStrings = new List<string>();
+        for (int i = headerIdx + 1; i < rawRows.Count; i++)
+        {
+            var cols = rawRows[i];
+            if (map.DateCol >= 0 && map.DateCol < cols.Count)
+            {
+                var s = cols[map.DateCol]?.Trim().Trim('"') ?? "";
+                if (!string.IsNullOrWhiteSpace(s)) dateStrings.Add(s);
+            }
+        }
+        var dateOrder = DetectDateOrder(dateStrings);
 
         var rows = new List<Row>();
         var skipped = new List<string>();
@@ -72,7 +99,7 @@ public static class BankCsvParser
             var dateStr = Get(map.DateCol);
             if (string.IsNullOrWhiteSpace(dateStr)) continue;
 
-            if (!TryParseFlexibleDate(dateStr, out var date))
+            if (!TryParseFlexibleDate(dateStr, dateOrder, out var date))
             {
                 skipped.Add($"แถว {i + 1}: รูปแบบวันที่ไม่ถูกต้อง '{dateStr}'");
                 continue;
@@ -247,20 +274,73 @@ public static class BankCsvParser
         return (-1, new ColumnMap(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
     }
 
+    /// <summary>Day-first vs month-first orientation for slash/dash-separated dates.</summary>
+    public enum DateOrder { Unknown, DayFirst, MonthFirst }
+
+    /// <summary>
+    /// Inspect every date string from the file to decide whether the format is
+    /// DD/MM (Thai/European, the default) or MM/DD (US). The classification is:
+    ///   - If any first component is > 12, the file is DD/MM (the first slot
+    ///     can only be a day).
+    ///   - If any first component is ≤ 12 AND the second component is > 12,
+    ///     the file is MM/DD.
+    ///   - When every row is ambiguous (both ≤ 12), default to DD/MM — that's
+    ///     the format Thai banks (BBL/KBank/SCB/KTB/BAY/TTB) export.
+    /// Same comparison is applied to dash- and dot-separated dates. ISO
+    /// (yyyy-MM-dd) and Thai-month-name strings ignore this and parse natively.
+    /// </summary>
+    public static DateOrder DetectDateOrder(IEnumerable<string> dateStrings)
+    {
+        var slashRx = new Regex(@"^\s*(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})\s*$");
+        bool sawDayFirstSignal = false;
+        bool sawMonthFirstSignal = false;
+        foreach (var s in dateStrings)
+        {
+            if (string.IsNullOrWhiteSpace(s)) continue;
+            var m = slashRx.Match(s);
+            if (!m.Success) continue;
+            if (!int.TryParse(m.Groups[1].Value, out var a)) continue;
+            if (!int.TryParse(m.Groups[2].Value, out var b)) continue;
+            if (a > 12 && b <= 12) sawDayFirstSignal = true;
+            else if (b > 12 && a <= 12) sawMonthFirstSignal = true;
+            // a == b or both > 12 → ambiguous / invalid; ignore.
+        }
+        if (sawMonthFirstSignal && !sawDayFirstSignal) return DateOrder.MonthFirst;
+        if (sawDayFirstSignal && !sawMonthFirstSignal) return DateOrder.DayFirst;
+        // Both signals present (corrupt file) or no signal at all — default to
+        // DD/MM since Thai bank exports overwhelmingly use that layout.
+        return DateOrder.DayFirst;
+    }
+
     public static bool TryParseFlexibleDate(string s, out DateTime date)
+        => TryParseFlexibleDate(s, DateOrder.DayFirst, out date);
+
+    public static bool TryParseFlexibleDate(string s, DateOrder order, out DateTime date)
     {
         date = default;
         if (string.IsNullOrWhiteSpace(s)) return false;
 
         s = s.Trim();
-        var formats = new[]
+
+        // ISO formats are unambiguous — try them first regardless of order.
+        var isoFormats = new[] { "yyyy-MM-dd", "yyyy/MM/dd", "yyyyMMdd" };
+        var thaiTextFormats = new[]
+        {
+            "dd MMM yyyy", "d MMM yyyy", "dd MMMM yyyy", "d MMMM yyyy",
+            "dd-MMM-yyyy", "d-MMM-yyyy"
+        };
+
+        var dayFirst = new[]
         {
             "dd/MM/yyyy", "d/M/yyyy", "dd/MM/yy", "d/M/yy",
             "dd-MM-yyyy", "d-M-yyyy", "dd-MM-yy", "d-M-yy",
-            "yyyy-MM-dd", "yyyy/MM/dd",
-            "dd.MM.yyyy", "d.M.yyyy",
-            "dd MMM yyyy", "d MMM yyyy", "dd MMMM yyyy",
-            "MM/dd/yyyy", "M/d/yyyy"
+            "dd.MM.yyyy", "d.M.yyyy"
+        };
+        var monthFirst = new[]
+        {
+            "MM/dd/yyyy", "M/d/yyyy", "MM/dd/yy", "M/d/yy",
+            "MM-dd-yyyy", "M-d-yyyy", "MM-dd-yy", "M-d-yy",
+            "MM.dd.yyyy", "M.d.yyyy"
         };
 
         var cultures = new[]
@@ -270,7 +350,14 @@ public static class BankCsvParser
             new CultureInfo("en-US")
         };
 
-        foreach (var fmt in formats)
+        // Order matters: try ISO first, then the orientation chosen for the
+        // whole file, then the opposite as a last resort (for sites that mix
+        // a single row in a foreign format — rare but harmless to attempt).
+        var ordered = order == DateOrder.MonthFirst
+            ? isoFormats.Concat(monthFirst).Concat(dayFirst).Concat(thaiTextFormats)
+            : isoFormats.Concat(dayFirst).Concat(monthFirst).Concat(thaiTextFormats);
+
+        foreach (var fmt in ordered)
         {
             foreach (var ci in cultures)
             {
@@ -282,13 +369,16 @@ public static class BankCsvParser
             }
         }
 
-        foreach (var ci in cultures)
+        // Final fallback: culture-driven free parse. Forces the right culture
+        // based on the detected order so US-style strings like "4/12/2025" get
+        // parsed as April 12, not April 4.
+        var fallbackCulture = order == DateOrder.MonthFirst
+            ? new CultureInfo("en-US")
+            : new CultureInfo("th-TH");
+        if (DateTime.TryParse(s, fallbackCulture, DateTimeStyles.AssumeLocal, out date))
         {
-            if (DateTime.TryParse(s, ci, DateTimeStyles.AssumeLocal, out date))
-            {
-                if (date.Year > 2400) date = date.AddYears(-543);
-                return true;
-            }
+            if (date.Year > 2400) date = date.AddYears(-543);
+            return true;
         }
 
         return false;

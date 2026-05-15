@@ -486,22 +486,25 @@ public partial class BankService : IBankService
         if (string.IsNullOrWhiteSpace(request.Base64Content))
             throw new ArgumentException("กรุณาระบุเนื้อหาไฟล์");
 
-        if (!string.Equals(request.FileFormat, "CSV", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("รองรับเฉพาะรูปแบบ CSV เท่านั้น");
+        var fmt = (request.FileFormat ?? "").Trim().ToUpperInvariant();
+        if (fmt != "CSV" && fmt != "EXCEL" && fmt != "XLSX")
+            throw new ArgumentException("รองรับเฉพาะรูปแบบ CSV และ Excel (.xlsx) เท่านั้น");
 
         var account = await _db.Set<BankAccount>()
             .FirstOrDefaultAsync(a => a.Id == request.BankAccountId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
-        var csvBytes = Convert.FromBase64String(request.Base64Content);
-        var (parsedRows, skippedRows) = BankCsvParser.ParseStatement(csvBytes);
+        var fileBytes = Convert.FromBase64String(request.Base64Content);
+        var (parsedRows, skippedRows) = (fmt == "EXCEL" || fmt == "XLSX")
+            ? BankExcelParser.ParseStatement(fileBytes)
+            : BankCsvParser.ParseStatement(fileBytes);
 
         if (parsedRows.Count == 0)
         {
             var hint = skippedRows.Count > 0
                 ? $" (ตัวอย่างปัญหา: {string.Join("; ", skippedRows.Take(3))})"
                 : "";
-            throw new ArgumentException($"ไม่พบรายการที่นำเข้าได้จาก CSV{hint}");
+            throw new ArgumentException($"ไม่พบรายการที่นำเข้าได้จากไฟล์{hint}");
         }
 
         // Load existing transactions for duplicate detection
