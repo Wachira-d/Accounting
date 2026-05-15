@@ -38,6 +38,7 @@ public class SettingsService : ISettingsService
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
+        if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
         if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
@@ -390,7 +391,8 @@ public class SettingsService : ISettingsService
         // Print layout
         s.ShowGlEntryOnDocument,
         // HR
-        s.LeaveQuotasJson);
+        s.LeaveQuotasJson,
+        s.EnforceManagerApproval);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

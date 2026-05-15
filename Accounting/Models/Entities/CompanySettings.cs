@@ -36,6 +36,13 @@ public class CompanySettings : TenantEntity
     // PayrollService.DefaultLeaveQuotas.
     public string? LeaveQuotasJson { get; set; }
 
+    // HR approval enforcement — when true, Approve / Reject on leaves
+    // and salary advances is restricted to the requester's direct manager
+    // (resolved via Employee.DirectManagerId) OR users holding a
+    // privileged company-role (Owner / SystemAdmin). Default false to
+    // preserve the historical "anyone can approve" behaviour.
+    public bool EnforceManagerApproval { get; set; } = false;
+
     // Tax Settings
     public decimal DefaultVatRate { get; set; } = 7;
     public bool VatRegistered { get; set; } = true;

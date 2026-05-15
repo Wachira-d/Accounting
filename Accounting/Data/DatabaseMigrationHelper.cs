@@ -1959,6 +1959,11 @@ public static class DatabaseMigrationHelper
             """
             CREATE INDEX IF NOT EXISTS "IX_Employees_DirectManagerId" ON "Employees" ("DirectManagerId");
             """,
+
+            // ===== CompanySettings: HR approval enforcement flag =====
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceManagerApproval" boolean NOT NULL DEFAULT false;
+            """,
         };
 
         foreach (var sql in statements)

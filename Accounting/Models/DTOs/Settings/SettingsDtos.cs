@@ -67,7 +67,11 @@ public record UpdateCompanySettingsRequest(
     // Annual leave quotas per LeaveType — JSON e.g.
     //   {"Annual":6,"Sick":30,"Personal":3,"Maternity":98}
     // Missing keys fall back to Thai labor-law defaults.
-    string? LeaveQuotasJson = null);
+    string? LeaveQuotasJson = null,
+
+    // Restrict HR approvals to the requester's direct manager (or
+    // Owner / SystemAdmin override).
+    bool? EnforceManagerApproval = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -121,7 +125,9 @@ public record CompanySettingsResponse(
     bool ShowGlEntryOnDocument = false,
 
     // Per-company annual leave quota override (JSON by LeaveType).
-    string? LeaveQuotasJson = null);
+    string? LeaveQuotasJson = null,
+
+    bool EnforceManagerApproval = false);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

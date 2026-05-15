@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Payroll;
 using Accounting.Services.Interfaces;
@@ -88,11 +89,19 @@ public class PayrollController : ControllerBase
 
     [HttpPost("leaves/{leaveId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> ApproveLeave(Guid companyId, Guid leaveId)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.ApproveLeaveAsync(companyId, leaveId, User.Identity?.Name ?? "")));
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var name = User.Identity?.Name ?? "";
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.ApproveLeaveAsync(companyId, leaveId, userId, name)));
+    }
 
     [HttpPost("leaves/{leaveId:guid}/reject")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> RejectLeave(Guid companyId, Guid leaveId, [FromBody] RejectLeaveRequest request)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.RejectLeaveAsync(companyId, leaveId, User.Identity?.Name ?? "", request)));
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var name = User.Identity?.Name ?? "";
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.RejectLeaveAsync(companyId, leaveId, userId, name, request)));
+    }
 
     [HttpPost("leaves/{leaveId:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CancelLeave(Guid companyId, Guid leaveId)
