@@ -801,7 +801,22 @@
       20:{n:'HTML กำหนดเอง',i:'</>',f:'html'},
       23:{n:'สรุปตะกร้า',i:'🛒',f:'cart'},
     };
-    const PAGE_STATUS = { 0:['ร่าง','draft'], 1:['เผยแพร่','published'], 2:['กำหนดเวลา','draft'], 3:['เก็บถาวร','draft'] };
+    // Status values come back from the API as enum *names* (JsonStringEnumConverter
+    // is enabled globally), so the dict keys must be string-typed. A few legacy
+    // call sites still send numeric values, so we accept both.
+    const PAGE_STATUS = {
+      'Draft':0, 0:['ร่าง','draft'],
+      'Published':1, 1:['เผยแพร่','published'],
+      'Scheduled':2, 2:['กำหนดเวลา','draft'],
+      'Archived':3, 3:['เก็บถาวร','draft'],
+    };
+    const isPublished = (s) => s === 1 || s === 'Published' || s === 'published';
+    const pageStatusLabel = (s) => {
+      const v = PAGE_STATUS[s];
+      if (Array.isArray(v)) return v;
+      if (typeof v === 'number') return PAGE_STATUS[v];
+      return ['?','draft'];
+    };
     // Match DomainVerificationStatus enum: Pending=0, Verifying=1, Verified=2, Failed=3
     const DOM_VERIFY = { 0:['รอยืนยัน','pending'], 1:['กำลังตรวจสอบ','pending'], 2:['ยืนยันแล้ว','verified'], 3:['ล้มเหลว','failed'] };
 
@@ -835,10 +850,10 @@
           this.site = res.data;
           if (!this.site) throw new Error('ไม่พบเว็บไซต์');
           document.getElementById('siteTitleHeader').textContent = this.site.name;
-          const isPublished = this.site.status === 1;
+          const sitePublished = isPublished(this.site.status);
           const pathUrl = `/site/${this.site.subdomain}`;
-          document.getElementById('siteSubtitleHeader').innerHTML = `${location.origin}/site/${this.site.subdomain} · ${isPublished ? '<span style="color:#10B981">เผยแพร่แล้ว</span>' : '<span style="color:#92400E">ร่าง</span>'}`;
-          if (isPublished) {
+          document.getElementById('siteSubtitleHeader').innerHTML = `${location.origin}/site/${this.site.subdomain} · ${sitePublished ? '<span style="color:#10B981">เผยแพร่แล้ว</span>' : '<span style="color:#92400E">ร่าง</span>'}`;
+          if (sitePublished) {
             const btn = document.getElementById('viewLiveBtn');
             btn.href = pathUrl;
             btn.style.display = '';
@@ -930,8 +945,8 @@
           return;
         }
         list.innerHTML = this.pages.sort((a,b)=>a.sortOrder-b.sortOrder).map(p => {
-          const [statusLabel, statusClass] = PAGE_STATUS[p.status] || ['?','draft'];
-          const isPublished = p.status === 1;
+          const [statusLabel, statusClass] = pageStatusLabel(p.status);
+          const pagePublished = isPublished(p.status);
           return `
             <div class="page-row">
               <div style="flex:1">
@@ -941,7 +956,7 @@
               <button class="btn btn-sm btn-primary" onclick="Page.openBlocks('${p.id}')">✏️ แก้ไขเนื้อหา</button>
               <button class="btn btn-sm btn-secondary" onclick="Page.openEditPage('${p.id}')">⚙️ ตั้งค่า</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.previewPage('${Layout.esc(p.slug)}')" title="ดูตัวอย่างในแท็บใหม่">👁 ดูตัวอย่าง</button>
-              ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publishPage('${p.id}')" title="เผยแพร่หน้านี้">🚀</button>` : ''}
+              ${!pagePublished ? `<button class="btn btn-sm btn-success" onclick="Page.publishPage('${p.id}')" title="เผยแพร่หน้านี้">🚀</button>` : ''}
               <button class="btn btn-sm btn-danger" onclick="Page.deletePage('${p.id}','${Layout.esc(p.title)}')">🗑</button>
             </div>`;
         }).join('');

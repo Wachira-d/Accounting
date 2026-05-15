@@ -40,6 +40,10 @@
          receipts) — extracting the embedded text layer directly is free,
          instant, and 100% accurate. MIT-licensed, zero native deps. -->
     <PackageReference Include="PdfPig" Version="0.1.9" />
+    <!-- Excel (.xlsx) reader for bank-statement import. Pure-managed, MIT-licensed,
+         streams the sheet directly so it handles large month-long statements
+         without OOM. -->
+    <PackageReference Include="ClosedXML" Version="0.104.2" />
   </ItemGroup>
 
   <ItemGroup>
