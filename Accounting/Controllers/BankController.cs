@@ -77,6 +77,11 @@ public class BankController : ControllerBase
     }
 
     [HttpPost("import-statement")]
+    // Default Kestrel body limit is 30MB. A multi-month .xlsx that's base64-
+    // encoded inside the JSON body inflates ~33% so the practical CSV/Excel
+    // file ceiling is ~22MB without this override. Bumping to 100MB covers
+    // even year-long exports comfortably.
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<ApiResponse<ImportBankStatementResponse>>> ImportStatement(
         Guid companyId, [FromBody] ImportBankStatementRequest request)
     {
