@@ -898,11 +898,10 @@ public class AccountingService : IAccountingService
 
     public async Task<int> BatchDeleteJournalEntriesAsync(Guid companyId, List<Guid> entryIds)
     {
+        // Mirrors DeleteJournalEntryAsync: any status, but not document-sourced.
         var entries = await _db.JournalEntries
             .Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id)
-                && j.Status != JournalEntryStatus.Reversed
-                && j.Status != JournalEntryStatus.Posted
                 && !j.SourceDocumentId.HasValue)
             .ToListAsync();
 
