@@ -71,6 +71,8 @@ public class AccountingDbContext : DbContext
     // Bank
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
     public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
+    public DbSet<ReconciliationGroup> ReconciliationGroups => Set<ReconciliationGroup>();
+    public DbSet<ReconciliationGroupItem> ReconciliationGroupItems => Set<ReconciliationGroupItem>();
 
     // Recurring
     public DbSet<RecurringTransaction> RecurringTransactions => Set<RecurringTransaction>();
@@ -703,6 +705,25 @@ public class AccountingDbContext : DbContext
             e.Property(t => t.Amount).HasPrecision(18, 2);
             e.Property(t => t.BalanceAfter).HasPrecision(18, 2);
             e.HasOne(t => t.BankAccount).WithMany(a => a.Transactions).HasForeignKey(t => t.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(t => t.ReconciliationGroup).WithMany().HasForeignKey(t => t.ReconciliationGroupId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(t => !t.IsDeleted);
+        });
+
+        // ===== ReconciliationGroup + Items (M:N + net-off bank matching) =====
+        modelBuilder.Entity<ReconciliationGroup>(e =>
+        {
+            e.Property(g => g.GroupNumber).HasMaxLength(40);
+            e.Property(g => g.TotalBankAmount).HasPrecision(18, 2);
+            e.Property(g => g.TotalMatchedAmount).HasPrecision(18, 2);
+            e.HasIndex(g => new { g.CompanyId, g.GroupNumber }).IsUnique();
+            e.HasOne(g => g.BankAccount).WithMany().HasForeignKey(g => g.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(g => !g.IsDeleted);
+        });
+        modelBuilder.Entity<ReconciliationGroupItem>(e =>
+        {
+            e.Property(i => i.AllocatedAmount).HasPrecision(18, 2);
+            e.HasOne(i => i.Group).WithMany(g => g.Items).HasForeignKey(i => i.GroupId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(i => new { i.ItemType, i.ItemId });
         });
 
         // ===== RecurringTransaction =====

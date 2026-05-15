@@ -688,6 +688,61 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchedEntryIdsJson" text NULL;
             """,
+            // ===== BankTransactions: link to true M:N reconciliation group =====
+            """
+            ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "ReconciliationGroupId" uuid NULL;
+            """,
+            // ===== ReconciliationGroups: header table for M:N + net-off matching =====
+            """
+            CREATE TABLE IF NOT EXISTS "ReconciliationGroups" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "BankAccountId" uuid NOT NULL,
+                "GroupNumber" varchar(40) NOT NULL,
+                "ReconciledDate" timestamp with time zone NOT NULL,
+                "TotalBankAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "TotalMatchedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "IsBalanced" boolean NOT NULL DEFAULT false,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_ReconciliationGroups_CompanyId_GroupNumber"
+                ON "ReconciliationGroups" ("CompanyId", "GroupNumber");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_ReconciliationGroups_BankAccountId"
+                ON "ReconciliationGroups" ("BankAccountId");
+            """,
+            // ===== ReconciliationGroupItems: line items (polymorphic) =====
+            """
+            CREATE TABLE IF NOT EXISTS "ReconciliationGroupItems" (
+                "Id" uuid PRIMARY KEY,
+                "GroupId" uuid NOT NULL REFERENCES "ReconciliationGroups"("Id") ON DELETE CASCADE,
+                "ItemType" int NOT NULL,
+                "ItemId" uuid NOT NULL,
+                "AllocatedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_ReconciliationGroupItems_GroupId"
+                ON "ReconciliationGroupItems" ("GroupId");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_ReconciliationGroupItems_ItemType_ItemId"
+                ON "ReconciliationGroupItems" ("ItemType", "ItemId");
+            """,
 
             // ===== CompanySettings: e-Tax mode + by-email registration columns =====
             """

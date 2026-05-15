@@ -245,3 +245,59 @@ public record BankTransactionDetailResponse(
     string? MatchedJournalNumber,
     DateTime? ReconciledAt,
     string? ReconciledBy);
+
+// ===== Reconciliation Group (M:N + net-off) =====
+
+/// <summary>
+/// Request to create a reconciliation group. Mix bank-transaction IDs with
+/// match items (Payment / JournalEntry / Document); each item carries a
+/// signed AllocatedAmount so the engine can net-off receipts vs payment
+/// vouchers and confirm the group balances.
+/// </summary>
+public record CreateReconciliationGroupRequest(
+    Guid BankAccountId,
+    DateTime ReconciledDate,
+    List<ReconciliationGroupItemRequest> BankTransactions,   // ItemType implicit = BankTransaction
+    List<ReconciliationGroupItemRequest> MatchItems,         // Payment / JournalEntry / Document
+    string? Notes = null,
+    decimal Tolerance = 0.01m);
+
+public record ReconciliationGroupItemRequest(
+    string ItemType,         // "BankTransaction" / "Payment" / "JournalEntry" / "Document"
+    Guid ItemId,
+    decimal AllocatedAmount, // signed: + inflow, - outflow
+    string? Notes = null);
+
+public record ReconciliationGroupResponse(
+    Guid Id,
+    Guid BankAccountId,
+    string GroupNumber,
+    DateTime ReconciledDate,
+    decimal TotalBankAmount,
+    decimal TotalMatchedAmount,
+    decimal Difference,
+    bool IsBalanced,
+    string? Notes,
+    string? CreatedBy,
+    DateTime CreatedAt,
+    List<ReconciliationGroupItemResponse> Items);
+
+public record ReconciliationGroupItemResponse(
+    Guid Id,
+    string ItemType,
+    Guid ItemId,
+    string? ItemNumber,         // e.g. PaymentNumber / EntryNumber / DocumentNumber
+    string? ItemDescription,
+    DateTime? ItemDate,
+    decimal AllocatedAmount,
+    string? Notes);
+
+public record ReconciliationGroupListItem(
+    Guid Id,
+    string GroupNumber,
+    DateTime ReconciledDate,
+    int BankTransactionCount,
+    int MatchItemCount,
+    decimal TotalBankAmount,
+    decimal TotalMatchedAmount,
+    bool IsBalanced);

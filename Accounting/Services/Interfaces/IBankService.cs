@@ -35,4 +35,13 @@ public interface IBankService
     // Match candidate picker
     Task<MatchCandidatesResponse> GetMatchCandidatesAsync(Guid companyId, Guid bankTransactionId);
     Task<AiMatchSuggestionResponse> SuggestMatchAsync(Guid companyId, Guid bankTransactionId);
+
+    // M:N reconciliation + net-off (Receipt vs Payment Voucher cancellation)
+    Task<ReconciliationGroupResponse> CreateReconciliationGroupAsync(Guid companyId, CreateReconciliationGroupRequest request, string userId);
+    Task<ReconciliationGroupResponse> GetReconciliationGroupAsync(Guid companyId, Guid groupId);
+    Task<PagedResponse<ReconciliationGroupListItem>> GetReconciliationGroupsAsync(Guid companyId, Guid bankAccountId, PagedRequest request);
+    Task UnreconcileGroupAsync(Guid companyId, Guid groupId);
+
+    // Reconciliation report — Excel export
+    Task<byte[]> ExportReconciliationReportAsync(Guid companyId, Guid bankAccountId, DateTime? fromDate, DateTime? toDate);
 }
