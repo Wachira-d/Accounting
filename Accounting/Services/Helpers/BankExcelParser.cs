@@ -1,20 +1,25 @@
-using ClosedXML.Excel;
 using System.Globalization;
+using MiniExcelLibs;
 
 namespace Accounting.Services.Helpers;
 
 /// <summary>
-/// Excel (.xlsx) bank-statement reader. Picks the first worksheet that has
-/// a meaningful number of rows (banks sometimes ship a cover sheet first),
-/// flattens every cell to a string preserving its underlying value, then
-/// hands the 2D grid to <see cref="BankCsvParser.ParseRows"/>.
+/// Excel (.xlsx) bank-statement reader. Uses MiniExcel — a single
+/// self-contained MIT-licensed library with ZERO transitive dependencies,
+/// chosen so the production publish pipeline can't drop a satellite DLL.
 ///
-/// Key correctness detail: real DateTime cells are rendered ISO
-/// (yyyy-MM-dd) so the downstream date parser never has to guess DD/MM
-/// vs MM/DD on them. Numeric cells are returned in invariant format so a
-/// thousand separator from the user's locale doesn't poison the amount
-/// parser. Text cells flow through unchanged and get the same date-order
-/// detection treatment as a CSV file.
+/// Each row of the sheet is materialised as a List&lt;string&gt; in
+/// alphabetical column order (A, B, C, …) and handed to
+/// <see cref="BankCsvParser.ParseRows"/> which already knows how to find
+/// the header row, classify date order across the whole file, and skip
+/// summary / brought-forward rows.
+///
+/// Key correctness detail: real DateTime cells are rendered in Excel
+/// display order (M/d/yyyy) — NOT ISO — so the downstream date parser
+/// can interpret them consistently with text dates in the same file via
+/// the DetectDateOrder pass. This is what keeps KBank-style statements
+/// (whose underlying serial encodes day-of-month in the MONTH slot)
+/// from being parsed three months off.
 /// </summary>
 public static class BankExcelParser
 {
@@ -23,11 +28,16 @@ public static class BankExcelParser
         if (fileBytes == null || fileBytes.Length == 0)
             throw new ArgumentException("ไฟล์ Excel ว่างเปล่า");
 
-        using var stream = new MemoryStream(fileBytes);
-        XLWorkbook workbook;
+        List<IDictionary<string, object?>> raw;
         try
         {
-            workbook = new XLWorkbook(stream);
+            using var stream = new MemoryStream(fileBytes);
+            // MiniExcel returns one row per sheet line; useHeaderRow=false so
+            // we get raw cells indexed by column letter ("A", "B", "C", …).
+            // Cast each to IDictionary so we can iterate by key.
+            raw = MiniExcel.Query(stream, useHeaderRow: false)
+                .Cast<IDictionary<string, object?>>()
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -35,94 +45,93 @@ public static class BankExcelParser
                 $"อ่านไฟล์ Excel ไม่สำเร็จ — ตรวจสอบว่าเป็น .xlsx ที่ไม่ถูกตั้งรหัสผ่าน ({ex.Message})", ex);
         }
 
-        try
+        if (raw.Count == 0)
+            throw new ArgumentException("ไฟล์ Excel ไม่มีข้อมูล");
+
+        // Find the maximum column letter actually used across all rows so the
+        // grid is rectangular for the downstream parser. MiniExcel keys are
+        // always Excel column letters (A..Z, AA..AZ, …).
+        int maxColIndex = 0;
+        foreach (var row in raw)
         {
-            // Pick the first worksheet with at least 2 rows of data.
-            IXLWorksheet? sheet = null;
-            foreach (var ws in workbook.Worksheets)
+            foreach (var key in row.Keys)
             {
-                IXLRange? r;
-                try { r = ws.RangeUsed(); }
-                catch { r = null; }
-                if (r == null) continue;
-                if (r.RowCount() >= 2) { sheet = ws; break; }
+                var idx = ColumnLetterToIndex(key);
+                if (idx > maxColIndex) maxColIndex = idx;
             }
-            sheet ??= workbook.Worksheets.FirstOrDefault();
-            if (sheet == null) throw new ArgumentException("ไฟล์ Excel ไม่มี worksheet");
-
-            var used = sheet.RangeUsed() ?? throw new ArgumentException("ไฟล์ Excel ไม่มีข้อมูล");
-
-            int firstRow = used.FirstRow().RowNumber();
-            int lastRow = used.LastRow().RowNumber();
-            int firstCol = used.FirstColumn().ColumnNumber();
-            int lastCol = used.LastColumn().ColumnNumber();
-
-            var cells = new List<List<string>>();
-            for (int r = firstRow; r <= lastRow; r++)
-            {
-                var line = new List<string>(lastCol - firstCol + 1);
-                for (int c = firstCol; c <= lastCol; c++)
-                {
-                    line.Add(StringifyCell(sheet.Cell(r, c)));
-                }
-                cells.Add(line);
-            }
-
-            return BankCsvParser.ParseRows(cells, "ไฟล์ Excel");
         }
-        finally
+        int colCount = Math.Max(maxColIndex + 1, 1);
+
+        var cells = new List<List<string>>(raw.Count);
+        foreach (var row in raw)
         {
-            workbook.Dispose();
+            var line = new List<string>(colCount);
+            for (int c = 0; c < colCount; c++)
+            {
+                var key = IndexToColumnLetter(c);
+                row.TryGetValue(key, out var v);
+                line.Add(StringifyValue(v));
+            }
+            cells.Add(line);
         }
+
+        return BankCsvParser.ParseRows(cells, "ไฟล์ Excel");
     }
 
-    private static string StringifyCell(IXLCell cell)
+    private static string StringifyValue(object? v)
     {
-        if (cell == null) return "";
-        try
+        if (v == null) return "";
+        switch (v)
         {
-            if (cell.IsEmpty()) return "";
-        }
-        catch { return ""; }
-
-        try
-        {
-            // Real DateTime cells → render in Excel-display order (M/d/yyyy)
-            // — NOT ISO. ISO would force a literal Gregorian reading and
-            // mis-handle a class of bank exports (KBank in particular) that
-            // store the day-of-month in the underlying serial's MONTH slot:
-            // Excel "1/4/2026" displays the same way for both US (MM/DD =
-            // Jan 4) and Thai (DD/MM = Apr 1) readers, but the underlying
-            // serial is Jan 4. Letting the downstream DetectDateOrder pass
-            // (which inspects ALL date strings including text dates like
-            // "13-04-26") classify the file means a Thai-readable serial
-            // stays Thai-readable end-to-end, while a genuine US file
-            // stays US.
-            if (cell.DataType == XLDataType.DateTime)
-            {
-                var dt = cell.GetDateTime();
+            case DateTime dt:
+                // Render in Excel display order (M/d/yyyy) so the downstream
+                // DetectDateOrder pass (which also reads text dates) can
+                // classify the file consistently — see class doc above.
                 return dt.TimeOfDay == TimeSpan.Zero
                     ? dt.ToString("M/d/yyyy", CultureInfo.InvariantCulture)
                     : dt.ToString("M/d/yyyy H:mm:ss", CultureInfo.InvariantCulture);
-            }
-            // Numbers → invariant string so amount parsing isn't fooled by the
-            // user's locale thousand separator.
-            if (cell.DataType == XLDataType.Number)
-            {
-                try { return cell.GetDouble().ToString("R", CultureInfo.InvariantCulture); }
-                catch { return cell.GetString() ?? ""; }
-            }
-            // Boolean / TimeSpan / Text → use the formatted display string when
-            // available, otherwise the raw value.
-            try { return cell.GetFormattedString() ?? ""; }
-            catch { return cell.GetString() ?? ""; }
+            case TimeSpan ts:
+                return ts.ToString(@"hh\:mm\:ss");
+            case double d:
+                return d.ToString("R", CultureInfo.InvariantCulture);
+            case float f:
+                return f.ToString("R", CultureInfo.InvariantCulture);
+            case decimal m:
+                return m.ToString(CultureInfo.InvariantCulture);
+            case int i:
+                return i.ToString(CultureInfo.InvariantCulture);
+            case long l:
+                return l.ToString(CultureInfo.InvariantCulture);
+            case bool b:
+                return b ? "TRUE" : "FALSE";
+            default:
+                return v.ToString() ?? "";
         }
-        catch
+    }
+
+    private static int ColumnLetterToIndex(string letters)
+    {
+        // "A" → 0, "B" → 1, …, "Z" → 25, "AA" → 26
+        int n = 0;
+        foreach (var ch in letters)
         {
-            // Formula cells whose cached value isn't materialised (rare on bank
-            // exports but possible with custom templates) — degrade to raw text.
-            try { return cell.GetString() ?? ""; }
-            catch { return ""; }
+            if (ch < 'A' || ch > 'Z') return n;
+            n = n * 26 + (ch - 'A' + 1);
         }
+        return n - 1;
+    }
+
+    private static string IndexToColumnLetter(int index)
+    {
+        // 0 → "A", 25 → "Z", 26 → "AA"
+        var letters = new List<char>();
+        index++;
+        while (index > 0)
+        {
+            index--;
+            letters.Insert(0, (char)('A' + index % 26));
+            index /= 26;
+        }
+        return new string(letters.ToArray());
     }
 }

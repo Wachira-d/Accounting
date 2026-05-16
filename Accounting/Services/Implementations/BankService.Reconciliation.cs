@@ -2,7 +2,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Bank;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
-using ClosedXML.Excel;
+using MiniExcelLibs;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -255,102 +255,83 @@ public partial class BankService
             .OrderBy(g => g.ReconciledDate)
             .ToListAsync();
 
-        using var wb = new XLWorkbook();
-
-        // Sheet 1: Transactions
-        var s1 = wb.Worksheets.Add("Transactions");
-        var hdr1 = new[] { "วันที่", "ประเภท", "จำนวนเงิน", "ยอดคงเหลือ", "รายละเอียด", "อ้างอิง", "ผู้รับ/ผู้จ่าย", "สถานะกระทบยอด", "Match Type", "Matched #", "เลขกลุ่ม", "วันที่กระทบยอด" };
-        for (int i = 0; i < hdr1.Length; i++) { s1.Cell(1, i + 1).Value = hdr1[i]; s1.Cell(1, i + 1).Style.Font.Bold = true; }
+        // MiniExcel multi-sheet export: each sheet is a Dictionary<string,object>
+        // entry where the value is a List of row dictionaries. MiniExcel writes
+        // ordered columns based on the first row's key order; we use ordered
+        // dictionaries to lock the column sequence per sheet.
         var groupNumberById = groups.ToDictionary(g => g.Id, g => g.GroupNumber);
-        int r = 2;
-        foreach (var t in txns)
+
+        var sheet1 = txns.Select(t =>
         {
             var matchType = t.ReconciliationGroupId.HasValue ? "Group" :
                 t.MatchedPaymentId.HasValue ? "Payment" :
                 t.MatchedJournalEntryId.HasValue ? "JournalEntry" :
                 !string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson) ? "AI-Aggregate" : "";
             var groupNum = t.ReconciliationGroupId.HasValue && groupNumberById.TryGetValue(t.ReconciliationGroupId.Value, out var gn) ? gn : "";
-            s1.Cell(r, 1).Value = t.TransactionDate;
-            s1.Cell(r, 1).Style.DateFormat.Format = "yyyy-mm-dd";
-            s1.Cell(r, 2).Value = t.TransactionType.ToString();
-            s1.Cell(r, 3).Value = t.Amount;
-            s1.Cell(r, 3).Style.NumberFormat.Format = "#,##0.00";
-            s1.Cell(r, 4).Value = t.BalanceAfter;
-            s1.Cell(r, 4).Style.NumberFormat.Format = "#,##0.00";
-            s1.Cell(r, 5).Value = t.Description ?? "";
-            s1.Cell(r, 6).Value = t.Reference ?? "";
-            s1.Cell(r, 7).Value = t.Payee ?? "";
-            s1.Cell(r, 8).Value = t.ReconciliationStatus.ToString();
-            s1.Cell(r, 9).Value = matchType;
-            s1.Cell(r, 10).Value = t.MatchedPaymentId?.ToString() ?? t.MatchedJournalEntryId?.ToString() ?? "";
-            s1.Cell(r, 11).Value = groupNum;
-            s1.Cell(r, 12).Value = t.ReconciledAt?.ToString("yyyy-MM-dd") ?? "";
-            r++;
-        }
-        s1.Columns().AdjustToContents();
-
-        // Sheet 2: Reconciliation Groups (M:N detail)
-        var s2 = wb.Worksheets.Add("Groups");
-        var hdr2 = new[] { "เลขกลุ่ม", "วันที่", "Bank Total", "Matched Total", "ผลต่าง", "สมดุล", "บันทึกย่อ", "ผู้ทำรายการ" };
-        for (int i = 0; i < hdr2.Length; i++) { s2.Cell(1, i + 1).Value = hdr2[i]; s2.Cell(1, i + 1).Style.Font.Bold = true; }
-        r = 2;
-        foreach (var g in groups)
-        {
-            s2.Cell(r, 1).Value = g.GroupNumber;
-            s2.Cell(r, 2).Value = g.ReconciledDate;
-            s2.Cell(r, 2).Style.DateFormat.Format = "yyyy-mm-dd";
-            s2.Cell(r, 3).Value = g.TotalBankAmount; s2.Cell(r, 3).Style.NumberFormat.Format = "#,##0.00";
-            s2.Cell(r, 4).Value = g.TotalMatchedAmount; s2.Cell(r, 4).Style.NumberFormat.Format = "#,##0.00";
-            s2.Cell(r, 5).Value = g.TotalBankAmount - g.TotalMatchedAmount; s2.Cell(r, 5).Style.NumberFormat.Format = "#,##0.00";
-            s2.Cell(r, 6).Value = g.IsBalanced ? "✓" : "✗";
-            s2.Cell(r, 7).Value = g.Notes ?? "";
-            s2.Cell(r, 8).Value = g.CreatedBy ?? "";
-            r++;
-        }
-        s2.Columns().AdjustToContents();
-
-        // Sheet 3: Group Items (the line-level audit detail)
-        var s3 = wb.Worksheets.Add("Group Items");
-        var hdr3 = new[] { "เลขกลุ่ม", "ประเภทรายการ", "Item ID", "จำนวนเงิน (signed)", "หมายเหตุ" };
-        for (int i = 0; i < hdr3.Length; i++) { s3.Cell(1, i + 1).Value = hdr3[i]; s3.Cell(1, i + 1).Style.Font.Bold = true; }
-        r = 2;
-        foreach (var g in groups)
-        {
-            foreach (var it in g.Items.OrderBy(i => i.ItemType).ThenByDescending(i => Math.Abs(i.AllocatedAmount)))
+            return new Dictionary<string, object?>
             {
-                s3.Cell(r, 1).Value = g.GroupNumber;
-                s3.Cell(r, 2).Value = it.ItemType.ToString();
-                s3.Cell(r, 3).Value = it.ItemId.ToString();
-                s3.Cell(r, 4).Value = it.AllocatedAmount; s3.Cell(r, 4).Style.NumberFormat.Format = "#,##0.00;-#,##0.00";
-                s3.Cell(r, 5).Value = it.Notes ?? "";
-                r++;
-            }
-        }
-        s3.Columns().AdjustToContents();
+                ["วันที่"] = t.TransactionDate.ToString("yyyy-MM-dd"),
+                ["ประเภท"] = t.TransactionType.ToString(),
+                ["จำนวนเงิน"] = t.Amount,
+                ["ยอดคงเหลือ"] = t.BalanceAfter,
+                ["รายละเอียด"] = t.Description ?? "",
+                ["อ้างอิง"] = t.Reference ?? "",
+                ["ผู้รับ/ผู้จ่าย"] = t.Payee ?? "",
+                ["สถานะกระทบยอด"] = t.ReconciliationStatus.ToString(),
+                ["Match Type"] = matchType,
+                ["Matched #"] = t.MatchedPaymentId?.ToString() ?? t.MatchedJournalEntryId?.ToString() ?? "",
+                ["เลขกลุ่ม"] = groupNum,
+                ["วันที่กระทบยอด"] = t.ReconciledAt?.ToString("yyyy-MM-dd") ?? "",
+            };
+        }).ToList();
 
-        // Sheet 4: Summary
-        var s4 = wb.Worksheets.Add("Summary");
-        s4.Cell(1, 1).Value = "บัญชี";
-        s4.Cell(1, 2).Value = $"{account.AccountName} ({account.BankName} {account.AccountNumber})";
-        s4.Cell(2, 1).Value = "ช่วงเวลา";
-        s4.Cell(2, 2).Value = $"{from:yyyy-MM-dd} ถึง {to.AddDays(-1):yyyy-MM-dd}";
-        s4.Cell(3, 1).Value = "ยอดธนาคารปัจจุบัน";
-        s4.Cell(3, 2).Value = account.CurrentBalance; s4.Cell(3, 2).Style.NumberFormat.Format = "#,##0.00";
-        s4.Cell(4, 1).Value = "รวมรายการในช่วงนี้";
-        s4.Cell(4, 2).Value = txns.Count;
-        s4.Cell(5, 1).Value = "กระทบยอดแล้ว";
-        s4.Cell(5, 2).Value = txns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Matched);
-        s4.Cell(6, 1).Value = "ยังไม่กระทบยอด";
-        s4.Cell(6, 2).Value = txns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched);
-        s4.Cell(7, 1).Value = "จำนวนกลุ่มกระทบยอด";
-        s4.Cell(7, 2).Value = groups.Count;
-        s4.Cell(8, 1).Value = "กลุ่มที่สมดุล";
-        s4.Cell(8, 2).Value = groups.Count(g => g.IsBalanced);
-        s4.Range("A1:A8").Style.Font.Bold = true;
-        s4.Columns().AdjustToContents();
+        var sheet2 = groups.Select(g => new Dictionary<string, object?>
+        {
+            ["เลขกลุ่ม"] = g.GroupNumber,
+            ["วันที่"] = g.ReconciledDate.ToString("yyyy-MM-dd"),
+            ["Bank Total"] = g.TotalBankAmount,
+            ["Matched Total"] = g.TotalMatchedAmount,
+            ["ผลต่าง"] = g.TotalBankAmount - g.TotalMatchedAmount,
+            ["สมดุล"] = g.IsBalanced ? "✓" : "✗",
+            ["บันทึกย่อ"] = g.Notes ?? "",
+            ["ผู้ทำรายการ"] = g.CreatedBy ?? "",
+        }).ToList();
+
+        var sheet3 = groups.SelectMany(g =>
+            g.Items
+                .OrderBy(i => i.ItemType).ThenByDescending(i => Math.Abs(i.AllocatedAmount))
+                .Select(it => new Dictionary<string, object?>
+                {
+                    ["เลขกลุ่ม"] = g.GroupNumber,
+                    ["ประเภทรายการ"] = it.ItemType.ToString(),
+                    ["Item ID"] = it.ItemId.ToString(),
+                    ["จำนวนเงิน (signed)"] = it.AllocatedAmount,
+                    ["หมายเหตุ"] = it.Notes ?? "",
+                })
+        ).ToList();
+
+        var sheet4 = new List<Dictionary<string, object?>>
+        {
+            new() { ["รายการ"] = "บัญชี", ["ค่า"] = $"{account.AccountName} ({account.BankName} {account.AccountNumber})" },
+            new() { ["รายการ"] = "ช่วงเวลา", ["ค่า"] = $"{from:yyyy-MM-dd} ถึง {to.AddDays(-1):yyyy-MM-dd}" },
+            new() { ["รายการ"] = "ยอดธนาคารปัจจุบัน", ["ค่า"] = account.CurrentBalance.ToString("#,##0.00") },
+            new() { ["รายการ"] = "รวมรายการในช่วงนี้", ["ค่า"] = txns.Count },
+            new() { ["รายการ"] = "กระทบยอดแล้ว", ["ค่า"] = txns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Matched) },
+            new() { ["รายการ"] = "ยังไม่กระทบยอด", ["ค่า"] = txns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched) },
+            new() { ["รายการ"] = "จำนวนกลุ่มกระทบยอด", ["ค่า"] = groups.Count },
+            new() { ["รายการ"] = "กลุ่มที่สมดุล", ["ค่า"] = groups.Count(g => g.IsBalanced) },
+        };
+
+        var sheets = new Dictionary<string, object>
+        {
+            ["Transactions"] = sheet1,
+            ["Groups"] = sheet2,
+            ["Group Items"] = sheet3,
+            ["Summary"] = sheet4,
+        };
 
         using var ms = new MemoryStream();
-        wb.SaveAs(ms);
+        ms.SaveAs(sheets);
         return ms.ToArray();
     }
 
