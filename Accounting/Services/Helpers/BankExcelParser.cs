@@ -28,15 +28,17 @@ public static class BankExcelParser
         if (fileBytes == null || fileBytes.Length == 0)
             throw new ArgumentException("ไฟล์ Excel ว่างเปล่า");
 
-        List<IDictionary<string, object?>> raw;
+        List<IDictionary<string, object>> raw;
         try
         {
             using var stream = new MemoryStream(fileBytes);
             // MiniExcel returns one row per sheet line; useHeaderRow=false so
             // we get raw cells indexed by column letter ("A", "B", "C", …).
-            // Cast each to IDictionary so we can iterate by key.
+            // Each row is an ExpandoObject which implements
+            // IDictionary<string, object> (non-nullable value) — match that
+            // exact generic shape or Cast throws InvalidCastException.
             raw = MiniExcel.Query(stream, useHeaderRow: false)
-                .Cast<IDictionary<string, object?>>()
+                .Cast<IDictionary<string, object>>()
                 .ToList();
         }
         catch (Exception ex)
