@@ -47,21 +47,15 @@
          receipts) — extracting the embedded text layer directly is free,
          instant, and 100% accurate. MIT-licensed, zero native deps. -->
     <PackageReference Include="PdfPig" Version="0.1.9" />
-    <!-- Excel (.xlsx) reader for bank-statement import. Pure-managed, MIT-licensed.
-         0.102.3 is the long-term-stable line — works on .NET 8 / Linux containers
-         without native deps. -->
-    <PackageReference Include="ClosedXML" Version="0.102.3" />
-    <!-- Pin ClosedXML's transitive dependencies explicitly so the deploy
-         pipeline copies each satellite assembly into the publish output.
-         Without these, production saw FileNotFoundException one library at
-         a time on first .xlsx open (DocumentFormat.OpenXml.Framework.dll,
-         ClosedXML.Parser.dll, …). The CopyLocalLockFileAssemblies flag in
-         the PropertyGroup is the belt; these explicit pins are the braces. -->
-    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.1" />
-    <PackageReference Include="ClosedXML.Parser" Version="1.2.0" />
-    <PackageReference Include="ExcelNumberFormat" Version="1.1.0" />
-    <PackageReference Include="RBush" Version="3.2.0" />
-    <PackageReference Include="SixLabors.Fonts" Version="1.0.0" />
+    <!-- Excel (.xlsx) reader/writer for bank-statement import + reconciliation
+         report export. Single self-contained MIT-licensed assembly with
+         ZERO transitive deps — chosen after ClosedXML's transitive dep
+         chain (DocumentFormat.OpenXml, ClosedXML.Parser, ExcelNumberFormat,
+         RBush, SixLabors.Fonts) repeatedly failed to publish on the
+         production pipeline despite CopyLocalLockFileAssemblies + explicit
+         pins. MiniExcel ships as one DLL — the publish output cannot drop
+         a transitive that doesn't exist. -->
+    <PackageReference Include="MiniExcel" Version="1.34.2" />
   </ItemGroup>
 
   <ItemGroup>

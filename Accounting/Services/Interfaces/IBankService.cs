@@ -47,6 +47,15 @@ public interface IBankService
     Task<LearnedSuggestionsResponse> GetLearnedSuggestionsAsync(Guid companyId, Guid bankTransactionId);
     Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId);
 
+    /// <summary>
+    /// Cascade cleanup: when an item that's a member of one or more
+    /// ReconciliationGroups becomes invalid (JE reversed, Payment voided,
+    /// Document voided/purged), unwind every group it belongs to —
+    /// release the bank txns back to Unmatched and soft-delete the group +
+    /// its items. Idempotent: if the item isn't in any group, no-op.
+    /// </summary>
+    Task UnwindGroupsContainingItemAsync(Guid companyId, Models.Entities.ReconciliationItemType itemType, Guid itemId);
+
     // Reconciliation report — Excel export
     Task<byte[]> ExportReconciliationReportAsync(Guid companyId, Guid bankAccountId, DateTime? fromDate, DateTime? toDate);
 }

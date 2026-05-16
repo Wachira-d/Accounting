@@ -23,6 +23,7 @@ public class DocumentService : IDocumentService
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
     private readonly CrossTenantWorkflowService _crossTenantWorkflow;
     private readonly INotificationEngine? _notify;
+    private readonly IBankService? _bankService;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -30,7 +31,8 @@ public class DocumentService : IDocumentService
         ILineNotifyService lineNotify,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
         CrossTenantWorkflowService crossTenantWorkflow,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null,
+        IBankService? bankService = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -42,6 +44,7 @@ public class DocumentService : IDocumentService
         _vendorIntel = vendorIntel;
         _crossTenantWorkflow = crossTenantWorkflow;
         _notify = notify;
+        _bankService = bankService;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -708,6 +711,18 @@ public class DocumentService : IDocumentService
                 throw;
             }
         });
+
+        // Cascade-unwind any ReconciliationGroup that referenced this Document
+        // directly (ItemType=Document — for Receipt/PV operators dragged into
+        // a group without going through a Payment record). JE-pathed groups
+        // were already unwound during step (2) via ReverseJournalEntryAsync.
+        // Runs OUTSIDE the strategy/transaction above so a bank-cleanup
+        // hiccup doesn't roll back the voided document state.
+        if (_bankService != null)
+        {
+            try { await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Document, documentId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Group unwind for voided document {DocId} failed", documentId); }
+        }
     }
 
     /// <summary>
@@ -941,6 +956,15 @@ public class DocumentService : IDocumentService
                 throw;
             }
         });
+
+        // Cascade-unwind any ReconciliationGroup that referenced this Payment
+        // directly (ItemType=Payment). JE-pathed groups were unwound by
+        // ReversePaymentInternalAsync → ReverseJournalEntryAsync → bank cleanup.
+        if (_bankService != null)
+        {
+            try { await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Payment, paymentId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Group unwind for voided payment {PayId} failed", paymentId); }
+        }
     }
 
     /// <summary>
