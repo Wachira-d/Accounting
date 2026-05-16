@@ -195,6 +195,27 @@ public partial class BankService
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
+    /// <summary>
+    /// Find every ReconciliationGroup that contains the given (itemType, itemId)
+    /// reference and unwind each one — release the bank-transaction members
+    /// back to Unmatched, soft-delete the group + its items, and decrement the
+    /// associated learning patterns so AI confidence isn't inflated by a
+    /// reconciliation that was effectively undone via a cascade.
+    /// </summary>
+    public async Task UnwindGroupsContainingItemAsync(
+        Guid companyId, ReconciliationItemType itemType, Guid itemId)
+    {
+        var groupIds = await _db.ReconciliationGroupItems
+            .Where(i => i.ItemType == itemType && i.ItemId == itemId
+                && i.Group.CompanyId == companyId
+                && !i.IsDeleted)
+            .Select(i => i.GroupId)
+            .Distinct()
+            .ToListAsync();
+        foreach (var gid in groupIds)
+            await UnreconcileGroupAsync(companyId, gid);
+    }
+
     public async Task UnreconcileGroupAsync(Guid companyId, Guid groupId)
     {
         var group = await _db.ReconciliationGroups
@@ -226,7 +247,63 @@ public partial class BankService
         group.IsDeleted = true;
         group.UpdatedAt = DateTime.UtcNow;
 
+        // Decrement learning patterns associated with this group's
+        // (bankTxn × item) pairs. Without this, repeated match→unmatch
+        // cycles on the same pair inflate the "TimesConfirmed" counter
+        // and pollute future AI suggestions with phantom confidence.
+        await DecrementPatternsForGroupAsync(companyId, group);
+
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>Mirror of RecordReconciliationPatternsAsync that walks the
+    /// same (bankTxn × item) cross-product and decrements TimesConfirmed.
+    /// Patterns with TimesConfirmed ≤ 0 are soft-deleted so they don't
+    /// linger as zero-confidence noise. Failures are swallowed —
+    /// learning bookkeeping never blocks a reconcile/unreconcile.</summary>
+    private async Task DecrementPatternsForGroupAsync(Guid companyId, ReconciliationGroup group)
+    {
+        try
+        {
+            var bankItems = group.Items.Where(i => i.ItemType == ReconciliationItemType.BankTransaction).ToList();
+            var matchItems = group.Items.Where(i => i.ItemType != ReconciliationItemType.BankTransaction).ToList();
+            if (bankItems.Count == 0 || matchItems.Count == 0) return;
+
+            var bankIds = bankItems.Select(b => b.ItemId).ToList();
+            var bankTxns = await _db.Set<BankTransaction>().AsNoTracking()
+                .Where(t => bankIds.Contains(t.Id))
+                .Select(t => new { t.Id, t.Description, t.Reference, t.Payee })
+                .ToListAsync();
+
+            foreach (var b in bankItems)
+            {
+                var info = bankTxns.FirstOrDefault(x => x.Id == b.ItemId);
+                if (info == null) continue;
+                var sig = ComputeDescriptionSignature(info.Description, info.Reference, info.Payee);
+                var bucket = ComputeAmountBucket(b.AllocatedAmount);
+
+                foreach (var item in matchItems)
+                {
+                    var pattern = await _db.BankReconciliationPatterns
+                        .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                            && p.BankAccountId == group.BankAccountId
+                            && p.DescriptionSignature == sig
+                            && p.AmountBucket == bucket
+                            && p.TargetType == item.ItemType);
+                    if (pattern == null) continue;
+                    pattern.TimesConfirmed = Math.Max(0, pattern.TimesConfirmed - 1);
+                    pattern.UpdatedAt = DateTime.UtcNow;
+                    if (pattern.TimesConfirmed == 0)
+                    {
+                        pattern.IsDeleted = true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "DecrementPatternsForGroupAsync failed for group {GroupId}", group.Id);
+        }
     }
 
     public async Task<byte[]> ExportReconciliationReportAsync(

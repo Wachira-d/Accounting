@@ -234,22 +234,37 @@ public class OrganizationService : IOrganizationService
         string? managerName = null;
         Guid? managerUserId = null;
         string? managerEmail = null;
-        if (emp.DirectManager != null)
+        // Only return the direct manager when they're still active — a
+        // terminated / inactive / soft-deleted manager should NOT receive
+        // leave / advance approval requests (the global query filter on
+        // Employees already hides IsDeleted; the IsActive / EndDate check
+        // catches terminated-but-not-soft-deleted records).
+        if (emp.DirectManager != null
+            && emp.DirectManager.IsActive
+            && (emp.DirectManager.EndDate == null || emp.DirectManager.EndDate > DateTime.UtcNow.Date))
         {
             managerName = $"{emp.DirectManager.TitleTh}{emp.DirectManager.FirstNameTh} {emp.DirectManager.LastNameTh}".Trim();
             managerUserId = emp.DirectManager.UserId;
             managerEmail = emp.DirectManager.Email;
         }
 
-        // Department-head fallback when no direct manager is set.
+        // Department-head fallback when no direct manager is set (or the
+        // direct manager is inactive). Same active-employee filter applies.
         Guid? deptHeadEmployeeId = emp.DepartmentRef?.ManagerEmployeeId;
         string? deptHeadName = null;
         if (deptHeadEmployeeId.HasValue && deptHeadEmployeeId.Value != employeeId)
         {
-            deptHeadName = await _db.Employees
-                .Where(e => e.Id == deptHeadEmployeeId.Value)
-                .Select(e => $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim())
+            var head = await _db.Employees
+                .Where(e => e.Id == deptHeadEmployeeId.Value
+                    && !e.IsDeleted
+                    && e.IsActive
+                    && (e.EndDate == null || e.EndDate > DateTime.UtcNow.Date))
+                .Select(e => new { e.TitleTh, e.FirstNameTh, e.LastNameTh })
                 .FirstOrDefaultAsync();
+            if (head != null)
+                deptHeadName = $"{head.TitleTh}{head.FirstNameTh} {head.LastNameTh}".Trim();
+            else
+                deptHeadEmployeeId = null;   // head is inactive — fall back to no escalation
         }
         else
         {
