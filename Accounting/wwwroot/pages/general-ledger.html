@@ -437,8 +437,8 @@
       // its underlying Journal Entry, then onward to the source Document.
       drillToEntry(jeId, sourceDocNumber) {
         if (jeId && jeId !== 'null' && jeId !== '') {
-          // Open the JE detail in the same tab — journals page accepts ?id=
-          window.open(`/pages/journals.html?id=${encodeURIComponent(jeId)}`, '_blank');
+          // journals.html reads ?entryId= (not ?id=) to auto-open the detail modal
+          window.open(`/pages/journals.html?entryId=${encodeURIComponent(jeId)}`, '_blank');
         } else if (sourceDocNumber && sourceDocNumber !== 'null' && sourceDocNumber !== '') {
           window.open(`/pages/documents.html?search=${encodeURIComponent(sourceDocNumber)}`, '_blank');
         }
