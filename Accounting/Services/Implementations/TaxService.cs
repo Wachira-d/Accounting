@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class TaxService : ITaxService
+public partial class TaxService : ITaxService
 {
     private readonly AccountingDbContext _db;
 
@@ -827,6 +827,10 @@ public class TaxService : ITaxService
 
         report.Status = TaxReportStatus.Filed;
         report.FiledDate = DateTime.UtcNow;
+        // Mark the filing as locked simultaneously — see Task 4 of the
+        // ERP upgrade. Once Filed, every linked document/JE is read-only
+        // until an explicit UnlockTaxFilingAsync (admin operation).
+        report.FilingLockedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
         return MapToResponse(report);

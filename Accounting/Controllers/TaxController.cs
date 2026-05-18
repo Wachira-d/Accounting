@@ -82,4 +82,64 @@ public class TaxController : ControllerBase
         var result = await _taxService.GetVatDebugAsync(companyId, year, month);
         return Ok(new ApiResponse<object>(true, result));
     }
+
+    // ===== Task 4 ERP Upgrade — Defer VAT / Unlock / Reject & Reverse =====
+
+    public record DeferInputVatRequest(Guid DocumentId, int DeferredToPeriod, string? Reason);
+
+    [HttpPost("defer-input-vat")]
+    public async Task<ActionResult<ApiResponse<object>>> DeferInputVat(
+        Guid companyId, [FromBody] DeferInputVatRequest request)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        var d = await _taxService.DeferInputVatAsync(companyId, request.DocumentId, request.DeferredToPeriod, request.Reason, userId);
+        return Ok(new ApiResponse<object>(true,
+            new { d.Id, d.DocumentId, d.DeferredFromPeriod, d.DeferredToPeriod, d.DeferredAmount },
+            $"เลื่อน Input VAT {d.DeferredAmount:N2} บาท ไปงวด {d.DeferredToPeriod}"));
+    }
+
+    public record UnlockTaxFilingRequest(string Reason);
+
+    [HttpPost("{reportId:guid}/unlock-filing")]
+    public async Task<ActionResult<ApiResponse<string>>> UnlockTaxFiling(
+        Guid companyId, Guid reportId, [FromBody] UnlockTaxFilingRequest request)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _taxService.UnlockTaxFilingAsync(companyId, reportId, userId, request.Reason);
+        return Ok(new ApiResponse<string>(true, null, "ปลดล็อกการยื่นภาษีสำเร็จ"));
+    }
+
+    public record RejectTaxReportRequest(string Reason, Guid? NonClaimableVatAccountId);
+
+    /// <summary>
+    /// Cancel a Filed report — generates an autonomous reversal JE that
+    /// moves the previously-claimed Input VAT into a non-claimable VAT
+    /// expense account (per Thai RD practice on rejected refund claims).
+    /// </summary>
+    [HttpPost("{reportId:guid}/reject-reverse")]
+    public async Task<ActionResult<ApiResponse<TaxReportResponse>>> RejectAndReverse(
+        Guid companyId, Guid reportId, [FromBody] RejectTaxReportRequest request)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _taxService.RejectAndReverseTaxReportAsync(companyId, reportId, request.Reason, request.NonClaimableVatAccountId, userId);
+        return Ok(new ApiResponse<TaxReportResponse>(true, result, "Reject + Reverse สำเร็จ — สร้าง reversal JE แล้ว"));
+    }
+
+    // ===== Task 4 ERP Upgrade — RD pipe-delimited e-Filing export =====
+
+    /// <summary>
+    /// Generate a Thai RD e-Filing pipe-delimited file for the given form
+    /// + period. Returns the text content as `text/plain` attachment so the
+    /// browser saves it directly. Also persists an EFilingExport audit row.
+    /// </summary>
+    [HttpPost("e-filing/{formType}")]
+    public async Task<IActionResult> GenerateEFiling(
+        Guid companyId, string formType, [FromQuery] int year, [FromQuery] int month)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        var export = await _taxService.GenerateEFilingAsync(companyId, formType, year, month, userId);
+        var fileName = $"{formType}_{year}{month:D2}.txt";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(export.FileContent);
+        return File(bytes, "text/plain; charset=utf-8", fileName);
+    }
 }

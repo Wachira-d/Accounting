@@ -1,0 +1,213 @@
+using Accounting.Models.DTOs.Accounting;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+public partial class TaxService
+{
+    // ============================================================
+    // Task 4 — RD compliance extensions
+    //   * Defer Input VAT (≤6 months per Thai law)
+    //   * Filing lock + unlock
+    //   * Reject & Reverse workflow (autonomous GL reversal)
+    //   * PND.54 (foreign WHT) + PP.36 (foreign service VAT) processing
+    // ============================================================
+
+    /// <summary>
+    /// Defer one Input-VAT-bearing document from its current period to a
+    /// later one (up to 6 months by Thai Revenue Code Section 82/3).
+    /// Creates a VatDeferral row; the source TaxReport regenerate flow
+    /// must respect deferrals and exclude them, the target month must
+    /// include them when generated.
+    /// </summary>
+    public async Task<VatDeferral> DeferInputVatAsync(
+        Guid companyId, Guid documentId, int deferredToPeriod, string? reason, string userId)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (doc.VatAmount <= 0)
+            throw new InvalidOperationException("เอกสารนี้ไม่มี VAT ที่จะเลื่อน");
+
+        var docPeriod = doc.DocumentDate.Year * 100 + doc.DocumentDate.Month;
+        // Validate within 6 months (e.g. doc=202601 → max defer to 202607).
+        var docDate = doc.DocumentDate;
+        var maxDefer = docDate.AddMonths(6);
+        var maxPeriod = maxDefer.Year * 100 + maxDefer.Month;
+        if (deferredToPeriod <= docPeriod)
+            throw new InvalidOperationException("วันที่เลื่อนต้องอยู่หลังเดือนของเอกสาร");
+        if (deferredToPeriod > maxPeriod)
+            throw new InvalidOperationException(
+                $"กฎหมายอนุญาตให้เลื่อน Input VAT ได้สูงสุด 6 เดือน — เลื่อนได้ไม่เกินงวด {maxPeriod}");
+
+        // Find or pseudo-link the original TaxReport for audit. If none yet
+        // (operator deferring proactively before generating the source month),
+        // we still record the deferral; the regenerate flow can read it later.
+        var originalReport = await _db.TaxReports
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                && r.TaxType == TaxType.VAT
+                && r.Year == docDate.Year && r.Month == docDate.Month);
+
+        var deferral = new VatDeferral
+        {
+            CompanyId = companyId,
+            DocumentId = documentId,
+            OriginalTaxReportId = originalReport?.Id ?? Guid.Empty,
+            DeferredAmount = doc.VatAmount,
+            DeferralReason = reason,
+            DeferredFromPeriod = docPeriod,
+            DeferredToPeriod = deferredToPeriod,
+            CreatedBy = userId,
+        };
+        _db.VatDeferrals.Add(deferral);
+        await _db.SaveChangesAsync();
+        return deferral;
+    }
+
+    public async Task UnlockTaxFilingAsync(Guid companyId, Guid reportId, string userId, string reason)
+    {
+        var report = await _db.TaxReports
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+        if (report.FilingLockedAt == null)
+            throw new InvalidOperationException("รายงานนี้ไม่ได้ถูก lock");
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("ต้องระบุเหตุผลในการ unlock");
+
+        report.FilingLockedAt = null;
+        report.FilingLockedBy = null;
+        report.Status = TaxReportStatus.Calculated;
+        report.Notes = (report.Notes ?? "") + $"\n[UNLOCK by {userId} @ {DateTime.UtcNow:u}] {reason}";
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Cancel & Reverse — when the RD rejects a filing or the company
+    /// discovers an error post-filing, this records the rejection and
+    /// generates a counter JE that moves the previously-claimed Input
+    /// VAT into a non-claimable VAT expense account so the period
+    /// balances net to zero on that VAT.
+    /// </summary>
+    public async Task<TaxReportResponse> RejectAndReverseTaxReportAsync(
+        Guid companyId, Guid reportId, string reason, Guid? nonClaimableVatAccountId, string userId)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("ต้องระบุเหตุผลในการ Reject");
+
+        var report = await _db.TaxReports
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+
+        if (report.Status != TaxReportStatus.Filed)
+            throw new InvalidOperationException("Reject ได้เฉพาะรายงานที่ Filed แล้ว");
+        if (report.ReversalJournalEntryId.HasValue)
+            throw new InvalidOperationException("รายงานนี้ถูก Reject + Reverse ไปแล้ว");
+
+        // Find a default non-claimable VAT expense account if none provided.
+        var nonClaim = nonClaimableVatAccountId.HasValue
+            ? await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == nonClaimableVatAccountId.Value && a.CompanyId == companyId)
+            : await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountType == AccountType.Expense
+                    && a.AccountName.Contains("VAT") && a.AccountName.Contains("ไม่"));
+        if (nonClaim == null)
+            throw new InvalidOperationException(
+                "ไม่พบบัญชี 'VAT ขอคืนไม่ได้' (Non-claimable VAT Expense) — กรุณาสร้างหรือระบุ Id");
+
+        var inputVatAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                && a.AccountCode.StartsWith("11317"))   // Standard Thai chart: 11317 = ภาษีซื้อ
+            ?? await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountType == AccountType.Asset
+                    && a.AccountName.Contains("ภาษีซื้อ"));
+        if (inputVatAccount == null)
+            throw new InvalidOperationException("ไม่พบบัญชีภาษีซื้อในผังบัญชี");
+
+        if (report.InputVat <= 0)
+            throw new InvalidOperationException("รายงานไม่มี Input VAT ที่ต้อง reverse");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // Build the reversal JE — Dr Non-claimable VAT Expense, Cr Input VAT.
+            var lines = new List<JournalLineRequest>
+            {
+                new(nonClaim.Id, report.InputVat, 0,
+                    $"Reject VAT คืน {report.Year}/{report.Month:D2} — {reason}"),
+                new(inputVatAccount.Id, 0, report.InputVat,
+                    $"Reverse Input VAT ที่ถูก Reject — รายงาน {report.Id.ToString("N")[..8]}"),
+            };
+
+            // Use the central CreateJournalEntryAsync via the IAccountingService
+            // when injected; otherwise create directly here. To avoid a wider
+            // DI surgery this partial just inserts the JE directly using a
+            // running number scheme that matches the convention.
+            var entryNumber = $"VR-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString("N")[..6].ToUpper()}";
+            var entry = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = DateTime.UtcNow.Date,
+                JournalType = JournalType.General,
+                Description = $"Reverse VAT Reject — รายงาน {report.Year}/{report.Month:D2} — {reason}",
+                Reference = report.Id.ToString("N")[..8],
+                Status = JournalEntryStatus.Posted,
+                IsAutoGenerated = true,
+                TotalDebit = report.InputVat,
+                TotalCredit = report.InputVat,
+                CreatedBy = userId,
+            };
+            _db.JournalEntries.Add(entry);
+
+            int order = 1;
+            foreach (var l in lines)
+            {
+                _db.JournalEntryLines.Add(new JournalEntryLine
+                {
+                    JournalEntryId = entry.Id,
+                    AccountId = l.AccountId,
+                    DebitAmount = l.DebitAmount,
+                    CreditAmount = l.CreditAmount,
+                    Description = l.Description,
+                    LineOrder = order++,
+                });
+            }
+
+            report.RejectionReason = reason;
+            report.RejectedAt = DateTime.UtcNow;
+            report.RejectedBy = userId;
+            report.ReversalJournalEntryId = entry.Id;
+            // Lift the filing lock so corrections can be made.
+            report.FilingLockedAt = null;
+            report.Status = TaxReportStatus.Draft;
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return MapToResponse(report);
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Whether a document is currently locked because a TaxReport that
+    /// includes it has FilingLockedAt set. Used by the document edit guard.
+    /// </summary>
+    public async Task<bool> IsDocumentFilingLockedAsync(Guid companyId, Guid documentId)
+    {
+        // A filing-lock applies when ANY TaxReportLine references this
+        // document and its parent TaxReport.FilingLockedAt is set.
+        return await _db.TaxReports.AnyAsync(r =>
+            r.CompanyId == companyId
+            && r.FilingLockedAt != null
+            && r.Lines.Any(l => l.DocumentId == documentId));
+    }
+}
