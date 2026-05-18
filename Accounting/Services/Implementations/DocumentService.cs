@@ -2637,7 +2637,13 @@ public class DocumentService : IDocumentService
         CertifierPosition: d.CertifierPosition,
         WitnessName: d.WitnessName,
         WitnessPosition: d.WitnessPosition,
-        PaymentDate: d.PaymentDate);
+        PaymentDate: d.PaymentDate,
+        // ERP upgrade fields — OCR compliance + aging
+        OcrConfidenceScore: d.OcrConfidenceScore,
+        RdComplianceStatus: d.RdComplianceStatus,
+        RdComplianceIssuesJson: d.RdComplianceIssuesJson,
+        OcrTenantMismatchFlag: d.OcrTenantMismatchFlag,
+        AgingDays: d.AgingDays);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,

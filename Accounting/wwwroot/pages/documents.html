@@ -1074,7 +1074,37 @@
           const d = res.data;
           this._currentDoc = d;
           document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
-          document.getElementById('detailContent').innerHTML = `
+          // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
+          let banners = '';
+          if (d.ocrTenantMismatchFlag) {
+            banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+              ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong> — กรุณาตรวจสอบว่าอัพโหลดถูกบริษัทหรือไม่
+            </div>`;
+          }
+          if (d.rdComplianceStatus && d.rdComplianceStatus !== 'Pending' && d.rdComplianceStatus !== 'Valid' && d.rdComplianceStatus !== 'Approved') {
+            const color = d.rdComplianceStatus === 'Failed' ? '#dc2626' : '#d97706';
+            const bg = d.rdComplianceStatus === 'Failed' ? '#fee2e2' : '#fef3c7';
+            let issues = [];
+            try { issues = JSON.parse(d.rdComplianceIssuesJson || '[]'); } catch(_) {}
+            banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+              🛡️ <strong>RD Compliance: ${d.rdComplianceStatus}</strong>
+              ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + issues.map(i => `<li>${Layout.esc(i.message || i.rule)}</li>`).join('') + '</ul>' : ''}
+            </div>`;
+          }
+          if (d.agingDays && d.agingDays >= 30) {
+            const bg = d.agingDays >= 90 ? '#fee2e2' : (d.agingDays >= 60 ? '#fed7aa' : '#fef3c7');
+            const color = d.agingDays >= 90 ? '#991b1b' : (d.agingDays >= 60 ? '#9a3412' : '#92400e');
+            banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+              ⏳ ค้างชำระมาแล้ว <strong>${d.agingDays} วัน</strong> (เกินกำหนด ${d.agingDays >= 90 ? '90+' : d.agingDays >= 60 ? '60+' : '30+'} วัน)
+            </div>`;
+          }
+          if (d.ocrConfidenceScore != null) {
+            const conf = Math.round(d.ocrConfidenceScore * 100);
+            const color = conf >= 80 ? '#059669' : (conf >= 50 ? '#d97706' : '#dc2626');
+            banners += `<div style="font-size:11px;color:${color};margin-bottom:8px">🔍 OCR confidence: ${conf}%</div>`;
+          }
+
+          document.getElementById('detailContent').innerHTML = banners + `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
               <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
