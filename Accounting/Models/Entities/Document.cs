@@ -81,6 +81,33 @@ public class Document : TenantEntity
     // Prevents double-counting on re-approval (Draft → Approved → Rejected → Draft → Approved).
     public DateTime? OcrIntelTrainedAt { get; set; }
 
+    // ===== OCR RD Compliance (Task 5 ERP Upgrade) =====
+
+    /// <summary>Average confidence (0..1) across all fields extracted by
+    /// Azure Document Intelligence on first OCR pass. Below 0.5 should
+    /// surface a "manual review" badge to the operator.</summary>
+    public decimal? OcrConfidenceScore { get; set; }
+
+    /// <summary>Result of the post-OCR RD compliance check
+    /// (Tax Invoice keyword present, Buyer/Seller Tax IDs valid, branch
+    /// code populated, VAT breakdown balances). Drives the UI badge.</summary>
+    public Enums.RdComplianceStatus RdComplianceStatus { get; set; } = Enums.RdComplianceStatus.Pending;
+
+    /// <summary>JSON-serialised list of individual issues so the badge can
+    /// expand to "3 problems: missing branch code, ..." without a join.</summary>
+    public string? RdComplianceIssuesJson { get; set; }
+
+    /// <summary>True when OCR pulled a Buyer Tax ID that doesn't match this
+    /// tenant's CompanyTaxId — usually means an invoice for a different
+    /// legal entity was uploaded into the wrong company. Hard warning.</summary>
+    public bool OcrTenantMismatchFlag { get; set; }
+
+    /// <summary>Aging engine watermark — calendar days since the document
+    /// became Pending (Approved-but-unpaid). Refreshed by AgingBackgroundService;
+    /// cached here so list views don't recompute on every fetch.</summary>
+    public int? AgingDays { get; set; }
+    public DateTime? AgingLastEvaluatedAt { get; set; }
+
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();

@@ -24,6 +24,26 @@ public class TaxReport : TenantEntity
 
     public string? Notes { get; set; }
 
+    // ===== Filing lock + audit (Task 4 RD compliance) =====
+
+    /// <summary>Once set, the report and every linked document/JE is locked
+    /// for edits — protects the integrity of what was actually submitted
+    /// to the RD. Cleared by an explicit unlock flow only.</summary>
+    public DateTime? FilingLockedAt { get; set; }
+    public string? FilingLockedBy { get; set; }
+
+    /// <summary>Timestamp of last e-Filing text export (pipe-delimited).</summary>
+    public DateTime? EFilingExportedAt { get; set; }
+    public string? EFilingReferenceNumber { get; set; }
+
+    /// <summary>Set when RD rejects the filing — captured here so
+    /// downstream "Cancel &amp; Reverse" workflow can record the reason
+    /// in the auto-generated reversal JE description.</summary>
+    public string? RejectionReason { get; set; }
+    public DateTime? RejectedAt { get; set; }
+    public string? RejectedBy { get; set; }
+    public Guid? ReversalJournalEntryId { get; set; }
+
     public ICollection<TaxReportLine> Lines { get; set; } = new List<TaxReportLine>();
 }
 

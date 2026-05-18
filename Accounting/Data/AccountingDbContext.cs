@@ -75,6 +75,16 @@ public class AccountingDbContext : DbContext
     public DbSet<ReconciliationGroupItem> ReconciliationGroupItems => Set<ReconciliationGroupItem>();
     public DbSet<BankReconciliationPattern> BankReconciliationPatterns => Set<BankReconciliationPattern>();
 
+    // ERP upgrade — Task 1 (periods, year-end, migration) + Task 4 (VAT deferral, e-Filing)
+    // + Task 5 (OCR compliance log)
+    public DbSet<OpeningBalance> OpeningBalances => Set<OpeningBalance>();
+    public DbSet<YearEndClosing> YearEndClosings => Set<YearEndClosing>();
+    public DbSet<MigrationSession> MigrationSessions => Set<MigrationSession>();
+    public DbSet<AccountMapping> AccountMappings => Set<AccountMapping>();
+    public DbSet<VatDeferral> VatDeferrals => Set<VatDeferral>();
+    public DbSet<EFilingExport> EFilingExports => Set<EFilingExport>();
+    public DbSet<OcrValidationLog> OcrValidationLogs => Set<OcrValidationLog>();
+
     // Recurring
     public DbSet<RecurringTransaction> RecurringTransactions => Set<RecurringTransaction>();
 
@@ -500,6 +510,66 @@ public class AccountingDbContext : DbContext
             e.HasIndex(f => new { f.CompanyId, f.Year, f.Month }).IsUnique();
             e.Property(f => f.Name).HasMaxLength(20);
             e.HasQueryFilter(f => !f.IsDeleted);
+        });
+
+        // ===== ERP Upgrade entities (Task 1, 4, 5) =====
+        modelBuilder.Entity<OpeningBalance>(e =>
+        {
+            e.Property(o => o.OpeningDebit).HasPrecision(18, 2);
+            e.Property(o => o.OpeningCredit).HasPrecision(18, 2);
+            e.HasOne(o => o.FiscalPeriod).WithMany().HasForeignKey(o => o.FiscalPeriodId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(o => o.Account).WithMany().HasForeignKey(o => o.AccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(o => new { o.CompanyId, o.FiscalPeriodId, o.AccountId }).IsUnique();
+            e.HasQueryFilter(o => !o.IsDeleted);
+        });
+        modelBuilder.Entity<YearEndClosing>(e =>
+        {
+            e.Property(y => y.TransferredAmount).HasPrecision(18, 2);
+            e.HasOne(y => y.RetainedEarningsAccount).WithMany().HasForeignKey(y => y.RetainedEarningsAccountId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(y => y.ClosingJournalEntry).WithMany().HasForeignKey(y => y.ClosingJournalEntryId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(y => new { y.CompanyId, y.FiscalYear }).IsUnique();
+            e.HasQueryFilter(y => !y.IsDeleted);
+        });
+        modelBuilder.Entity<MigrationSession>(e =>
+        {
+            e.Property(m => m.SessionName).HasMaxLength(200);
+            e.HasIndex(m => new { m.CompanyId, m.Status });
+            e.HasQueryFilter(m => !m.IsDeleted);
+        });
+        modelBuilder.Entity<AccountMapping>(e =>
+        {
+            e.Property(a => a.LegacyCode).HasMaxLength(50);
+            e.Property(a => a.LegacyName).HasMaxLength(200);
+            e.Property(a => a.LegacyDebit).HasPrecision(18, 2);
+            e.Property(a => a.LegacyCredit).HasPrecision(18, 2);
+            e.HasOne(a => a.MigrationSession).WithMany().HasForeignKey(a => a.MigrationSessionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(a => a.MappedAccount).WithMany().HasForeignKey(a => a.MappedAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(a => new { a.MigrationSessionId, a.LegacyCode });
+        });
+        modelBuilder.Entity<VatDeferral>(e =>
+        {
+            e.Property(v => v.DeferredAmount).HasPrecision(18, 2);
+            e.Property(v => v.DeferralReason).HasMaxLength(500);
+            e.HasOne(v => v.Document).WithMany().HasForeignKey(v => v.DocumentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(v => v.OriginalTaxReport).WithMany().HasForeignKey(v => v.OriginalTaxReportId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(v => new { v.CompanyId, v.DeferredToPeriod });
+            e.HasQueryFilter(v => !v.IsDeleted);
+        });
+        modelBuilder.Entity<EFilingExport>(e =>
+        {
+            e.Property(x => x.FormType).HasMaxLength(20);
+            e.Property(x => x.TotalAmount).HasPrecision(18, 2);
+            e.Property(x => x.TotalTax).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.FormType, x.PeriodYear, x.PeriodMonth });
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<OcrValidationLog>(e =>
+        {
+            e.Property(o => o.RuleCode).HasMaxLength(50);
+            e.Property(o => o.Severity).HasMaxLength(20);
+            e.HasOne(o => o.Document).WithMany().HasForeignKey(o => o.DocumentId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(o => o.DocumentId);
+            e.HasQueryFilter(o => !o.IsDeleted);
         });
 
         // ===== Document =====
