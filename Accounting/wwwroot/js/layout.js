@@ -301,6 +301,67 @@ const Layout = {
     catch (_) { return {}; }
   },
 
+  // ===== Global search (header) =====
+  _globalSearchTimer: null,
+  _onGlobalSearch(q) {
+    clearTimeout(this._globalSearchTimer);
+    if (!q || q.trim().length < 2) { this._hideGlobalSearch(); return; }
+    this._globalSearchTimer = setTimeout(() => this._runGlobalSearch(q.trim()), 250);
+  },
+  async _runGlobalSearch(query) {
+    const cid = this.getCompanyId();
+    if (!cid) return;
+    const dropdown = document.getElementById('globalSearchDropdown');
+    dropdown.style.display = 'block';
+    dropdown.innerHTML = '<div style="padding:14px;text-align:center;color:#94a3b8;font-size:13px">กำลังค้นหา...</div>';
+    try {
+      const res = await API.get(`/api/companies/${cid}/accountant/search?q=${encodeURIComponent(query)}`);
+      const d = res.data;
+      if (!d.totalHits) {
+        dropdown.innerHTML = '<div style="padding:14px;text-align:center;color:#94a3b8;font-size:13px">ไม่พบผลลัพธ์</div>';
+        return;
+      }
+      let html = '';
+      if (d.documents.length) {
+        html += `<div style="padding:6px 14px;background:#f8fafc;font-size:11px;font-weight:600;color:#475569">📄 เอกสาร (${d.documents.length})</div>`;
+        html += d.documents.map(doc => `<a href="/pages/documents.html?id=${doc.id}" style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 14px;border-bottom:1px solid #f1f5f9;text-decoration:none;color:inherit;font-size:13px">
+          <div><strong>${this.esc(doc.documentNumber)}</strong> · ${this.esc(doc.documentType)}<br>
+            <span style="font-size:11px;color:#64748b">${this.esc(doc.contactName || '-')} · ${this.date(doc.date)}</span></div>
+          <div style="text-align:right;font-variant-numeric:tabular-nums">${this.money(doc.totalAmount)}<br>
+            <span style="font-size:10px;color:#94a3b8">${this.esc(doc.status)}</span></div>
+        </a>`).join('');
+      }
+      if (d.journalEntries.length) {
+        html += `<div style="padding:6px 14px;background:#f8fafc;font-size:11px;font-weight:600;color:#475569">📝 สมุดรายวัน (${d.journalEntries.length})</div>`;
+        html += d.journalEntries.map(j => `<a href="/pages/journals.html?entryId=${j.id}" style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 14px;border-bottom:1px solid #f1f5f9;text-decoration:none;color:inherit;font-size:13px">
+          <div><strong>${this.esc(j.entryNumber)}</strong> · ${this.esc(j.journalType)}<br>
+            <span style="font-size:11px;color:#64748b">${this.esc(j.description || '-')} · ${this.date(j.entryDate)}</span></div>
+          <div style="text-align:right;font-variant-numeric:tabular-nums">${this.money(j.totalDebit)}<br>
+            <span style="font-size:10px;color:#94a3b8">${this.esc(j.status)}</span></div>
+        </a>`).join('');
+      }
+      if (d.contacts.length) {
+        html += `<div style="padding:6px 14px;background:#f8fafc;font-size:11px;font-weight:600;color:#475569">👥 ผู้ติดต่อ (${d.contacts.length})</div>`;
+        html += d.contacts.map(c => `<a href="/pages/contacts.html?id=${c.id}" style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 14px;border-bottom:1px solid #f1f5f9;text-decoration:none;color:inherit;font-size:13px">
+          <div><strong>${this.esc(c.name)}</strong><br>
+            <span style="font-size:11px;color:#64748b">${this.esc(c.taxId || '-')} · ${this.esc(c.contactType)}</span></div>
+          <div></div>
+        </a>`).join('');
+      }
+      dropdown.innerHTML = html;
+    } catch (e) {
+      dropdown.innerHTML = `<div style="padding:14px;color:#dc2626;font-size:13px">${this.esc(e.message)}</div>`;
+    }
+  },
+  _showGlobalSearchResults() {
+    const d = document.getElementById('globalSearchDropdown');
+    if (d && d.innerHTML.trim()) d.style.display = 'block';
+  },
+  _hideGlobalSearch() {
+    const d = document.getElementById('globalSearchDropdown');
+    if (d) d.style.display = 'none';
+  },
+
   // ===== Per-user menu visibility (stored in localStorage, scoped by company) =====
   _menuKey() {
     const cid = (this.subscription && this.subscription.companyId) ||
@@ -451,6 +512,8 @@ const Layout = {
   navItems: [
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard',
       description: 'ภาพรวมธุรกิจ — ยอดขาย รายจ่าย ลูกหนี้ เจ้าหนี้ กำไร เปรียบเทียบรายเดือน' },
+    { id: 'accountant', label: '🧮 เครื่องมือนักบัญชี', icon: '🧮', href: '/pages/accountant.html', feature: 'BasicAccounting',
+      description: 'Pre-close checklist + Sub-Ledger ↔ GL reconciliation + Document completeness — ตรวจสุขภาพระบบรายเดือน' },
 
     { section: 'ขาย / รายรับ', icon: '📤', description: 'ออกใบเสนอราคา ใบแจ้งหนี้ ใบกำกับภาษี ใบเสร็จ รับรู้รายได้' },
     { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue', feature: 'DocumentEngine', _i18nKey: 'nav.documents',
@@ -639,6 +702,15 @@ const Layout = {
       <div class="header-left">
         <button class="mobile-toggle" onclick="Layout.toggleSidebar()">☰</button>
         <h1 class="header-title" id="headerTitle"></h1>
+      </div>
+      <div class="header-center" style="flex:1;max-width:480px;margin:0 16px;position:relative">
+        <input type="text" id="globalSearchInput" placeholder="🔍 ค้นหาเอกสาร / JE / ผู้ติดต่อ..."
+          autocomplete="off" oninput="Layout._onGlobalSearch(this.value)"
+          onblur="setTimeout(()=>Layout._hideGlobalSearch(),200)"
+          onfocus="if(this.value.length>=2)Layout._showGlobalSearchResults()"
+          style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;background:#f9fafb"
+          title="พิมพ์เลขเอกสาร / เลข JE / ชื่อลูกค้า / จำนวนเงิน เพื่อค้นหาทั่วระบบ">
+        <div id="globalSearchDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:480px;overflow-y:auto;z-index:1100"></div>
       </div>
       <div class="header-right">
         <div id="appLangSwitcher" style="margin-right:8px"></div>
