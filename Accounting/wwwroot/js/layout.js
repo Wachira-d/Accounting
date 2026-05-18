@@ -512,7 +512,7 @@ const Layout = {
   navItems: [
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard',
       description: 'ภาพรวมธุรกิจ — ยอดขาย รายจ่าย ลูกหนี้ เจ้าหนี้ กำไร เปรียบเทียบรายเดือน' },
-    { id: 'accountant', label: '🧮 เครื่องมือนักบัญชี', icon: '🧮', href: '/pages/accountant.html', feature: 'BasicAccounting',
+    { id: 'accountant', label: '🧮 เครื่องมือนักบัญชี', icon: '🧮', href: '/pages/accountant.html', feature: 'BasicAccounting', _i18nKey: 'nav.accountant',
       description: 'Pre-close checklist + Sub-Ledger ↔ GL reconciliation + Document completeness — ตรวจสุขภาพระบบรายเดือน' },
 
     { section: 'ขาย / รายรับ', icon: '📤', description: 'ออกใบเสนอราคา ใบแจ้งหนี้ ใบกำกับภาษี ใบเสร็จ รับรู้รายได้' },
