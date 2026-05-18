@@ -91,6 +91,7 @@ builder.Services.AddMemoryCache();
 // Core
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountingService, AccountingService>();
+builder.Services.AddScoped<IMigrationWizardService, MigrationWizardService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
