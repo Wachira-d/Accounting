@@ -210,4 +210,53 @@ public partial class TaxService
             && r.FilingLockedAt != null
             && r.Lines.Any(l => l.DocumentId == documentId));
     }
+
+    /// <summary>
+    /// Adjust a freshly-generated VAT report's Input VAT to:
+    ///   1. SUBTRACT documents that were deferred OUT of this month
+    ///      (they show up on the deferred target month instead).
+    ///   2. ADD documents that were deferred INTO this month from
+    ///      earlier months.
+    /// Recomputes report.InputVat + NetVat after both passes.
+    /// </summary>
+    private async Task ApplyVatDeferralsAsync(Guid companyId, int year, int month, TaxReport report)
+    {
+        var period = year * 100 + month;
+        var deferrals = await _db.VatDeferrals.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && (d.DeferredFromPeriod == period || d.DeferredToPeriod == period))
+            .ToListAsync();
+        if (deferrals.Count == 0) return;
+
+        var subtract = deferrals
+            .Where(d => d.DeferredFromPeriod == period && d.ClaimedAt == null)
+            .Sum(d => d.DeferredAmount);
+        var add = deferrals
+            .Where(d => d.DeferredToPeriod == period && d.ClaimedAt == null)
+            .Sum(d => d.DeferredAmount);
+
+        if (subtract > 0)
+        {
+            report.InputVat -= subtract;
+            report.Notes = (report.Notes ?? "") + $"\n[VAT Deferred OUT] -{subtract:N2} (เลื่อนการเคลม)";
+        }
+        if (add > 0)
+        {
+            report.InputVat += add;
+            report.Notes = (report.Notes ?? "") + $"\n[VAT Deferred IN] +{add:N2} (เคลมจากเดือนก่อน)";
+            // Mark the incoming deferrals as claimed so they don't pile up.
+            var incoming = deferrals.Where(d => d.DeferredToPeriod == period && d.ClaimedAt == null).ToList();
+            foreach (var d in incoming)
+            {
+                var tracked = await _db.VatDeferrals.FirstOrDefaultAsync(x => x.Id == d.Id);
+                if (tracked != null)
+                {
+                    tracked.ClaimedAt = DateTime.UtcNow;
+                    tracked.ClaimedTaxReportId = report.Id;
+                }
+            }
+        }
+        // Recompute net.
+        report.NetVat = report.OutputVat - report.InputVat;
+    }
 }

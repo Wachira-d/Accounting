@@ -46,6 +46,7 @@ public class OcrService : IOcrService
     private readonly Services.Interfaces.IOcrQuotaService _quota;
     private readonly Ocr.AzureDiPatternLearner _azureLearner;
     private readonly Ocr.VendorKnownGoodCorrector _knownGoodCorrector;
+    private readonly Ocr.RdComplianceValidator? _rdComplianceValidator;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -59,7 +60,8 @@ public class OcrService : IOcrService
         RecurringExpenseDetector recurringDetector,
         Services.Interfaces.IOcrQuotaService quota,
         Ocr.AzureDiPatternLearner azureLearner,
-        Ocr.VendorKnownGoodCorrector knownGoodCorrector)
+        Ocr.VendorKnownGoodCorrector knownGoodCorrector,
+        Ocr.RdComplianceValidator? rdComplianceValidator = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -76,6 +78,7 @@ public class OcrService : IOcrService
         _quota = quota;
         _azureLearner = azureLearner;
         _knownGoodCorrector = knownGoodCorrector;
+        _rdComplianceValidator = rdComplianceValidator;
     }
 
     public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
@@ -2786,6 +2789,24 @@ public class OcrService : IOcrService
 
         // Re-link scanned file to the created document (orphan prevention)
         await RelinkScanFileToDocumentAsync(companyId, result.FileAttachmentId, document.Id);
+
+        // Run RD-compliance + tenant-mismatch validation on the freshly
+        // created document (Task 5 of ERP upgrade). Failures don't roll
+        // back the document creation — they surface as
+        // Document.RdComplianceStatus badges + OcrValidationLog rows.
+        if (_rdComplianceValidator != null)
+        {
+            try
+            {
+                var ocrResultDto = MapToResponse(result);
+                await _rdComplianceValidator.EvaluateAndPersistAsync(
+                    companyId, document.Id, ocrResultDto, result.RawTextContent);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "RdComplianceValidator failed for document {DocId}", document.Id);
+            }
+        }
 
         return MapToResponse(result);
     }

@@ -72,12 +72,26 @@ public partial class TaxService : ITaxService
             if (request.TaxType == TaxType.VAT)
             {
                 await GenerateVatReport(companyId, startDate, endDate, report);
+                await ApplyVatDeferralsAsync(companyId, request.Year, request.Month, report);
             }
             else if (request.TaxType == TaxType.WithholdingTax3
                   || request.TaxType == TaxType.WithholdingTax53
-                  || request.TaxType == TaxType.WithholdingTax1)
+                  || request.TaxType == TaxType.WithholdingTax1
+                  || request.TaxType == TaxType.WithholdingTax54)
             {
+                // PND.54 reuses the WHT report generator — the difference is
+                // in the form's per-line IncomeTypeCode and the e-Filing export
+                // layout (BuildPndAsync handles 54 separately).
                 await GenerateWhtReport(companyId, startDate, endDate, report);
+            }
+            else if (request.TaxType == TaxType.VatPp36)
+            {
+                // PP.36 — foreign service VAT. Treat like VAT report but
+                // pulled only from documents flagged as foreign-supplier
+                // (heuristic: contact has non-Thai TaxId or is marked
+                // ForeignSupplier). For now reuse the VAT generator;
+                // ApplyVatDeferralsAsync skips this branch.
+                await GenerateVatReport(companyId, startDate, endDate, report);
             }
             else if (request.TaxType == TaxType.CorporateIncomeTax)
             {

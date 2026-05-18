@@ -24,6 +24,7 @@ public class DocumentService : IDocumentService
     private readonly CrossTenantWorkflowService _crossTenantWorkflow;
     private readonly INotificationEngine? _notify;
     private readonly IBankService? _bankService;
+    private readonly ITaxService? _taxService;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -32,7 +33,8 @@ public class DocumentService : IDocumentService
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
         CrossTenantWorkflowService crossTenantWorkflow,
         INotificationEngine? notify = null,
-        IBankService? bankService = null)
+        IBankService? bankService = null,
+        ITaxService? taxService = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -45,6 +47,7 @@ public class DocumentService : IDocumentService
         _crossTenantWorkflow = crossTenantWorkflow;
         _notify = notify;
         _bankService = bankService;
+        _taxService = taxService;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -617,6 +620,14 @@ public class DocumentService : IDocumentService
 
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");
+
+        // Filing lock guard: an Approved document that's part of a TaxReport
+        // already marked Filed (FilingLockedAt set) is sealed for audit —
+        // the operator must Unlock the report first (admin) or use
+        // RejectAndReverseTaxReportAsync to formally cancel the filing.
+        if (_taxService != null && await _taxService.IsDocumentFilingLockedAsync(companyId, documentId))
+            throw new InvalidOperationException(
+                "เอกสารนี้อยู่ในรายงานภาษีที่ Filed แล้ว — กรุณา Unlock รายงานหรือใช้ 'Reject & Reverse' ก่อน");
 
         // Block void if eTax has been submitted/accepted by RD — must contact RD to revoke first
         var lockedEtax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.DocumentId == documentId
