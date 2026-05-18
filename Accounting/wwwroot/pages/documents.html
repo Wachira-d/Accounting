@@ -779,9 +779,25 @@
             const projectBadge = d.projectId
               ? `<span title="โครงการ: ${this.escapeHtml(d.projectName || '')} — บัญชีของเอกสารนี้จะถูกบันทึกเข้าโครงการนี้" style="margin-left:6px;padding:1px 6px;background:#6366f1;color:#fff;border-radius:6px;font-size:10px;font-weight:600">📁 ${this.escapeHtml(d.projectCode || d.projectName || '')}</span>`
               : '';
+            // Aging badge — surfaced inline next to the document number.
+            // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
+            // the document detail for follow-up.
+            let agingBadge = '';
+            if (d.agingDays && d.agingDays >= 30) {
+              const tier = d.agingDays >= 90 ? '90+' : (d.agingDays >= 60 ? '60+' : '30+');
+              const color = d.agingDays >= 90 ? '#dc2626' : (d.agingDays >= 60 ? '#ea580c' : '#d97706');
+              agingBadge = `<span title="ค้างชำระ ${d.agingDays} วัน" style="margin-left:6px;padding:1px 6px;background:${color};color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ ${tier}d</span>`;
+            }
+            // RD compliance dot (small).
+            let rdBadge = '';
+            if (d.rdComplianceStatus === 'Failed' || d.ocrTenantMismatchFlag) {
+              rdBadge = `<span title="RD compliance ผิดหรือ tenant mismatch" style="margin-left:4px;color:#dc2626;font-size:14px">🛡️</span>`;
+            } else if (d.rdComplianceStatus === 'Warning') {
+              rdBadge = `<span title="RD compliance: มีคำเตือน" style="margin-left:4px;color:#d97706;font-size:14px">🛡️</span>`;
+            }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}</td>
+            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
