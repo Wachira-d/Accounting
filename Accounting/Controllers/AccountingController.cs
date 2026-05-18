@@ -272,4 +272,54 @@ public class AccountingController : ControllerBase
         await _accountingService.CloseFiscalPeriodAsync(companyId, periodId);
         return Ok(new ApiResponse<string>(true, null, "ปิดงวดบัญชีสำเร็จ"));
     }
+
+    // ===== Year-End Close + Soft/Hard Close (Task 1 ERP upgrade) =====
+
+    /// <summary>Soft close — flips period to Closed but admin can reopen.</summary>
+    [HttpPost("fiscal-periods/{periodId:guid}/soft-close")]
+    public async Task<ActionResult<ApiResponse<object>>> SoftClosePeriod(Guid companyId, Guid periodId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var period = await _accountingService.SoftClosePeriodAsync(companyId, periodId, userId);
+        return Ok(new ApiResponse<object>(true, new { period.Id, period.Status, period.ClosedAt }, "Soft-close งวดบัญชีสำเร็จ"));
+    }
+
+    /// <summary>Re-open a soft-closed period (cannot reopen Locked).</summary>
+    [HttpPost("fiscal-periods/{periodId:guid}/reopen")]
+    public async Task<ActionResult<ApiResponse<object>>> ReopenPeriod(Guid companyId, Guid periodId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var period = await _accountingService.ReopenPeriodAsync(companyId, periodId, userId);
+        return Ok(new ApiResponse<object>(true, new { period.Id, period.Status }, "เปิดงวดบัญชีอีกครั้งสำเร็จ"));
+    }
+
+    public record YearEndCloseRequest(int FiscalYear, Guid RetainedEarningsAccountId, DateTime? ClosingDate);
+
+    /// <summary>
+    /// Hard close: year-end — auto-generates the P&amp;L → Retained Earnings
+    /// transfer journal entry, locks every month of the year, then rolls
+    /// Asset/Liability/Equity ending balances to January of the next year
+    /// as OpeningBalance rows.
+    /// </summary>
+    [HttpPost("year-end-close")]
+    public async Task<ActionResult<ApiResponse<object>>> YearEndClose(Guid companyId, [FromBody] YearEndCloseRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _accountingService.YearEndCloseAsync(companyId, request.FiscalYear, request.RetainedEarningsAccountId, request.ClosingDate, userId);
+        return Ok(new ApiResponse<object>(true,
+            new { result.Id, result.FiscalYear, result.TransferredAmount, result.ClosingJournalEntryId },
+            $"ปิดงบประจำปี {request.FiscalYear} สำเร็จ — โอน {result.TransferredAmount:N2} ไป Retained Earnings"));
+    }
+
+    public record RollOpeningBalancesRequest(int Year);
+
+    /// <summary>Re-run the opening-balance roll-over for a given target year
+    /// (idempotent — overwrites existing OpeningBalance rows for January).</summary>
+    [HttpPost("roll-opening-balances")]
+    public async Task<ActionResult<ApiResponse<int>>> RollOpeningBalances(Guid companyId, [FromBody] RollOpeningBalancesRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var count = await _accountingService.RollOpeningBalancesAsync(companyId, request.Year, userId);
+        return Ok(new ApiResponse<int>(true, count, $"อัพเดต Opening Balance {count} บัญชี"));
+    }
 }

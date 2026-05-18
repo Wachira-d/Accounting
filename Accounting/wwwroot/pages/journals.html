@@ -729,18 +729,39 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async reverseEntry(id) {
+        // Custom posting-date for the reversal — operator-set instead of
+        // hardcoded today, matches Thai RD requirement that the reversal
+        // posts on a chosen accounting date inside an open period.
+        const today = new Date().toISOString().slice(0, 10);
+        const html = `
+          <div style="font-size:13px;line-height:1.7;color:var(--gray-700)">
+            ระบบจะสร้าง<b>รายการใหม่</b>ที่สลับยอดเดบิต↔เครดิต เพื่อหักล้างรายการเดิม<br>
+            รายการต้นฉบับจะเปลี่ยนสถานะเป็น <b>กลับรายการแล้ว (Reversed)</b><br><br>
+            <label style="font-weight:600">วันที่ลงตัวกลับรายการ (Posting Date):</label>
+            <input type="date" id="reverseDateInput" value="${today}"
+              style="display:block;margin-top:6px;padding:8px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:14px;width:100%">
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">
+              💡 เลือกวันที่ในงวดบัญชีที่ยังเปิดอยู่ — ปกติคือวันที่ค้นพบข้อผิดพลาด
+            </div>
+            <label style="font-weight:600;display:block;margin-top:14px">หมายเหตุ (optional):</label>
+            <textarea id="reverseNoteInput" rows="2" placeholder="ระบุเหตุผลในการกลับรายการ..."
+              style="display:block;margin-top:6px;padding:8px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;width:100%;resize:vertical"></textarea>
+          </div>`;
         const ok = await Layout.confirmDanger({
           title: 'กลับรายการ (Journal Reverse)',
-          message: 'ระบบจะสร้าง<b>รายการใหม่</b>ที่สลับยอดเดบิต↔เครดิต เพื่อหักล้างรายการเดิม<br><br>รายการต้นฉบับจะเปลี่ยนสถานะเป็น <b>กลับรายการแล้ว (Reversed)</b> ตามหลักบัญชี',
+          message: html,
           mode: 'math'
         });
         if (!ok) return;
+        const reversalDate = document.getElementById('reverseDateInput')?.value || today;
+        const noteEl = document.getElementById('reverseNoteInput');
+        const note = noteEl?.value?.trim() || null;
         const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.reverseJournal(id);
+          const res = await api.reverseJournal(id, { reversalDate, description: note });
           Layout.closeModal('detailModal');
           this.selected.delete(id);
-          Layout.toast('กลับรายการสำเร็จ — สร้างรายการใหม่เรียบร้อย');
+          Layout.toast(`กลับรายการสำเร็จ — สร้างรายการลงวันที่ ${reversalDate}`);
           await this.load();
           this.loadCounts();
           this.updateBatchBar();
