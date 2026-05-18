@@ -242,11 +242,14 @@
           <td class="text-right font-semibold ${r.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(r.netVat)}</td>
           <td>${Layout.statusBadge(r.status)}</td>
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
-          <td class="flex gap-1">
+          <td class="flex gap-1" style="flex-wrap:wrap">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')" data-i18n="common.view">ดู</button>
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${r.id}')">สร้างใหม่</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
+            <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="Page.exportEFiling('${r.id}','${r.taxType}',${r.year},${r.month})" title="ดาวน์โหลดไฟล์ pipe-delimited สำหรับยื่น RD">📥 e-Filing</button>
+            ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
+            ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
         </tr>`).join('');
         this._updateTaxSelectionBar();
@@ -420,7 +423,85 @@
           Layout.toast('สร้างรายงานภาษีสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
-      }
+      },
+
+      // ===== Task 4 ERP Upgrade — Defer / Unlock / Reject / e-Filing =====
+
+      async exportEFiling(reportId, taxType, year, month) {
+        // Map TaxType enum/string to RD form code.
+        const formMap = {
+          'VAT':'PP.30', '1':'PP.30',
+          'WithholdingTax3':'PND.3', '2':'PND.3',
+          'WithholdingTax53':'PND.53', '3':'PND.53',
+          'WithholdingTax1':'PND.1', '4':'PND.1',
+          'WithholdingTax54':'PND.54', '8':'PND.54',
+          'VatPp36':'PP.36', '9':'PP.36',
+        };
+        const form = formMap[taxType] || taxType;
+        const cid = Layout.getCompanyId();
+        const url = `/api/companies/${cid}/tax/e-filing/${encodeURIComponent(form)}?year=${year}&month=${month}`;
+        const token = localStorage.getItem('token');
+        try {
+          const res = await fetch(url, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) {
+            const t = await res.text();
+            throw new Error(`Export ล้มเหลว (${res.status}): ${t.slice(0,200)}`);
+          }
+          const blob = await res.blob();
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `${form}_${year}${String(month).padStart(2,'0')}.txt`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          Layout.toast(`ดาวน์โหลด ${form} สำเร็จ — ไฟล์พร้อมส่ง RD`);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async unlockFiling(reportId) {
+        const reason = prompt('ระบุเหตุผลในการ Unlock การยื่นภาษี (ต้องระบุ):');
+        if (!reason || !reason.trim()) return;
+        const api = Layout.api(); if (!api) return;
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/tax/${reportId}/unlock-filing`, { reason: reason.trim() });
+          Layout.toast('ปลดล็อกการยื่นภาษีสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async rejectAndReverse(reportId) {
+        const reason = prompt('ระบุเหตุผลที่ RD ปฏิเสธการขอคืน (ต้องระบุ):');
+        if (!reason || !reason.trim()) return;
+        const confirmMsg = 'ระบบจะสร้าง JE กลับรายการอัตโนมัติ:\n  Dr VAT ขอคืนไม่ได้ (ค่าใช้จ่าย)\n  Cr ภาษีซื้อ\n\nรายงานนี้จะกลับเป็นสถานะ Draft\nดำเนินการต่อ?';
+        if (!confirm(confirmMsg)) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/tax/${reportId}/reject-reverse`,
+            { reason: reason.trim(), nonClaimableVatAccountId: null });
+          Layout.toast(res?.message || 'Reject + Reverse สำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async openDeferVat(documentId, vatAmount, docDate) {
+        // Compute valid defer-to range (next month to +6 months).
+        const d = new Date(docDate);
+        const months = [];
+        for (let i = 1; i <= 6; i++) {
+          const dt = new Date(d.getFullYear(), d.getMonth() + i, 1);
+          const p = dt.getFullYear() * 100 + (dt.getMonth() + 1);
+          months.push(`<option value="${p}">${dt.toLocaleDateString('th-TH',{year:'numeric',month:'long'})} (${p})</option>`);
+        }
+        const period = prompt(`เลื่อน Input VAT ${vatAmount.toLocaleString()} บาท ไปงวดใด?\n(ตัวเลข YYYYMM เช่น 202607 = ก.ค. 2026)\nกฎหมายให้เลื่อนได้สูงสุด 6 เดือน`);
+        if (!period) return;
+        const reason = prompt('เหตุผลในการเลื่อน (optional):') || null;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/tax/defer-input-vat`,
+            { documentId, deferredToPeriod: parseInt(period), reason });
+          Layout.toast(res?.message || 'เลื่อน VAT สำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
     };
     Page.init();
   </script>

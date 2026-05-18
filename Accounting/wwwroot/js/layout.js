@@ -379,6 +379,7 @@ const Layout = {
     { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html', feature: 'BasicAccounting', _i18nKey: 'nav.journals' },
     { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html', feature: 'BasicAccounting', _i18nKey: 'nav.generalLedger' },
     { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html', feature: 'BasicAccounting', _i18nKey: 'nav.fiscal' },
+    { id: 'migration-wizard', label: 'นำเข้าข้อมูลเดิม', icon: '🔄', href: '/pages/migration-wizard.html', feature: 'BasicAccounting' },
     { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets' },
     { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html', feature: 'AdvancedReporting', _i18nKey: 'nav.financialMgmt' },
 
