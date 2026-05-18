@@ -59,15 +59,20 @@ public class SubLedgerReconciliationService
         foreach (var acc in arAccounts)
         {
             var glBal = await ComputeGlBalanceAsync(companyId, acc.Id, asOfExclusive);
-            // Sub-ledger: sum of Approved documents (revenue side) with outstanding balance
+            // Sub-ledger: sum of revenue-side documents with outstanding
+            // balance at the as-of date — covers Sent / PartiallyPaid /
+            // Overdue / Approved alike (excludes Draft, Voided, Rejected).
             var arSub = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
                     && d.DocumentDate < asOfExclusive
-                    && d.Status == DocumentStatus.Approved
+                    && d.Status != DocumentStatus.Draft
+                    && d.Status != DocumentStatus.Voided
+                    && d.Status != DocumentStatus.Rejected
                     && d.BalanceDue > 0
                     && (d.DocumentType == DocumentType.Invoice
                         || d.DocumentType == DocumentType.TaxInvoice
-                        || d.DocumentType == DocumentType.BillingNote))
+                        || d.DocumentType == DocumentType.BillingNote
+                        || d.DocumentType == DocumentType.DebitNote))
                 .GroupBy(d => 1)
                 .Select(g => new { Total = g.Sum(d => d.BalanceDue), Count = g.Count() })
                 .FirstOrDefaultAsync();
@@ -92,9 +97,12 @@ public class SubLedgerReconciliationService
             var apSub = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
                     && d.DocumentDate < asOfExclusive
-                    && d.Status == DocumentStatus.Approved
+                    && d.Status != DocumentStatus.Draft
+                    && d.Status != DocumentStatus.Voided
+                    && d.Status != DocumentStatus.Rejected
                     && d.BalanceDue > 0
-                    && (d.DocumentType == DocumentType.PurchaseOrder
+                    && (d.DocumentType == DocumentType.PurchaseInvoice
+                        || d.DocumentType == DocumentType.Expense
                         || d.DocumentType == DocumentType.PaymentVoucher))
                 .GroupBy(d => 1)
                 .Select(g => new { Total = g.Sum(d => d.BalanceDue), Count = g.Count() })

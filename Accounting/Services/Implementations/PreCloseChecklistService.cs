@@ -63,7 +63,7 @@ public class PreCloseChecklistService
         var pendingDocCount = await _db.Documents.AsNoTracking()
             .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.DocumentDate >= periodStart && d.DocumentDate < periodEnd
-                && d.Status == DocumentStatus.PendingApproval);
+                && d.Status == DocumentStatus.WaitingApproval);
         items.Add(new("DOC_PENDING_APPROVAL", "เอกสารรออนุมัติ", pendingDocCount == 0,
             pendingDocCount == 0 ? "Info" : "Warning",
             pendingDocCount == 0 ? "เอกสารอนุมัติครบ" : $"พบเอกสารรออนุมัติ {pendingDocCount} ฉบับ",

@@ -1361,8 +1361,8 @@ const Layout = {
   // timeline with action / user / timestamp / diff-of-changed-fields.
   // Keeps every detail page free of audit-log boilerplate.
   async showEntityTimeline(entityType, entityId, label) {
-    const api = this.api();
-    if (!api) { this.toast('กรุณาเลือกบริษัทก่อน', 'warning'); return; }
+    const cid = this.getCompanyId();
+    if (!cid) { this.toast('กรุณาเลือกบริษัทก่อน', 'warning'); return; }
     let wrap = document.getElementById('entityTimelineModal');
     if (!wrap) {
       wrap = document.createElement('div');
@@ -1386,7 +1386,7 @@ const Layout = {
     body.innerHTML = '<div style="text-align:center;padding:24px;color:#6b7280">กำลังโหลด...</div>';
     wrap.classList.add('active');
     try {
-      const res = await api.get(`/accountant/timeline/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`);
+      const res = await API.get(`/api/companies/${cid}/accountant/timeline/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`);
       const items = res?.data || [];
       if (!items.length) {
         body.innerHTML = '<div style="text-align:center;padding:32px;color:#6b7280">ไม่พบประวัติการเปลี่ยนแปลง</div>';

@@ -81,12 +81,17 @@ public class DocumentCompletenessService
         // 2. Approved-but-no-JE detection.
         // For documents that should auto-post (Invoice/TaxInvoice/Receipt/PV
         // when Approved), find ones with no JournalEntry pointing back.
-        var approvedDocIds = docs.Where(d => d.Status == DocumentStatus.Approved
+        var approvedDocIds = docs.Where(d =>
+            (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent
+             || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Paid)
             && (d.DocumentType == DocumentType.Invoice
                 || d.DocumentType == DocumentType.TaxInvoice
                 || d.DocumentType == DocumentType.Receipt
                 || d.DocumentType == DocumentType.PaymentVoucher
-                || d.DocumentType == DocumentType.PurchaseOrder))
+                || d.DocumentType == DocumentType.PurchaseInvoice
+                || d.DocumentType == DocumentType.Expense
+                || d.DocumentType == DocumentType.DebitNote
+                || d.DocumentType == DocumentType.CreditNote))
             .Select(d => d.Id).ToList();
         var jeDocLinks = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId
