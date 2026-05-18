@@ -1,5 +1,7 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Audit;
 using Accounting.Services.Implementations;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +10,8 @@ namespace Accounting.Controllers;
 /// <summary>
 /// Endpoints that power the accountant-tools UI pages — sub-ledger
 /// reconciliation, pre-close checklist, document completeness check,
-/// global search. Read-only / aggregate operations, no state mutation.
+/// global search, entity timeline. Read-only / aggregate operations,
+/// no state mutation.
 /// </summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/accountant")]
@@ -19,17 +22,20 @@ public class AccountantToolsController : ControllerBase
     private readonly PreCloseChecklistService _preClose;
     private readonly DocumentCompletenessService _docComplete;
     private readonly GlobalSearchService _search;
+    private readonly IAuditTrailService _audit;
 
     public AccountantToolsController(
         SubLedgerReconciliationService subRecon,
         PreCloseChecklistService preClose,
         DocumentCompletenessService docComplete,
-        GlobalSearchService search)
+        GlobalSearchService search,
+        IAuditTrailService audit)
     {
         _subRecon = subRecon;
         _preClose = preClose;
         _docComplete = docComplete;
         _search = search;
+        _audit = audit;
     }
 
     /// <summary>Sub-Ledger ↔ GL reconciliation across AR / AP / Inventory /
@@ -73,5 +79,19 @@ public class AccountantToolsController : ControllerBase
                 new GlobalSearchService.SearchResult(new(), new(), new(), 0)));
         var result = await _search.SearchAsync(companyId, q.Trim(), Math.Min(Math.Max(limit, 5), 50));
         return Ok(new ApiResponse<GlobalSearchService.SearchResult>(true, result));
+    }
+
+    /// <summary>Chronological audit timeline for a single entity (Document,
+    /// JournalEntry, Contact, etc.). Powers the "history" modal that any
+    /// detail page can pop open without re-implementing audit-log reads.
+    /// </summary>
+    [HttpGet("timeline/{entityType}/{entityId}")]
+    public async Task<ActionResult<ApiResponse<List<AuditLogResponse>>>> Timeline(
+        Guid companyId, string entityType, string entityId)
+    {
+        if (string.IsNullOrWhiteSpace(entityType) || string.IsNullOrWhiteSpace(entityId))
+            return Ok(new ApiResponse<List<AuditLogResponse>>(true, new List<AuditLogResponse>()));
+        var history = await _audit.GetEntityHistoryAsync(companyId, entityType, entityId);
+        return Ok(new ApiResponse<List<AuditLogResponse>>(true, history));
     }
 }

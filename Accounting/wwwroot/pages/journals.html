@@ -685,6 +685,7 @@
               </table>
             </div>`;
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('JournalEntry','${j.id}','${Layout.esc(j.entryNumber)}')" title="ประวัติการสร้าง / ผ่านรายการ / กลับรายการ / แก้ไข ของรายการบัญชี">📜 ประวัติ</button>`;
           // Direct edit — works in any status; backend blocks only auto-generated
           // (document-sourced) entries. For audit-safe edits on Posted, the
           // existing "แก้ไข (กลับรายการ)" button still uses Reverse+Draft.

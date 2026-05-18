@@ -1354,6 +1354,99 @@ const Layout = {
   openModal(id) { document.getElementById(id).classList.add('active'); },
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
 
+  // ===== Entity Timeline Modal (Phase N) =====
+  // Reusable audit-history modal that any detail page can pop open via
+  //   Layout.showEntityTimeline('Document', docId, 'INV-2026-0001')
+  // Loads /accountant/timeline/{type}/{id} and renders a vertical
+  // timeline with action / user / timestamp / diff-of-changed-fields.
+  // Keeps every detail page free of audit-log boilerplate.
+  async showEntityTimeline(entityType, entityId, label) {
+    const api = this.api();
+    if (!api) { this.toast('กรุณาเลือกบริษัทก่อน', 'warning'); return; }
+    let wrap = document.getElementById('entityTimelineModal');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'entityTimelineModal';
+      wrap.className = 'modal-overlay';
+      wrap.innerHTML = `
+        <div class="modal" style="max-width:720px">
+          <div class="modal-header">
+            <h3 class="modal-title" id="etTitle">📜 ประวัติการเปลี่ยนแปลง</h3>
+            <button class="modal-close" onclick="Layout.closeModal('entityTimelineModal')">&times;</button>
+          </div>
+          <div class="modal-body" id="etBody" style="max-height:60vh;overflow-y:auto"></div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('entityTimelineModal')">ปิด</button>
+          </div>
+        </div>`;
+      document.body.appendChild(wrap);
+    }
+    wrap.querySelector('#etTitle').textContent = '📜 ประวัติการเปลี่ยนแปลง' + (label ? ' — ' + label : '');
+    const body = wrap.querySelector('#etBody');
+    body.innerHTML = '<div style="text-align:center;padding:24px;color:#6b7280">กำลังโหลด...</div>';
+    wrap.classList.add('active');
+    try {
+      const res = await api.get(`/accountant/timeline/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`);
+      const items = res?.data || [];
+      if (!items.length) {
+        body.innerHTML = '<div style="text-align:center;padding:32px;color:#6b7280">ไม่พบประวัติการเปลี่ยนแปลง</div>';
+        return;
+      }
+      const actionMap = { Create: ['สร้าง','#10b981','✨'], Update: ['แก้ไข','#3b82f6','✏️'],
+        Delete: ['ลบ','#dc2626','🗑️'], View: ['ดู','#6b7280','👁️'], Login: ['เข้าระบบ','#6366f1','🔑'],
+        Logout: ['ออกจากระบบ','#6b7280','🚪'], Approve: ['อนุมัติ','#10b981','✅'],
+        Reject: ['ปฏิเสธ','#dc2626','⛔'], Post: ['ลงบัญชี','#10b981','📒'],
+        Void: ['ยกเลิก','#dc2626','🚫'], Reverse: ['กลับรายการ','#f59e0b','↩️'] };
+      body.innerHTML = items.map(it => {
+        const ai = actionMap[it.action] || [it.action,'#6b7280','•'];
+        const ts = new Date(it.timestamp);
+        const tsStr = ts.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short' });
+        const diff = this._renderAuditDiff(it.oldValues, it.newValues, it.action);
+        return `<div style="border-left:3px solid ${ai[1]};padding:10px 14px;margin-bottom:10px;background:#f9fafb;border-radius:0 6px 6px 0">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+            <div style="font-weight:600;color:${ai[1]}">${ai[2]} ${ai[0]}</div>
+            <div style="color:#6b7280;font-size:12px">${tsStr}</div>
+          </div>
+          <div style="color:#374151;font-size:13px;margin-top:4px">${this.esc(it.userEmail || '(ระบบ)')}</div>
+          ${diff}
+        </div>`;
+      }).join('');
+    } catch (e) {
+      body.innerHTML = `<div style="color:#dc2626;padding:16px">โหลดประวัติไม่สำเร็จ: ${this.esc(e?.message || String(e))}</div>`;
+    }
+  },
+
+  // Render a compact diff of changed fields between OldValues / NewValues
+  // JSON blobs. Hides housekeeping fields (timestamps, audit cols) and
+  // truncates long values so the timeline stays scannable.
+  _renderAuditDiff(oldJson, newJson, action) {
+    const skip = new Set(['UpdatedAt','CreatedAt','UpdatedBy','CreatedBy','RowVersion','ConcurrencyStamp']);
+    const trunc = v => { const s = v == null ? '∅' : String(v); return s.length > 80 ? s.slice(0,80) + '…' : s; };
+    let oldV = {}, newV = {};
+    try { if (oldJson) oldV = JSON.parse(oldJson); } catch {}
+    try { if (newJson) newV = JSON.parse(newJson); } catch {}
+    if (action === 'Create' && newV && typeof newV === 'object') {
+      const keys = Object.keys(newV).filter(k => !skip.has(k) && newV[k] != null && newV[k] !== '').slice(0, 6);
+      if (!keys.length) return '';
+      return `<div style="margin-top:6px;font-size:12px;color:#4b5563">
+        ${keys.map(k => `<div><b>${this.esc(k)}:</b> ${this.esc(trunc(newV[k]))}</div>`).join('')}
+      </div>`;
+    }
+    if (action === 'Update') {
+      const keys = new Set([...Object.keys(oldV || {}), ...Object.keys(newV || {})]);
+      const rows = [];
+      for (const k of keys) {
+        if (skip.has(k)) continue;
+        const o = oldV?.[k], n = newV?.[k];
+        if (JSON.stringify(o) === JSON.stringify(n)) continue;
+        rows.push(`<div><b>${this.esc(k)}:</b> <span style="color:#dc2626;text-decoration:line-through">${this.esc(trunc(o))}</span> → <span style="color:#059669">${this.esc(trunc(n))}</span></div>`);
+      }
+      if (!rows.length) return '';
+      return `<div style="margin-top:6px;font-size:12px;color:#4b5563">${rows.slice(0,8).join('')}${rows.length>8?`<div style="color:#9ca3af">…และอีก ${rows.length-8} รายการ</div>`:''}</div>`;
+    }
+    return '';
+  },
+
   // Danger confirm: requires solving math problem OR typing "confirm"
   // Usage: await Layout.confirmDanger({ title, message, mode: 'math'|'type'|'doubleCheck', confirmText }) → boolean
   // doubleCheck mode: first solves math, then types confirmText

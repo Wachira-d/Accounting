@@ -1192,6 +1192,7 @@
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
+          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('Document','${d.id}','${Layout.esc(d.documentNumber)}')" title="ดูประวัติการสร้าง / แก้ไข / อนุมัติ / ยกเลิก ของเอกสารฉบับนี้">📜 ประวัติ</button>`;
           if (d.status === 'Draft') {
             actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
