@@ -79,7 +79,7 @@ public partial class TaxService
 
         report.FilingLockedAt = null;
         report.FilingLockedBy = null;
-        report.Status = TaxReportStatus.Calculated;
+        report.Status = TaxReportStatus.Draft;
         report.Notes = (report.Notes ?? "") + $"\n[UNLOCK by {userId} @ {DateTime.UtcNow:u}] {reason}";
         await _db.SaveChangesAsync();
     }
