@@ -114,7 +114,7 @@ public record DocumentResponse(
     DateTime? PaymentDate = null,
     // ERP upgrade — OCR RD compliance + aging cache
     decimal? OcrConfidenceScore = null,
-    Accounting.Models.Enums.RdComplianceStatus RdComplianceStatus = Accounting.Models.Enums.RdComplianceStatus.Pending,
+    RdComplianceStatus RdComplianceStatus = RdComplianceStatus.Pending,
     string? RdComplianceIssuesJson = null,
     bool OcrTenantMismatchFlag = false,
     int? AgingDays = null);
