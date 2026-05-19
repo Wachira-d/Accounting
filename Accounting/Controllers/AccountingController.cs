@@ -273,6 +273,26 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ปิดงวดบัญชีสำเร็จ"));
     }
 
+    /// <summary>Edit a fiscal period's year/month/start/end dates — for
+    /// fixing accidentally-mis-typed values. Allowed only on Open periods
+    /// with no posted data inside the old or new window.</summary>
+    [HttpPut("fiscal-periods/{periodId:guid}")]
+    public async Task<ActionResult<ApiResponse<FiscalPeriodResponse>>> UpdateFiscalPeriod(
+        Guid companyId, Guid periodId, [FromBody] CreateFiscalPeriodRequest request)
+    {
+        var result = await _accountingService.UpdateFiscalPeriodAsync(companyId, periodId, request);
+        return Ok(new ApiResponse<FiscalPeriodResponse>(true, result, "แก้ไขงวดบัญชีสำเร็จ"));
+    }
+
+    /// <summary>Delete an Open fiscal period that has no JEs/openings yet
+    /// (e.g. one accidentally created with the wrong dates).</summary>
+    [HttpDelete("fiscal-periods/{periodId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> DeleteFiscalPeriod(Guid companyId, Guid periodId)
+    {
+        await _accountingService.DeleteFiscalPeriodAsync(companyId, periodId);
+        return Ok(new ApiResponse<string>(true, null, "ลบงวดบัญชีสำเร็จ"));
+    }
+
     // ===== Year-End Close + Soft/Hard Close (Task 1 ERP upgrade) =====
 
     /// <summary>Soft close — flips period to Closed but admin can reopen.</summary>
