@@ -218,6 +218,42 @@ public class OcrService : IOcrService
             // Capture all three branches in azureOutcome so the trace is
             // always populated.
 
+            // ─── Tier 0: e-Tax embedded XML shortcut ───
+            // If the upload is a PDF/A-3 that carries an ETDA Cross Industry
+            // Invoice XML in its EmbeddedFiles tree, the legally authoritative
+            // values live INSIDE the file. Read them directly — no OCR engine
+            // needed, no quota consumed, 100% accuracy on every field. This
+            // is the single biggest accuracy win available and runs FIRST.
+            //
+            // Only attempts on PDF content-type. Any failure (no embed,
+            // unknown XML schema, broken parse) falls through to Tier 1.
+            if (extractedData == null
+                && (file.ContentType?.Contains("pdf", StringComparison.OrdinalIgnoreCase) == true
+                    || (file.OriginalFileName?.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) == true)))
+            {
+                try
+                {
+                    var pdfBytes = await File.ReadAllBytesAsync(file.StoragePath);
+                    var etax = Ocr.EtaxPdfXmlExtractor.TryExtract(pdfBytes);
+                    if (etax != null && etax.Found)
+                    {
+                        extractedData = MapEtaxToOcrData(etax);
+                        extractedText = etax.XmlContent ?? "";
+                        ocrEngineUsed = "EtaxXml";
+                        tierTrace.Add($"Tier 0 — e-Tax XML embedded → ใช้ค่าจาก XML โดยตรง " +
+                            $"(เอกสาร {etax.MappedDocumentType} {etax.DocumentNumber}, " +
+                            $"{etax.Items.Count} รายการ, ยอดรวม {etax.GrandTotal:N2})");
+                        _logger.LogInformation(
+                            "OCR Tier 0 (e-Tax XML) hit: ScanId={ScanId} Company={Cid} DocNum={DocNum} Total={Total}",
+                            scanResult.Id, companyId, etax.DocumentNumber, etax.GrandTotal);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "e-Tax XML extraction attempt failed — falling through to Tier 1");
+                }
+            }
+
             // Tier 1: Azure DI — runs whenever the admin has fully configured
             // it (toggle + endpoint + key), regardless of OcrProvider's value.
             // Per-engine quota gate: even when Azure DI is enabled +
@@ -3332,6 +3368,58 @@ public class OcrService : IOcrService
         if (r.ScanStatus != "Completed") return null;
         var grade = Ocr.ScanQualityGrader.Compute(r);
         return new OcrQualityGradeDto(grade.Letter, grade.Score, grade.Color);
+    }
+
+    /// <summary>
+    /// Map ETDA e-Tax XML extraction result onto the OcrExtractedData shape
+    /// the rest of the pipeline (gateway, role inferrer, vendor enrichment)
+    /// consumes. Confidence is hard-pinned to 100% because every value came
+    /// from the legally authoritative XML — not heuristic OCR text. Each
+    /// field also gets a 1.0 FieldConfidence so the gateway treats them as
+    /// gold and won't try to "correct" them.
+    /// </summary>
+    private static OcrExtractedData MapEtaxToOcrData(Ocr.EtaxPdfXmlExtractor.ExtractResult etax)
+    {
+        var data = new OcrExtractedData
+        {
+            DocumentType = etax.MappedDocumentType ?? "TaxInvoice",
+            Confidence = 1.0m,
+            DocumentNumber = etax.DocumentNumber,
+            DocumentDate = etax.DocumentDate,
+            VendorName = etax.SellerName,
+            VendorTaxId = etax.SellerTaxId,
+            VendorBranchCode = etax.SellerBranchCode,
+            VendorAddress = etax.SellerAddress,
+            BuyerName = etax.BuyerName,
+            BuyerTaxId = etax.BuyerTaxId,
+            BuyerBranchCode = etax.BuyerBranchCode,
+            BuyerAddress = etax.BuyerAddress,
+            SubTotal = etax.LineTotal ?? etax.TaxBasis,
+            VatAmount = etax.VatAmount,
+            TotalAmount = etax.GrandTotal,
+        };
+
+        foreach (var k in new[] { "DocumentNumber", "DocumentDate", "VendorName", "VendorTaxId",
+            "VendorAddress", "BuyerName", "BuyerTaxId", "SubTotal", "VatAmount", "TotalAmount" })
+        {
+            data.FieldConfidence[k] = 1.0;
+        }
+
+        foreach (var li in etax.Items)
+        {
+            data.Items.Add(new OcrExtractedLineItem
+            {
+                Description = li.Description,
+                Quantity = li.Quantity,
+                UnitPrice = li.UnitPrice,
+                Amount = li.Amount,
+            });
+        }
+
+        data.ReasoningTrace.Add(
+            $"[Tier 0] ดึงค่าจาก e-Tax XML ที่ฝังใน PDF/A-3 — เอกสาร {etax.DocumentTypeName} " +
+            $"({etax.DocumentTypeCode}) เลขที่ {etax.DocumentNumber}, ยอดรวม {etax.GrandTotal:N2} {etax.Currency}");
+        return data;
     }
 }
 
