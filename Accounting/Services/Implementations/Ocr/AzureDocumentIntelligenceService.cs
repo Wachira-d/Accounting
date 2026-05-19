@@ -106,7 +106,7 @@ public class AzureDocumentIntelligenceService
             _logger.LogError(ex, "Azure DI submit failed");
             return new AzureDiResult { Success = false, ErrorMessage = ex.Message };
         }
-        _submitGate.Release();
+        gate.Release();
 
         if (submitResponse.StatusCode != System.Net.HttpStatusCode.Accepted)
         {
