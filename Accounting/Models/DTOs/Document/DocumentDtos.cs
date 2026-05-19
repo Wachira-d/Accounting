@@ -111,7 +111,13 @@ public record DocumentResponse(
     string? CertifierPosition = null,
     string? WitnessName = null,
     string? WitnessPosition = null,
-    DateTime? PaymentDate = null);
+    DateTime? PaymentDate = null,
+    // ERP upgrade — OCR RD compliance + aging cache
+    decimal? OcrConfidenceScore = null,
+    Accounting.Models.Enums.RdComplianceStatus RdComplianceStatus = Accounting.Models.Enums.RdComplianceStatus.Pending,
+    string? RdComplianceIssuesJson = null,
+    bool OcrTenantMismatchFlag = false,
+    int? AgingDays = null);
 
 public record DocumentLineResponse(
     Guid Id,

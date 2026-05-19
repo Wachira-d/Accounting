@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class AccountingService : IAccountingService
+public partial class AccountingService : IAccountingService
 {
     private readonly AccountingDbContext _db;
     private readonly IBankService? _bankService;

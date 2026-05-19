@@ -771,6 +771,242 @@ public static class DatabaseMigrationHelper
                 ON "BankReconciliationPatterns" ("CompanyId", "BankAccountId", "DescriptionSignature", "AmountBucket");
             """,
 
+            // ============================================================
+            // ERP Upgrade — Task 1 (period close + migration), Task 4
+            // (VAT deferral + filing lock + e-Filing), Task 5 (OCR audit)
+            // ============================================================
+
+            // FiscalPeriods: soft/hard close + year-end closing JE link
+            """
+            ALTER TABLE "FiscalPeriods" ADD COLUMN IF NOT EXISTS "ClosedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "FiscalPeriods" ADD COLUMN IF NOT EXISTS "ClosedBy" text NULL;
+            """,
+            """
+            ALTER TABLE "FiscalPeriods" ADD COLUMN IF NOT EXISTS "LockedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "FiscalPeriods" ADD COLUMN IF NOT EXISTS "LockedBy" text NULL;
+            """,
+            """
+            ALTER TABLE "FiscalPeriods" ADD COLUMN IF NOT EXISTS "YearEndJournalEntryId" uuid NULL;
+            """,
+
+            // TaxReports: filing-lock + e-filing audit + rejection workflow
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "FilingLockedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "FilingLockedBy" text NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "EFilingExportedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "EFilingReferenceNumber" text NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RejectionReason" text NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RejectedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RejectedBy" text NULL;
+            """,
+            """
+            ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "ReversalJournalEntryId" uuid NULL;
+            """,
+
+            // Documents: OCR compliance + aging cache
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OcrConfidenceScore" numeric(5,4) NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RdComplianceStatus" int NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RdComplianceIssuesJson" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OcrTenantMismatchFlag" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "AgingDays" int NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "AgingLastEvaluatedAt" timestamp with time zone NULL;
+            """,
+
+            // OpeningBalances — per-period per-account opening figures
+            """
+            CREATE TABLE IF NOT EXISTS "OpeningBalances" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "FiscalPeriodId" uuid NOT NULL,
+                "AccountId" uuid NOT NULL,
+                "OpeningDebit" numeric(18,2) NOT NULL DEFAULT 0,
+                "OpeningCredit" numeric(18,2) NOT NULL DEFAULT 0,
+                "DimensionId" uuid NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_OpeningBalances_Lookup"
+                ON "OpeningBalances" ("CompanyId", "FiscalPeriodId", "AccountId");
+            """,
+
+            // YearEndClosings — audit per closed fiscal year
+            """
+            CREATE TABLE IF NOT EXISTS "YearEndClosings" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "FiscalYear" int NOT NULL,
+                "RetainedEarningsAccountId" uuid NOT NULL,
+                "TransferredAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "ClosingJournalEntryId" uuid NOT NULL,
+                "LockedFiscalPeriods" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_YearEndClosings_CompanyYear"
+                ON "YearEndClosings" ("CompanyId", "FiscalYear");
+            """,
+
+            // MigrationSessions + AccountMappings (Task 1 wizard)
+            """
+            CREATE TABLE IF NOT EXISTS "MigrationSessions" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "SessionName" varchar(200) NOT NULL,
+                "MigrationType" int NOT NULL,
+                "Status" int NOT NULL DEFAULT 0,
+                "TargetFiscalPeriodId" uuid NULL,
+                "MappingsJson" text NULL,
+                "ImportSummaryJson" text NULL,
+                "CompletedAt" timestamp with time zone NULL,
+                "CompletedBy" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_MigrationSessions_CompanyStatus"
+                ON "MigrationSessions" ("CompanyId", "Status");
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AccountMappings" (
+                "Id" uuid PRIMARY KEY,
+                "MigrationSessionId" uuid NOT NULL REFERENCES "MigrationSessions"("Id") ON DELETE CASCADE,
+                "LegacyCode" varchar(50) NOT NULL,
+                "LegacyName" varchar(200) NULL,
+                "MappedAccountId" uuid NULL,
+                "LegacyDebit" numeric(18,2) NOT NULL DEFAULT 0,
+                "LegacyCredit" numeric(18,2) NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_AccountMappings_Session"
+                ON "AccountMappings" ("MigrationSessionId", "LegacyCode");
+            """,
+
+            // VatDeferrals (Task 4)
+            """
+            CREATE TABLE IF NOT EXISTS "VatDeferrals" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "DocumentId" uuid NOT NULL,
+                "OriginalTaxReportId" uuid NOT NULL,
+                "DeferredAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "DeferralReason" varchar(500) NULL,
+                "DeferredFromPeriod" int NOT NULL,
+                "DeferredToPeriod" int NOT NULL,
+                "ClaimedAt" timestamp with time zone NULL,
+                "ClaimedTaxReportId" uuid NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_VatDeferrals_Target"
+                ON "VatDeferrals" ("CompanyId", "DeferredToPeriod");
+            """,
+
+            // EFilingExports — RD pipe-delimited file artifacts
+            """
+            CREATE TABLE IF NOT EXISTS "EFilingExports" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "FormType" varchar(20) NOT NULL,
+                "PeriodYear" int NOT NULL,
+                "PeriodMonth" int NOT NULL,
+                "FileContent" text NOT NULL,
+                "LineCount" int NOT NULL DEFAULT 0,
+                "TotalAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "TotalTax" numeric(18,2) NOT NULL DEFAULT 0,
+                "RdReferenceNumber" text NULL,
+                "GeneratedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "GeneratedBy" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_EFilingExports_FormPeriod"
+                ON "EFilingExports" ("CompanyId", "FormType", "PeriodYear", "PeriodMonth");
+            """,
+
+            // OcrValidationLogs (Task 5)
+            """
+            CREATE TABLE IF NOT EXISTS "OcrValidationLogs" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "DocumentId" uuid NOT NULL,
+                "RuleCode" varchar(50) NOT NULL,
+                "IsValid" boolean NOT NULL DEFAULT false,
+                "Severity" varchar(20) NOT NULL DEFAULT 'Warning',
+                "Message" text NULL,
+                "FieldValue" text NULL,
+                "OverriddenBy" uuid NULL,
+                "OverriddenAt" timestamp with time zone NULL,
+                "OverrideReason" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrValidationLogs_Document"
+                ON "OcrValidationLogs" ("DocumentId");
+            """,
+
             // ===== CompanySettings: e-Tax mode + by-email registration columns =====
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxMode" int NOT NULL DEFAULT 0;

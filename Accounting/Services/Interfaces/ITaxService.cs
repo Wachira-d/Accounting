@@ -14,4 +14,13 @@ public interface ITaxService
     Task DeleteTaxReportAsync(Guid companyId, Guid reportId);
     Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2);
     Task<object> GetVatDebugAsync(Guid companyId, int year, int month);
+
+    // Task 4 of ERP upgrade
+    Task<Models.Entities.VatDeferral> DeferInputVatAsync(Guid companyId, Guid documentId, int deferredToPeriod, string? reason, string userId);
+    Task UnlockTaxFilingAsync(Guid companyId, Guid reportId, string userId, string reason);
+    Task<TaxReportResponse> RejectAndReverseTaxReportAsync(Guid companyId, Guid reportId, string reason, Guid? nonClaimableVatAccountId, string userId);
+    Task<bool> IsDocumentFilingLockedAsync(Guid companyId, Guid documentId);
+
+    // RD pipe-delimited e-Filing export (Phase E)
+    Task<Models.Entities.EFilingExport> GenerateEFilingAsync(Guid companyId, string formType, int year, int month, string userId);
 }

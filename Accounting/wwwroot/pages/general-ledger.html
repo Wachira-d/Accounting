@@ -409,9 +409,9 @@
                     <td class="text-right"></td>
                     <td class="text-right font-semibold">${Layout.money(a.openingBalance)}</td>
                   </tr>
-                  ${a.transactions.map(t => `<tr>
+                  ${a.transactions.map(t => `<tr style="cursor:pointer" onclick="Page.drillToEntry('${t.journalEntryId || ''}','${t.sourceDocumentNumber || ''}')" title="คลิกเพื่อดูใบสำคัญต้นทาง">
                     <td style="font-size:13px">${Layout.date(t.entryDate)}</td>
-                    <td style="font-size:13px">${t.entryNumber}</td>
+                    <td style="font-size:13px;color:#4F46E5;font-weight:500">${t.entryNumber}</td>
                     <td>${this.jtBadge(t.journalType)}</td>
                     <td style="font-size:13px">${t.description || '-'}</td>
                     <td class="text-right" style="font-size:13px">${t.debitAmount > 0 ? Layout.money(t.debitAmount) : ''}</td>
@@ -432,6 +432,16 @@
       },
       toggle(idx) {
         document.getElementById(`acct_${idx}`).classList.toggle('open');
+      },
+      // ERP upgrade: infinite drill-down — click any GL line to navigate to
+      // its underlying Journal Entry, then onward to the source Document.
+      drillToEntry(jeId, sourceDocNumber) {
+        if (jeId && jeId !== 'null' && jeId !== '') {
+          // journals.html reads ?entryId= (not ?id=) to auto-open the detail modal
+          window.open(`/pages/journals.html?entryId=${encodeURIComponent(jeId)}`, '_blank');
+        } else if (sourceDocNumber && sourceDocNumber !== 'null' && sourceDocNumber !== '') {
+          window.open(`/pages/documents.html?search=${encodeURIComponent(sourceDocNumber)}`, '_blank');
+        }
       },
       jtBadge(type) {
         const label = this.journalTypeLabels[type] || 'JV';

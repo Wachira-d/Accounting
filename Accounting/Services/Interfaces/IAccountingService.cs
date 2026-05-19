@@ -29,6 +29,12 @@ public interface IAccountingService
     Task<int> BatchDeleteJournalEntriesAsync(Guid companyId, List<Guid> entryIds);
     Task<int> BatchPostJournalEntriesAsync(Guid companyId);
 
+    // Period closing — Task 1 of ERP upgrade
+    Task<Models.Entities.FiscalPeriod> SoftClosePeriodAsync(Guid companyId, Guid periodId, string userId);
+    Task<Models.Entities.FiscalPeriod> ReopenPeriodAsync(Guid companyId, Guid periodId, string userId);
+    Task<Models.Entities.YearEndClosing> YearEndCloseAsync(Guid companyId, int fiscalYear, Guid retainedEarningsAccountId, DateTime? closingDate, string userId);
+    Task<int> RollOpeningBalancesAsync(Guid companyId, int year, string userId);
+
     // General Ledger
     Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);
     Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null);

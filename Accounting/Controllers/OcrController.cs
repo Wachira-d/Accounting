@@ -104,9 +104,11 @@ public class OcrController : ControllerBase
             throw;
         }
 
-        // Refund if scan returned a duplicate (no new OCR work was actually done)
-        // OR if scan failed silently (status != Completed)
-        if (result.IsDuplicate || result.ScanStatus != "Completed")
+        // Refund if scan returned a duplicate (no new OCR work was actually done),
+        // failed silently (status != Completed), or extracted everything from an
+        // embedded e-Tax XML (no OCR engine ever ran — the page count was
+        // pre-charged but never consumed).
+        if (result.IsDuplicate || result.ScanStatus != "Completed" || result.OcrEngine == "EtaxXml")
             await _quota.RefundAsync(companyId);
 
         return Ok(new ApiResponse<OcrResultResponse>(true, result));

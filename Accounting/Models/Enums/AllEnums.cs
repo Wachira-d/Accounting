@@ -155,7 +155,43 @@ public enum TaxType
     WithholdingTax1 = 4,  // ภงด.1 (เงินเดือน)
     SocialSecurity = 5,   // ประกันสังคม
     CorporateIncomeTax = 6, // ภงด.50/51
-    PersonalIncomeTax91 = 7 // ภงด.91 (ภาษีเงินได้บุคคลธรรมดา)
+    PersonalIncomeTax91 = 7, // ภงด.91 (ภาษีเงินได้บุคคลธรรมดา)
+    WithholdingTax54 = 8, // ภงด.54 (Foreign WHT — บริการต่างประเทศ)
+    VatPp36 = 9,          // ภพ.36 (Foreign service VAT)
+}
+
+// ==================== Migration Wizard ====================
+public enum MigrationType
+{
+    ChartOfAccounts = 1,
+    TrialBalance = 2,
+    SubLedgerAR = 3,
+    SubLedgerAP = 4,
+    SubLedgerFixedAssets = 5,
+    SubLedgerInventory = 6,
+    OpeningBalances = 7,
+}
+
+public enum MigrationStatus
+{
+    Draft = 0,         // session created, mapping/upload in progress
+    Mapping = 1,       // COA mapping in progress
+    Validating = 2,    // sub-ledger ↔ control-account validation
+    ReadyToCommit = 3, // all validations passed
+    Committed = 4,     // data persisted
+    Failed = 5,        // commit aborted on integrity error
+    Cancelled = 6,
+}
+
+// ==================== RD Compliance ====================
+public enum RdComplianceStatus
+{
+    Pending = 0,       // not yet evaluated
+    Valid = 1,         // all checks passed
+    Warning = 2,       // soft issues — operator can override
+    Failed = 3,        // hard issues — must be fixed before posting
+    ManuallyOverridden = 4, // operator overrode a warning/failure
+    Approved = 5,      // accepted into the system
 }
 
 public enum VatRate

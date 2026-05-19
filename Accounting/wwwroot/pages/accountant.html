@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เครื่องมือนักบัญชี - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .acc-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:18px; margin-bottom:24px }
+    @media(max-width:900px){ .acc-grid{grid-template-columns:1fr} }
+    .check-item { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--gray-100); font-size:13px }
+    .check-item .ok { color:#10b981; font-size:18px }
+    .check-item .warn { color:#f59e0b; font-size:18px }
+    .check-item .fail { color:#dc2626; font-size:18px }
+    .recon-row { display:grid; grid-template-columns:1.4fr 1fr 1fr 1fr auto; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--gray-100); font-size:13px }
+    .recon-row.head { background:#f8fafc; font-weight:600 }
+    .recon-row.fail { background:#fee2e2 }
+    .recon-row.ok { background:#f0fdf4 }
+    .var-pos { color:#dc2626 }
+    .var-neg { color:#dc2626 }
+    .var-zero { color:#10b981 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">🧮 เครื่องมือนักบัญชี</h2>
+        <p class="page-subtitle">Pre-close checklist · Sub-ledger vs GL · Document completeness — ตรวจสุขภาพระบบรายเดือน</p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <label class="form-label" style="margin:0">งวด:</label>
+        <input type="month" class="form-input" id="periodInput" style="max-width:160px">
+        <button class="btn btn-primary" onclick="Page.runAll()">🔄 ตรวจสอบ</button>
+      </div>
+    </div>
+
+    <div class="acc-grid">
+      <!-- Card 1: Pre-Close Checklist -->
+      <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <h3>✅ Pre-Close Checklist</h3>
+          <span id="preCloseStatus" style="font-size:12px"></span>
+        </div>
+        <div id="preCloseBody" style="padding:0">
+          <div class="text-center text-gray-400" style="padding:32px;font-size:13px">เลือกงวดและกด "ตรวจสอบ"</div>
+        </div>
+      </div>
+
+      <!-- Card 2: Document Completeness -->
+      <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <h3>🔢 Document Completeness</h3>
+          <span id="docCompleteStatus" style="font-size:12px"></span>
+        </div>
+        <div id="docCompleteBody" style="padding:0">
+          <div class="text-center text-gray-400" style="padding:32px;font-size:13px">รอตรวจสอบ</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sub-Ledger Reconciliation (full width) -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h3>⚖️ Sub-Ledger ↔ GL Reconciliation</h3>
+        <span style="font-size:12px;color:var(--gray-500)">ตรวจว่ายอด sub-ledger ตรงกับ GL control account หรือไม่</span>
+      </div>
+      <div id="reconBody" style="padding:0">
+        <div class="text-center text-gray-400" style="padding:32px;font-size:13px">รอตรวจสอบ</div>
+      </div>
+    </div>
+
+    <!-- Quick links -->
+    <div class="card">
+      <div class="card-header"><h3>🔗 ทางลัด</h3></div>
+      <div style="padding:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        <a class="btn btn-secondary" href="/pages/journals.html">📝 สมุดรายวัน</a>
+        <a class="btn btn-secondary" href="/pages/general-ledger.html">📒 บัญชีแยกประเภท</a>
+        <a class="btn btn-secondary" href="/pages/reports.html">📈 งบการเงิน</a>
+        <a class="btn btn-secondary" href="/pages/tax.html">🏛️ ยื่นภาษี</a>
+        <a class="btn btn-secondary" href="/pages/bank.html">🏦 กระทบยอดธนาคาร</a>
+        <a class="btn btn-secondary" href="/pages/aging.html">⏳ อายุลูกหนี้/เจ้าหนี้</a>
+        <a class="btn btn-secondary" href="/pages/fiscal.html">📅 ปิดงวด / ปิดปี</a>
+        <a class="btn btn-secondary" href="/pages/migration-wizard.html">🔄 นำเข้าข้อมูลเดิม</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('accountant')) return;
+        const now = new Date();
+        document.getElementById('periodInput').value =
+          `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        await this.runAll();
+      },
+
+      async runAll() {
+        const [year, month] = document.getElementById('periodInput').value.split('-').map(Number);
+        await Promise.all([
+          this.loadPreClose(year, month),
+          this.loadDocComplete(year, month),
+          this.loadRecon(),
+        ]);
+      },
+
+      async loadPreClose(year, month) {
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.get(`/api/companies/${cid}/accountant/pre-close-checklist?year=${year}&month=${month}`);
+          const d = res.data;
+          const head = document.getElementById('preCloseStatus');
+          head.innerHTML = d.readyToClose
+            ? `<span style="color:#10b981;font-weight:600">✓ พร้อมปิดงวด</span>`
+            : `<span style="color:#dc2626;font-weight:600">${d.failedCount} fail · ${d.warningCount} warn</span>`;
+          document.getElementById('preCloseBody').innerHTML = d.items.map(i => `
+            <div class="check-item">
+              <div class="${i.passed ? 'ok' : (i.severity === 'Error' ? 'fail' : 'warn')}">${i.passed ? '✓' : (i.severity === 'Error' ? '✗' : '!')}</div>
+              <div>
+                <div style="font-weight:500">${Layout.esc(i.label)}</div>
+                <div style="font-size:11px;color:var(--gray-500)">${Layout.esc(i.message)}</div>
+              </div>
+              ${i.actionUrl && !i.passed ? `<a href="${i.actionUrl}" class="btn btn-sm btn-ghost">ไปแก้ →</a>` : '<div></div>'}
+            </div>`).join('');
+        } catch (e) {
+          document.getElementById('preCloseBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`;
+        }
+      },
+
+      async loadDocComplete(year, month) {
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.get(`/api/companies/${cid}/accountant/document-completeness?year=${year}&month=${month}`);
+          const d = res.data;
+          const head = document.getElementById('docCompleteStatus');
+          const allOk = d.sequentialGapsCount === 0 && d.missingJeCount === 0;
+          head.innerHTML = allOk
+            ? `<span style="color:#10b981;font-weight:600">✓ ครบถ้วน · ${d.documentCount} เอกสาร</span>`
+            : `<span style="color:#dc2626;font-weight:600">⚠️ ${d.sequentialGapsCount} gap · ${d.missingJeCount} JE หาย</span>`;
+          let html = '<div style="padding:12px">';
+          html += `<div style="font-size:13px;margin-bottom:8px">เอกสารในงวดทั้งหมด: <strong>${d.documentCount}</strong></div>`;
+          if (d.gaps.length) {
+            html += `<div style="margin-top:10px"><strong style="color:#dc2626">🔢 เลขเอกสารหายไป (${d.gaps.length}):</strong>`;
+            html += '<ul style="margin:6px 0 0 18px;font-size:12px;color:#7f1d1d">';
+            html += d.gaps.slice(0, 10).map(g => `<li>${Layout.esc(g.documentType)} ${Layout.esc(g.expectedNumber)} (ระหว่าง ${Layout.esc(g.before)} กับ ${Layout.esc(g.after)})</li>`).join('');
+            if (d.gaps.length > 10) html += `<li>... อีก ${d.gaps.length - 10} รายการ</li>`;
+            html += '</ul></div>';
+          }
+          if (d.missingJes.length) {
+            html += `<div style="margin-top:10px"><strong style="color:#dc2626">📒 Approved แต่ JE ไม่เกิด (${d.missingJes.length}):</strong>`;
+            html += '<ul style="margin:6px 0 0 18px;font-size:12px;color:#7f1d1d">';
+            html += d.missingJes.slice(0, 10).map(m => `<li>${Layout.esc(m.documentType)} ${Layout.esc(m.documentNumber)} · ${Layout.money(m.totalAmount)} · ${Layout.date(m.documentDate)}</li>`).join('');
+            html += '</ul></div>';
+          }
+          if (allOk) html += '<div style="color:#10b981;font-size:13px;margin-top:8px">✓ ทุกเอกสารต่อเนื่อง + auto-post JE ครบ</div>';
+          html += '</div>';
+          document.getElementById('docCompleteBody').innerHTML = html;
+        } catch (e) {
+          document.getElementById('docCompleteBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`;
+        }
+      },
+
+      async loadRecon() {
+        const cid = Layout.getCompanyId();
+        const [year, month] = document.getElementById('periodInput').value.split('-').map(Number);
+        const asOf = new Date(year, month, 0).toISOString().slice(0, 10);  // end-of-month
+        try {
+          const res = await API.get(`/api/companies/${cid}/accountant/sub-ledger-recon?asOf=${asOf}`);
+          const d = res.data;
+          if (!d.lines.length) {
+            document.getElementById('reconBody').innerHTML = '<div class="text-center text-gray-400" style="padding:32px">ไม่พบ control account — ตรวจสอบผังบัญชีก่อน</div>';
+            return;
+          }
+          let html = `<div class="recon-row head">
+            <div>ประเภท / บัญชี</div>
+            <div class="text-right">ยอด GL</div>
+            <div class="text-right">ยอด Sub-Ledger</div>
+            <div class="text-right">ผลต่าง</div>
+            <div></div>
+          </div>`;
+          html += d.lines.map(l => `<div class="recon-row ${l.isReconciled ? 'ok' : 'fail'}">
+            <div>
+              <div style="font-weight:600;font-size:13px">${Layout.esc(l.category)}</div>
+              <div style="font-size:11px;color:var(--gray-500)">${Layout.esc(l.accountCode)} ${Layout.esc(l.accountName)}${l.subLedgerItemCount ? ' · '+l.subLedgerItemCount+' รายการ' : ''}</div>
+              ${l.notes ? `<div style="font-size:11px;color:var(--gray-400);font-style:italic">${Layout.esc(l.notes)}</div>` : ''}
+            </div>
+            <div class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(l.glBalance)}</div>
+            <div class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(l.subLedgerBalance)}</div>
+            <div class="text-right ${Math.abs(l.variance) < 0.01 ? 'var-zero' : 'var-pos'}" style="font-variant-numeric:tabular-nums;font-weight:600">${l.variance > 0 ? '+' : ''}${Layout.money(l.variance)}</div>
+            <div>${l.isReconciled ? '<span style="color:#10b981;font-size:18px">✓</span>' : '<a href="/pages/general-ledger.html" class="btn btn-sm btn-ghost">ตรวจ →</a>'}</div>
+          </div>`).join('');
+          html += `<div style="padding:12px 14px;background:#f8fafc;border-top:2px solid var(--gray-200);font-size:13px">
+            ✓ สมดุล: <strong style="color:#10b981">${d.reconciledCount}</strong> · ✗ ไม่ตรง: <strong style="color:#dc2626">${d.varianceCount}</strong>
+            <span style="color:var(--gray-500);margin-left:12px">tolerance: ฿${d.tolerance}</span>
+          </div>`;
+          document.getElementById('reconBody').innerHTML = html;
+        } catch (e) {
+          document.getElementById('reconBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`;
+        }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

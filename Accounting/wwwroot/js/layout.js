@@ -183,26 +183,183 @@ const Layout = {
     const items = this.navItems.filter(item =>
       (!item.id || !hidden.includes(item.id))
       && (!item.id || this.hasMenuAccess(item.id))
-      // adminOnly items are hidden from non-admin users in the sidebar.
-      // The API itself enforces role authorization (defense in depth).
       && (!item.adminOnly || isAdminUser)
     );
-    const visible = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
+
+    // Walk the list: top-level items (no section ancestor) render directly;
+    // section markers open a collapsible <details> that wraps every
+    // subsequent item until the next section marker.
+    const collapsedState = this._loadCollapsedSections();
+    const html = [];
+    html.push(this._renderNavSearch());
+
+    let inGroup = false;
+    let groupItems = [];
+    let currentSection = null;
+    const flush = () => {
+      if (!inGroup) return;
+      if (groupItems.length === 0) { inGroup = false; return; }
+      // Auto-expand only the group containing the active page.
+      // All other groups default to COLLAPSED (the user-collapsed-by-default
+      // model — keeps the sidebar compact on first visit).  An explicit
+      // localStorage entry of `false` re-opens a group that's not active.
+      const containsActive = groupItems.some(it => it.id === this.currentPage);
+      const explicit = collapsedState[currentSection.section];
+      const isCollapsed = containsActive ? false : (explicit === false ? false : true);
+      const sectionKey = this._sectionI18nKey(currentSection.section);
+      const label = sectionKey ? this._t(sectionKey, currentSection.section) : currentSection.section;
+      const icon = currentSection.icon || '📁';
+      const desc = currentSection.description ? ` title="${this._esc(currentSection.description)}"` : '';
+      html.push(`<details class="nav-group" data-section="${currentSection.section}"${isCollapsed ? '' : ' open'}>
+        <summary class="nav-group-header"${desc}>
+          <span class="icon">${icon}</span>
+          <span class="label">${this._esc(label)}</span>
+          <span class="count">${groupItems.length}</span>
+        </summary>
+        <div class="nav-group-items">${groupItems.map(it => this._renderNavItem(it)).join('')}</div>
+      </details>`);
+      groupItems = [];
+      inGroup = false;
+    };
+
+    for (const it of items) {
       if (it.section) {
-        let hasFollowing = false;
-        for (let j = i + 1; j < items.length; j++) {
-          if (items[j].section) break;
-          hasFollowing = true; break;
-        }
-        if (hasFollowing) visible.push(it);
+        flush();
+        currentSection = it;
+        inGroup = true;
+      } else if (inGroup) {
+        groupItems.push(it);
       } else {
-        visible.push(it);
+        // top-level item before the first section
+        html.push(this._renderNavItem(it));
       }
     }
-    nav.innerHTML = visible.map(item => this._renderNavItem(item)).join('');
+    flush();
+
+    nav.innerHTML = html.join('');
+    this._wireNavSearch();
+    this._wireGroupPersistence();
     this._highlightActiveSection();
+  },
+
+  _renderNavSearch() {
+    return `<div class="nav-search-wrap"><input type="text" id="navSearchBox"
+        class="nav-search" placeholder="🔍 ค้นหาเมนู..." autocomplete="off"
+        oninput="Layout._filterNav(this.value)"></div>`;
+  },
+
+  _filterNav(query) {
+    const q = (query || '').trim().toLowerCase();
+    const groups = document.querySelectorAll('.sidebar-nav .nav-group');
+    const flatItems = document.querySelectorAll('.sidebar-nav > .nav-item');
+    if (!q) {
+      groups.forEach(g => { g.style.display = ''; g.querySelectorAll('.nav-item').forEach(a => a.style.display = ''); });
+      flatItems.forEach(a => a.style.display = '');
+      return;
+    }
+    flatItems.forEach(a => {
+      const t = (a.textContent + ' ' + (a.title || '')).toLowerCase();
+      a.style.display = t.includes(q) ? '' : 'none';
+    });
+    groups.forEach(g => {
+      const matches = Array.from(g.querySelectorAll('.nav-item')).filter(a => {
+        const t = (a.textContent + ' ' + (a.title || '')).toLowerCase();
+        const match = t.includes(q);
+        a.style.display = match ? '' : 'none';
+        return match;
+      });
+      if (matches.length > 0) {
+        g.style.display = '';
+        g.open = true; // force-expand groups with hits
+      } else {
+        g.style.display = 'none';
+      }
+    });
+  },
+
+  _wireNavSearch() {
+    // (no-op currently — input already wires via inline oninput)
+  },
+
+  _wireGroupPersistence() {
+    document.querySelectorAll('.sidebar-nav .nav-group').forEach(g => {
+      g.addEventListener('toggle', () => {
+        const state = this._loadCollapsedSections();
+        const section = g.dataset.section;
+        // Record both states explicitly:
+        //   false = "user opened" — keep it open on reload even if not active
+        //   true  = "user collapsed" — keep it collapsed
+        // (Default behaviour when entry is undefined: collapsed unless active.)
+        state[section] = !g.open;
+        try { localStorage.setItem('nav.collapsedSections', JSON.stringify(state)); } catch (_) {}
+      });
+    });
+  },
+
+  _loadCollapsedSections() {
+    try { return JSON.parse(localStorage.getItem('nav.collapsedSections') || '{}'); }
+    catch (_) { return {}; }
+  },
+
+  // ===== Global search (header) =====
+  _globalSearchTimer: null,
+  _onGlobalSearch(q) {
+    clearTimeout(this._globalSearchTimer);
+    if (!q || q.trim().length < 2) { this._hideGlobalSearch(); return; }
+    this._globalSearchTimer = setTimeout(() => this._runGlobalSearch(q.trim()), 250);
+  },
+  async _runGlobalSearch(query) {
+    const cid = this.getCompanyId();
+    if (!cid) return;
+    const dropdown = document.getElementById('globalSearchDropdown');
+    dropdown.style.display = 'block';
+    dropdown.innerHTML = '<div style="padding:14px;text-align:center;color:#94a3b8;font-size:13px">กำลังค้นหา...</div>';
+    try {
+      const res = await API.get(`/api/companies/${cid}/accountant/search?q=${encodeURIComponent(query)}`);
+      const d = res.data;
+      if (!d.totalHits) {
+        dropdown.innerHTML = '<div style="padding:14px;text-align:center;color:#94a3b8;font-size:13px">ไม่พบผลลัพธ์</div>';
+        return;
+      }
+      let html = '';
+      if (d.documents.length) {
+        html += `<div style="padding:6px 14px;background:#f8fafc;font-size:11px;font-weight:600;color:#475569">📄 เอกสาร (${d.documents.length})</div>`;
+        html += d.documents.map(doc => `<a href="/pages/documents.html?id=${doc.id}" style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 14px;border-bottom:1px solid #f1f5f9;text-decoration:none;color:inherit;font-size:13px">
+          <div><strong>${this.esc(doc.documentNumber)}</strong> · ${this.esc(doc.documentType)}<br>
+            <span style="font-size:11px;color:#64748b">${this.esc(doc.contactName || '-')} · ${this.date(doc.date)}</span></div>
+          <div style="text-align:right;font-variant-numeric:tabular-nums">${this.money(doc.totalAmount)}<br>
+            <span style="font-size:10px;color:#94a3b8">${this.esc(doc.status)}</span></div>
+        </a>`).join('');
+      }
+      if (d.journalEntries.length) {
+        html += `<div style="padding:6px 14px;background:#f8fafc;font-size:11px;font-weight:600;color:#475569">📝 สมุดรายวัน (${d.journalEntries.length})</div>`;
+        html += d.journalEntries.map(j => `<a href="/pages/journals.html?entryId=${j.id}" style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 14px;border-bottom:1px solid #f1f5f9;text-decoration:none;color:inherit;font-size:13px">
+          <div><strong>${this.esc(j.entryNumber)}</strong> · ${this.esc(j.journalType)}<br>
+            <span style="font-size:11px;color:#64748b">${this.esc(j.description || '-')} · ${this.date(j.entryDate)}</span></div>
+          <div style="text-align:right;font-variant-numeric:tabular-nums">${this.money(j.totalDebit)}<br>
+            <span style="font-size:10px;color:#94a3b8">${this.esc(j.status)}</span></div>
+        </a>`).join('');
+      }
+      if (d.contacts.length) {
+        html += `<div style="padding:6px 14px;background:#f8fafc;font-size:11px;font-weight:600;color:#475569">👥 ผู้ติดต่อ (${d.contacts.length})</div>`;
+        html += d.contacts.map(c => `<a href="/pages/contacts.html?id=${c.id}" style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 14px;border-bottom:1px solid #f1f5f9;text-decoration:none;color:inherit;font-size:13px">
+          <div><strong>${this.esc(c.name)}</strong><br>
+            <span style="font-size:11px;color:#64748b">${this.esc(c.taxId || '-')} · ${this.esc(c.contactType)}</span></div>
+          <div></div>
+        </a>`).join('');
+      }
+      dropdown.innerHTML = html;
+    } catch (e) {
+      dropdown.innerHTML = `<div style="padding:14px;color:#dc2626;font-size:13px">${this.esc(e.message)}</div>`;
+    }
+  },
+  _showGlobalSearchResults() {
+    const d = document.getElementById('globalSearchDropdown');
+    if (d && d.innerHTML.trim()) d.style.display = 'block';
+  },
+  _hideGlobalSearch() {
+    const d = document.getElementById('globalSearchDropdown');
+    if (d) d.style.display = 'none';
   },
 
   // ===== Per-user menu visibility (stored in localStorage, scoped by company) =====
@@ -250,10 +407,20 @@ const Layout = {
     const active = item.id === this.currentPage ? ' active' : '';
     const label = item._i18nKey ? this._t(item._i18nKey, item.label) : item.label;
     const locked = item.feature && this.subscription && !this.hasFeature(item.feature);
+    // Tooltip: the description hover-text. Combine with the lock message
+    // when the feature isn't available in the current plan.
+    const tooltip = locked
+      ? this._t('layout.upgradeLocked', 'Upgrade required').replace('{label}', label) + ' — ' + (item.description || '')
+      : (item.description || label);
+    const tt = ` title="${this._esc(tooltip)}"`;
     if (locked) {
-      return `<a href="/pages/subscription.html" class="nav-item nav-item-locked${active}" data-nav-id="${item.id}" title="${this._t('layout.upgradeLocked', 'Upgrade required').replace('{label}', label)}" style="opacity:0.5"><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:11px">🔒</span></a>`;
+      return `<a href="/pages/subscription.html" class="nav-item nav-item-locked${active}" data-nav-id="${item.id}"${tt} style="opacity:0.5"><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:11px">🔒</span></a>`;
     }
-    return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"><span class="icon">${item.icon}</span>${label}</a>`;
+    return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"${tt}><span class="icon">${item.icon}</span>${label}</a>`;
+  },
+
+  _esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   },
 
   _sectionI18nKey(section) {
@@ -337,102 +504,168 @@ const Layout = {
     } catch (e) { /* SignalR optional */ }
   },
 
-  // Navigation organized following PEAK Account structure
+  // Navigation v2 — grouped + collapsible + with descriptions for tooltips.
+  // Structure: top-level items appear first (always visible).  Subsequent
+  // `section:` markers open collapsible groups; every item in a group also
+  // carries a `description` shown in the hover tooltip.  Active section
+  // auto-expands; collapsed state persists in localStorage.
   navItems: [
-    { section: 'หลัก' },
-    { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard' },
+    { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard',
+      description: 'ภาพรวมธุรกิจ — ยอดขาย รายจ่าย ลูกหนี้ เจ้าหนี้ กำไร เปรียบเทียบรายเดือน' },
+    { id: 'accountant', label: '🧮 เครื่องมือนักบัญชี', icon: '🧮', href: '/pages/accountant.html', feature: 'BasicAccounting', _i18nKey: 'nav.accountant',
+      description: 'Pre-close checklist + Sub-Ledger ↔ GL reconciliation + Document completeness — ตรวจสุขภาพระบบรายเดือน' },
 
-    { section: 'รายรับ' },
-    { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue', feature: 'DocumentEngine', _i18nKey: 'nav.documents' },
-    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition' },
+    { section: 'ขาย / รายรับ', icon: '📤', description: 'ออกใบเสนอราคา ใบแจ้งหนี้ ใบกำกับภาษี ใบเสร็จ รับรู้รายได้' },
+    { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue', feature: 'DocumentEngine', _i18nKey: 'nav.documents',
+      description: 'ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · ใบลดหนี้/เพิ่มหนี้' },
+    { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',
+      description: 'ASC 606 / TFRS 15 — รับรู้รายได้ตาม performance obligation' },
 
-    { section: 'รายจ่าย' },
-    { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases' },
-    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement', _i18nKey: 'nav.expense' },
-    { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense', feature: 'DocumentEngine', _i18nKey: 'nav.expenseDocs' },
-    { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments' },
+    { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'บันทึกการซื้อ ค่าใช้จ่าย ใบสำคัญจ่าย ชำระเงิน' },
+    { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases',
+      description: 'ใบสั่งซื้อ · ใบรับสินค้า · ใบกำกับภาษีซื้อ' },
+    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement', _i18nKey: 'nav.expense',
+      description: 'บันทึกใบเสร็จค่าใช้จ่าย — มี OCR สแกนช่วยกรอกอัตโนมัติ' },
+    { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense', feature: 'DocumentEngine', _i18nKey: 'nav.expenseDocs',
+      description: 'ใบสำคัญจ่าย · ใบเสร็จรับเงินจากผู้ขาย · ใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ' },
+    { id: 'payments', label: 'ชำระเงิน / รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments',
+      description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว' },
 
-    { section: 'รายการอัตโนมัติ' },
-    { id: 'recurring', label: 'รายการประจำ', icon: '🔄', href: '/pages/recurring.html', feature: 'RecurringTransactions', _i18nKey: 'nav.recurring' },
+    { section: 'POS หน้าร้าน', icon: '🏪', description: 'ระบบหน้าขาย Point of Sale + แพ็คเกจบริการ + รายงาน' },
+    { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html', feature: 'DocumentEngine', _i18nKey: 'nav.pos',
+      description: 'หน้าขายแบบ Touch — รับชำระเงิน พิมพ์ใบเสร็จด่วน' },
+    { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html', feature: 'DocumentEngine', _i18nKey: 'nav.posPackages',
+      description: 'ตั้งค่าแพ็คเกจคอร์ส/บริการ — สำหรับสปา คลินิก ฟิตเนส' },
+    { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html', feature: 'DocumentEngine', _i18nKey: 'nav.posModifiers',
+      description: 'ไซส์ · สี · รสชาติ · เพิ่ม-ลด ingredient ต่อจาน' },
+    { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html', feature: 'DocumentEngine', _i18nKey: 'nav.posReports',
+      description: 'สรุปยอดขาย · X-Report · Z-Report · ยอดต่อพนักงาน' },
 
-    { section: 'ผู้ติดต่อ' },
-    { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html', feature: 'DocumentEngine', _i18nKey: 'nav.contacts' },
-    { section: 'สินค้า/บริการ' },
-    { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html', feature: 'Inventory', _i18nKey: 'nav.products' },
-    { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html', feature: 'WarehouseManagement', _i18nKey: 'nav.warehouse' },
-    { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊', href: '/pages/inventory-reports.html', feature: 'Inventory', _i18nKey: 'nav.inventoryReports' },
-    { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html', feature: 'Inventory', _i18nKey: 'nav.supplies' },
+    { section: 'ผู้ติดต่อ & สินค้า', icon: '👥', description: 'ลูกค้า ผู้จำหน่าย สินค้า คลัง' },
+    { id: 'contacts', label: 'ลูกค้า / ผู้จำหน่าย', icon: '👥', href: '/pages/contacts.html', feature: 'DocumentEngine', _i18nKey: 'nav.contacts',
+      description: 'ฐานข้อมูลลูกค้า / ผู้จำหน่าย — ดึง DBD อัตโนมัติจากเลขผู้เสียภาษี' },
+    { id: 'products', label: 'สินค้าและบริการ', icon: '📦', href: '/pages/products.html', feature: 'Inventory', _i18nKey: 'nav.products',
+      description: 'สินค้า · บริการ · ราคา · ตัวเลือก · barcode · ภาษีต่อรายการ' },
+    { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭', href: '/pages/warehouse.html', feature: 'WarehouseManagement', _i18nKey: 'nav.warehouse',
+      description: 'หลายคลัง · โอนระหว่างคลัง · ตรวจนับ · ต้นทุน FIFO/Weighted' },
+    { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊', href: '/pages/inventory-reports.html', feature: 'Inventory', _i18nKey: 'nav.inventoryReports',
+      description: 'Stock card · Aging stock · Movement · Valuation' },
+    { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html', feature: 'Inventory', _i18nKey: 'nav.supplies',
+      description: 'ของใช้ในออฟฟิศ — เบิกตามต้องการ ไม่ตัดสต็อกขาย' },
 
-    { section: 'POS ขายหน้าร้าน' },
-    { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html', feature: 'DocumentEngine', _i18nKey: 'nav.pos' },
-    { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html', feature: 'DocumentEngine', _i18nKey: 'nav.posPackages' },
-    { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html', feature: 'DocumentEngine', _i18nKey: 'nav.posModifiers' },
-    { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html', feature: 'DocumentEngine', _i18nKey: 'nav.posReports' },
+    { section: 'การเงิน / ธนาคาร', icon: '🏦', description: 'บัญชีธนาคาร กระทบยอด สินเชื่อ สกุลเงินต่างประเทศ' },
+    { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation', _i18nKey: 'nav.bank',
+      description: 'นำเข้า statement · M:N reconciliation · AI auto-match จากประวัติ · กลุ่ม net-off' },
+    { id: 'loans', label: 'สินเชื่อ / เงินกู้', icon: '💰', href: '/pages/loans.html', feature: 'LoanManagement', _i18nKey: 'nav.loans',
+      description: 'จัดการเงินกู้ — ผ่อนต้น+ดอกเบี้ย · ตารางผ่อน · สรุปดอกจ่าย' },
+    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html', feature: 'MultiCurrency', _i18nKey: 'nav.multiCurrency',
+      description: 'อัตราแลกเปลี่ยน · กำไร/ขาดทุนจากอัตราแลกเปลี่ยน · revaluation' },
 
-    { section: 'การเงิน' },
-    { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation', _i18nKey: 'nav.bank' },
-    { id: 'loans', label: 'สินเชื่อ/เงินกู้', icon: '💰', href: '/pages/loans.html', feature: 'LoanManagement', _i18nKey: 'nav.loans' },
-    { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html', feature: 'MultiCurrency', _i18nKey: 'nav.multiCurrency' },
+    { section: 'บัญชี', icon: '📚', description: 'ผังบัญชี สมุดรายวัน บัญชีแยกประเภท งวด สินทรัพย์ ปิดสิ้นปี' },
+    { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html', feature: 'BasicAccounting', _i18nKey: 'nav.accounts',
+      description: 'Chart of Accounts ไม่จำกัดระดับ · seed มาตรฐานไทย' },
+    { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html', feature: 'BasicAccounting', _i18nKey: 'nav.journals',
+      description: 'JV/SV/UV/RV/PV — สร้าง แก้ไข กลับรายการ (เลือกวันที่ได้) ลบทุกสถานะ' },
+    { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html', feature: 'BasicAccounting', _i18nKey: 'nav.generalLedger',
+      description: 'GL พร้อม Opening/Debit/Credit/Ending · drill-down ทุกบัญชีลงไปถึงเอกสาร' },
+    { id: 'fiscal', label: 'งวดบัญชี & ปิดสิ้นปี', icon: '📅', href: '/pages/fiscal.html', feature: 'BasicAccounting', _i18nKey: 'nav.fiscal',
+      description: 'งวดบัญชี · Soft Close · Year-End Close (auto JE โอน P&L ไป RE)' },
+    { id: 'migration-wizard', label: 'นำเข้าข้อมูลเดิม', icon: '🔄', href: '/pages/migration-wizard.html', feature: 'BasicAccounting',
+      description: 'Wizard 3 ขั้น: Upload legacy COA → Map → Validate → Commit opening balances' },
+    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets',
+      description: 'ทะเบียนสินทรัพย์ · คำนวณค่าเสื่อมราคาอัตโนมัติ · จำหน่าย' },
+    { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html', feature: 'AdvancedReporting', _i18nKey: 'nav.financialMgmt',
+      description: 'Cash flow forecast · กระแสเงินสดล่วงหน้า · liquidity analysis' },
 
-    { section: 'บัญชี' },
-    { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html', feature: 'BasicAccounting', _i18nKey: 'nav.accounts' },
-    { id: 'journals', label: 'สมุดรายวัน', icon: '📝', href: '/pages/journals.html', feature: 'BasicAccounting', _i18nKey: 'nav.journals' },
-    { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒', href: '/pages/general-ledger.html', feature: 'BasicAccounting', _i18nKey: 'nav.generalLedger' },
-    { id: 'fiscal', label: 'งวดบัญชี', icon: '📅', href: '/pages/fiscal.html', feature: 'BasicAccounting', _i18nKey: 'nav.fiscal' },
-    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets' },
-    { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html', feature: 'AdvancedReporting', _i18nKey: 'nav.financialMgmt' },
+    { section: 'ภาษี & e-Filing', icon: '🏛️', description: 'ภพ.30 · ภงด.1/3/53/54 · ภพ.36 · e-Tax · ปฏิทินภาษี · Export RD' },
+    { id: 'tax', label: 'รายงานภาษี ภพ.30', icon: '🏛️', href: '/pages/tax.html', feature: 'TaxManagement', _i18nKey: 'nav.tax',
+      description: 'VAT รายเดือน · Defer Input VAT ≤6 เดือน · Filing Lock · Reject & Reverse · Export pipe-delimited RD' },
+    { id: 'wht', label: 'หัก ณ ที่จ่าย (ภงด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement', _i18nKey: 'nav.wht',
+      description: 'ภงด.1/3/53/54 · สร้างหนังสือรับรองหัก ณ ที่จ่าย · Export ยื่นออนไลน์' },
+    { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement', _i18nKey: 'nav.taxCalendar',
+      description: 'กำหนดการยื่นภาษี · alert ก่อนถึงวัน due · ติดตามสถานะการยื่น' },
+    { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html', feature: 'EtaxInvoice', _i18nKey: 'nav.etax',
+      description: 'ใบกำกับภาษีอิเล็กทรอนิกส์ — PDF/A-3 + XML ฝัง · ส่งกรมสรรพากร' },
+    { id: 'tax-export', label: 'Export ยื่นภาษี / SSO', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement', _i18nKey: 'nav.taxExport',
+      description: 'ไฟล์ TXT ตามรูปแบบกรมสรรพากร + ประกันสังคม' },
 
-    { section: 'ภาษี' },
-    { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️', href: '/pages/tax.html', feature: 'TaxManagement', _i18nKey: 'nav.tax' },
-    { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement', _i18nKey: 'nav.wht' },
-    { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement', _i18nKey: 'nav.taxCalendar' },
-    { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html', feature: 'EtaxInvoice', _i18nKey: 'nav.etax' },
-    { id: 'tax-export', label: 'Export ยื่นภาษี/ประกันสังคม', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement', _i18nKey: 'nav.taxExport' },
+    { section: 'HR / เงินเดือน', icon: '👤', description: 'โครงสร้างองค์กร · เงินเดือน · ลา · เงินทดรอง · คอมมิชชัน' },
+    { id: 'organization', label: 'โครงสร้างองค์กร', icon: '🏢', href: '/pages/organization.html', feature: 'Payroll', _i18nKey: 'nav.organization',
+      description: 'แผนก · ตำแหน่ง · ผู้บังคับบัญชา · org chart · routing การอนุมัติ' },
+    { id: 'payroll', label: 'ระบบเงินเดือน & ลา', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll', _i18nKey: 'nav.payroll',
+      description: 'พนักงาน · รอบจ่าย · ภงด.1 · ประกันสังคม · กองทุน · ลาหยุด' },
+    { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance',
+      description: 'เงินยืม-เคลียร์ · workflow อนุมัติ · หักจากเงินเดือนอัตโนมัติ' },
+    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission',
+      description: 'กฎคอมมิชชันต่อพนักงาน · คำนวณจากยอดขาย · เข้ารวมเงินเดือน' },
 
-    { section: 'เงินเดือน' },
-    { id: 'organization', label: 'โครงสร้างองค์กร', icon: '🏢', href: '/pages/organization.html', feature: 'Payroll', _i18nKey: 'nav.organization' },
-    { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll', _i18nKey: 'nav.payroll' },
-    { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance' },
-    { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission' },
+    { section: 'รายงาน / วิเคราะห์', icon: '📊', description: 'งบการเงิน · executive · งบประมาณ · aging · FP&A' },
+    { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔', href: '/pages/executive-reports.html', feature: 'AdvancedReporting', _i18nKey: 'nav.executiveReports',
+      description: 'KPI สรุปสำหรับผู้บริหาร · trend · benchmark · highlights' },
+    { id: 'reports', label: 'งบการเงิน', icon: '📈', href: '/pages/reports.html', feature: 'BasicAccounting', _i18nKey: 'nav.reports',
+      description: 'งบทดลอง · งบดุล · งบกำไรขาดทุน · กระแสเงินสด · งบแสดงการเปลี่ยนแปลงส่วนของเจ้าของ' },
+    { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html', feature: 'BudgetManagement', _i18nKey: 'nav.budget',
+      description: 'ตั้งงบประมาณรายเดือน · เปรียบเทียบ actual vs budget · variance' },
+    { id: 'aging', label: 'อายุลูกหนี้ / เจ้าหนี้', icon: '⏳', href: '/pages/aging.html', feature: 'AgingReport', _i18nKey: 'nav.aging',
+      description: 'แยกตามอายุ 30/60/90/120 วัน · alert ค้างชำระ · auto-refresh ทุก 6 ชม.' },
+    { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',
+      description: 'DSO · DPO · cycle time · ลูกค้า top-N · เจ้าหนี้ top-N' },
+    { id: 'fpa', label: 'วิเคราะห์การเงิน (FP&A)', icon: '📉', href: '/pages/fpa.html', feature: 'FPA', _i18nKey: 'nav.fpa',
+      description: 'Financial Planning & Analysis · ratio · DuPont · forecast' },
 
-    { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications' },
+    { section: 'โครงการ / มิติ', icon: '🏗️', description: 'โครงการ · cost center · multi-company · งบรวม' },
+    { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html', feature: 'ProjectAccounting', _i18nKey: 'nav.projects',
+      description: 'job cost · งบประมาณต่อโครงการ · ติดตามรายได้/ค่าใช้จ่าย' },
+    { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html', feature: 'TimeBilling', _i18nKey: 'nav.timeBilling',
+      description: 'timesheet · บิลตามชั่วโมง · ติดตามกำไรต่อโปรเจค' },
+    { id: 'dimensions', label: 'สาขา & มิติ (Cost Center)', icon: '🏬', href: '/pages/dimensions.html', feature: 'CostCenter', _i18nKey: 'nav.dimensions',
+      description: 'cost center หลายมิติ · กระจาย JE ตามแผนก/สาขา · รายงานต่อมิติ' },
+    { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html', feature: 'MultiCompany', _i18nKey: 'nav.intercompany',
+      description: 'ธุรกรรมข้ามบริษัทในเครือ · auto-mirror · eliminate ตอนรวมงบ' },
+    { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation', _i18nKey: 'nav.consolidation',
+      description: 'รวมงบทุกบริษัทในเครือ · FX translation · NCI · elimination entries' },
 
-    { section: 'รายงาน' },
-    { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔', href: '/pages/executive-reports.html', feature: 'AdvancedReporting', _i18nKey: 'nav.executiveReports' },
-    { id: 'reports', label: 'รายงานการเงิน', icon: '📈', href: '/pages/reports.html', feature: 'BasicAccounting', _i18nKey: 'nav.reports' },
-    { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html', feature: 'BudgetManagement', _i18nKey: 'nav.budget' },
-    { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳', href: '/pages/aging.html', feature: 'AgingReport', _i18nKey: 'nav.aging' },
-    { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis' },
-    { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉', href: '/pages/fpa.html', feature: 'FPA', _i18nKey: 'nav.fpa' },
+    { section: 'ออนไลน์ & เครื่องมือ', icon: '🌐', description: 'เว็บไซต์ลูกค้า · Portal · AI · OCR สแกน · นำเข้า/ส่งออก' },
+    { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
+      description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
+    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
+      description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
+    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools',
+      description: 'auto-categorize · ตรวจจับ anomaly · พยากรณ์ cash flow · vendor learning' },
+    { id: 'document-scan', label: 'สแกนเอกสาร (OCR)', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan',
+      description: 'สแกนใบเสร็จ-ใบกำกับด้วยกล้อง · Azure DI + Tesseract · RD compliance check' },
+    { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
+      description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
+    { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications',
+      description: 'Matrix ตั้งค่าแจ้งเตือนต่อ event/role · System · Email · LINE · per-user preferences' },
 
-    { section: 'โครงการ/องค์กร' },
-    { id: 'projects', label: 'โครงการ', icon: '📐', href: '/pages/projects.html', feature: 'ProjectAccounting', _i18nKey: 'nav.projects' },
-    { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html', feature: 'TimeBilling', _i18nKey: 'nav.timeBilling' },
-    { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬', href: '/pages/dimensions.html', feature: 'CostCenter', _i18nKey: 'nav.dimensions' },
-    { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html', feature: 'MultiCompany', _i18nKey: 'nav.intercompany' },
-    { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation', _i18nKey: 'nav.consolidation' },
+    { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'ผู้ใช้ · role · ตั้งค่าบริษัท · workflow อนุมัติ · ลายเซ็น' },
+    { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
+      description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
+    { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team',
+      description: 'เชิญสมาชิก · กำหนด role ต่อคน · เปิด/ปิดสิทธิ์' },
+    { id: 'roles', label: 'จัดการ Role / สิทธิ์', icon: '🔐', href: '/pages/roles.html', feature: 'MultiUser', _i18nKey: 'nav.roles',
+      description: 'สร้าง role · เลือกเมนู + perm:* keys ที่อนุญาต · seed defaults' },
+    { id: 'approval', label: 'การอนุมัติ (Workflow)', icon: '✅', href: '/pages/approval.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.approval',
+      description: 'workflow อนุมัติเอกสาร · กำหนดผู้อนุมัติแต่ละขั้น · เงื่อนไขตามจำนวนเงิน' },
+    { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.signatures',
+      description: 'ลายเซ็นดิจิทัล · ผู้จัดทำ-ผู้อนุมัติ · stamp บน PDF อัตโนมัติ' },
 
-    { section: 'เว็บไซต์ของฉัน' },
-    { id: 'cms-sites', label: 'เว็บไซต์ของฉัน', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites' },
+    { section: 'Developer / API', icon: '🔧', description: 'เชื่อมต่อระบบภายนอก · API key · webhook · TaketTime / external ERP' },
+    { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html', feature: 'APIAccess', _i18nKey: 'nav.integrations',
+      description: 'API key สำหรับ external system · mapping บัญชี · sync log' },
+    { id: 'api-developer', label: 'API Documentation', icon: '📘', href: '/pages/api-developer.html', feature: 'APIAccess', _i18nKey: 'nav.apiDeveloper',
+      description: 'เอกสาร REST API สำหรับ developer · endpoint list · sample payload' },
+    { id: 'webhooks', label: 'Webhooks', icon: '🔌', href: '/pages/webhooks.html', feature: 'Webhook', _i18nKey: 'nav.webhooks',
+      description: 'ส่ง event ออกไประบบอื่นเมื่อมีการเปลี่ยนแปลง · subscribe/unsubscribe' },
 
-    { section: 'คลังเอกสาร' },
-    { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport' },
-    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal' },
-    { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools' },
-    { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan' },
-
-    { section: 'ตั้งค่า' },
-    { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team' },
-    { id: 'roles', label: 'จัดการ Role/สิทธิ์', icon: '🔐', href: '/pages/roles.html', feature: 'MultiUser', _i18nKey: 'nav.roles' },
-    { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings' },
-    { id: 'approval', label: 'การอนุมัติ', icon: '✅', href: '/pages/approval.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.approval' },
-    { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.signatures' },
-    { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html', feature: 'APIAccess', _i18nKey: 'nav.integrations' },
-    { id: 'api-developer', label: 'API Developer', icon: '📘', href: '/pages/api-developer.html', feature: 'APIAccess', _i18nKey: 'nav.apiDeveloper' },
-    { id: 'webhooks', label: 'Webhooks & API', icon: '🔌', href: '/pages/webhooks.html', feature: 'Webhook', _i18nKey: 'nav.webhooks' },
-    { id: 'subscription', label: 'แพ็กเกจ', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription' },
-    { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage' },
-    { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit' },
+    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'แพ็กเกจ · การใช้งาน · audit log' },
+    { id: 'subscription', label: 'แพ็กเกจของฉัน', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
+      description: 'จัดการแพ็กเกจ · เปรียบเทียบฟีเจอร์ · เปลี่ยน plan · ใบเสร็จ' },
+    { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
+      description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
+    { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',
+      description: 'ประวัติทุก action ในระบบ · ใคร · เมื่อไหร่ · IP · เปลี่ยนอะไร' },
   ],
 
   render() {
@@ -469,6 +702,15 @@ const Layout = {
       <div class="header-left">
         <button class="mobile-toggle" onclick="Layout.toggleSidebar()">☰</button>
         <h1 class="header-title" id="headerTitle"></h1>
+      </div>
+      <div class="header-center" style="flex:1;max-width:480px;margin:0 16px;position:relative">
+        <input type="text" id="globalSearchInput" placeholder="🔍 ค้นหาเอกสาร / JE / ผู้ติดต่อ..."
+          autocomplete="off" oninput="Layout._onGlobalSearch(this.value)"
+          onblur="setTimeout(()=>Layout._hideGlobalSearch(),200)"
+          onfocus="if(this.value.length>=2)Layout._showGlobalSearchResults()"
+          style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;background:#f9fafb"
+          title="พิมพ์เลขเอกสาร / เลข JE / ชื่อลูกค้า / จำนวนเงิน เพื่อค้นหาทั่วระบบ">
+        <div id="globalSearchDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:480px;overflow-y:auto;z-index:1100"></div>
       </div>
       <div class="header-right">
         <div id="appLangSwitcher" style="margin-right:8px"></div>
@@ -1111,6 +1353,99 @@ const Layout = {
   // Modal helpers
   openModal(id) { document.getElementById(id).classList.add('active'); },
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
+
+  // ===== Entity Timeline Modal (Phase N) =====
+  // Reusable audit-history modal that any detail page can pop open via
+  //   Layout.showEntityTimeline('Document', docId, 'INV-2026-0001')
+  // Loads /accountant/timeline/{type}/{id} and renders a vertical
+  // timeline with action / user / timestamp / diff-of-changed-fields.
+  // Keeps every detail page free of audit-log boilerplate.
+  async showEntityTimeline(entityType, entityId, label) {
+    const cid = this.getCompanyId();
+    if (!cid) { this.toast('กรุณาเลือกบริษัทก่อน', 'warning'); return; }
+    let wrap = document.getElementById('entityTimelineModal');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'entityTimelineModal';
+      wrap.className = 'modal-overlay';
+      wrap.innerHTML = `
+        <div class="modal" style="max-width:720px">
+          <div class="modal-header">
+            <h3 class="modal-title" id="etTitle">📜 ประวัติการเปลี่ยนแปลง</h3>
+            <button class="modal-close" onclick="Layout.closeModal('entityTimelineModal')">&times;</button>
+          </div>
+          <div class="modal-body" id="etBody" style="max-height:60vh;overflow-y:auto"></div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('entityTimelineModal')">ปิด</button>
+          </div>
+        </div>`;
+      document.body.appendChild(wrap);
+    }
+    wrap.querySelector('#etTitle').textContent = '📜 ประวัติการเปลี่ยนแปลง' + (label ? ' — ' + label : '');
+    const body = wrap.querySelector('#etBody');
+    body.innerHTML = '<div style="text-align:center;padding:24px;color:#6b7280">กำลังโหลด...</div>';
+    wrap.classList.add('active');
+    try {
+      const res = await API.get(`/api/companies/${cid}/accountant/timeline/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`);
+      const items = res?.data || [];
+      if (!items.length) {
+        body.innerHTML = '<div style="text-align:center;padding:32px;color:#6b7280">ไม่พบประวัติการเปลี่ยนแปลง</div>';
+        return;
+      }
+      const actionMap = { Create: ['สร้าง','#10b981','✨'], Update: ['แก้ไข','#3b82f6','✏️'],
+        Delete: ['ลบ','#dc2626','🗑️'], View: ['ดู','#6b7280','👁️'], Login: ['เข้าระบบ','#6366f1','🔑'],
+        Logout: ['ออกจากระบบ','#6b7280','🚪'], Approve: ['อนุมัติ','#10b981','✅'],
+        Reject: ['ปฏิเสธ','#dc2626','⛔'], Post: ['ลงบัญชี','#10b981','📒'],
+        Void: ['ยกเลิก','#dc2626','🚫'], Reverse: ['กลับรายการ','#f59e0b','↩️'] };
+      body.innerHTML = items.map(it => {
+        const ai = actionMap[it.action] || [it.action,'#6b7280','•'];
+        const ts = new Date(it.timestamp);
+        const tsStr = ts.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short' });
+        const diff = this._renderAuditDiff(it.oldValues, it.newValues, it.action);
+        return `<div style="border-left:3px solid ${ai[1]};padding:10px 14px;margin-bottom:10px;background:#f9fafb;border-radius:0 6px 6px 0">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+            <div style="font-weight:600;color:${ai[1]}">${ai[2]} ${ai[0]}</div>
+            <div style="color:#6b7280;font-size:12px">${tsStr}</div>
+          </div>
+          <div style="color:#374151;font-size:13px;margin-top:4px">${this.esc(it.userEmail || '(ระบบ)')}</div>
+          ${diff}
+        </div>`;
+      }).join('');
+    } catch (e) {
+      body.innerHTML = `<div style="color:#dc2626;padding:16px">โหลดประวัติไม่สำเร็จ: ${this.esc(e?.message || String(e))}</div>`;
+    }
+  },
+
+  // Render a compact diff of changed fields between OldValues / NewValues
+  // JSON blobs. Hides housekeeping fields (timestamps, audit cols) and
+  // truncates long values so the timeline stays scannable.
+  _renderAuditDiff(oldJson, newJson, action) {
+    const skip = new Set(['UpdatedAt','CreatedAt','UpdatedBy','CreatedBy','RowVersion','ConcurrencyStamp']);
+    const trunc = v => { const s = v == null ? '∅' : String(v); return s.length > 80 ? s.slice(0,80) + '…' : s; };
+    let oldV = {}, newV = {};
+    try { if (oldJson) oldV = JSON.parse(oldJson); } catch {}
+    try { if (newJson) newV = JSON.parse(newJson); } catch {}
+    if (action === 'Create' && newV && typeof newV === 'object') {
+      const keys = Object.keys(newV).filter(k => !skip.has(k) && newV[k] != null && newV[k] !== '').slice(0, 6);
+      if (!keys.length) return '';
+      return `<div style="margin-top:6px;font-size:12px;color:#4b5563">
+        ${keys.map(k => `<div><b>${this.esc(k)}:</b> ${this.esc(trunc(newV[k]))}</div>`).join('')}
+      </div>`;
+    }
+    if (action === 'Update') {
+      const keys = new Set([...Object.keys(oldV || {}), ...Object.keys(newV || {})]);
+      const rows = [];
+      for (const k of keys) {
+        if (skip.has(k)) continue;
+        const o = oldV?.[k], n = newV?.[k];
+        if (JSON.stringify(o) === JSON.stringify(n)) continue;
+        rows.push(`<div><b>${this.esc(k)}:</b> <span style="color:#dc2626;text-decoration:line-through">${this.esc(trunc(o))}</span> → <span style="color:#059669">${this.esc(trunc(n))}</span></div>`);
+      }
+      if (!rows.length) return '';
+      return `<div style="margin-top:6px;font-size:12px;color:#4b5563">${rows.slice(0,8).join('')}${rows.length>8?`<div style="color:#9ca3af">…และอีก ${rows.length-8} รายการ</div>`:''}</div>`;
+    }
+    return '';
+  },
 
   // Danger confirm: requires solving math problem OR typing "confirm"
   // Usage: await Layout.confirmDanger({ title, message, mode: 'math'|'type'|'doubleCheck', confirmText }) → boolean

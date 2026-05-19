@@ -10,8 +10,11 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">งวดบัญชี</h2><p class="page-subtitle">จัดการงวดบัญชี เปิด/ปิดรอบบัญชี</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงวดบัญชี</button>
+      <div><h2 class="page-title">งวดบัญชี</h2><p class="page-subtitle">จัดการงวดบัญชี เปิด/ปิดรอบบัญชี + ปิดสิ้นปี (Year-End Close)</p></div>
+      <div class="flex gap-2">
+        <button class="btn btn-warning" onclick="Page.openYearEndModal()" title="ปิดงบประจำปี — สร้าง JE โอน P&L ไป Retained Earnings + ล็อกทุกเดือนในปี + roll opening balances">🏛️ ปิดสิ้นปี (Year-End)</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงวดบัญชี</button>
+      </div>
     </div>
     <div class="table-container">
       <table class="table">
@@ -61,6 +64,43 @@
         </div>
       </div>
     </div>
+
+    <!-- Year-End Close Modal -->
+    <div class="modal-overlay" id="yearEndModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">🏛️ ปิดสิ้นปี (Year-End Close)</h3><button class="modal-close" onclick="Layout.closeModal('yearEndModal')">&times;</button></div>
+        <div class="modal-body">
+          <div style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;padding:12px;border-radius:8px;margin-bottom:16px;font-size:13px;line-height:1.6">
+            <strong>⚠️ การปิดสิ้นปีไม่สามารถยกเลิกได้</strong> ระบบจะ:
+            <ol style="margin:6px 0 0 18px;padding:0">
+              <li>สร้างใบสำคัญ JE ปิดบัญชี — Dr รายได้ทุกตัวเป็น 0, Cr ค่าใช้จ่ายทุกตัวเป็น 0, balance ไปกำไรสะสม</li>
+              <li>Lock ทุกเดือนในปีนั้น (สถานะ → Locked)</li>
+              <li>Roll opening balances ของ Asset/Liability/Equity ไปงวด 1 มกราคมของปีถัดไป</li>
+            </ol>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ปีบัญชีที่จะปิด *</label>
+            <input type="number" class="form-input" id="yeYear" value="" min="2020" max="2099">
+          </div>
+          <div class="form-group">
+            <label class="form-label">บัญชีกำไรสะสม (Retained Earnings) *</label>
+            <select class="form-select" id="yeRetainedAccount">
+              <option value="">-- เลือกบัญชี --</option>
+            </select>
+            <small style="color:#64748b;font-size:11px">เลือกบัญชีประเภท Equity ที่จะรับยอด P&L เข้าไป</small>
+          </div>
+          <div class="form-group">
+            <label class="form-label">วันที่ปิด (Closing Date)</label>
+            <input type="date" class="form-input" id="yeClosingDate">
+            <small style="color:#64748b;font-size:11px">ปกติคือ 31 ธันวาคม ของปีที่ปิด</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('yearEndModal')">ยกเลิก</button>
+          <button class="btn btn-warning" onclick="Page.confirmYearEnd()" id="yeConfirmBtn">🏛️ ยืนยันปิดสิ้นปี</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -83,16 +123,22 @@
           this._periods = items;
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีงวดบัญชี — กดปุ่ม "สร้างงวดบัญชี" เพื่อเริ่มต้น</td></tr>'; return; }
-          tbody.innerHTML = items.map(p => `<tr>
-            <td class="font-medium">${Layout.esc(p.name || `${p.year}/${p.month}`)}</td>
-            <td>${p.year}</td><td>${p.month}</td>
-            <td>${Layout.date(p.startDate)}</td><td>${Layout.date(p.endDate)}</td>
-            <td>${Layout.statusBadge(p.status)}</td>
-            <td>
-              ${p.status === 'Open' ? `<button class="btn btn-sm btn-warning" onclick="Page.closePeriod('${p.id}')">ปิดงวด</button>` : ''}
-              ${p.status === 'Closed' ? '<span class="text-xs text-gray-400">ปิดแล้ว</span>' : ''}
-            </td>
-          </tr>`).join('');
+          tbody.innerHTML = items.map(p => {
+            const closedNote = p.closedAt ? `<div class="text-xs text-gray-500" title="Closed by ${Layout.esc(p.closedBy||'-')}">Soft-closed: ${Layout.date(p.closedAt)}</div>` : '';
+            const lockedNote = p.lockedAt ? `<div class="text-xs" style="color:#7c3aed" title="Locked by year-end">🔒 Hard-locked: ${Layout.date(p.lockedAt)}</div>` : '';
+            const yearEndLink = p.yearEndJournalEntryId ? `<div class="text-xs" style="color:#7c3aed">ดู JE ปิดปี →</div>` : '';
+            return `<tr>
+              <td class="font-medium">${Layout.esc(p.name || `${p.year}/${p.month}`)}${closedNote}${lockedNote}${yearEndLink}</td>
+              <td>${p.year}</td><td>${p.month}</td>
+              <td>${Layout.date(p.startDate)}</td><td>${Layout.date(p.endDate)}</td>
+              <td>${Layout.statusBadge(p.status)}</td>
+              <td>
+                ${p.status === 'Open' ? `<button class="btn btn-sm btn-warning" onclick="Page.softClose('${p.id}')" title="Soft close — สามารถ reopen ได้">📁 Soft Close</button>` : ''}
+                ${p.status === 'Closed' ? `<button class="btn btn-sm btn-ghost" onclick="Page.reopen('${p.id}')" title="กลับไป Open status">↩️ Reopen</button>` : ''}
+                ${p.status === 'Locked' ? '<span class="text-xs" style="color:#7c3aed">🔒 Locked (Year-End)</span>' : ''}
+              </td>
+            </tr>`;
+          }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       openCreate() {
@@ -204,7 +250,69 @@
           Layout.toast(e.message, 'error');
           if (btn) { btn.disabled = false; btn.textContent = 'ยืนยันปิดงวด'; }
         }
-      }
+      },
+
+      // ===== Soft Close / Reopen (Task 1 of ERP upgrade) =====
+      async softClose(id) {
+        if (!confirm('Soft-close งวดนี้? — Admin สามารถ Reopen ได้ภายหลัง\nระบบจะ reject postings ใหม่ ยกเว้น adjustment')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/accounting/fiscal-periods/${id}/soft-close`);
+          Layout.toast(res?.message || 'Soft-close สำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async reopen(id) {
+        if (!confirm('เปิดงวดอีกครั้ง?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/accounting/fiscal-periods/${id}/reopen`);
+          Layout.toast(res?.message || 'เปิดงวดสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Year-End Close (hard close + RE transfer + roll opening) =====
+      async openYearEndModal() {
+        // Pre-fill year = current year - 1 (the most common scenario:
+        // closing last year's books in early Jan/Feb).
+        const now = new Date();
+        document.getElementById('yeYear').value = now.getFullYear() - 1;
+        document.getElementById('yeClosingDate').value = `${now.getFullYear() - 1}-12-31`;
+        // Load Equity accounts so operator can pick the Retained Earnings one.
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts('?type=Equity');
+          const accounts = (res.data?.items || res.data || []).filter(a => a.accountType === 'Equity' || a.accountType === 3);
+          const sel = document.getElementById('yeRetainedAccount');
+          sel.innerHTML = '<option value="">-- เลือกบัญชี --</option>' +
+            accounts.map(a => `<option value="${a.id}">${a.accountCode} — ${Layout.esc(a.accountName)}</option>`).join('');
+          // Pre-select any account with "กำไรสะสม" / "Retained Earnings" in the name.
+          const re = accounts.find(a => /กำไรสะสม|retained.*earning/i.test(a.accountName));
+          if (re) sel.value = re.id;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        Layout.openModal('yearEndModal');
+      },
+      async confirmYearEnd() {
+        const year = parseInt(document.getElementById('yeYear').value);
+        const reAccount = document.getElementById('yeRetainedAccount').value;
+        const closingDate = document.getElementById('yeClosingDate').value || null;
+        if (!year || !reAccount) { Layout.toast('กรุณาระบุปีและบัญชีกำไรสะสม', 'error'); return; }
+        const ok = confirm(`ยืนยันปิดสิ้นปี ${year}?\nระบบจะ:\n• สร้าง JE ปิดบัญชี P&L → Retained Earnings\n• Lock ทุกเดือนในปี ${year}\n• Roll opening balances ไปปี ${year + 1}\n\nย้อนกลับไม่ได้ — แน่ใจหรือไม่?`);
+        if (!ok) return;
+        const cid = Layout.getCompanyId();
+        const btn = document.getElementById('yeConfirmBtn');
+        btn.disabled = true; btn.textContent = 'กำลังปิดสิ้นปี...';
+        try {
+          const res = await API.post(`/api/companies/${cid}/accounting/year-end-close`, {
+            fiscalYear: year, retainedEarningsAccountId: reAccount, closingDate
+          });
+          Layout.toast(res?.message || 'ปิดสิ้นปีสำเร็จ', 'success');
+          Layout.closeModal('yearEndModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; btn.textContent = '🏛️ ยืนยันปิดสิ้นปี'; }
+      },
     };
     Page.init();
   </script>

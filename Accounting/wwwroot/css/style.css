@@ -319,6 +319,25 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .nav-item .badge-count { margin-left: auto; background: var(--danger); color: #fff; font-size: 11px; padding: 1px 7px; border-radius: 9999px; }
 .sidebar-footer { padding: 16px 20px; border-top: 1px solid var(--gray-800); }
 
+/* ===== Collapsible nav groups (v2 sidebar) ===== */
+.nav-search-wrap { padding: 10px 14px 6px; position: sticky; top: 0; background: var(--gray-900); z-index: 2; }
+.nav-search { width: 100%; padding: 7px 12px; font-size: 13px; background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.1); border-radius: 6px; outline: none; transition: border-color .15s; }
+.nav-search::placeholder { color: rgba(255,255,255,.4); }
+.nav-search:focus { border-color: var(--primary-light); background: rgba(255,255,255,.12); }
+.nav-group { margin: 0; padding: 0; }
+.nav-group > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 10px; padding: 9px 18px; font-size: 12px; font-weight: 600; color: var(--gray-400); text-transform: uppercase; letter-spacing: .04em; border-left: 3px solid transparent; transition: color .15s, background .15s; }
+.nav-group > summary::-webkit-details-marker { display: none; }
+.nav-group > summary::before { content: '▶'; font-size: 9px; color: var(--gray-500); transition: transform .2s; margin-right: 2px; }
+.nav-group[open] > summary::before { transform: rotate(90deg); }
+.nav-group > summary:hover { color: #fff; background: rgba(255,255,255,.04); }
+.nav-group > summary .icon { font-size: 14px; }
+.nav-group > summary .label { flex: 1; }
+.nav-group > summary .count { font-size: 10px; background: rgba(255,255,255,.08); color: var(--gray-400); padding: 1px 7px; border-radius: 9999px; font-weight: 500; letter-spacing: 0; }
+.nav-group[open] > summary { color: var(--primary-light); }
+.nav-group[open] > summary .count { background: rgba(79,70,229,.25); color: #fff; }
+.nav-group-items { padding: 2px 0 6px; }
+.nav-group-items .nav-item { padding-left: 36px; font-size: 13px; }
+
 /* Main Content */
 .main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; background: var(--gray-50); min-width: 0; overflow-x: hidden; }
 

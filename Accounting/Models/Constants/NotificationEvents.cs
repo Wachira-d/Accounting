@@ -38,6 +38,8 @@ public static class NotificationEvents
     public const string OcrAssetDetected = "ocr.asset_detected";
     public const string PaymentVoucherGenerated = "document.pv_generated";
     public const string DocumentApproved        = "document.approved";
+    public const string DocumentVoided          = "document.voided";
+    public const string DepreciationPosted      = "depreciation.posted";
 
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
@@ -66,6 +68,8 @@ public static class NotificationEvents
         ("Accounting", OcrAssetDetected, "OCR พบสินทรัพย์น่าจะลงทะเบียน"),
         ("Accounting", PaymentVoucherGenerated, "สร้างใบสำคัญจ่ายอัตโนมัติ"),
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
+        ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
+        ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
         ("CMS",      SitePublishSucceeded, "เผยแพร่เว็บไซต์สำเร็จ"),
         ("CMS",      SitePublishFailed,    "เผยแพร่เว็บไซต์ล้มเหลว"),
     };

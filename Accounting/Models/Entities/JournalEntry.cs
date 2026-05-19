@@ -72,5 +72,19 @@ public class FiscalPeriod : TenantEntity
     public DateTime EndDate { get; set; }
     public FiscalPeriodStatus Status { get; set; } = FiscalPeriodStatus.Open;
 
+    /// <summary>Soft close — period locked for routine posting but admin
+    /// can still adjust. Set by SoftClosePeriodAsync.</summary>
+    public DateTime? ClosedAt { get; set; }
+    public string? ClosedBy { get; set; }
+
+    /// <summary>Hard close — permanently sealed; only year-end adjustments
+    /// allowed. Triggered as part of YearEndCloseAsync.</summary>
+    public DateTime? LockedAt { get; set; }
+    public string? LockedBy { get; set; }
+
+    /// <summary>The auto-generated JE that closes P&amp;L to Retained Earnings
+    /// for this period's year-end. Null for non-terminal months.</summary>
+    public Guid? YearEndJournalEntryId { get; set; }
+
     public ICollection<JournalEntry> JournalEntries { get; set; } = new List<JournalEntry>();
 }

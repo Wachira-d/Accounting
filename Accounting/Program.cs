@@ -91,6 +91,12 @@ builder.Services.AddMemoryCache();
 // Core
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountingService, AccountingService>();
+builder.Services.AddScoped<IMigrationWizardService, MigrationWizardService>();
+// Accountant tools (Phase I-N)
+builder.Services.AddScoped<SubLedgerReconciliationService>();
+builder.Services.AddScoped<PreCloseChecklistService>();
+builder.Services.AddScoped<DocumentCompletenessService>();
+builder.Services.AddScoped<GlobalSearchService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
@@ -162,6 +168,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RecurringExpe
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.DocumentWorkflowPredictor>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorClusteringService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RdComplianceValidator>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDiPatternLearner>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorKnownGoodCorrector>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.CrossTenantKnowledgeAggregator>();
@@ -234,6 +241,8 @@ builder.Services.AddSignalR();
 // Background job scheduler
 builder.Services.AddHostedService<BackgroundJobService>();
 builder.Services.AddHostedService<AbandonedCartService>();
+builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
+builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

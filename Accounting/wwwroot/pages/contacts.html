@@ -113,6 +113,7 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-secondary" id="contactHistoryBtn" onclick="Page.showHistory()" style="display:none" title="ดูประวัติการแก้ไขผู้ติดต่อรายนี้">📜 ประวัติ</button>
           <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
@@ -282,14 +283,22 @@
         document.getElementById('fContactType').value = '2';
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
+        const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = 'none';
         this.onContactTypeChange();
         Layout.openModal('formModal');
         setTimeout(() => this._attachDbd(), 100);
+      },
+      showHistory() {
+        const id = document.getElementById('editId').value;
+        if (!id) return;
+        const c = this._cache[id];
+        Layout.showEntityTimeline('Contact', id, c ? c.name : '');
       },
       openEdit(id) {
         const c = this._cache[id]; if (!c) return;
         document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
         document.getElementById('editId').value = c.id;
+        const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = '';
         document.getElementById('fContactType').value = String(c.contactType || 2);
         document.getElementById('fName').value = c.name;
         document.getElementById('fTaxId').value = c.taxId || '';

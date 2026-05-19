@@ -779,9 +779,25 @@
             const projectBadge = d.projectId
               ? `<span title="โครงการ: ${this.escapeHtml(d.projectName || '')} — บัญชีของเอกสารนี้จะถูกบันทึกเข้าโครงการนี้" style="margin-left:6px;padding:1px 6px;background:#6366f1;color:#fff;border-radius:6px;font-size:10px;font-weight:600">📁 ${this.escapeHtml(d.projectCode || d.projectName || '')}</span>`
               : '';
+            // Aging badge — surfaced inline next to the document number.
+            // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
+            // the document detail for follow-up.
+            let agingBadge = '';
+            if (d.agingDays && d.agingDays >= 30) {
+              const tier = d.agingDays >= 90 ? '90+' : (d.agingDays >= 60 ? '60+' : '30+');
+              const color = d.agingDays >= 90 ? '#dc2626' : (d.agingDays >= 60 ? '#ea580c' : '#d97706');
+              agingBadge = `<span title="ค้างชำระ ${d.agingDays} วัน" style="margin-left:6px;padding:1px 6px;background:${color};color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ ${tier}d</span>`;
+            }
+            // RD compliance dot (small).
+            let rdBadge = '';
+            if (d.rdComplianceStatus === 'Failed' || d.ocrTenantMismatchFlag) {
+              rdBadge = `<span title="RD compliance ผิดหรือ tenant mismatch" style="margin-left:4px;color:#dc2626;font-size:14px">🛡️</span>`;
+            } else if (d.rdComplianceStatus === 'Warning') {
+              rdBadge = `<span title="RD compliance: มีคำเตือน" style="margin-left:4px;color:#d97706;font-size:14px">🛡️</span>`;
+            }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}</td>
+            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -1074,7 +1090,37 @@
           const d = res.data;
           this._currentDoc = d;
           document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
-          document.getElementById('detailContent').innerHTML = `
+          // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
+          let banners = '';
+          if (d.ocrTenantMismatchFlag) {
+            banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+              ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong> — กรุณาตรวจสอบว่าอัพโหลดถูกบริษัทหรือไม่
+            </div>`;
+          }
+          if (d.rdComplianceStatus && d.rdComplianceStatus !== 'Pending' && d.rdComplianceStatus !== 'Valid' && d.rdComplianceStatus !== 'Approved') {
+            const color = d.rdComplianceStatus === 'Failed' ? '#dc2626' : '#d97706';
+            const bg = d.rdComplianceStatus === 'Failed' ? '#fee2e2' : '#fef3c7';
+            let issues = [];
+            try { issues = JSON.parse(d.rdComplianceIssuesJson || '[]'); } catch(_) {}
+            banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+              🛡️ <strong>RD Compliance: ${d.rdComplianceStatus}</strong>
+              ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + issues.map(i => `<li>${Layout.esc(i.message || i.rule)}</li>`).join('') + '</ul>' : ''}
+            </div>`;
+          }
+          if (d.agingDays && d.agingDays >= 30) {
+            const bg = d.agingDays >= 90 ? '#fee2e2' : (d.agingDays >= 60 ? '#fed7aa' : '#fef3c7');
+            const color = d.agingDays >= 90 ? '#991b1b' : (d.agingDays >= 60 ? '#9a3412' : '#92400e');
+            banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+              ⏳ ค้างชำระมาแล้ว <strong>${d.agingDays} วัน</strong> (เกินกำหนด ${d.agingDays >= 90 ? '90+' : d.agingDays >= 60 ? '60+' : '30+'} วัน)
+            </div>`;
+          }
+          if (d.ocrConfidenceScore != null) {
+            const conf = Math.round(d.ocrConfidenceScore * 100);
+            const color = conf >= 80 ? '#059669' : (conf >= 50 ? '#d97706' : '#dc2626');
+            banners += `<div style="font-size:11px;color:${color};margin-bottom:8px">🔍 OCR confidence: ${conf}%</div>`;
+          }
+
+          document.getElementById('detailContent').innerHTML = banners + `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
               <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
@@ -1146,6 +1192,7 @@
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
+          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('Document','${d.id}','${Layout.esc(d.documentNumber)}')" title="ดูประวัติการสร้าง / แก้ไข / อนุมัติ / ยกเลิก ของเอกสารฉบับนี้">📜 ประวัติ</button>`;
           if (d.status === 'Draft') {
             actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;

@@ -24,6 +24,7 @@ public class DocumentService : IDocumentService
     private readonly CrossTenantWorkflowService _crossTenantWorkflow;
     private readonly INotificationEngine? _notify;
     private readonly IBankService? _bankService;
+    private readonly ITaxService? _taxService;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -32,7 +33,8 @@ public class DocumentService : IDocumentService
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
         CrossTenantWorkflowService crossTenantWorkflow,
         INotificationEngine? notify = null,
-        IBankService? bankService = null)
+        IBankService? bankService = null,
+        ITaxService? taxService = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -45,6 +47,7 @@ public class DocumentService : IDocumentService
         _crossTenantWorkflow = crossTenantWorkflow;
         _notify = notify;
         _bankService = bankService;
+        _taxService = taxService;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -618,6 +621,14 @@ public class DocumentService : IDocumentService
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");
 
+        // Filing lock guard: an Approved document that's part of a TaxReport
+        // already marked Filed (FilingLockedAt set) is sealed for audit —
+        // the operator must Unlock the report first (admin) or use
+        // RejectAndReverseTaxReportAsync to formally cancel the filing.
+        if (_taxService != null && await _taxService.IsDocumentFilingLockedAsync(companyId, documentId))
+            throw new InvalidOperationException(
+                "เอกสารนี้อยู่ในรายงานภาษีที่ Filed แล้ว — กรุณา Unlock รายงานหรือใช้ 'Reject & Reverse' ก่อน");
+
         // Block void if eTax has been submitted/accepted by RD — must contact RD to revoke first
         var lockedEtax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.DocumentId == documentId
             && e.CompanyId == companyId
@@ -722,6 +733,26 @@ public class DocumentService : IDocumentService
         {
             try { await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Document, documentId); }
             catch (Exception ex) { _logger.LogWarning(ex, "Group unwind for voided document {DocId} failed", documentId); }
+        }
+
+        // Fire DocumentVoided notification (best-effort, post-commit). Cascades
+        // through the per-user matrix to Accounting / Owner recipients per
+        // their configured channels (in-app, LINE, email).
+        if (_notify != null)
+        {
+            try
+            {
+                var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId)
+                    .Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+                await _notify.DispatchAsync(companyId, NotificationEvents.DocumentVoided, new NotificationContext
+                {
+                    Title = $"ยกเลิกเอกสาร {doc.DocumentNumber}",
+                    Message = $"{doc.DocumentType} · {contactName} · ยอดรวม {doc.TotalAmount:N2} บาท — กลับรายการบัญชี/ชำระเงิน/e-Tax อัตโนมัติ",
+                    ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                    EntityType = "Document", EntityId = doc.Id,
+                });
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "DocumentVoided notification failed for {DocId}", documentId); }
         }
     }
 
@@ -2626,7 +2657,13 @@ public class DocumentService : IDocumentService
         CertifierPosition: d.CertifierPosition,
         WitnessName: d.WitnessName,
         WitnessPosition: d.WitnessPosition,
-        PaymentDate: d.PaymentDate);
+        PaymentDate: d.PaymentDate,
+        // ERP upgrade fields — OCR compliance + aging
+        OcrConfidenceScore: d.OcrConfidenceScore,
+        RdComplianceStatus: d.RdComplianceStatus,
+        RdComplianceIssuesJson: d.RdComplianceIssuesJson,
+        OcrTenantMismatchFlag: d.OcrTenantMismatchFlag,
+        AgingDays: d.AgingDays);
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,

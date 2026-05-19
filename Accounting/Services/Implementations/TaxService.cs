@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class TaxService : ITaxService
+public partial class TaxService : ITaxService
 {
     private readonly AccountingDbContext _db;
 
@@ -72,12 +72,26 @@ public class TaxService : ITaxService
             if (request.TaxType == TaxType.VAT)
             {
                 await GenerateVatReport(companyId, startDate, endDate, report);
+                await ApplyVatDeferralsAsync(companyId, request.Year, request.Month, report);
             }
             else if (request.TaxType == TaxType.WithholdingTax3
                   || request.TaxType == TaxType.WithholdingTax53
-                  || request.TaxType == TaxType.WithholdingTax1)
+                  || request.TaxType == TaxType.WithholdingTax1
+                  || request.TaxType == TaxType.WithholdingTax54)
             {
+                // PND.54 reuses the WHT report generator — the difference is
+                // in the form's per-line IncomeTypeCode and the e-Filing export
+                // layout (BuildPndAsync handles 54 separately).
                 await GenerateWhtReport(companyId, startDate, endDate, report);
+            }
+            else if (request.TaxType == TaxType.VatPp36)
+            {
+                // PP.36 — foreign service VAT. Treat like VAT report but
+                // pulled only from documents flagged as foreign-supplier
+                // (heuristic: contact has non-Thai TaxId or is marked
+                // ForeignSupplier). For now reuse the VAT generator;
+                // ApplyVatDeferralsAsync skips this branch.
+                await GenerateVatReport(companyId, startDate, endDate, report);
             }
             else if (request.TaxType == TaxType.CorporateIncomeTax)
             {
@@ -827,6 +841,10 @@ public class TaxService : ITaxService
 
         report.Status = TaxReportStatus.Filed;
         report.FiledDate = DateTime.UtcNow;
+        // Mark the filing as locked simultaneously — see Task 4 of the
+        // ERP upgrade. Once Filed, every linked document/JE is read-only
+        // until an explicit UnlockTaxFilingAsync (admin operation).
+        report.FilingLockedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
         return MapToResponse(report);
