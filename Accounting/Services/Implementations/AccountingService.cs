@@ -121,6 +121,56 @@ public partial class AccountingService : IAccountingService
         await SeedDefaultAccountsAsync(companyId, businessType, IndustryType.General);
     }
 
+    /// <summary>
+    /// Build the chart-of-accounts seed list for a business/industry type by
+    /// composing the admin-managed master template (SystemAccountTemplates)
+    /// with built-in fallbacks per scope. This is the SINGLE source of truth
+    /// shared by company seeding (<see cref="SeedDefaultAccountsAsync"/>) and
+    /// the registration preview (<see cref="GetSeedTemplatePreviewAsync"/>) so
+    /// the preview can never diverge from what is actually seeded.
+    /// </summary>
+    private async Task<List<ChartOfAccountTemplates.AccountTemplate>> BuildSeedTemplateAsync(
+        BusinessType businessType, IndustryType industryType)
+    {
+        var master = await _db.SystemAccountTemplates
+            .AsNoTracking()
+            .Where(t => !t.IsDeleted && t.IsActive)
+            .Select(t => new { t.AccountCode, t.AccountNameTh, t.AccountNameEn,
+                t.AccountType, t.Level, t.BusinessType, t.IndustryType })
+            .ToListAsync();
+
+        var commonRows = master
+            .Where(t => t.BusinessType == null && t.IndustryType == null)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToList();
+        var equityRows = master
+            .Where(t => t.BusinessType == businessType)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToList();
+        var industryRows = master
+            .Where(t => t.IndustryType == industryType)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToList();
+
+        return ChartOfAccountTemplates.Compose(
+            commonRows.Count > 0 ? commonRows : null,
+            equityRows.Count > 0 ? equityRows : null,
+            industryType == IndustryType.General
+                ? new List<ChartOfAccountTemplates.AccountTemplate>()
+                : (industryRows.Count > 0 ? industryRows : null),
+            businessType, industryType);
+    }
+
+    /// <summary>Preview the exact chart of accounts a new company of this
+    /// business/industry type would be seeded with — reflects any admin
+    /// customisation of the master template.</summary>
+    public Task<List<ChartOfAccountTemplates.AccountTemplate>> GetSeedTemplatePreviewAsync(
+        BusinessType businessType, IndustryType industryType)
+        => BuildSeedTemplateAsync(businessType, industryType);
+
     public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType)
     {
         // Use raw SQL for deletes to guarantee hard-delete (bypass any EF soft-delete behavior)
@@ -139,19 +189,9 @@ public partial class AccountingService : IAccountingService
         if (usedSystemAccountCount > 0)
             throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
 
-        // Prefer the admin-managed master Chart of Accounts when it has been
-        // populated; fall back to the built-in static template otherwise.
-        var masterCommon = await _db.SystemAccountTemplates
-            .AsNoTracking()
-            .Where(t => !t.IsDeleted && t.IsActive)
-            .OrderBy(t => t.AccountCode)
-            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
-                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
-            .ToListAsync();
-
-        var templates = masterCommon.Count > 0
-            ? ChartOfAccountTemplates.ComposeFromCommon(masterCommon, businessType, industryType)
-            : ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
+        // Compose the seed list from the admin-managed master Chart of Accounts
+        // (same logic the registration preview uses — see BuildSeedTemplateAsync).
+        var templates = await BuildSeedTemplateAsync(businessType, industryType);
         var templateCodes = templates.Select(t => t.Code).ToList();
 
         // Hard-delete system accounts using raw SQL (use {0} placeholders for EF Core)

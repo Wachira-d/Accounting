@@ -1982,16 +1982,39 @@ public class AdminController : ControllerBase
     }
 
     // ===================================================================
-    // Master Chart of Accounts — admin-editable system-wide COA template
+    // Master Chart of Accounts — admin-editable system-wide COA template.
+    //
+    // Rows are partitioned into SCOPES via the businessType / industryType
+    // query params (mutually exclusive):
+    //   • neither set            → common block (codes 1/2/4/5)
+    //   • businessType=<enum>    → equity (code 3) block for that type
+    //   • industryType=<enum>    → industry-specific block for that type
+    // Every endpoint below operates on exactly one scope.
     // ===================================================================
 
-    /// <summary>List the master Chart of Accounts template (sorted by code).</summary>
-    [HttpGet("coa-template")]
-    public async Task<ActionResult<ApiResponse<List<SystemAccountTemplateDto>>>> GetCoaTemplate()
+    /// <summary>Validate the businessType/industryType scope pair.
+    /// Returns an error message, or null when the scope is valid.</summary>
+    private static string? ValidateCoaScope(BusinessType? businessType, IndustryType? industryType)
     {
+        if (businessType.HasValue && industryType.HasValue)
+            return "ระบุได้เพียง businessType หรือ industryType อย่างใดอย่างหนึ่ง";
+        if (industryType == IndustryType.General)
+            return "อุตสาหกรรม 'ทั่วไป' ไม่มีผังบัญชีเฉพาะ — ใช้ขอบเขตส่วนกลางแทน";
+        return null;
+    }
+
+    /// <summary>List the master Chart of Accounts template for one scope.</summary>
+    [HttpGet("coa-template")]
+    public async Task<ActionResult<ApiResponse<List<SystemAccountTemplateDto>>>> GetCoaTemplate(
+        [FromQuery] BusinessType? businessType = null, [FromQuery] IndustryType? industryType = null)
+    {
+        var scopeErr = ValidateCoaScope(businessType, industryType);
+        if (scopeErr != null)
+            return BadRequest(new ApiResponse<List<SystemAccountTemplateDto>>(false, null, scopeErr));
+
         var rows = await _db.SystemAccountTemplates
             .AsNoTracking()
-            .Where(t => !t.IsDeleted)
+            .Where(t => !t.IsDeleted && t.BusinessType == businessType && t.IndustryType == industryType)
             .OrderBy(t => t.AccountCode)
             .Select(t => new SystemAccountTemplateDto(
                 t.AccountCode, t.AccountNameTh, t.AccountNameEn,
@@ -2000,17 +2023,20 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<List<SystemAccountTemplateDto>>(true, rows));
     }
 
-    /// <summary>Bulk-replace the master template with the supplied list.
-    /// The whole table is rewritten in one transaction — the admin page
-    /// edits a full snapshot and saves it back.</summary>
+    /// <summary>Bulk-replace the rows of ONE scope with the supplied list.
+    /// Only the targeted scope is touched — other scopes are untouched.
+    /// An empty list clears the scope (seeding then falls back to built-in).</summary>
     [HttpPut("coa-template")]
     public async Task<ActionResult<ApiResponse<object>>> SaveCoaTemplate(
-        [FromBody] List<SystemAccountTemplateDto> rows)
+        [FromBody] List<SystemAccountTemplateDto> rows,
+        [FromQuery] BusinessType? businessType = null, [FromQuery] IndustryType? industryType = null)
     {
-        if (rows == null || rows.Count == 0)
-            return BadRequest(new ApiResponse<object>(false, null, "ไม่มีรายการให้บันทึก"));
+        var scopeErr = ValidateCoaScope(businessType, industryType);
+        if (scopeErr != null)
+            return BadRequest(new ApiResponse<object>(false, null, scopeErr));
+        rows ??= new List<SystemAccountTemplateDto>();
 
-        // Validate codes unique + types parseable before touching the table.
+        // Validate codes unique within the scope + types parseable.
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows)
         {
@@ -2023,7 +2049,13 @@ public class AdminController : ControllerBase
         }
 
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        await _db.Database.ExecuteSqlRawAsync(@"DELETE FROM ""SystemAccountTemplates""");
+        // Replace-the-scope is wrapped in a transaction so a failure mid-save
+        // never leaves the scope wiped (which would silently fall back to the
+        // built-in template for every company seeded afterwards).
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await _db.SystemAccountTemplates
+            .Where(t => t.BusinessType == businessType && t.IndustryType == industryType)
+            .ExecuteDeleteAsync();
         foreach (var r in rows)
         {
             _db.SystemAccountTemplates.Add(new SystemAccountTemplate
@@ -2034,22 +2066,38 @@ public class AdminController : ControllerBase
                 AccountType = Enum.Parse<AccountType>(r.AccountType),
                 Level = r.Level is >= 1 and <= 4 ? r.Level : 1,
                 IsActive = r.IsActive,
+                BusinessType = businessType,
+                IndustryType = industryType,
                 CreatedBy = userId,
             });
         }
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Ok(new ApiResponse<object>(true, new { count = rows.Count },
             $"บันทึกผังบัญชีต้นแบบ {rows.Count} รายการสำเร็จ"));
     }
 
-    /// <summary>Initialise the master template from the built-in static
-    /// common-accounts list — gives the admin an editable starting point.</summary>
+    /// <summary>Initialise ONE scope from its built-in code-based block,
+    /// giving the admin an editable starting point.</summary>
     [HttpPost("coa-template/seed-builtin")]
-    public async Task<ActionResult<ApiResponse<object>>> SeedCoaTemplateFromBuiltin()
+    public async Task<ActionResult<ApiResponse<object>>> SeedCoaTemplateFromBuiltin(
+        [FromQuery] BusinessType? businessType = null, [FromQuery] IndustryType? industryType = null)
     {
+        var scopeErr = ValidateCoaScope(businessType, industryType);
+        if (scopeErr != null)
+            return BadRequest(new ApiResponse<object>(false, null, scopeErr));
+
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var builtin = ChartOfAccountTemplates.GetCommonAccounts();
-        await _db.Database.ExecuteSqlRawAsync(@"DELETE FROM ""SystemAccountTemplates""");
+        var builtin = businessType.HasValue
+            ? ChartOfAccountTemplates.GetEquityForBusinessType(businessType.Value)
+            : industryType.HasValue
+                ? ChartOfAccountTemplates.GetIndustryAccounts(industryType.Value)
+                : ChartOfAccountTemplates.GetCommonAccounts();
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await _db.SystemAccountTemplates
+            .Where(t => t.BusinessType == businessType && t.IndustryType == industryType)
+            .ExecuteDeleteAsync();
         foreach (var t in builtin)
         {
             _db.SystemAccountTemplates.Add(new SystemAccountTemplate
@@ -2060,12 +2108,46 @@ public class AdminController : ControllerBase
                 AccountType = t.Type,
                 Level = t.Level,
                 IsActive = true,
+                BusinessType = businessType,
+                IndustryType = industryType,
                 CreatedBy = userId,
             });
         }
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Ok(new ApiResponse<object>(true, new { count = builtin.Count },
             $"นำเข้าผังบัญชีมาตรฐาน {builtin.Count} รายการจากระบบสำเร็จ"));
+    }
+
+    /// <summary>List the editable scopes (common + each business type +
+    /// each industry) with Thai labels and how many master rows each has.</summary>
+    [HttpGet("coa-template/scopes")]
+    public async Task<ActionResult<ApiResponse<object>>> GetCoaTemplateScopes()
+    {
+        var counts = await _db.SystemAccountTemplates
+            .AsNoTracking()
+            .Where(t => !t.IsDeleted)
+            .GroupBy(t => new { t.BusinessType, t.IndustryType })
+            .Select(g => new { g.Key.BusinessType, g.Key.IndustryType, Count = g.Count() })
+            .ToListAsync();
+
+        int CommonCount() => counts.FirstOrDefault(c => c.BusinessType == null && c.IndustryType == null)?.Count ?? 0;
+        int BizCount(BusinessType b) => counts.FirstOrDefault(c => c.BusinessType == b)?.Count ?? 0;
+        int IndCount(IndustryType i) => counts.FirstOrDefault(c => c.IndustryType == i)?.Count ?? 0;
+
+        var businessTypes = ChartOfAccountTemplates.GetAllBusinessTypes()
+            .Where(b => b.Type != BusinessType.Other)
+            .Select(b => new { b.Type, name = b.NameTh, equityLabel = b.EquityLabel, count = BizCount(b.Type) });
+        var industryTypes = ChartOfAccountTemplates.GetAllIndustryTypes()
+            .Where(i => i.Type is not (IndustryType.General or IndustryType.Other))
+            .Select(i => new { i.Type, name = i.NameTh, icon = i.Icon, count = IndCount(i.Type) });
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            common = new { count = CommonCount() },
+            businessTypes,
+            industryTypes,
+        }));
     }
 
     // ===================================================================

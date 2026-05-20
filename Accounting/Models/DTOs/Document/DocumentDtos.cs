@@ -42,7 +42,11 @@ public record DocumentLineRequest(
     // Optional product linkage — set when the user picked a product via
     // the line-item typeahead. Stored on DocumentLine.ProductCode so reports
     // can group revenue/cost by product without re-parsing descriptions.
-    string? ProductCode = null);
+    string? ProductCode = null,
+    // Traceability link for flexible/partial conversion — set by the
+    // conversion engine, and round-tripped by the edit form so editing a
+    // converted document never loses its link to the source line.
+    Guid? SourceLineId = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -135,7 +139,49 @@ public record DocumentLineResponse(
     decimal WithholdingTaxAmount,
     Guid? AccountId = null,
     Guid? ProjectId = null,
-    string? ProductCode = null);
+    string? ProductCode = null,
+    Guid? SourceLineId = null);
+
+// ===== Flexible / partial document conversion =====
+
+/// <summary>Convert only a chosen subset of a source document's lines, each
+/// at a chosen quantity — e.g. split one PO into several delivery notes /
+/// invoices. <see cref="Lines"/> with quantity 0 are ignored.</summary>
+public record PartialConvertRequest(
+    List<PartialConvertLineRequest> Lines,
+    DateTime? DocumentDate = null,
+    DateTime? DueDate = null);
+
+public record PartialConvertLineRequest(Guid SourceLineId, decimal Quantity);
+
+/// <summary>Per-line fulfilment snapshot of a source document — how much of
+/// each line has already been carried forward into delivery notes vs.
+/// billing documents, and how much remains.</summary>
+public record DocumentFulfillmentResponse(
+    Guid DocumentId,
+    string DocumentNumber,
+    DocumentType DocumentType,
+    bool SupportsDelivery,
+    bool SupportsBilling,
+    List<DocumentLineFulfillmentResponse> Lines);
+
+public record DocumentLineFulfillmentResponse(
+    Guid LineId,
+    int LineOrder,
+    string Description,
+    string Unit,
+    decimal OrderedQuantity,
+    decimal DeliveredQuantity,
+    decimal DeliveryRemaining,
+    decimal BilledQuantity,
+    decimal BillingRemaining,
+    decimal UnitPrice,
+    decimal DiscountPercent,
+    decimal VatRate,
+    decimal WithholdingTaxRate,
+    Guid? AccountId,
+    Guid? ProjectId,
+    string? ProductCode);
 
 public record ContactBrief(Guid Id, string Name, string? TaxId);
 
