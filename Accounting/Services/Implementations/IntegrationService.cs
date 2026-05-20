@@ -186,7 +186,7 @@ public class IntegrationService : IIntegrationService
         await _db.SaveChangesAsync();
     }
 
-    public async Task<IntegrationResponse> RegenerateApiKeyAsync(Guid companyId, Guid integrationId)
+    public async Task<IntegrationCreatedResponse> RegenerateApiKeyAsync(Guid companyId, Guid integrationId)
     {
         var integration = await _db.Set<ExternalIntegration>()
             .FirstOrDefaultAsync(i => i.Id == integrationId && i.CompanyId == companyId && !i.IsDeleted)
@@ -199,11 +199,12 @@ public class IntegrationService : IIntegrationService
         integration.ConsecutiveErrors = 0;
         await _db.SaveChangesAsync();
 
-        return new IntegrationResponse(
-            integration.Id, integration.SystemName, integration.SystemType, integration.SystemVersion,
-            integration.BaseUrl, integration.ApiKeyPrefix, integration.IsActive, integration.LastSyncAt,
-            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute,
-            integration.WebhookUrl, integration.WebhookEnabled, integration.CreatedAt);
+        // Return the raw key so the caller can show it ONCE — it is hashed in
+        // storage and cannot be retrieved again. SecretKey is unchanged by a
+        // key regeneration, so it is not re-surfaced here.
+        return new IntegrationCreatedResponse(
+            integration.Id, integration.SystemName, rawKey, integration.ApiKeyPrefix,
+            null, integration.CreatedAt);
     }
 
     // ===== Account Mapping =====

@@ -105,6 +105,7 @@
               <span class="info-label">API Key</span>
               <span class="info-value"><code id="detailKeyPrefix" style="font-size:12px;background:var(--gray-100);padding:2px 6px;border-radius:4px">-</code>
                 <button class="btn btn-sm btn-outline" style="margin-left:8px" onclick="Page.regenerateKey()">สร้างใหม่</button>
+                <div class="text-xs" style="color:var(--gray-500);margin-top:4px">เพื่อความปลอดภัย ระบบเก็บ Key แบบเข้ารหัส จึงแสดงเต็มครั้งเดียวตอนสร้าง — หากไม่ได้บันทึกไว้ กด "สร้างใหม่" เพื่อรับ Key ใหม่</div>
               </span>
               <span class="info-label">Webhook URL</span><span class="info-value" id="detailWebhook" style="word-break:break-all">-</span>
               <span class="info-label">สร้างเมื่อ</span><span class="info-value" id="detailCreated">-</span>
@@ -204,7 +205,7 @@
         <div class="modal-body">
           <div style="background:#fef3c7;padding:12px;border-radius:8px;margin-bottom:16px"><p class="text-sm" style="color:#d97706;font-weight:600;margin:0">กรุณาคัดลอก API Key เก็บไว้ จะแสดงครั้งเดียวเท่านั้น</p></div>
           <div class="form-group"><label class="form-label">API Key</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="resultApiKey" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultApiKey')">Copy</button></div></div>
-          <div class="form-group"><label class="form-label">Secret Key (HMAC Webhook Verification)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="resultSecret" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultSecret')">Copy</button></div></div>
+          <div class="form-group" id="resultSecretGroup"><label class="form-label">Secret Key (HMAC Webhook Verification)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="resultSecret" class="form-input" readonly style="font-family:monospace;font-size:13px"><button class="btn btn-outline" onclick="Page.copyKey('resultSecret')">Copy</button></div></div>
         </div>
         <div class="modal-footer"><button class="btn btn-primary" onclick="Page.closeModal('keyModal')">เข้าใจแล้ว ปิด</button></div>
       </div>
@@ -428,6 +429,7 @@ const Page = {
         const res = await this.api.createIntegration(data);
         document.getElementById('resultApiKey').value = res.data.apiKey;
         document.getElementById('resultSecret').value = res.data.secretKey || '';
+        document.getElementById('resultSecretGroup').style.display = '';
         document.getElementById('keyModal').classList.add('active');
         Layout.toast('สร้าง Integration สำเร็จ');
       }
@@ -446,9 +448,15 @@ const Page = {
   },
 
   async regenerateKey() {
-    if (!this.selectedId || !confirm('สร้าง API Key ใหม่? Key เดิมจะใช้ไม่ได้อีก')) return;
+    if (!this.selectedId || !confirm('สร้าง API Key ใหม่? Key เดิมจะใช้ไม่ได้อีกทันที')) return;
     try {
-      await this.api.regenerateIntegrationKey(this.selectedId);
+      const res = await this.api.regenerateIntegrationKey(this.selectedId);
+      // The raw key is shown only once — surface it in the result modal so
+      // the user can copy it. Secret Key is unchanged on regeneration, so
+      // its row is hidden here.
+      document.getElementById('resultApiKey').value = res.data.apiKey;
+      document.getElementById('resultSecretGroup').style.display = 'none';
+      document.getElementById('keyModal').classList.add('active');
       Layout.toast('สร้าง API Key ใหม่สำเร็จ');
       this.loadDashboard();
     } catch(e) { Layout.toast(e.message, 'error'); }
