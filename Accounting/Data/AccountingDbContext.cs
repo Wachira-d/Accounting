@@ -41,6 +41,7 @@ public class AccountingDbContext : DbContext
     // Audit
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
+    public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
 
     // Products & Inventory
     public DbSet<Product> Products => Set<Product>();

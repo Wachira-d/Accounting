@@ -41,6 +41,7 @@ const AdminAPI = {
   get(path) { return this.request('GET', path); },
   post(path, body) { return this.request('POST', path, body); },
   put(path, body) { return this.request('PUT', path, body); },
+  del(path) { return this.request('DELETE', path); },
 
   async upload(path, formData) {
     const token = localStorage.getItem('admin_token');
@@ -113,6 +114,19 @@ const AdminAPI = {
   processExpiredTrials() { return this.post('/trial/process-expired'); },
   processExpiredSubs() { return this.post('/subscription/process-expired'); },
   processNotifications() { return this.post('/subscription/process-notifications'); },
+  processRecurring() { return this.post('/recurring/process'); },
+
+  // Master Chart of Accounts template
+  coaTemplate() { return this.get('/coa-template'); },
+  saveCoaTemplate(rows) { return this.put('/coa-template', rows); },
+  seedCoaTemplateBuiltin() { return this.post('/coa-template/seed-builtin', {}); },
+
+  // Audit log (system-wide)
+  auditLogs(params = '') { return this.get(`/audit-logs${params}`); },
+
+  // Error log (system-wide)
+  errorLogs(params = '') { return this.get(`/error-logs${params}`); },
+  purgeErrorLogs(days) { return this.del(`/error-logs/purge?olderThanDays=${days}`); },
 
   // Site Settings
   siteSettings() { return this.get('/site-settings'); },

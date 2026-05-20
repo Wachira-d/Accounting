@@ -1606,13 +1606,13 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CurrentMonthLocalOcrPages" integer NOT NULL DEFAULT 0;
             """,
             """
-            ALTER TABLE "SubscriptionPlans" ADD COLUMN IF NOT EXISTS "AzureOcrPagesPerMonth" integer NULL;
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "AzureOcrPagesPerMonth" integer NULL;
             """,
             """
-            ALTER TABLE "SubscriptionPlans" ADD COLUMN IF NOT EXISTS "LocalOcrPagesPerMonth" integer NULL;
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "LocalOcrPagesPerMonth" integer NULL;
             """,
             """
-            ALTER TABLE "SubscriptionPlans" ADD COLUMN IF NOT EXISTS "FallbackToLocalWhenAzureExhausted" boolean NOT NULL DEFAULT true;
+            ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "FallbackToLocalWhenAzureExhausted" boolean NOT NULL DEFAULT true;
             """,
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "OcrBonusExpiresAt" timestamp NULL;
@@ -2070,33 +2070,33 @@ public static class DatabaseMigrationHelper
 
             // === Documents: searched by DocumentNumber + Contact name ===
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Documents_DocumentNumber_trgm"
+            CREATE INDEX IF NOT EXISTS "IX_Documents_DocumentNumber_trgm"
             ON "Documents" USING gin ("DocumentNumber" gin_trgm_ops);
             """,
 
             // === Contacts: searched by Name, TaxId ===
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Contacts_Name_trgm"
+            CREATE INDEX IF NOT EXISTS "IX_Contacts_Name_trgm"
             ON "Contacts" USING gin ("Name" gin_trgm_ops);
             """,
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Contacts_TaxId_trgm"
+            CREATE INDEX IF NOT EXISTS "IX_Contacts_TaxId_trgm"
             ON "Contacts" USING gin ("TaxId" gin_trgm_ops);
             """,
 
             // === Products: searched by Name, Code ===
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Products_Name_trgm"
+            CREATE INDEX IF NOT EXISTS "IX_Products_Name_trgm"
             ON "Products" USING gin ("Name" gin_trgm_ops);
             """,
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Products_Code_trgm"
+            CREATE INDEX IF NOT EXISTS "IX_Products_Code_trgm"
             ON "Products" USING gin ("Code" gin_trgm_ops);
             """,
 
             // === ChartOfAccounts: searched by AccountCode, AccountName ===
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_ChartOfAccounts_AccountName_trgm"
+            CREATE INDEX IF NOT EXISTS "IX_ChartOfAccounts_AccountName_trgm"
             ON "ChartOfAccounts" USING gin ("AccountName" gin_trgm_ops);
             """,
 
@@ -2104,7 +2104,7 @@ public static class DatabaseMigrationHelper
             """
             DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'FixedAssets') THEN
-                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_FixedAssets_Name_trgm" ON "FixedAssets" USING gin ("Name" gin_trgm_ops)';
+                EXECUTE 'CREATE INDEX IF NOT EXISTS "IX_FixedAssets_Name_trgm" ON "FixedAssets" USING gin ("Name" gin_trgm_ops)';
             END IF;
             END $$;
             """,
@@ -2113,7 +2113,7 @@ public static class DatabaseMigrationHelper
             """
             DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Loans') THEN
-                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Loans_Name_trgm" ON "Loans" USING gin ("Name" gin_trgm_ops)';
+                EXECUTE 'CREATE INDEX IF NOT EXISTS "IX_Loans_Name_trgm" ON "Loans" USING gin ("Name" gin_trgm_ops)';
             END IF;
             END $$;
             """,
@@ -2122,7 +2122,7 @@ public static class DatabaseMigrationHelper
             """
             DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Projects') THEN
-                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Projects_Name_trgm" ON "Projects" USING gin ("Name" gin_trgm_ops)';
+                EXECUTE 'CREATE INDEX IF NOT EXISTS "IX_Projects_Name_trgm" ON "Projects" USING gin ("Name" gin_trgm_ops)';
             END IF;
             END $$;
             """,
@@ -2131,7 +2131,7 @@ public static class DatabaseMigrationHelper
             """
             DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Employees') THEN
-                EXECUTE 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "IX_Employees_Names_trgm" ON "Employees" USING gin (("EmployeeCode" || '' '' || COALESCE("FirstNameTh",'''') || '' '' || COALESCE("LastNameTh",'''') || '' '' || COALESCE("FirstNameEn",'''')) gin_trgm_ops)';
+                EXECUTE 'CREATE INDEX IF NOT EXISTS "IX_Employees_Names_trgm" ON "Employees" USING gin (("EmployeeCode" || '' '' || COALESCE("FirstNameTh",'''') || '' '' || COALESCE("LastNameTh",'''') || '' '' || COALESCE("FirstNameEn",'''')) gin_trgm_ops)';
             END IF;
             END $$;
             """,
@@ -2332,6 +2332,29 @@ public static class DatabaseMigrationHelper
             """
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_NotificationPreferences_CompanyId_UserId_EventKey"
                 ON "NotificationPreferences" ("CompanyId", "UserId", "EventKey");
+            """,
+
+            // ===== SystemAccountTemplates: admin-editable master Chart of Accounts =====
+            """
+            CREATE TABLE IF NOT EXISTS "SystemAccountTemplates" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "AccountCode" varchar(20) NOT NULL,
+                "AccountNameTh" varchar(256) NOT NULL,
+                "AccountNameEn" text NULL,
+                "AccountType" integer NOT NULL DEFAULT 0,
+                "Level" integer NOT NULL DEFAULT 1,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SystemAccountTemplates" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SystemAccountTemplates_AccountCode"
+                ON "SystemAccountTemplates" ("AccountCode");
             """,
         };
 

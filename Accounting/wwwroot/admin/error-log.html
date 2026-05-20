@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บันทึกข้อผิดพลาด - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center }
+    .filters input, .filters select { padding:8px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:13px; font-family:inherit }
+    .log-tbl { width:100%; border-collapse:collapse; font-size:13px }
+    .log-tbl th { background:#f1f5f9; padding:9px 10px; text-align:left; font-weight:600 }
+    .log-tbl td { border-bottom:1px solid #f1f5f9; padding:8px 10px; vertical-align:top }
+    .log-tbl tr:hover { background:#f8fafc; cursor:pointer }
+    .sc { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:11px; font-weight:700 }
+    .sc-5 { background:#fee2e2; color:#b91c1c } .sc-4 { background:#fef3c7; color:#b45309 }
+    .sc-0 { background:#e5e7eb; color:#374151 }
+    .trace { background:#1e293b; color:#e2e8f0; border-radius:8px; padding:12px; font-size:11px; font-family:ui-monospace,Menlo,monospace; margin-top:6px; white-space:pre-wrap; word-break:break-all; max-height:320px; overflow:auto }
+    .meta { font-size:12px; color:#475569; margin-top:4px }
+    .pager { display:flex; gap:8px; align-items:center; margin-top:14px; justify-content:center }
+    .empty-state { text-align:center; padding:48px; color:#6b7280 }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>บันทึกข้อผิดพลาด (Error Log)</strong> — exception ทั้งหมดที่เกิดในระบบ
+      ใช้สำหรับ debug — คลิกที่แถวเพื่อดู stack trace เต็ม
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">🐞 บันทึกข้อผิดพลาดทั้งระบบ</span>
+        <button class="btn-secondary" onclick="Page.purge()" style="font-size:12px">🗑 ลบ log เก่ากว่า 90 วัน</button>
+      </div>
+      <div class="filters">
+        <input type="text" id="q" placeholder="🔍 path / message / exception type..." onkeydown="if(event.key==='Enter')Page.reload()">
+        <select id="statusCode">
+          <option value="">ทุก HTTP status</option>
+          <option value="500">500 — Server Error</option>
+          <option value="400">400 — Bad Request</option>
+          <option value="401">401 — Unauthorized</option>
+          <option value="403">403 — Forbidden</option>
+          <option value="404">404 — Not Found</option>
+          <option value="0">0 — ไม่ใช่ HTTP (background)</option>
+        </select>
+        <button class="btn-primary" onclick="Page.reload()">ค้นหา</button>
+      </div>
+      <div id="content"><div class="empty-state">กำลังโหลด...</div></div>
+      <div class="pager" id="pager"></div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      page: 1, pageSize: 50, totalPages: 1,
+      async init() { AdminLayout.init('error-log'); await this.load(); },
+      reload() { this.page = 1; this.load(); },
+      async load() {
+        const p = new URLSearchParams({ page: this.page, pageSize: this.pageSize });
+        const q = document.getElementById('q').value.trim();
+        const sc = document.getElementById('statusCode').value;
+        if (q) p.set('q', q);
+        if (sc !== '') p.set('statusCode', sc);
+        try {
+          const res = await AdminAPI.errorLogs('?' + p.toString());
+          this.render(res.data);
+        } catch (e) {
+          document.getElementById('content').innerHTML = `<div class="empty-state" style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+        }
+      },
+      esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      fmt(ts) { const d = new Date(ts); return isNaN(d) ? '-' : d.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'medium' }); },
+      scClass(c) { return c >= 500 ? 'sc-5' : c >= 400 ? 'sc-4' : 'sc-0'; },
+      render(d) {
+        this.totalPages = d.totalPages || 1;
+        const items = d.items || [];
+        const c = document.getElementById('content');
+        if (!items.length) { c.innerHTML = '<div class="empty-state">ไม่พบข้อผิดพลาด — ดีมาก! 🎉</div>'; document.getElementById('pager').innerHTML = ''; return; }
+        c.innerHTML = `<table class="log-tbl"><thead><tr>
+          <th>เวลา</th><th>Status</th><th>ประเภท Exception</th><th>ข้อความ</th><th>Path</th>
+        </tr></thead><tbody>${items.map((it, i) => `
+          <tr onclick="Page.toggle(${i})">
+            <td style="white-space:nowrap">${this.fmt(it.timestamp)}</td>
+            <td><span class="sc ${this.scClass(it.statusCode)}">${it.statusCode}</span></td>
+            <td style="font-size:12px">${this.esc(it.exceptionType)}</td>
+            <td>${this.esc((it.message || '').slice(0, 120))}</td>
+            <td style="font-size:11px;color:#6b7280">${this.esc(it.httpMethod || '')} ${this.esc(it.requestPath || '-')}</td>
+          </tr>
+          <tr id="detail-${i}" style="display:none"><td colspan="5">
+            <div class="meta"><b>ข้อความเต็ม:</b> ${this.esc(it.message)}</div>
+            ${it.queryString ? `<div class="meta"><b>Query:</b> ${this.esc(it.queryString)}</div>` : ''}
+            ${it.userId ? `<div class="meta"><b>User:</b> ${this.esc(it.userId)}</div>` : ''}
+            ${it.ipAddress ? `<div class="meta"><b>IP:</b> ${this.esc(it.ipAddress)}</div>` : ''}
+            ${it.innerException ? `<div class="meta"><b>Inner:</b> ${this.esc(it.innerException)}</div>` : ''}
+            ${it.stackTrace ? `<div class="trace">${this.esc(it.stackTrace)}</div>` : '<div class="meta">ไม่มี stack trace</div>'}
+          </td></tr>`).join('')}</tbody></table>`;
+        document.getElementById('pager').innerHTML = `
+          <button class="btn-secondary" ${this.page<=1?'disabled':''} onclick="Page.go(${this.page-1})">‹ ก่อนหน้า</button>
+          <span>หน้า ${this.page} / ${this.totalPages} (${d.total} รายการ)</span>
+          <button class="btn-secondary" ${this.page>=this.totalPages?'disabled':''} onclick="Page.go(${this.page+1})">ถัดไป ›</button>`;
+      },
+      toggle(i) { const r = document.getElementById('detail-' + i); if (r) r.style.display = r.style.display === 'none' ? '' : 'none'; },
+      go(p) { this.page = p; this.load(); window.scrollTo(0,0); },
+      async purge() {
+        if (!confirm('ลบ error log ที่เก่ากว่า 90 วันทั้งหมด?')) return;
+        try {
+          const res = await AdminAPI.purgeErrorLogs(90);
+          alert(res.message || 'ลบสำเร็จ');
+          this.reload();
+        } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

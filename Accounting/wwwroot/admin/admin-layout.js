@@ -13,10 +13,16 @@ const AdminLayout = {
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
     { section: 'เชื่อมต่อระบบ' },
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },
+    { section: 'ตั้งค่าระบบบัญชี' },
+    { id: 'coa-template', label: 'ผังบัญชีต้นแบบ', icon: '📒', href: '/admin/coa-template.html' },
     { section: 'ตั้งค่า' },
     { id: 'site-settings', label: 'ตั้งค่าเว็บไซต์', icon: '⚙️', href: '/admin/site-settings.html' },
     { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
     { id: 'ocr-config', label: 'ตั้งค่า OCR / Azure DI', icon: '🔍', href: '/admin/ocr-config.html' },
+    { section: 'ตรวจสอบระบบ' },
+    { id: 'audit-log', label: 'บันทึกกิจกรรม (Audit)', icon: '📜', href: '/admin/audit-log.html' },
+    { id: 'error-log', label: 'บันทึกข้อผิดพลาด', icon: '🐞', href: '/admin/error-log.html' },
+    { id: 'background-jobs', label: 'งานเบื้องหลัง (Jobs)', icon: '🛠️', href: '/admin/background-jobs.html' },
   ],
 
   init(pageName) {
