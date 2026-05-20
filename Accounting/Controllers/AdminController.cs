@@ -2049,6 +2049,10 @@ public class AdminController : ControllerBase
         }
 
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        // Replace-the-scope is wrapped in a transaction so a failure mid-save
+        // never leaves the scope wiped (which would silently fall back to the
+        // built-in template for every company seeded afterwards).
+        await using var tx = await _db.Database.BeginTransactionAsync();
         await _db.SystemAccountTemplates
             .Where(t => t.BusinessType == businessType && t.IndustryType == industryType)
             .ExecuteDeleteAsync();
@@ -2068,6 +2072,7 @@ public class AdminController : ControllerBase
             });
         }
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Ok(new ApiResponse<object>(true, new { count = rows.Count },
             $"บันทึกผังบัญชีต้นแบบ {rows.Count} รายการสำเร็จ"));
     }
@@ -2089,6 +2094,7 @@ public class AdminController : ControllerBase
                 ? ChartOfAccountTemplates.GetIndustryAccounts(industryType.Value)
                 : ChartOfAccountTemplates.GetCommonAccounts();
 
+        await using var tx = await _db.Database.BeginTransactionAsync();
         await _db.SystemAccountTemplates
             .Where(t => t.BusinessType == businessType && t.IndustryType == industryType)
             .ExecuteDeleteAsync();
@@ -2108,6 +2114,7 @@ public class AdminController : ControllerBase
             });
         }
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Ok(new ApiResponse<object>(true, new { count = builtin.Count },
             $"นำเข้าผังบัญชีมาตรฐาน {builtin.Count} รายการจากระบบสำเร็จ"));
     }
