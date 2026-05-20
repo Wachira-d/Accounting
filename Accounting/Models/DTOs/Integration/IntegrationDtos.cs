@@ -106,7 +106,10 @@ public record InboundAttachment(
 public record InboundInvoiceLineRequest(
     string? ItemCode, string ItemName, decimal Quantity, decimal UnitPrice,
     decimal? DiscountAmount, string? AccountCode, string? Category,
-    string? Unit, decimal? VatRate);
+    string? Unit, decimal? VatRate,
+    // Withholding-tax rate (%) for this line. Used on purchase-side docs
+    // (Expense) so integration sync can auto-issue the WHT certificate.
+    decimal? WithholdingTaxRate = null);
 
 public record InboundPaymentRequest(
     string? ExternalId, string? ExternalRef,
