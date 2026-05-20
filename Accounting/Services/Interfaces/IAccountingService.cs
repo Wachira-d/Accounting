@@ -14,6 +14,10 @@ public interface IAccountingService
     Task SeedDefaultAccountsAsync(Guid companyId);
     Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType);
     Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType);
+    /// <summary>ผังบัญชีที่บริษัทใหม่จะได้รับ — รวมการปรับแต่งผังต้นแบบของแอดมินแล้ว
+    /// (ใช้ตรรกะเดียวกับการ seed จริง เพื่อให้ตัวอย่างตรงกับของจริงเสมอ)</summary>
+    Task<List<Accounting.Services.ChartOfAccountTemplates.AccountTemplate>> GetSeedTemplatePreviewAsync(
+        BusinessType businessType, IndustryType industryType);
 
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);

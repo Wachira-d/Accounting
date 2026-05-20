@@ -63,9 +63,11 @@ public class AccountingController : ControllerBase
     }
 
     [HttpGet("accounts/template-preview")]
-    public ActionResult<ApiResponse<object>> PreviewAccountTemplate([FromQuery] BusinessType businessType = BusinessType.JuristicPerson, [FromQuery] IndustryType industryType = IndustryType.General)
+    public async Task<ActionResult<ApiResponse<object>>> PreviewAccountTemplate([FromQuery] BusinessType businessType = BusinessType.JuristicPerson, [FromQuery] IndustryType industryType = IndustryType.General)
     {
-        var templates = Services.ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
+        // Reflects admin customisation of the master template — identical to
+        // what SeedDefaultAccountsAsync will actually create.
+        var templates = await _accountingService.GetSeedTemplatePreviewAsync(businessType, industryType);
         var preview = templates.Select(t => new { t.Code, t.NameTh, t.NameEn, AccountType = t.Type.ToString(), t.Level }).ToList();
         return Ok(new ApiResponse<object>(true, new { totalAccounts = preview.Count, accounts = preview }));
     }

@@ -121,28 +121,17 @@ public partial class AccountingService : IAccountingService
         await SeedDefaultAccountsAsync(companyId, businessType, IndustryType.General);
     }
 
-    public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType)
+    /// <summary>
+    /// Build the chart-of-accounts seed list for a business/industry type by
+    /// composing the admin-managed master template (SystemAccountTemplates)
+    /// with built-in fallbacks per scope. This is the SINGLE source of truth
+    /// shared by company seeding (<see cref="SeedDefaultAccountsAsync"/>) and
+    /// the registration preview (<see cref="GetSeedTemplatePreviewAsync"/>) so
+    /// the preview can never diverge from what is actually seeded.
+    /// </summary>
+    private async Task<List<ChartOfAccountTemplates.AccountTemplate>> BuildSeedTemplateAsync(
+        BusinessType businessType, IndustryType industryType)
     {
-        // Use raw SQL for deletes to guarantee hard-delete (bypass any EF soft-delete behavior)
-        // The unique index IX_ChartOfAccounts_CompanyId_AccountCode has no IsDeleted filter,
-        // so we must truly remove rows from the table.
-
-        // Check if any system accounts are in use (have journal entry lines)
-        var usedSystemAccountCount = await _db.JournalEntryLines
-            .IgnoreQueryFilters()
-            .CountAsync(l => _db.ChartOfAccounts
-                .IgnoreQueryFilters()
-                .Where(a => a.CompanyId == companyId && a.IsSystemAccount)
-                .Select(a => a.Id)
-                .Contains(l.AccountId));
-
-        if (usedSystemAccountCount > 0)
-            throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
-
-        // Compose the seed list from the admin-managed master Chart of Accounts.
-        // Each scope (common / business-type equity / industry) is overridden
-        // independently — a scope with no master rows falls back to the
-        // built-in code-based block (handled inside ChartOfAccountTemplates.Compose).
         var master = await _db.SystemAccountTemplates
             .AsNoTracking()
             .Where(t => !t.IsDeleted && t.IsActive)
@@ -166,13 +155,43 @@ public partial class AccountingService : IAccountingService
                 t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
             .ToList();
 
-        var templates = ChartOfAccountTemplates.Compose(
+        return ChartOfAccountTemplates.Compose(
             commonRows.Count > 0 ? commonRows : null,
             equityRows.Count > 0 ? equityRows : null,
             industryType == IndustryType.General
                 ? new List<ChartOfAccountTemplates.AccountTemplate>()
                 : (industryRows.Count > 0 ? industryRows : null),
             businessType, industryType);
+    }
+
+    /// <summary>Preview the exact chart of accounts a new company of this
+    /// business/industry type would be seeded with — reflects any admin
+    /// customisation of the master template.</summary>
+    public Task<List<ChartOfAccountTemplates.AccountTemplate>> GetSeedTemplatePreviewAsync(
+        BusinessType businessType, IndustryType industryType)
+        => BuildSeedTemplateAsync(businessType, industryType);
+
+    public async Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType, IndustryType industryType)
+    {
+        // Use raw SQL for deletes to guarantee hard-delete (bypass any EF soft-delete behavior)
+        // The unique index IX_ChartOfAccounts_CompanyId_AccountCode has no IsDeleted filter,
+        // so we must truly remove rows from the table.
+
+        // Check if any system accounts are in use (have journal entry lines)
+        var usedSystemAccountCount = await _db.JournalEntryLines
+            .IgnoreQueryFilters()
+            .CountAsync(l => _db.ChartOfAccounts
+                .IgnoreQueryFilters()
+                .Where(a => a.CompanyId == companyId && a.IsSystemAccount)
+                .Select(a => a.Id)
+                .Contains(l.AccountId));
+
+        if (usedSystemAccountCount > 0)
+            throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
+
+        // Compose the seed list from the admin-managed master Chart of Accounts
+        // (same logic the registration preview uses — see BuildSeedTemplateAsync).
+        var templates = await BuildSeedTemplateAsync(businessType, industryType);
         var templateCodes = templates.Select(t => t.Code).ToList();
 
         // Hard-delete system accounts using raw SQL (use {0} placeholders for EF Core)
