@@ -1393,15 +1393,75 @@ public class DocumentService : IDocumentService
     public static IReadOnlyList<DocumentType> GetValidConversionTargets(DocumentType source) =>
         ValidConversions.TryGetValue(source, out var targets) ? targets : Array.Empty<DocumentType>();
 
-    public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)
+    // ===================================================================
+    // Flexible / partial document composition
+    //
+    // A source document line may be carried forward into MANY child lines
+    // across MANY documents. Conversion tracks "how much is left" along two
+    // independent fulfilment axes:
+    //   • Delivery — consumed by DeliveryNote
+    //   • Billing  — consumed by Invoice / TaxInvoice / BillingNote /
+    //                PurchaseInvoice / Expense / PurchaseOrder
+    // Conversions to other types (Receipt, CreditNote, ...) settle by
+    // amount, not quantity, and keep the legacy whole-document behaviour.
+    // ===================================================================
+
+    private enum FulfillmentAxis { None, Delivery, Billing }
+
+    private static FulfillmentAxis GetFulfillmentAxis(DocumentType type) => type switch
     {
-        var source = await _db.Documents
-            .Include(d => d.Lines)
-            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        DocumentType.DeliveryNote => FulfillmentAxis.Delivery,
+        DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.BillingNote
+            or DocumentType.PurchaseInvoice or DocumentType.Expense
+            or DocumentType.PurchaseOrder => FulfillmentAxis.Billing,
+        _ => FulfillmentAxis.None
+    };
 
-        // ===== Validation per Thai accounting workflow =====
+    private static string AxisLabel(FulfillmentAxis axis) => axis switch
+    {
+        FulfillmentAxis.Delivery => "ส่งมอบ",
+        FulfillmentAxis.Billing => "วางบิล/แจ้งหนี้",
+        _ => ""
+    };
 
+    private const decimal QtyEpsilon = 0.0001m;
+
+    /// <summary>How much of each given source line has already been carried
+    /// forward into child documents, split per fulfilment axis. Voided /
+    /// Rejected / deleted child documents do not count.</summary>
+    private async Task<Dictionary<Guid, (decimal Delivery, decimal Billing)>> ComputeConsumptionAsync(
+        Guid companyId, List<Guid> sourceLineIds)
+    {
+        var result = sourceLineIds.ToDictionary(id => id, _ => (Delivery: 0m, Billing: 0m));
+        if (sourceLineIds.Count == 0) return result;
+
+        var children = await (
+            from cl in _db.DocumentLines
+            join cd in _db.Documents on cl.DocumentId equals cd.Id
+            where cl.SourceLineId != null && sourceLineIds.Contains(cl.SourceLineId.Value)
+                  && cd.CompanyId == companyId
+                  && cd.Status != DocumentStatus.Voided && cd.Status != DocumentStatus.Rejected
+            select new { SourceLineId = cl.SourceLineId!.Value, cl.Quantity, cd.DocumentType })
+            .ToListAsync();
+
+        foreach (var c in children)
+        {
+            var axis = GetFulfillmentAxis(c.DocumentType);
+            var cur = result[c.SourceLineId];
+            result[c.SourceLineId] = axis switch
+            {
+                FulfillmentAxis.Delivery => (cur.Delivery + c.Quantity, cur.Billing),
+                FulfillmentAxis.Billing => (cur.Delivery, cur.Billing + c.Quantity),
+                _ => cur
+            };
+        }
+        return result;
+    }
+
+    /// <summary>Shared validation for both whole-document and partial
+    /// conversion — throws on any rule violation.</summary>
+    private async Task ValidateConversionAsync(Document source, DocumentType targetType, Guid companyId)
+    {
         // Block converting from Voided/Rejected source — they no longer reflect
         // the customer's true position; new derivative would carry stale data.
         if (source.Status == DocumentStatus.Voided)
@@ -1427,8 +1487,7 @@ public class DocumentService : IDocumentService
         }
 
         // Cycle detection — fetch entire ancestry chain in a single recursive CTE
-        // instead of N round-trips (one per ancestor level). For deep chains this is
-        // ~50-100ms savings vs. the loop-and-query approach.
+        // instead of N round-trips (one per ancestor level).
         if (source.RelatedDocumentId.HasValue)
         {
             var startId = source.RelatedDocumentId.Value;
@@ -1454,8 +1513,7 @@ public class DocumentService : IDocumentService
         }
 
         // For derivative types that adjust source's balance, source must be approved
-        // and have outstanding balance. (CN/DN/Receipt validation happens at approval
-        // via ApplySourceDocumentAdjustmentsAsync, but warn earlier for better UX.)
+        // and have outstanding balance.
         var derivativeTypes = new[] {
             DocumentType.Receipt, DocumentType.ReceiptVoucher,
             DocumentType.CreditNote, DocumentType.PaymentVoucher
@@ -1470,17 +1528,26 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"เอกสาร {source.DocumentNumber} ไม่มียอดคงค้าง — ไม่สามารถแปลงเป็น {targetType}");
         }
+    }
 
-        // ===== Build conversion =====
+    /// <summary>Create the child document from a chosen set of (source line,
+    /// quantity) pairs, link it back to the source, stamp SourceLineId on
+    /// every new line, and cascade metadata + attachments.</summary>
+    private async Task<DocumentResponse> ConvertCoreAsync(
+        Document source, DocumentType targetType,
+        List<(DocumentLine Line, decimal Qty)> spec, string createdBy,
+        DateTime? documentDate = null, DateTime? dueDate = null)
+    {
+        var companyId = source.CompanyId;
 
-        var lines = source.Lines.Select(l => new DocumentLineRequest(
-            l.Description, l.Quantity, l.Unit, l.UnitPrice,
-            l.DiscountPercent, l.VatRate, l.WithholdingTaxRate, l.AccountId,
-            ProjectId: l.ProjectId,
-            ProductCode: l.ProductCode)).ToList();
+        var lines = spec.Select(s => new DocumentLineRequest(
+            s.Line.Description, s.Qty, s.Line.Unit, s.Line.UnitPrice,
+            s.Line.DiscountPercent, s.Line.VatRate, s.Line.WithholdingTaxRate, s.Line.AccountId,
+            ProjectId: s.Line.ProjectId,
+            ProductCode: s.Line.ProductCode)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
-            targetType, DateTime.UtcNow, source.DueDate, source.ContactId,
+            targetType, documentDate ?? DateTime.UtcNow, dueDate ?? source.DueDate, source.ContactId,
             source.DocumentNumber, source.Notes, lines,
             ProjectId: source.ProjectId,
             BankAccountId: source.BankAccountId,
@@ -1491,27 +1558,163 @@ public class DocumentService : IDocumentService
         var created = await _db.Documents.FindAsync(newDoc.Id);
         if (created != null)
         {
-            created.RelatedDocumentId = documentId;
+            created.RelatedDocumentId = source.Id;
             created.CustomAppendix = source.CustomAppendix;
             created.CustomFooterNotes = source.CustomFooterNotes;
             created.CustomTermsAndConditions = source.CustomTermsAndConditions;
             created.RevenueContractId = source.RevenueContractId;
             created.PerformanceObligationId = source.PerformanceObligationId;
-            // Cascade CertificateInLieu fields
             created.CertificateReason = source.CertificateReason;
             created.CertifierName = source.CertifierName;
             created.CertifierPosition = source.CertifierPosition;
             created.WitnessName = source.WitnessName;
             created.WitnessPosition = source.WitnessPosition;
             created.PaymentDate = source.PaymentDate;
-            await _db.SaveChangesAsync();
         }
 
+        // Stamp SourceLineId on every new line. CreateDocumentAsync assigns
+        // LineOrder 1,2,3... in request order, so ordering by LineOrder zips
+        // 1:1 with the spec list.
+        var newLines = await _db.DocumentLines
+            .Where(l => l.DocumentId == newDoc.Id)
+            .OrderBy(l => l.LineOrder)
+            .ToListAsync();
+        for (var i = 0; i < newLines.Count && i < spec.Count; i++)
+            newLines[i].SourceLineId = spec[i].Line.Id;
+
+        await _db.SaveChangesAsync();
+
         // Cascade file attachments — copy reference rows so child doc shares
-        // the same physical files. We share storage paths to avoid duplication.
+        // the same physical files.
         await CascadeAttachmentsAsync(companyId, source.Id, newDoc.Id, createdBy);
 
-        return newDoc;
+        return await GetDocumentAsync(companyId, newDoc.Id);
+    }
+
+    public async Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy)
+    {
+        var source = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        await ValidateConversionAsync(source, targetType, companyId);
+
+        var axis = GetFulfillmentAxis(targetType);
+        var orderedLines = source.Lines.OrderBy(l => l.LineOrder).ToList();
+        List<(DocumentLine Line, decimal Qty)> spec;
+
+        if (axis == FulfillmentAxis.None)
+        {
+            // Settlement / adjustment target — copy every line verbatim.
+            spec = orderedLines.Select(l => (l, l.Quantity)).ToList();
+        }
+        else
+        {
+            // Quantity-tracked target — carry forward only what is still
+            // un-converted on this axis, so a second convert never duplicates.
+            var consumption = await ComputeConsumptionAsync(companyId, orderedLines.Select(l => l.Id).ToList());
+            spec = new List<(DocumentLine, decimal)>();
+            foreach (var l in orderedLines)
+            {
+                var used = axis == FulfillmentAxis.Delivery ? consumption[l.Id].Delivery : consumption[l.Id].Billing;
+                var remaining = l.Quantity - used;
+                if (remaining > QtyEpsilon)
+                    spec.Add((l, remaining));
+            }
+            if (spec.Count == 0)
+                throw new InvalidOperationException(
+                    $"เอกสาร {source.DocumentNumber} ถูกแปลงเพื่อ{AxisLabel(axis)}ครบทุกรายการแล้ว " +
+                    $"— ไม่มีจำนวนคงเหลือให้แปลง");
+        }
+
+        return await ConvertCoreAsync(source, targetType, spec, createdBy);
+    }
+
+    public async Task<DocumentResponse> ConvertDocumentPartialAsync(
+        Guid companyId, Guid documentId, DocumentType targetType,
+        PartialConvertRequest request, string createdBy)
+    {
+        var source = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        await ValidateConversionAsync(source, targetType, companyId);
+
+        var axis = GetFulfillmentAxis(targetType);
+        if (axis == FulfillmentAxis.None)
+            throw new InvalidOperationException(
+                $"การแปลงเป็น {targetType} ไม่รองรับการเลือกบางรายการ — กรุณาใช้การแปลงทั้งฉบับ");
+
+        if (request.Lines == null || request.Lines.Count == 0)
+            throw new InvalidOperationException("กรุณาเลือกรายการที่ต้องการแปลงอย่างน้อย 1 รายการ");
+
+        var consumption = await ComputeConsumptionAsync(
+            companyId, source.Lines.Select(l => l.Id).ToList());
+        var byId = source.Lines.ToDictionary(l => l.Id);
+
+        // Preserve source line order in the new document.
+        var spec = new List<(DocumentLine Line, decimal Qty)>();
+        foreach (var req in request.Lines.Where(r => r.Quantity > QtyEpsilon)
+                     .OrderBy(r => byId.TryGetValue(r.SourceLineId, out var sl) ? sl.LineOrder : int.MaxValue))
+        {
+            if (!byId.TryGetValue(req.SourceLineId, out var srcLine))
+                throw new InvalidOperationException("ไม่พบรายการต้นทางที่เลือก ในเอกสารนี้");
+            var used = axis == FulfillmentAxis.Delivery
+                ? consumption[srcLine.Id].Delivery : consumption[srcLine.Id].Billing;
+            var remaining = srcLine.Quantity - used;
+            if (req.Quantity > remaining + QtyEpsilon)
+                throw new InvalidOperationException(
+                    $"รายการ '{srcLine.Description}' ขอแปลง {req.Quantity:0.##} " +
+                    $"แต่คงเหลือให้{AxisLabel(axis)}เพียง {remaining:0.##} {srcLine.Unit}");
+            spec.Add((srcLine, req.Quantity));
+        }
+        if (spec.Count == 0)
+            throw new InvalidOperationException("ไม่มีรายการที่จะแปลง — จำนวนต้องมากกว่า 0");
+
+        return await ConvertCoreAsync(source, targetType, spec, createdBy,
+            request.DocumentDate, request.DueDate);
+    }
+
+    public async Task<DocumentFulfillmentResponse> GetDocumentFulfillmentAsync(Guid companyId, Guid documentId)
+    {
+        var source = await _db.Documents
+            .Include(d => d.Lines)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var orderedLines = source.Lines.OrderBy(l => l.LineOrder).ToList();
+        var consumption = await ComputeConsumptionAsync(companyId, orderedLines.Select(l => l.Id).ToList());
+
+        // Which axes make sense for this source — based on what it can convert into.
+        var targets = GetValidConversionTargets(source.DocumentType);
+        var supportsDelivery = targets.Any(t => GetFulfillmentAxis(t) == FulfillmentAxis.Delivery);
+        var supportsBilling = targets.Any(t => GetFulfillmentAxis(t) == FulfillmentAxis.Billing);
+
+        var lines = orderedLines.Select(l =>
+        {
+            var c = consumption[l.Id];
+            return new DocumentLineFulfillmentResponse(
+                l.Id, l.LineOrder, l.Description, l.Unit,
+                OrderedQuantity: l.Quantity,
+                DeliveredQuantity: c.Delivery,
+                DeliveryRemaining: Math.Max(0m, l.Quantity - c.Delivery),
+                BilledQuantity: c.Billing,
+                BillingRemaining: Math.Max(0m, l.Quantity - c.Billing),
+                UnitPrice: l.UnitPrice,
+                DiscountPercent: l.DiscountPercent,
+                VatRate: l.VatRate,
+                WithholdingTaxRate: l.WithholdingTaxRate,
+                AccountId: l.AccountId,
+                ProjectId: l.ProjectId,
+                ProductCode: l.ProductCode);
+        }).ToList();
+
+        return new DocumentFulfillmentResponse(
+            source.Id, source.DocumentNumber, source.DocumentType,
+            supportsDelivery, supportsBilling, lines);
     }
 
     private async Task CascadeAttachmentsAsync(Guid companyId, Guid sourceDocId, Guid targetDocId, string createdBy)
@@ -2633,7 +2836,8 @@ public class DocumentService : IDocumentService
             l.VatRate, l.VatAmount, l.WithholdingTaxRate, l.WithholdingTaxAmount,
             AccountId: l.AccountId,
             ProjectId: l.ProjectId,
-            ProductCode: l.ProductCode)).ToList(),
+            ProductCode: l.ProductCode,
+            SourceLineId: l.SourceLineId)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,

@@ -20,6 +20,10 @@ public interface IDocumentService
     Task PurgeDocumentAsync(Guid companyId, Guid documentId);
     Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
+    /// <summary>แปลงเอกสารบางส่วน — เลือกเฉพาะบางรายการ/บางจำนวน (เช่น แยก PO เดียวเป็นหลายใบส่งของ/หลาย Invoice)</summary>
+    Task<DocumentResponse> ConvertDocumentPartialAsync(Guid companyId, Guid documentId, DocumentType targetType, PartialConvertRequest request, string createdBy);
+    /// <summary>สถานะการแปลง/ส่งมอบรายบรรทัด — จำนวนสั่ง/ส่งแล้ว/วางบิลแล้ว/คงเหลือ</summary>
+    Task<DocumentFulfillmentResponse> GetDocumentFulfillmentAsync(Guid companyId, Guid documentId);
     /// <summary>แปลงหลายเอกสารพร้อมกัน — รวมเป็นเอกสารเดียว (กรณี target ยอมให้รวม) หรือสร้างทีละฉบับ</summary>
     Task<List<DocumentResponse>> BatchConvertDocumentsAsync(Guid companyId, List<Guid> documentIds, DocumentType targetType, string createdBy);
     /// <summary>สร้างใบแจ้งหนี้จาก Performance Obligation ของ Revenue Contract (ASC 606 / TFRS 15)</summary>

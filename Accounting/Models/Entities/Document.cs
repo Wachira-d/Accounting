@@ -145,6 +145,21 @@ public class DocumentLine : BaseEntity
     // mixed invoice billing two projects).
     public Guid? ProjectId { get; set; }
     public Project? Project { get; set; }
+
+    /// <summary>
+    /// When this line was created by converting another document, points at
+    /// the source <see cref="DocumentLine"/> it was derived from. Null on
+    /// lines entered directly by the user.
+    ///
+    /// This is the backbone of FLEXIBLE / PARTIAL document composition: one
+    /// source line (e.g. a PO line for 100 units) may be carried forward
+    /// into several child lines across several documents (DeliveryNote ×2,
+    /// Invoice ×3...). The quantity still available to convert is
+    ///   <c>source.Quantity − Σ(child line Quantity)</c>
+    /// computed per fulfilment axis (delivery vs. billing) — see
+    /// DocumentService.ComputeConsumptionAsync.
+    /// </summary>
+    public Guid? SourceLineId { get; set; }
 }
 
 /// <summary>

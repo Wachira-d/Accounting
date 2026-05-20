@@ -2364,6 +2364,13 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_SystemAccountTemplates_Scope"
                 ON "SystemAccountTemplates" ("BusinessType", "IndustryType", "AccountCode");
             """,
+
+            // ===== DocumentLines.SourceLineId: partial / flexible document composition =====
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceLineId" uuid NULL;""",
+            """
+            CREATE INDEX IF NOT EXISTS "IX_DocumentLines_SourceLineId"
+                ON "DocumentLines" ("SourceLineId") WHERE "SourceLineId" IS NOT NULL;
+            """,
         };
 
         foreach (var sql in statements)

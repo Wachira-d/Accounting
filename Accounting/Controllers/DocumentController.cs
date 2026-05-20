@@ -184,6 +184,34 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<DocumentType>>(true, targets));
     }
 
+    /// <summary>
+    /// แปลงเอกสารบางส่วน — เลือกเฉพาะบางรายการและบางจำนวน เช่น แยก PO เดียว
+    /// ออกเป็นใบส่งของหลายใบ หรือ Invoice หลายใบ ระบบติดตามจำนวนคงเหลือให้
+    /// (แปลงเกินจำนวนที่สั่ง/คงเหลือไม่ได้).
+    /// </summary>
+    [HttpPost("{documentId:guid}/convert-partial/{targetType}")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ConvertDocumentPartial(
+        Guid companyId, Guid documentId, DocumentType targetType,
+        [FromBody] PartialConvertRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _documentService.ConvertDocumentPartialAsync(
+            companyId, documentId, targetType, request, userId);
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารบางส่วนสำเร็จ"));
+    }
+
+    /// <summary>
+    /// สถานะการส่งมอบ/วางบิลรายบรรทัด — จำนวนที่สั่ง, ส่งมอบแล้ว, วางบิลแล้ว
+    /// และจำนวนคงเหลือของแต่ละแกน ใช้แสดงในหน้าจอแปลงเอกสารบางส่วน.
+    /// </summary>
+    [HttpGet("{documentId:guid}/fulfillment")]
+    public async Task<ActionResult<ApiResponse<DocumentFulfillmentResponse>>> GetFulfillment(
+        Guid companyId, Guid documentId)
+    {
+        var result = await _documentService.GetDocumentFulfillmentAsync(companyId, documentId);
+        return Ok(new ApiResponse<DocumentFulfillmentResponse>(true, result));
+    }
+
     [HttpPost("batch-convert/{targetType}")]
     public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> BatchConvert(
         Guid companyId, DocumentType targetType, [FromBody] BatchConvertRequest request)
