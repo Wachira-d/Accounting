@@ -1750,6 +1750,102 @@ public partial class AccountingService : IAccountingService
         return periods.Select(MapPeriodToResponse).ToList();
     }
 
+    /// <summary>
+    /// Fix a fiscal period that was created with the wrong start/end dates
+    /// (or year/month). Allowed only when the period is still Open AND no
+    /// data has landed in it yet — once anything's been posted into the
+    /// window, changing the dates would silently re-bucket transactions
+    /// across periods and break every report. Same uniqueness guard as
+    /// Create: (CompanyId, Year, Month) stays unique.
+    /// </summary>
+    public async Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(Guid companyId, Guid periodId, CreateFiscalPeriodRequest request)
+    {
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f => f.Id == periodId && f.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบงวดบัญชี");
+
+        if (period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException("แก้ไขได้เฉพาะงวดบัญชีที่สถานะเป็น Open เท่านั้น — กรุณา Reopen งวดก่อน");
+
+        if (request.StartDate > request.EndDate)
+            throw new ArgumentException("วันเริ่มต้นต้องไม่หลังวันสิ้นสุด");
+
+        // If the year/month is changing, ensure (Year, Month) stays unique.
+        if ((period.Year != request.Year || period.Month != request.Month)
+            && await _db.FiscalPeriods.AnyAsync(f => f.CompanyId == companyId
+                && f.Year == request.Year && f.Month == request.Month && f.Id != periodId))
+        {
+            throw new InvalidOperationException($"งวดบัญชี {request.Year}/{request.Month} มีอยู่แล้ว");
+        }
+
+        // Hard block: if any JE / OpeningBalance / Document already lives
+        // in either the OLD window OR the NEW window, refuse — the safe
+        // way to fix the dates is to Delete + Create again on an empty
+        // period, since changing dates with live data would re-bucket it.
+        var oldStart = period.StartDate; var oldEnd = period.EndDate;
+        var newStart = request.StartDate; var newEnd = request.EndDate;
+        var jeCount = await _db.JournalEntries.AsNoTracking()
+            .CountAsync(j => j.CompanyId == companyId
+                && (j.FiscalPeriodId == periodId
+                    || (j.EntryDate >= oldStart && j.EntryDate <= oldEnd)
+                    || (j.EntryDate >= newStart && j.EntryDate <= newEnd)));
+        if (jeCount > 0)
+            throw new InvalidOperationException(
+                $"ไม่สามารถแก้ไขช่วงวันที่ของงวดได้ — มีใบสำคัญ {jeCount} รายการที่กระทบงวด " +
+                "ถ้าจำเป็นต้องแก้กรุณา void ใบสำคัญในงวดก่อน แล้วค่อยแก้");
+        var obCount = await _db.OpeningBalances.AsNoTracking()
+            .CountAsync(o => o.CompanyId == companyId && o.FiscalPeriodId == periodId);
+        if (obCount > 0)
+            throw new InvalidOperationException(
+                $"ไม่สามารถแก้ไขได้ — งวดนี้มี Opening Balance {obCount} รายการอยู่");
+
+        period.Year = request.Year;
+        period.Month = request.Month;
+        period.Name = $"{request.Year}/{request.Month:D2}";
+        period.StartDate = request.StartDate;
+        period.EndDate = request.EndDate;
+        period.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+        return MapPeriodToResponse(period);
+    }
+
+    /// <summary>
+    /// Delete a fiscal period — only for periods accidentally created with
+    /// wrong dates that haven't been used yet. Refuses when:
+    ///   * Status != Open (Closed / Locked / year-end-locked stays for audit)
+    ///   * Any JournalEntry references this period via FiscalPeriodId or
+    ///     falls within its date window
+    ///   * Any OpeningBalance row points at it
+    /// Hard delete (not soft) — accidentally-created periods carry no
+    /// historical value, and a soft-deleted period would still bloat the
+    /// uniqueness check for (Year, Month).
+    /// </summary>
+    public async Task DeleteFiscalPeriodAsync(Guid companyId, Guid periodId)
+    {
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f => f.Id == periodId && f.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบงวดบัญชี");
+
+        if (period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException("ลบได้เฉพาะงวดที่สถานะเป็น Open เท่านั้น — กรุณา Reopen ก่อน");
+
+        var jeCount = await _db.JournalEntries.AsNoTracking()
+            .CountAsync(j => j.CompanyId == companyId
+                && (j.FiscalPeriodId == periodId
+                    || (j.EntryDate >= period.StartDate && j.EntryDate <= period.EndDate)));
+        if (jeCount > 0)
+            throw new InvalidOperationException(
+                $"ไม่สามารถลบงวดที่มีใบสำคัญ {jeCount} รายการได้ — กรุณา void ใบสำคัญในงวดก่อน");
+
+        var obCount = await _db.OpeningBalances.AsNoTracking()
+            .CountAsync(o => o.CompanyId == companyId && o.FiscalPeriodId == periodId);
+        if (obCount > 0)
+            throw new InvalidOperationException(
+                $"ไม่สามารถลบได้ — งวดนี้มี Opening Balance {obCount} รายการอยู่");
+
+        _db.FiscalPeriods.Remove(period);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task CloseFiscalPeriodAsync(Guid companyId, Guid periodId)
     {
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f => f.Id == periodId && f.CompanyId == companyId)

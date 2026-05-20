@@ -133,15 +133,21 @@
               <td>${Layout.date(p.startDate)}</td><td>${Layout.date(p.endDate)}</td>
               <td>${Layout.statusBadge(p.status)}</td>
               <td>
+                ${p.status === 'Open' ? `<button class="btn btn-sm btn-secondary" onclick='Page.openEdit(${JSON.stringify(p)})' title="แก้ไขชื่อ/ปี/เดือน/วันที่ — ใช้ตอนที่กรอกผิดและยังไม่มีรายการในงวดนี้">✏️ แก้ไข</button>` : ''}
                 ${p.status === 'Open' ? `<button class="btn btn-sm btn-warning" onclick="Page.softClose('${p.id}')" title="Soft close — สามารถ reopen ได้">📁 Soft Close</button>` : ''}
                 ${p.status === 'Closed' ? `<button class="btn btn-sm btn-ghost" onclick="Page.reopen('${p.id}')" title="กลับไป Open status">↩️ Reopen</button>` : ''}
+                ${p.status === 'Open' ? `<button class="btn btn-sm btn-danger" onclick="Page.deletePeriod('${p.id}','${Layout.esc(p.name || (p.year + '/' + p.month))}')" title="ลบงวด — ใช้ได้เฉพาะงวดที่ยังไม่มีใบสำคัญ/opening balance">🗑️ ลบ</button>` : ''}
                 ${p.status === 'Locked' ? '<span class="text-xs" style="color:#7c3aed">🔒 Locked (Year-End)</span>' : ''}
               </td>
             </tr>`;
           }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      _editId: null,
       openCreate() {
+        this._editId = null;
+        document.querySelector('#formModal .modal-title').textContent = 'สร้างงวดบัญชี';
+        document.querySelector('#formModal .modal-footer .btn-primary').textContent = 'สร้างงวด';
         const now = new Date();
         document.getElementById('fYear').value = now.getFullYear();
         document.getElementById('fMonth').value = now.getMonth() + 1;
@@ -149,6 +155,37 @@
         document.getElementById('fMonth').addEventListener('change', () => this.updateDates());
         document.getElementById('fYear').addEventListener('change', () => this.updateDates());
         Layout.openModal('formModal');
+      },
+      openEdit(p) {
+        // Reuse the same modal in edit mode — flip title + save() branch.
+        // Edit is gated server-side: backend rejects when JEs / opening
+        // balances live in either the old or new window.
+        this._editId = p.id;
+        document.querySelector('#formModal .modal-title').textContent = 'แก้ไขงวดบัญชี';
+        document.querySelector('#formModal .modal-footer .btn-primary').textContent = 'บันทึก';
+        document.getElementById('fName').value = p.name || `${p.year}/${p.month}`;
+        document.getElementById('fYear').value = p.year;
+        document.getElementById('fMonth').value = p.month;
+        document.getElementById('fStart').value = (p.startDate || '').slice(0, 10);
+        document.getElementById('fEnd').value = (p.endDate || '').slice(0, 10);
+        Layout.openModal('formModal');
+      },
+      async deletePeriod(id, label) {
+        const ok = await Layout.confirmDanger({
+          title: 'ลบงวดบัญชี',
+          message: `ต้องการลบงวด <b>${Layout.esc(label)}</b> ใช่หรือไม่?<br><br>
+            <span style="color:#64748b;font-size:12px">
+              ใช้ได้เฉพาะงวดที่ยังไม่มีใบสำคัญและไม่มี Opening Balance — ถ้ามีระบบจะปฏิเสธ.
+            </span>`,
+          mode: 'math',
+        });
+        if (!ok) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.del(`/api/companies/${cid}/accounting/fiscal-periods/${id}`);
+          Layout.toast(res?.message || 'ลบงวดบัญชีสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       updateDates() {
         const y = parseInt(document.getElementById('fYear').value);
@@ -161,16 +198,25 @@
         document.getElementById('fName').value = `${months[m]} ${y}`;
       },
       async save() {
-        const api = Layout.api(); if (!api) return;
+        const cid = Layout.getCompanyId();
+        const body = {
+          name: document.getElementById('fName').value,
+          year: parseInt(document.getElementById('fYear').value),
+          month: parseInt(document.getElementById('fMonth').value),
+          startDate: document.getElementById('fStart').value,
+          endDate: document.getElementById('fEnd').value,
+        };
         try {
-          await api.createFiscalPeriod({
-            name: document.getElementById('fName').value,
-            year: parseInt(document.getElementById('fYear').value),
-            month: parseInt(document.getElementById('fMonth').value),
-            startDate: document.getElementById('fStart').value,
-            endDate: document.getElementById('fEnd').value,
-          });
-          Layout.closeModal('formModal'); Layout.toast('สร้างงวดบัญชีสำเร็จ'); await this.load();
+          if (this._editId) {
+            await API.put(`/api/companies/${cid}/accounting/fiscal-periods/${this._editId}`, body);
+            Layout.closeModal('formModal'); Layout.toast('แก้ไขงวดบัญชีสำเร็จ');
+          } else {
+            const api = Layout.api(); if (!api) return;
+            await api.createFiscalPeriod(body);
+            Layout.closeModal('formModal'); Layout.toast('สร้างงวดบัญชีสำเร็จ');
+          }
+          this._editId = null;
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       _closeId: null,

@@ -51,4 +51,6 @@ public interface IAccountingService
     Task<FiscalPeriodResponse> CreateFiscalPeriodAsync(Guid companyId, CreateFiscalPeriodRequest request);
     Task<List<FiscalPeriodResponse>> GetFiscalPeriodsAsync(Guid companyId);
     Task CloseFiscalPeriodAsync(Guid companyId, Guid periodId);
+    Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(Guid companyId, Guid periodId, CreateFiscalPeriodRequest request);
+    Task DeleteFiscalPeriodAsync(Guid companyId, Guid periodId);
 }

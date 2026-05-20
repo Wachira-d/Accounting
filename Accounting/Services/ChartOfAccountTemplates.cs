@@ -141,6 +141,7 @@ public static class ChartOfAccountTemplates
             new("21916", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 3", "Withholding Tax Payable (P.N.D. 3)", AccountType.Liability, 4),
             new("21917", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 53", "Withholding Tax Payable (P.N.D. 53)", AccountType.Liability, 4),
             new("21918", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 54", "Withholding Tax Payable (P.N.D. 54)", AccountType.Liability, 4),
+            new("21919", "ภาษีมูลค่าเพิ่มรอนำส่ง (ภ.พ.30)", "VAT Payable - Pending Submission (P.P.30)", AccountType.Liability, 4),
             new("21920", "ภาษีเงินได้นิติบุคคลค้างจ่าย", "Corporate Income Tax Payable", AccountType.Liability, 4),
             new("21921", "ภาษีอื่นๆ ค้างจ่าย", "Other Taxes Payable", AccountType.Liability, 4),
             new("21922", "เจ้าหนี้สรรพากร", "Revenue Department Payable", AccountType.Liability, 4),
