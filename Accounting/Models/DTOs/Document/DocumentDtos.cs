@@ -42,7 +42,11 @@ public record DocumentLineRequest(
     // Optional product linkage — set when the user picked a product via
     // the line-item typeahead. Stored on DocumentLine.ProductCode so reports
     // can group revenue/cost by product without re-parsing descriptions.
-    string? ProductCode = null);
+    string? ProductCode = null,
+    // Traceability link for flexible/partial conversion — set by the
+    // conversion engine, and round-tripped by the edit form so editing a
+    // converted document never loses its link to the source line.
+    Guid? SourceLineId = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,

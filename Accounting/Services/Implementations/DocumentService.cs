@@ -223,7 +223,8 @@ public class DocumentService : IDocumentService
                     WithholdingTaxAmount = whtAmt,
                     AccountId = line.AccountId,
                     ProjectId = line.ProjectId,
-                    ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim()
+                    ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
+                    SourceLineId = line.SourceLineId
                 });
             }
 
@@ -433,7 +434,12 @@ public class DocumentService : IDocumentService
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = whtAmt,
                     AccountId = line.AccountId,
-                    ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim()
+                    ProjectId = line.ProjectId,
+                    ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
+                    // Preserve the conversion-traceability link across edits —
+                    // the edit form round-trips SourceLineId per line, so a
+                    // converted document keeps its fulfilment accounting intact.
+                    SourceLineId = line.SourceLineId
                 });
             }
 
@@ -1540,11 +1546,15 @@ public class DocumentService : IDocumentService
     {
         var companyId = source.CompanyId;
 
+        // SourceLineId travels through the DTO so CreateDocumentAsync stamps
+        // it inside its own transaction — every new line is linked 1:1 to the
+        // source line it was carried forward from.
         var lines = spec.Select(s => new DocumentLineRequest(
             s.Line.Description, s.Qty, s.Line.Unit, s.Line.UnitPrice,
             s.Line.DiscountPercent, s.Line.VatRate, s.Line.WithholdingTaxRate, s.Line.AccountId,
             ProjectId: s.Line.ProjectId,
-            ProductCode: s.Line.ProductCode)).ToList();
+            ProductCode: s.Line.ProductCode,
+            SourceLineId: s.Line.Id)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, documentDate ?? DateTime.UtcNow, dueDate ?? source.DueDate, source.ContactId,
@@ -1570,19 +1580,8 @@ public class DocumentService : IDocumentService
             created.WitnessName = source.WitnessName;
             created.WitnessPosition = source.WitnessPosition;
             created.PaymentDate = source.PaymentDate;
+            await _db.SaveChangesAsync();
         }
-
-        // Stamp SourceLineId on every new line. CreateDocumentAsync assigns
-        // LineOrder 1,2,3... in request order, so ordering by LineOrder zips
-        // 1:1 with the spec list.
-        var newLines = await _db.DocumentLines
-            .Where(l => l.DocumentId == newDoc.Id)
-            .OrderBy(l => l.LineOrder)
-            .ToListAsync();
-        for (var i = 0; i < newLines.Count && i < spec.Count; i++)
-            newLines[i].SourceLineId = spec[i].Line.Id;
-
-        await _db.SaveChangesAsync();
 
         // Cascade file attachments — copy reference rows so child doc shares
         // the same physical files.

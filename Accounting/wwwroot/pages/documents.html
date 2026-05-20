@@ -976,6 +976,9 @@
               row.dataset.productCode = l.productCode;
               if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
             }
+            // Carry the conversion-traceability link so editing this document
+            // never breaks its partial-fulfilment accounting.
+            if (l.sourceLineId) row.dataset.sourceLineId = l.sourceLineId;
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
@@ -1002,6 +1005,7 @@
           // Server keys on productCode (string), not the id, because Code is the
           // user-facing immutable identifier in DocumentLine.
           if (row.dataset.productCode) line.productCode = row.dataset.productCode;
+          if (row.dataset.sourceLineId) line.sourceLineId = row.dataset.sourceLineId;
           lines.push(line);
         });
         const contactId = document.getElementById('fContactId').value;
@@ -1146,6 +1150,7 @@
               <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
             </div>
+            <div id="docFulfillment_${d.id}" style="margin-top:14px"></div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
               <div class="text-sm">ยอดรวมก่อน VAT: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
@@ -1169,6 +1174,8 @@
 
           // Load attachments asynchronously (doesn't block other sections)
           this.renderAttachmentSection(d.id);
+          // Partial-fulfilment status (delivery / billing progress per line)
+          this.renderFulfillmentSection(d.id);
 
           // Load related payments and journal entries
           try {
@@ -1769,6 +1776,59 @@
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // Render the delivery/billing fulfilment panel in the detail view.
+      // Only shows for documents that can be converted along a quantity axis.
+      async renderFulfillmentSection(id) {
+        const api = Layout.api(); if (!api) return;
+        const host = document.getElementById('docFulfillment_' + id);
+        if (!host) return;
+        let f;
+        try { f = (await api.getDocumentFulfillment(id)).data; }
+        catch { return; }
+        if (!f || (!f.supportsDelivery && !f.supportsBilling) || !f.lines?.length) return;
+
+        const fmt = n => (Math.round((n + Number.EPSILON) * 10000) / 10000).toLocaleString('en-US');
+        const sum = sel => f.lines.reduce((s, l) => s + sel(l), 0);
+        const ordered = sum(l => l.orderedQuantity);
+
+        const bar = (done, total, label, color) => {
+          const pct = total > 0 ? Math.min(100, Math.round(done / total * 100)) : 0;
+          return `<div style="flex:1;min-width:180px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+              <span style="color:#6b7280">${label}</span>
+              <span style="font-weight:600">${fmt(done)}/${fmt(total)} (${pct}%)</span>
+            </div>
+            <div style="height:7px;background:#e5e7eb;border-radius:4px;overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${color}"></div>
+            </div></div>`;
+        };
+
+        let summary = '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px">';
+        if (f.supportsDelivery) summary += bar(sum(l => l.deliveredQuantity), ordered, '🚚 ส่งมอบแล้ว', '#0ea5e9');
+        if (f.supportsBilling) summary += bar(sum(l => l.billedQuantity), ordered, '🧾 วางบิล/แจ้งหนี้แล้ว', '#8b5cf6');
+        summary += '</div>';
+
+        const dCol = f.supportsDelivery, bCol = f.supportsBilling;
+        const head = `<tr style="background:#f8fafc">
+          <th style="padding:5px 8px;text-align:left;font-size:11px;color:#6b7280">รายการ</th>
+          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#6b7280">สั่ง</th>
+          ${dCol ? '<th style="padding:5px 8px;text-align:right;font-size:11px;color:#6b7280">ส่งแล้ว</th><th style="padding:5px 8px;text-align:right;font-size:11px;color:#6b7280">ค้างส่ง</th>' : ''}
+          ${bCol ? '<th style="padding:5px 8px;text-align:right;font-size:11px;color:#6b7280">บิลแล้ว</th><th style="padding:5px 8px;text-align:right;font-size:11px;color:#6b7280">ค้างบิล</th>' : ''}
+        </tr>`;
+        const rows = f.lines.map(l => `<tr style="border-top:1px solid #f1f5f9">
+          <td style="padding:5px 8px;font-size:12px">${Layout.esc(l.description || '')}</td>
+          <td style="padding:5px 8px;text-align:right;font-size:12px">${fmt(l.orderedQuantity)} ${Layout.esc(l.unit || '')}</td>
+          ${dCol ? `<td style="padding:5px 8px;text-align:right;font-size:12px">${fmt(l.deliveredQuantity)}</td><td style="padding:5px 8px;text-align:right;font-size:12px;font-weight:600;color:${l.deliveryRemaining > 0.0001 ? '#ea580c' : '#16a34a'}">${fmt(l.deliveryRemaining)}</td>` : ''}
+          ${bCol ? `<td style="padding:5px 8px;text-align:right;font-size:12px">${fmt(l.billedQuantity)}</td><td style="padding:5px 8px;text-align:right;font-size:12px;font-weight:600;color:${l.billingRemaining > 0.0001 ? '#ea580c' : '#16a34a'}">${fmt(l.billingRemaining)}</td>` : ''}
+        </tr>`).join('');
+
+        host.innerHTML = `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">📦 สถานะการส่งมอบ / วางบิล</div>
+          ${summary}
+          <table style="width:100%;border-collapse:collapse"><thead>${head}</thead><tbody>${rows}</tbody></table>
+        </div>`;
+      },
+
       _currentPdfDoc: null,
       async showPdf(id) {
         const api = Layout.api(); if (!api) return;
