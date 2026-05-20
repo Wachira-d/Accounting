@@ -7,39 +7,51 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/admin/admin.css">
   <style>
+    .scope-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px 14px; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:10px }
+    .scope-bar label { font-weight:700; font-size:13px; color:#5b21b6 }
+    .scope-bar select { padding:8px 12px; border:1px solid #c4b5fd; border-radius:8px; font-size:13px; font-family:inherit; min-width:300px }
+    .scope-hint { font-size:12px; color:#6d28d9 }
     .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; align-items:center }
     .coa-tbl { width:100%; border-collapse:collapse; font-size:13px }
     .coa-tbl th { background:#f1f5f9; padding:8px; text-align:left; font-weight:600; position:sticky; top:0; z-index:1 }
     .coa-tbl td { border-bottom:1px solid #f1f5f9; padding:4px 6px }
     .coa-tbl input, .coa-tbl select { width:100%; padding:5px 7px; border:1px solid #d1d5db; border-radius:6px; font-size:13px; font-family:inherit }
     .coa-tbl input:focus, .coa-tbl select:focus { outline:none; border-color:#6366f1 }
-    .tbl-wrap { max-height:62vh; overflow:auto; border:1px solid #e2e8f0; border-radius:10px }
-    .row-del { color:#dc2626; cursor:pointer; border:none; background:transparent; font-size:16px }
+    .tbl-wrap { max-height:58vh; overflow:auto; border:1px solid #e2e8f0; border-radius:10px }
     .lvl-1 td input { font-weight:700 }
     .lvl-2 td:first-child { padding-left:14px }
     .lvl-3 td:first-child { padding-left:26px }
     .lvl-4 td:first-child { padding-left:38px }
+    .row-del { color:#dc2626; cursor:pointer; border:none; background:transparent; font-size:16px }
     .empty-state { text-align:center; padding:48px 20px; color:#6b7280 }
   </style>
 </head>
 <body>
   <div id="pageContent">
     <div class="info-box">
-      <strong>ผังบัญชีต้นแบบกลาง (Master Chart of Accounts)</strong> — ผังบัญชีนี้คือ
-      <strong>ฐาน (หมวด 1/2/4/5)</strong> ที่บริษัทใหม่ทุกบริษัทจะ seed ออกไปใช้
-      ส่วนหมวด 3 (ส่วนของเจ้าของ) และบัญชีเฉพาะอุตสาหกรรม ระบบจะเติมให้อัตโนมัติตามประเภทธุรกิจ
-      <br><br>
-      ⚠️ ถ้าตารางนี้ว่าง ระบบจะใช้ผังบัญชีมาตรฐานที่ฝังในโค้ดแทน — กด
-      <strong>"นำเข้าจากระบบ"</strong> เพื่อเริ่มต้นแก้ไข
+      <strong>ผังบัญชีต้นแบบกลาง (Master Chart of Accounts)</strong> — ผังบัญชีที่บริษัทใหม่ทุกบริษัทใช้เป็นจุดเริ่ม
+      แบ่งเป็น 3 ขอบเขต (Scope) แก้แยกกันได้:
+      <ul style="margin:8px 0 0;padding-left:20px;line-height:1.7">
+        <li><strong>ส่วนกลาง</strong> — บัญชีพื้นฐาน หมวด 1/2/4/5 ใช้กับทุกบริษัท</li>
+        <li><strong>ตามประเภทธุรกิจ</strong> — บัญชีส่วนของเจ้าของ (หมวด 3) แยกตามรูปแบบนิติบุคคล</li>
+        <li><strong>ตามอุตสาหกรรม</strong> — บัญชีเฉพาะกลุ่มธุรกิจ (เช่น โรงแรม ร้านอาหาร)</li>
+      </ul>
+      ⚠️ ขอบเขตใดที่ตารางว่าง ระบบจะใช้ผังบัญชีมาตรฐานในโค้ดแทน — กด <strong>"นำเข้าจากระบบ"</strong> เพื่อเริ่มแก้ไขขอบเขตนั้น
     </div>
 
     <div class="admin-card">
+      <div class="scope-bar">
+        <label for="scope">🎯 ขอบเขต:</label>
+        <select id="scope" onchange="Page.onScopeChange()"><option>กำลังโหลด...</option></select>
+        <span class="scope-hint" id="scopeHint"></span>
+      </div>
+
       <div class="admin-card-header">
-        <span class="admin-card-title">📒 ผังบัญชีต้นแบบ <span id="rowCount" style="color:#6b7280;font-weight:400"></span></span>
+        <span class="admin-card-title">📒 <span id="scopeTitle">ผังบัญชีต้นแบบ</span> <span id="rowCount" style="color:#6b7280;font-weight:400"></span></span>
       </div>
 
       <div class="toolbar">
-        <button class="btn-primary" onclick="Page.save()">💾 บันทึกทั้งหมด</button>
+        <button class="btn-primary" onclick="Page.save()">💾 บันทึกขอบเขตนี้</button>
         <button class="btn-secondary" onclick="Page.addRow()">+ เพิ่มบัญชี</button>
         <button class="btn-secondary" onclick="Page.seedBuiltin()">⬇️ นำเข้าจากระบบ (ผังมาตรฐาน)</button>
         <button class="btn-secondary" onclick="Page.exportCsv()">📤 ส่งออก CSV</button>
@@ -70,7 +82,8 @@
   <script src="/admin/admin-layout.js"></script>
   <script>
     const Page = {
-      rows: [],   // {accountCode, accountNameTh, accountNameEn, accountType, level, isActive}
+      rows: [],
+      scopeKey: 'common',   // 'common' | 'b:<BusinessType>' | 'i:<IndustryType>'
       types: ['Asset','Liability','Equity','Revenue','Expense'],
       typeLabels: { Asset:'สินทรัพย์', Liability:'หนี้สิน', Equity:'ส่วนของเจ้าของ', Revenue:'รายได้', Expense:'ค่าใช้จ่าย' },
       typeAliases: { 'asset':'Asset','สินทรัพย์':'Asset','liability':'Liability','หนี้สิน':'Liability',
@@ -79,15 +92,72 @@
 
       async init() {
         AdminLayout.init('coa-template');
+        await this.loadScopes();
         await this.load();
       },
+
+      // --- scope handling -------------------------------------------------
+      scopeQs(key) {
+        if (key === 'common') return '';
+        const [kind, val] = key.split(':');
+        return kind === 'b' ? `?businessType=${encodeURIComponent(val)}`
+                            : `?industryType=${encodeURIComponent(val)}`;
+      },
+      scopeLabel(key) {
+        const o = document.querySelector(`#scope option[value="${key}"]`);
+        return o ? o.dataset.name || o.textContent.trim() : key;
+      },
+      async loadScopes() {
+        const sel = document.getElementById('scope');
+        try {
+          const res = await AdminAPI.coaTemplateScopes();
+          const d = res.data;
+          let html = `<option value="common" data-name="ส่วนกลาง">📋 ส่วนกลาง — บัญชีพื้นฐาน (${d.common.count})</option>`;
+          html += `<optgroup label="ส่วนของเจ้าของ (หมวด 3) ตามประเภทธุรกิจ">`;
+          for (const b of d.businessTypes)
+            html += `<option value="b:${b.type}" data-name="${b.name}">🏢 ${b.name} — ${b.equityLabel} (${b.count})</option>`;
+          html += `</optgroup><optgroup label="บัญชีเฉพาะอุตสาหกรรม">`;
+          for (const i of d.industryTypes)
+            html += `<option value="i:${i.type}" data-name="${i.name}">${i.icon} ${i.name} (${i.count})</option>`;
+          html += `</optgroup>`;
+          sel.innerHTML = html;
+          sel.value = this.scopeKey;
+        } catch (e) {
+          sel.innerHTML = '<option value="common">ส่วนกลาง</option>';
+          alert('โหลดรายการขอบเขตไม่สำเร็จ: ' + e.message);
+        }
+      },
+      async onScopeChange() {
+        if (this.rows.length && !confirm('เปลี่ยนขอบเขต — รายการที่ยังไม่บันทึกจะหาย ดำเนินการต่อ?')) {
+          document.getElementById('scope').value = this.scopeKey;
+          return;
+        }
+        this.scopeKey = document.getElementById('scope').value;
+        await this.load();
+      },
+
       async load() {
         try {
-          const res = await AdminAPI.coaTemplate();
+          const res = await AdminAPI.coaTemplate(this.scopeQs(this.scopeKey));
           this.rows = (res.data || []).map(r => ({ ...r }));
+          document.getElementById('filter').value = '';
+          this.updateScopeUi();
           this.render();
         } catch (e) { alert('โหลดไม่สำเร็จ: ' + e.message); }
       },
+      updateScopeUi() {
+        const name = this.scopeLabel(this.scopeKey);
+        document.getElementById('scopeTitle').textContent = 'ผังบัญชีต้นแบบ — ' + name;
+        const hint = this.scopeKey === 'common'
+          ? 'บัญชีพื้นฐานที่ใช้กับทุกบริษัท'
+          : this.scopeKey.startsWith('b:')
+            ? 'บัญชีหมวด 3 (ส่วนของเจ้าของ) เฉพาะประเภทธุรกิจนี้'
+            : 'บัญชีเฉพาะอุตสาหกรรมนี้ — จะถูกเติมเพิ่มจากบัญชีส่วนกลาง';
+        document.getElementById('scopeHint').textContent = hint
+          + (this.rows.length ? '' : ' · (ว่าง — ระบบจะใช้ผังมาตรฐานในโค้ด)');
+      },
+
+      // --- table ----------------------------------------------------------
       render() {
         const f = (document.getElementById('filter').value || '').toLowerCase();
         const view = this.rows
@@ -97,7 +167,7 @@
             || (r.accountNameEn || '').toLowerCase().includes(f));
         const tb = document.getElementById('tbody');
         if (!this.rows.length) {
-          tb.innerHTML = `<tr><td colspan="7"><div class="empty-state">ยังไม่มีผังบัญชีต้นแบบ — กด "นำเข้าจากระบบ" เพื่อเริ่ม</div></td></tr>`;
+          tb.innerHTML = `<tr><td colspan="7"><div class="empty-state">ขอบเขตนี้ยังไม่มีผังบัญชี — กด "นำเข้าจากระบบ" เพื่อเริ่ม หรือ "เพิ่มบัญชี"</div></td></tr>`;
         } else {
           tb.innerHTML = view.map(({ r, i }) => `
             <tr class="lvl-${r.level || 1}">
@@ -120,14 +190,15 @@
       esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); },
       upd(i, field, val) { if (this.rows[i]) this.rows[i][field] = val; },
       addRow() {
-        this.rows.unshift({ accountCode:'', accountNameTh:'', accountNameEn:'', accountType:'Asset', level:4, isActive:true });
+        this.rows.unshift({ accountCode:'', accountNameTh:'', accountNameEn:'',
+          accountType: this.scopeKey.startsWith('b:') ? 'Equity' : 'Asset', level:4, isActive:true });
         document.getElementById('filter').value = '';
-        this.render();
+        this.render(); this.updateScopeUi();
       },
-      delRow(i) { this.rows.splice(i, 1); this.render(); },
+      delRow(i) { this.rows.splice(i, 1); this.render(); this.updateScopeUi(); },
 
+      // --- save / seed ----------------------------------------------------
       async save() {
-        if (!this.rows.length) { alert('ไม่มีรายการให้บันทึก'); return; }
         const codes = new Set();
         for (const r of this.rows) {
           if (!r.accountCode || !r.accountCode.trim()) { alert('พบรายการที่ไม่มีรหัสบัญชี'); return; }
@@ -135,7 +206,10 @@
           if (codes.has(c)) { alert('รหัสบัญชีซ้ำ: ' + c); return; }
           codes.add(c);
         }
-        if (!confirm(`บันทึกผังบัญชีต้นแบบ ${this.rows.length} รายการ?\nระบบจะเขียนทับของเดิมทั้งหมด`)) return;
+        const msg = this.rows.length
+          ? `บันทึกผังบัญชีขอบเขต "${this.scopeLabel(this.scopeKey)}" จำนวน ${this.rows.length} รายการ?`
+          : `บันทึกขอบเขต "${this.scopeLabel(this.scopeKey)}" เป็นค่าว่าง?\nระบบจะกลับไปใช้ผังมาตรฐานในโค้ดสำหรับขอบเขตนี้`;
+        if (!confirm(msg)) return;
         try {
           const res = await AdminAPI.saveCoaTemplate(this.rows.map(r => ({
             accountCode: r.accountCode.trim(),
@@ -144,20 +218,23 @@
             accountType: r.accountType,
             level: r.level || 1,
             isActive: r.isActive !== false,
-          })));
+          })), this.scopeQs(this.scopeKey));
           alert(res.message || 'บันทึกสำเร็จ');
+          await this.loadScopes();
           await this.load();
         } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
       },
       async seedBuiltin() {
-        if (!confirm('นำเข้าผังบัญชีมาตรฐานจากระบบ?\nรายการที่มีอยู่ตอนนี้จะถูกเขียนทับ')) return;
+        if (!confirm(`นำเข้าผังบัญชีมาตรฐานของขอบเขต "${this.scopeLabel(this.scopeKey)}" จากระบบ?\nรายการในขอบเขตนี้จะถูกเขียนทับ`)) return;
         try {
-          const res = await AdminAPI.seedCoaTemplateBuiltin();
+          const res = await AdminAPI.seedCoaTemplateBuiltin(this.scopeQs(this.scopeKey));
           alert(res.message || 'นำเข้าสำเร็จ');
+          await this.loadScopes();
           await this.load();
         } catch (e) { alert('นำเข้าไม่สำเร็จ: ' + e.message); }
       },
 
+      // --- CSV ------------------------------------------------------------
       exportCsv() {
         if (!this.rows.length) { alert('ไม่มีข้อมูลให้ส่งออก'); return; }
         const cell = v => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
@@ -168,13 +245,13 @@
         const blob = new Blob(['﻿' + lines.join('\r\n')], { type:'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `coa-template-${new Date().toISOString().slice(0,10)}.csv`;
+        a.download = `coa-${this.scopeKey.replace(':','-')}-${new Date().toISOString().slice(0,10)}.csv`;
         a.click(); URL.revokeObjectURL(a.href);
       },
       async importCsv(file) {
         if (!file) return;
         document.getElementById('csvFile').value = '';
-        if (!confirm('นำเข้า CSV จะแทนที่ตารางที่กำลังแก้อยู่ทั้งหมด (ยังไม่บันทึกจนกว่าจะกด "บันทึกทั้งหมด") — ดำเนินการต่อ?')) return;
+        if (!confirm('นำเข้า CSV จะแทนที่ตารางของขอบเขตที่กำลังแก้อยู่ (ยังไม่บันทึกจนกว่าจะกด "บันทึกขอบเขตนี้") — ดำเนินการต่อ?')) return;
         try {
           let text = await file.text();
           if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
@@ -205,8 +282,8 @@
           if (!out.length) throw new Error('ไม่พบข้อมูลในไฟล์');
           this.rows = out;
           document.getElementById('filter').value = '';
-          this.render();
-          alert(`โหลด ${out.length} รายการจาก CSV แล้ว — ตรวจสอบและกด "บันทึกทั้งหมด"`);
+          this.render(); this.updateScopeUi();
+          alert(`โหลด ${out.length} รายการจาก CSV แล้ว — ตรวจสอบและกด "บันทึกขอบเขตนี้"`);
         } catch (e) { alert('นำเข้า CSV ไม่สำเร็จ: ' + e.message); }
       },
     };

@@ -504,14 +504,11 @@ public static class ChartOfAccountTemplates
     public static List<AccountTemplate> GetTemplateByBusinessType(
         BusinessType businessType,
         IndustryType industryType = IndustryType.General)
-    {
-        var accounts = new List<AccountTemplate>();
+        => Compose(null, null, null, businessType, industryType);
 
-        // 1. Common accounts (1,2,4,5)
-        accounts.AddRange(GetCommonAccounts());
-
-        // 2. Equity accounts (3) based on business type
-        accounts.AddRange(businessType switch
+    /// <summary>Built-in equity (code 3) block for a business type.</summary>
+    public static List<AccountTemplate> GetEquityForBusinessType(BusinessType businessType)
+        => businessType switch
         {
             BusinessType.JuristicPerson => GetEquityJuristicPerson(),
             BusinessType.PublicCompany  => GetEquityPublicCompany(),
@@ -519,72 +516,51 @@ public static class ChartOfAccountTemplates
             BusinessType.Individual     => GetEquityIndividual(),
             BusinessType.Foundation or BusinessType.Association => GetEquityFoundation(),
             _ => GetEquityJuristicPerson()
-        });
+        };
 
-        // 3. Industry-specific accounts
-        if (industryType != IndustryType.General)
+    /// <summary>Built-in industry-specific block for an industry type
+    /// (empty for <see cref="IndustryType.General"/>).</summary>
+    public static List<AccountTemplate> GetIndustryAccounts(IndustryType industryType)
+    {
+        if (industryType == IndustryType.General) return new List<AccountTemplate>();
+        return industryType switch
         {
-            accounts.AddRange(industryType switch
-            {
-                IndustryType.Trading or IndustryType.Retail or IndustryType.Ecommerce => GetIndustryTrading(),
-                IndustryType.Manufacturing or IndustryType.Construction or IndustryType.Agriculture => GetIndustryManufacturing(),
-                IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
-                    or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation
-                    or IndustryType.Freelance => GetIndustryService(),
-                IndustryType.Hotel => GetIndustryHotel(),
-                IndustryType.RealEstate    => GetIndustryRealEstate(),
-                IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
-                _ => new List<AccountTemplate>()
-            });
-        }
-
-        // Sort by code for proper hierarchy
-        return accounts.OrderBy(a => a.Code).ToList();
+            IndustryType.Trading or IndustryType.Retail or IndustryType.Ecommerce => GetIndustryTrading(),
+            IndustryType.Manufacturing or IndustryType.Construction or IndustryType.Agriculture => GetIndustryManufacturing(),
+            IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
+                or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation
+                or IndustryType.Freelance => GetIndustryService(),
+            IndustryType.Hotel => GetIndustryHotel(),
+            IndustryType.RealEstate    => GetIndustryRealEstate(),
+            IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
+            _ => new List<AccountTemplate>()
+        };
     }
 
     /// <summary>
-    /// Compose a seed template from an admin-supplied common-accounts list
-    /// (the SystemAccountTemplates master) instead of the built-in
-    /// <see cref="GetCommonAccounts"/>. The business-type equity block and
-    /// the industry block still come from code — those are small and
-    /// type-specific. Used by AccountingService when the master table has
-    /// rows; otherwise <see cref="GetTemplateByBusinessType"/> is used.
+    /// Compose a company seed template from three optional admin-supplied
+    /// blocks held in the SystemAccountTemplates master table. Each block
+    /// that is <c>null</c> falls back to its built-in code-based block —
+    /// so the admin can override only the scopes they care about:
+    ///   • <paramref name="common"/>  — common accounts (codes 1/2/4/5)
+    ///   • <paramref name="equity"/>  — equity block for the business type
+    ///   • <paramref name="industry"/> — industry-specific block
+    /// Pass an empty (non-null) list to mean "this scope contributes
+    /// nothing" — used for the General industry, which has no block.
     /// </summary>
-    public static List<AccountTemplate> ComposeFromCommon(
-        List<AccountTemplate> common,
+    public static List<AccountTemplate> Compose(
+        List<AccountTemplate>? common,
+        List<AccountTemplate>? equity,
+        List<AccountTemplate>? industry,
         BusinessType businessType,
         IndustryType industryType = IndustryType.General)
     {
-        var accounts = new List<AccountTemplate>(common);
+        var accounts = new List<AccountTemplate>();
+        accounts.AddRange(common ?? GetCommonAccounts());
+        accounts.AddRange(equity ?? GetEquityForBusinessType(businessType));
+        accounts.AddRange(industry ?? GetIndustryAccounts(industryType));
 
-        accounts.AddRange(businessType switch
-        {
-            BusinessType.JuristicPerson => GetEquityJuristicPerson(),
-            BusinessType.PublicCompany  => GetEquityPublicCompany(),
-            BusinessType.Partnership    => GetEquityPartnership(),
-            BusinessType.Individual     => GetEquityIndividual(),
-            BusinessType.Foundation or BusinessType.Association => GetEquityFoundation(),
-            _ => GetEquityJuristicPerson()
-        });
-
-        if (industryType != IndustryType.General)
-        {
-            accounts.AddRange(industryType switch
-            {
-                IndustryType.Trading or IndustryType.Retail or IndustryType.Ecommerce => GetIndustryTrading(),
-                IndustryType.Manufacturing or IndustryType.Construction or IndustryType.Agriculture => GetIndustryManufacturing(),
-                IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
-                    or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation
-                    or IndustryType.Freelance => GetIndustryService(),
-                IndustryType.Hotel => GetIndustryHotel(),
-                IndustryType.RealEstate    => GetIndustryRealEstate(),
-                IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
-                _ => new List<AccountTemplate>()
-            });
-        }
-
-        // De-dup by code (admin common list may overlap an industry block),
-        // keeping the first occurrence, then sort for hierarchy order.
+        // De-dup by code (scopes may overlap), keep first, sort for hierarchy.
         return accounts
             .GroupBy(a => a.Code)
             .Select(g => g.First())

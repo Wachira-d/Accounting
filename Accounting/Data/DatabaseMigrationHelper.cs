@@ -2344,6 +2344,8 @@ public static class DatabaseMigrationHelper
                 "AccountType" integer NOT NULL DEFAULT 0,
                 "Level" integer NOT NULL DEFAULT 1,
                 "IsActive" boolean NOT NULL DEFAULT true,
+                "BusinessType" integer NULL,
+                "IndustryType" integer NULL,
                 "CreatedAt" timestamp NOT NULL DEFAULT now(),
                 "UpdatedAt" timestamp NULL,
                 "CreatedBy" text NULL,
@@ -2352,9 +2354,15 @@ public static class DatabaseMigrationHelper
                 CONSTRAINT "PK_SystemAccountTemplates" PRIMARY KEY ("Id")
             );
             """,
+            // Scope columns — ADD IF NOT EXISTS for tables created before they existed.
+            """ALTER TABLE "SystemAccountTemplates" ADD COLUMN IF NOT EXISTS "BusinessType" integer NULL;""",
+            """ALTER TABLE "SystemAccountTemplates" ADD COLUMN IF NOT EXISTS "IndustryType" integer NULL;""",
+            // Old single-column unique index no longer valid (a code may repeat
+            // across scopes) — replace with a plain lookup index.
+            """DROP INDEX IF EXISTS "IX_SystemAccountTemplates_AccountCode";""",
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SystemAccountTemplates_AccountCode"
-                ON "SystemAccountTemplates" ("AccountCode");
+            CREATE INDEX IF NOT EXISTS "IX_SystemAccountTemplates_Scope"
+                ON "SystemAccountTemplates" ("BusinessType", "IndustryType", "AccountCode");
             """,
         };
 

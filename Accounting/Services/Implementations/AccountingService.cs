@@ -139,19 +139,40 @@ public partial class AccountingService : IAccountingService
         if (usedSystemAccountCount > 0)
             throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
 
-        // Prefer the admin-managed master Chart of Accounts when it has been
-        // populated; fall back to the built-in static template otherwise.
-        var masterCommon = await _db.SystemAccountTemplates
+        // Compose the seed list from the admin-managed master Chart of Accounts.
+        // Each scope (common / business-type equity / industry) is overridden
+        // independently — a scope with no master rows falls back to the
+        // built-in code-based block (handled inside ChartOfAccountTemplates.Compose).
+        var master = await _db.SystemAccountTemplates
             .AsNoTracking()
             .Where(t => !t.IsDeleted && t.IsActive)
-            .OrderBy(t => t.AccountCode)
-            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
-                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .Select(t => new { t.AccountCode, t.AccountNameTh, t.AccountNameEn,
+                t.AccountType, t.Level, t.BusinessType, t.IndustryType })
             .ToListAsync();
 
-        var templates = masterCommon.Count > 0
-            ? ChartOfAccountTemplates.ComposeFromCommon(masterCommon, businessType, industryType)
-            : ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
+        var commonRows = master
+            .Where(t => t.BusinessType == null && t.IndustryType == null)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToList();
+        var equityRows = master
+            .Where(t => t.BusinessType == businessType)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToList();
+        var industryRows = master
+            .Where(t => t.IndustryType == industryType)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToList();
+
+        var templates = ChartOfAccountTemplates.Compose(
+            commonRows.Count > 0 ? commonRows : null,
+            equityRows.Count > 0 ? equityRows : null,
+            industryType == IndustryType.General
+                ? new List<ChartOfAccountTemplates.AccountTemplate>()
+                : (industryRows.Count > 0 ? industryRows : null),
+            businessType, industryType);
         var templateCodes = templates.Select(t => t.Code).ToList();
 
         // Hard-delete system accounts using raw SQL (use {0} placeholders for EF Core)

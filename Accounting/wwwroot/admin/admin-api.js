@@ -116,10 +116,11 @@ const AdminAPI = {
   processNotifications() { return this.post('/subscription/process-notifications'); },
   processRecurring() { return this.post('/recurring/process'); },
 
-  // Master Chart of Accounts template
-  coaTemplate() { return this.get('/coa-template'); },
-  saveCoaTemplate(rows) { return this.put('/coa-template', rows); },
-  seedCoaTemplateBuiltin() { return this.post('/coa-template/seed-builtin', {}); },
+  // Master Chart of Accounts template (qs = scope query string, e.g. '?businessType=Partnership')
+  coaTemplateScopes() { return this.get('/coa-template/scopes'); },
+  coaTemplate(qs = '') { return this.get('/coa-template' + qs); },
+  saveCoaTemplate(rows, qs = '') { return this.put('/coa-template' + qs, rows); },
+  seedCoaTemplateBuiltin(qs = '') { return this.post('/coa-template/seed-builtin' + qs, {}); },
 
   // Audit log (system-wide)
   auditLogs(params = '') { return this.get(`/audit-logs${params}`); },
