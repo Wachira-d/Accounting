@@ -139,7 +139,19 @@ public partial class AccountingService : IAccountingService
         if (usedSystemAccountCount > 0)
             throw new InvalidOperationException("ไม่สามารถรีเซ็ตผังบัญชีได้ เนื่องจากมีบัญชีที่ถูกใช้งานแล้ว");
 
-        var templates = ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
+        // Prefer the admin-managed master Chart of Accounts when it has been
+        // populated; fall back to the built-in static template otherwise.
+        var masterCommon = await _db.SystemAccountTemplates
+            .AsNoTracking()
+            .Where(t => !t.IsDeleted && t.IsActive)
+            .OrderBy(t => t.AccountCode)
+            .Select(t => new ChartOfAccountTemplates.AccountTemplate(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn ?? "", t.AccountType, t.Level))
+            .ToListAsync();
+
+        var templates = masterCommon.Count > 0
+            ? ChartOfAccountTemplates.ComposeFromCommon(masterCommon, businessType, industryType)
+            : ChartOfAccountTemplates.GetTemplateByBusinessType(businessType, industryType);
         var templateCodes = templates.Select(t => t.Code).ToList();
 
         // Hard-delete system accounts using raw SQL (use {0} placeholders for EF Core)

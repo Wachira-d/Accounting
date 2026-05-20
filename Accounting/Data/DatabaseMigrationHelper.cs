@@ -2333,6 +2333,29 @@ public static class DatabaseMigrationHelper
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_NotificationPreferences_CompanyId_UserId_EventKey"
                 ON "NotificationPreferences" ("CompanyId", "UserId", "EventKey");
             """,
+
+            // ===== SystemAccountTemplates: admin-editable master Chart of Accounts =====
+            """
+            CREATE TABLE IF NOT EXISTS "SystemAccountTemplates" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "AccountCode" varchar(20) NOT NULL,
+                "AccountNameTh" varchar(256) NOT NULL,
+                "AccountNameEn" text NULL,
+                "AccountType" integer NOT NULL DEFAULT 0,
+                "Level" integer NOT NULL DEFAULT 1,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SystemAccountTemplates" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SystemAccountTemplates_AccountCode"
+                ON "SystemAccountTemplates" ("AccountCode");
+            """,
         };
 
         foreach (var sql in statements)

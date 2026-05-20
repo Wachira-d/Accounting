@@ -7,6 +7,7 @@ using Accounting.Models.DTOs.Company;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Helpers;
+using Accounting.Services;
 using Accounting.Services.Implementations;
 using Accounting.Services.Implementations.Email;
 using Accounting.Services.Interfaces;
@@ -1979,6 +1980,175 @@ public class AdminController : ControllerBase
         await selfCorrection.RunMaintenanceAsync();
         return Ok(new ApiResponse<object>(true, null, "เริ่ม OCR self-correction maintenance สำเร็จ"));
     }
+
+    // ===================================================================
+    // Master Chart of Accounts — admin-editable system-wide COA template
+    // ===================================================================
+
+    /// <summary>List the master Chart of Accounts template (sorted by code).</summary>
+    [HttpGet("coa-template")]
+    public async Task<ActionResult<ApiResponse<List<SystemAccountTemplateDto>>>> GetCoaTemplate()
+    {
+        var rows = await _db.SystemAccountTemplates
+            .AsNoTracking()
+            .Where(t => !t.IsDeleted)
+            .OrderBy(t => t.AccountCode)
+            .Select(t => new SystemAccountTemplateDto(
+                t.AccountCode, t.AccountNameTh, t.AccountNameEn,
+                t.AccountType.ToString(), t.Level, t.IsActive))
+            .ToListAsync();
+        return Ok(new ApiResponse<List<SystemAccountTemplateDto>>(true, rows));
+    }
+
+    /// <summary>Bulk-replace the master template with the supplied list.
+    /// The whole table is rewritten in one transaction — the admin page
+    /// edits a full snapshot and saves it back.</summary>
+    [HttpPut("coa-template")]
+    public async Task<ActionResult<ApiResponse<object>>> SaveCoaTemplate(
+        [FromBody] List<SystemAccountTemplateDto> rows)
+    {
+        if (rows == null || rows.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "ไม่มีรายการให้บันทึก"));
+
+        // Validate codes unique + types parseable before touching the table.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows)
+        {
+            if (string.IsNullOrWhiteSpace(r.AccountCode))
+                return BadRequest(new ApiResponse<object>(false, null, "พบรายการที่ไม่มีรหัสบัญชี"));
+            if (!seen.Add(r.AccountCode))
+                return BadRequest(new ApiResponse<object>(false, null, $"รหัสบัญชีซ้ำ: {r.AccountCode}"));
+            if (!Enum.TryParse<AccountType>(r.AccountType, out _))
+                return BadRequest(new ApiResponse<object>(false, null, $"ประเภทบัญชีไม่ถูกต้อง: {r.AccountType} ({r.AccountCode})"));
+        }
+
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.Database.ExecuteSqlRawAsync(@"DELETE FROM ""SystemAccountTemplates""");
+        foreach (var r in rows)
+        {
+            _db.SystemAccountTemplates.Add(new SystemAccountTemplate
+            {
+                AccountCode = r.AccountCode.Trim(),
+                AccountNameTh = r.AccountNameTh?.Trim() ?? r.AccountCode,
+                AccountNameEn = string.IsNullOrWhiteSpace(r.AccountNameEn) ? null : r.AccountNameEn.Trim(),
+                AccountType = Enum.Parse<AccountType>(r.AccountType),
+                Level = r.Level is >= 1 and <= 4 ? r.Level : 1,
+                IsActive = r.IsActive,
+                CreatedBy = userId,
+            });
+        }
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { count = rows.Count },
+            $"บันทึกผังบัญชีต้นแบบ {rows.Count} รายการสำเร็จ"));
+    }
+
+    /// <summary>Initialise the master template from the built-in static
+    /// common-accounts list — gives the admin an editable starting point.</summary>
+    [HttpPost("coa-template/seed-builtin")]
+    public async Task<ActionResult<ApiResponse<object>>> SeedCoaTemplateFromBuiltin()
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var builtin = ChartOfAccountTemplates.GetCommonAccounts();
+        await _db.Database.ExecuteSqlRawAsync(@"DELETE FROM ""SystemAccountTemplates""");
+        foreach (var t in builtin)
+        {
+            _db.SystemAccountTemplates.Add(new SystemAccountTemplate
+            {
+                AccountCode = t.Code,
+                AccountNameTh = t.NameTh,
+                AccountNameEn = t.NameEn,
+                AccountType = t.Type,
+                Level = t.Level,
+                IsActive = true,
+                CreatedBy = userId,
+            });
+        }
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { count = builtin.Count },
+            $"นำเข้าผังบัญชีมาตรฐาน {builtin.Count} รายการจากระบบสำเร็จ"));
+    }
+
+    // ===================================================================
+    // Audit Log — cross-company / system-wide activity feed
+    // ===================================================================
+
+    /// <summary>Paged system-wide audit log. Optional filters: entityType,
+    /// action, free-text (matches user email / entity id).</summary>
+    [HttpGet("audit-logs")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAuditLogs(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50,
+        [FromQuery] string? entityType = null, [FromQuery] AuditAction? action = null,
+        [FromQuery] string? q = null,
+        [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 10, 200);
+        var query = _db.AuditLogs.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(entityType)) query = query.Where(a => a.EntityType == entityType);
+        if (action.HasValue) query = query.Where(a => a.Action == action.Value);
+        if (fromDate.HasValue) query = query.Where(a => a.Timestamp >= fromDate.Value);
+        if (toDate.HasValue) query = query.Where(a => a.Timestamp <= toDate.Value);
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var term = q.Trim();
+            query = query.Where(a => (a.UserEmail != null && a.UserEmail.Contains(term))
+                || (a.EntityId != null && a.EntityId.Contains(term)));
+        }
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(a => a.Timestamp)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(a => new {
+                a.Id, a.CompanyId, a.UserEmail, Action = a.Action.ToString(),
+                a.EntityType, a.EntityId, a.IpAddress, a.Timestamp,
+                a.OldValues, a.NewValues })
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, new {
+            items, total, page, pageSize,
+            totalPages = (int)Math.Ceiling(total / (double)pageSize) }));
+    }
+
+    // ===================================================================
+    // Error Log — system exception feed for debugging
+    // ===================================================================
+
+    /// <summary>Paged system error log, newest first. Optional filter by
+    /// HTTP status code and free-text on path / message / exception type.</summary>
+    [HttpGet("error-logs")]
+    public async Task<ActionResult<ApiResponse<object>>> GetErrorLogs(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50,
+        [FromQuery] int? statusCode = null, [FromQuery] string? q = null)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 10, 200);
+        var query = _db.ErrorLogs.AsNoTracking().AsQueryable();
+        if (statusCode.HasValue) query = query.Where(e => e.StatusCode == statusCode.Value);
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var term = q.Trim();
+            query = query.Where(e => (e.RequestPath != null && e.RequestPath.Contains(term))
+                || e.Message.Contains(term) || e.ExceptionType.Contains(term));
+        }
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(e => e.Timestamp)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, new {
+            items, total, page, pageSize,
+            totalPages = (int)Math.Ceiling(total / (double)pageSize) }));
+    }
+
+    /// <summary>Delete error-log rows older than the given number of days
+    /// (housekeeping). Default 90.</summary>
+    [HttpDelete("error-logs/purge")]
+    public async Task<ActionResult<ApiResponse<object>>> PurgeErrorLogs([FromQuery] int olderThanDays = 90)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-Math.Max(1, olderThanDays));
+        var deleted = await _db.ErrorLogs.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
+        return Ok(new ApiResponse<object>(true, new { deleted },
+            $"ลบ error log เก่ากว่า {olderThanDays} วัน — {deleted} รายการ"));
+    }
 }
 
 // ===== Admin-specific DTOs =====
@@ -2019,3 +2189,7 @@ public record UpdateOcrConfigRequest(
 
 public record ReviewOcrCreditRequest(bool Approve, string? Notes = null);
 public record GrantOcrBonusRequest(int Pages, DateTime? ExpiresAt = null, string? Reason = null);
+
+public record SystemAccountTemplateDto(
+    string AccountCode, string AccountNameTh, string? AccountNameEn,
+    string AccountType, int Level, bool IsActive);

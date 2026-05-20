@@ -541,4 +541,54 @@ public static class ChartOfAccountTemplates
         // Sort by code for proper hierarchy
         return accounts.OrderBy(a => a.Code).ToList();
     }
+
+    /// <summary>
+    /// Compose a seed template from an admin-supplied common-accounts list
+    /// (the SystemAccountTemplates master) instead of the built-in
+    /// <see cref="GetCommonAccounts"/>. The business-type equity block and
+    /// the industry block still come from code — those are small and
+    /// type-specific. Used by AccountingService when the master table has
+    /// rows; otherwise <see cref="GetTemplateByBusinessType"/> is used.
+    /// </summary>
+    public static List<AccountTemplate> ComposeFromCommon(
+        List<AccountTemplate> common,
+        BusinessType businessType,
+        IndustryType industryType = IndustryType.General)
+    {
+        var accounts = new List<AccountTemplate>(common);
+
+        accounts.AddRange(businessType switch
+        {
+            BusinessType.JuristicPerson => GetEquityJuristicPerson(),
+            BusinessType.PublicCompany  => GetEquityPublicCompany(),
+            BusinessType.Partnership    => GetEquityPartnership(),
+            BusinessType.Individual     => GetEquityIndividual(),
+            BusinessType.Foundation or BusinessType.Association => GetEquityFoundation(),
+            _ => GetEquityJuristicPerson()
+        });
+
+        if (industryType != IndustryType.General)
+        {
+            accounts.AddRange(industryType switch
+            {
+                IndustryType.Trading or IndustryType.Retail or IndustryType.Ecommerce => GetIndustryTrading(),
+                IndustryType.Manufacturing or IndustryType.Construction or IndustryType.Agriculture => GetIndustryManufacturing(),
+                IndustryType.Service or IndustryType.Technology or IndustryType.Healthcare
+                    or IndustryType.Education or IndustryType.Beauty or IndustryType.Transportation
+                    or IndustryType.Freelance => GetIndustryService(),
+                IndustryType.Hotel => GetIndustryHotel(),
+                IndustryType.RealEstate    => GetIndustryRealEstate(),
+                IndustryType.Restaurant or IndustryType.Cafe => GetIndustryRestaurant(),
+                _ => new List<AccountTemplate>()
+            });
+        }
+
+        // De-dup by code (admin common list may overlap an industry block),
+        // keeping the first occurrence, then sort for hierarchy order.
+        return accounts
+            .GroupBy(a => a.Code)
+            .Select(g => g.First())
+            .OrderBy(a => a.Code)
+            .ToList();
+    }
 }

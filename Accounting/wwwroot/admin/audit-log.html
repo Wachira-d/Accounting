@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บันทึกกิจกรรม - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center }
+    .filters input, .filters select { padding:8px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:13px; font-family:inherit }
+    .log-tbl { width:100%; border-collapse:collapse; font-size:13px }
+    .log-tbl th { background:#f1f5f9; padding:9px 10px; text-align:left; font-weight:600 }
+    .log-tbl td { border-bottom:1px solid #f1f5f9; padding:8px 10px; vertical-align:top }
+    .log-tbl tr:hover { background:#f8fafc; cursor:pointer }
+    .act { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:11px; font-weight:600 }
+    .act-Create { background:#dcfce7; color:#15803d } .act-Update { background:#dbeafe; color:#1d4ed8 }
+    .act-Delete { background:#fee2e2; color:#b91c1c } .act-Login,.act-Logout { background:#ede9fe; color:#6d28d9 }
+    .act-Approve { background:#dcfce7; color:#15803d } .act-Reject { background:#fee2e2; color:#b91c1c }
+    .diff { background:#f8fafc; border-radius:8px; padding:10px; font-size:12px; margin-top:6px; white-space:pre-wrap; word-break:break-all; max-height:240px; overflow:auto }
+    .pager { display:flex; gap:8px; align-items:center; margin-top:14px; justify-content:center }
+    .empty-state { text-align:center; padding:48px; color:#6b7280 }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>บันทึกกิจกรรม (Audit Log)</strong> — ทุกการสร้าง/แก้ไข/ลบข้อมูลของทุกบริษัทในระบบ
+      คลิกที่แถวเพื่อดูค่าก่อน/หลังการเปลี่ยนแปลง
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">📜 บันทึกกิจกรรมทั้งระบบ</span></div>
+      <div class="filters">
+        <input type="text" id="q" placeholder="🔍 อีเมลผู้ใช้ / Entity ID..." onkeydown="if(event.key==='Enter')Page.reload()">
+        <input type="text" id="entityType" placeholder="ประเภท Entity (เช่น Document)" onkeydown="if(event.key==='Enter')Page.reload()">
+        <select id="action">
+          <option value="">ทุกการกระทำ</option>
+          <option value="Create">สร้าง</option><option value="Update">แก้ไข</option>
+          <option value="Delete">ลบ</option><option value="Login">เข้าระบบ</option>
+          <option value="Logout">ออกระบบ</option><option value="Approve">อนุมัติ</option>
+          <option value="Reject">ปฏิเสธ</option><option value="Export">ส่งออก</option>
+        </select>
+        <input type="date" id="fromDate"><span>ถึง</span><input type="date" id="toDate">
+        <button class="btn-primary" onclick="Page.reload()">ค้นหา</button>
+      </div>
+      <div id="content"><div class="empty-state">กำลังโหลด...</div></div>
+      <div class="pager" id="pager"></div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      page: 1, pageSize: 50, totalPages: 1,
+      async init() { AdminLayout.init('audit-log'); await this.load(); },
+      reload() { this.page = 1; this.load(); },
+      async load() {
+        const p = new URLSearchParams({ page: this.page, pageSize: this.pageSize });
+        const q = document.getElementById('q').value.trim();
+        const et = document.getElementById('entityType').value.trim();
+        const ac = document.getElementById('action').value;
+        const fd = document.getElementById('fromDate').value;
+        const td = document.getElementById('toDate').value;
+        if (q) p.set('q', q);
+        if (et) p.set('entityType', et);
+        if (ac) p.set('action', ac);
+        if (fd) p.set('fromDate', fd);
+        if (td) p.set('toDate', td + 'T23:59:59');
+        try {
+          const res = await AdminAPI.auditLogs('?' + p.toString());
+          this.render(res.data);
+        } catch (e) {
+          document.getElementById('content').innerHTML = `<div class="empty-state" style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+        }
+      },
+      esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      fmt(ts) { const d = new Date(ts); return isNaN(d) ? '-' : d.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short' }); },
+      prettyJson(s) { if (!s) return ''; try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; } },
+      render(d) {
+        this.totalPages = d.totalPages || 1;
+        const items = d.items || [];
+        const c = document.getElementById('content');
+        if (!items.length) { c.innerHTML = '<div class="empty-state">ไม่พบบันทึกกิจกรรม</div>'; document.getElementById('pager').innerHTML = ''; return; }
+        c.innerHTML = `<table class="log-tbl"><thead><tr>
+          <th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>Entity</th><th>Entity ID</th><th>IP</th>
+        </tr></thead><tbody>${items.map((it, i) => `
+          <tr onclick="Page.toggle(${i})">
+            <td>${this.fmt(it.timestamp)}</td>
+            <td>${this.esc(it.userEmail || '(ระบบ)')}</td>
+            <td><span class="act act-${this.esc(it.action)}">${this.esc(it.action)}</span></td>
+            <td>${this.esc(it.entityType)}</td>
+            <td style="font-size:11px;color:#6b7280">${this.esc(it.entityId || '-')}</td>
+            <td style="font-size:11px;color:#6b7280">${this.esc(it.ipAddress || '-')}</td>
+          </tr>
+          <tr id="detail-${i}" style="display:none"><td colspan="6">
+            ${it.oldValues ? `<div><b>ค่าเดิม:</b><div class="diff">${this.esc(this.prettyJson(it.oldValues))}</div></div>` : ''}
+            ${it.newValues ? `<div><b>ค่าใหม่:</b><div class="diff">${this.esc(this.prettyJson(it.newValues))}</div></div>` : ''}
+            ${!it.oldValues && !it.newValues ? '<div style="color:#6b7280;padding:8px">ไม่มีรายละเอียดการเปลี่ยนแปลง</div>' : ''}
+          </td></tr>`).join('')}</tbody></table>`;
+        document.getElementById('pager').innerHTML = `
+          <button class="btn-secondary" ${this.page<=1?'disabled':''} onclick="Page.go(${this.page-1})">‹ ก่อนหน้า</button>
+          <span>หน้า ${this.page} / ${this.totalPages} (${d.total} รายการ)</span>
+          <button class="btn-secondary" ${this.page>=this.totalPages?'disabled':''} onclick="Page.go(${this.page+1})">ถัดไป ›</button>`;
+      },
+      toggle(i) { const r = document.getElementById('detail-' + i); if (r) r.style.display = r.style.display === 'none' ? '' : 'none'; },
+      go(p) { this.page = p; this.load(); window.scrollTo(0,0); },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
