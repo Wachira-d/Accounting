@@ -9,7 +9,7 @@ public interface IIntegrationService
     Task<IntegrationCreatedResponse> CreateIntegrationAsync(Guid companyId, CreateIntegrationRequest request);
     Task<IntegrationResponse> UpdateIntegrationAsync(Guid companyId, Guid integrationId, UpdateIntegrationRequest request);
     Task DeleteIntegrationAsync(Guid companyId, Guid integrationId);
-    Task<IntegrationResponse> RegenerateApiKeyAsync(Guid companyId, Guid integrationId);
+    Task<IntegrationCreatedResponse> RegenerateApiKeyAsync(Guid companyId, Guid integrationId);
 
     // Account mapping
     Task<List<AccountMappingResponse>> GetMappingsAsync(Guid companyId, Guid integrationId);

@@ -55,10 +55,10 @@ public class IntegrationController : ControllerBase
     }
 
     [HttpPost("{integrationId:guid}/regenerate-key")]
-    public async Task<ActionResult<ApiResponse<IntegrationResponse>>> RegenerateKey(Guid companyId, Guid integrationId)
+    public async Task<ActionResult<ApiResponse<IntegrationCreatedResponse>>> RegenerateKey(Guid companyId, Guid integrationId)
     {
         var result = await _service.RegenerateApiKeyAsync(companyId, integrationId);
-        return Ok(new ApiResponse<IntegrationResponse>(true, result, "สร้าง API Key ใหม่สำเร็จ"));
+        return Ok(new ApiResponse<IntegrationCreatedResponse>(true, result, "สร้าง API Key ใหม่สำเร็จ"));
     }
 
     // ===== Account Mapping =====
