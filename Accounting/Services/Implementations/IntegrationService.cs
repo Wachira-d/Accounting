@@ -16,16 +16,19 @@ public class IntegrationService : IIntegrationService
     private readonly ILogger<IntegrationService> _logger;
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
     private readonly IDocumentService? _documentService;
+    private readonly IWithholdingTaxCertService? _whtCertService;
 
     public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
-        IDocumentService? documentService = null)
+        IDocumentService? documentService = null,
+        IWithholdingTaxCertService? whtCertService = null)
     {
         _db = db;
         _settingsService = settingsService;
         _logger = logger;
         _vendorIntel = vendorIntel;
         _documentService = documentService;
+        _whtCertService = whtCertService;
     }
 
     // ===== Helper: Atomic Journal Entry Number =====
@@ -912,6 +915,35 @@ public class IntegrationService : IIntegrationService
         return contact;
     }
 
+    /// <summary>
+    /// Best-effort withholding-tax certificate auto-issue for an
+    /// integration-synced purchase document. Returns a short note to append
+    /// to the sync response message; never throws — the document and its
+    /// journal entry are already committed by the time this runs.
+    /// </summary>
+    private async Task<string> TryAutoGenerateWhtAsync(Guid companyId, Document document)
+    {
+        if (document.WithholdingTaxAmount <= 0) return "";
+        if (_whtCertService == null)
+        {
+            _logger.LogWarning("WHT auto-generate skipped for document {DocId}: WHT service unavailable", document.Id);
+            return " (มีภาษีหัก ณ ที่จ่าย — กรุณาออกหนังสือรับรองในระบบ)";
+        }
+        try
+        {
+            var cert = await _whtCertService.AutoGenerateFromDocumentAsync(
+                companyId, document.Id, autoIssue: true, "integration-sync");
+            _logger.LogInformation("WHT certificate {CertNo} auto-issued for synced document {DocId}",
+                cert.CertificateNumber, document.Id);
+            return $" + ออกหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "WHT auto-generate failed for synced document {DocId}", document.Id);
+            return " (ออกหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติไม่สำเร็จ — กรุณาออกในระบบ)";
+        }
+    }
+
     private static List<DocumentLine> BuildDocumentLines(List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7)
     {
         return lines.Select((line, i) =>
@@ -921,6 +953,8 @@ public class IntegrationService : IIntegrationService
             var lineNet = lineAmount - lineDiscount;
             var lineVatRate = line.VatRate ?? defaultVatRate;
             var lineVat = lineNet * lineVatRate / 100;
+            var lineWhtRate = line.WithholdingTaxRate ?? 0;
+            var lineWht = Math.Round(lineNet * lineWhtRate / 100, 2, MidpointRounding.AwayFromZero);
 
             return new DocumentLine
             {
@@ -933,7 +967,9 @@ public class IntegrationService : IIntegrationService
                 DiscountAmount = lineDiscount,
                 Amount = lineNet,
                 VatRate = lineVatRate,
-                VatAmount = lineVat
+                VatAmount = lineVat,
+                WithholdingTaxRate = lineWhtRate,
+                WithholdingTaxAmount = lineWht
             };
         }).ToList();
     }
@@ -1616,7 +1652,9 @@ public class IntegrationService : IIntegrationService
             var lines = BuildDocumentLines(request.Lines, vatRate);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
-            var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+            var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
+            // Net payable = gross − withholding tax (consistent with manual entry).
+            var totalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
 
             var document = new Document
             {
@@ -1630,6 +1668,7 @@ public class IntegrationService : IIntegrationService
                 Reference = request.ExternalRef,
                 SubTotal = subTotal,
                 VatAmount = totalVat,
+                WithholdingTaxAmount = totalWht,
                 TotalAmount = totalAmount,
                 BalanceDue = totalAmount,
                 Notes = request.Notes,
@@ -1642,6 +1681,11 @@ public class IntegrationService : IIntegrationService
 
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
 
+            // Auto-issue the withholding-tax certificate so an int_ key sync is
+            // self-sufficient (no separate manual WHT step). Best-effort — a
+            // failure here must not fail the already-committed expense sync.
+            var whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
             log.CreatedContactId = supplier.Id;
@@ -1649,7 +1693,7 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Expense created", document.Id, supplier.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true, "Expense created" + whtNote, document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
