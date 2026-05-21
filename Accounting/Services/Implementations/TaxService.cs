@@ -239,48 +239,47 @@ public partial class TaxService : ITaxService
                   || doc.DocumentType == DocumentType.Expense
                   || doc.DocumentType == DocumentType.CertificateInLieu)
             {
-                // ----- Rule B: split claimable vs. prohibited input VAT -----
-                // Classify each line by the account it posts to (falling back
-                // to the document's expense category). VAT on lines hitting a
-                // prohibited account (ค่ารับรอง) is NOT credited on ภ.พ.30.
+                // ----- Rule B: detect prohibited input VAT (ภาษีซื้อต้องห้าม) -----
+                // Sum VAT on lines posting to a non-claimable account
+                // (falling back to the document's expense category). This is
+                // surfaced as a WARNING only — the amount stays in the claimed
+                // total; whether to exclude it is the accountant's call (the
+                // ภ.พ.30 line is editable).
                 decimal lineVatTotal = doc.Lines.Sum(l => l.VatAmount);
-                decimal claimableVat, prohibitedVat;
+                decimal prohibitedVat = 0m;
                 if (Math.Abs(lineVatTotal) < 0.01m && doc.VatAmount != 0)
                 {
-                    // No per-line VAT detail — classify the whole doc by its
-                    // header expense category.
-                    var headerProhibited = doc.ExpenseCategoryId.HasValue
-                        && nonClaimableAccountIds.Contains(doc.ExpenseCategoryId.Value);
-                    prohibitedVat = headerProhibited ? doc.VatAmount : 0m;
-                    claimableVat = headerProhibited ? 0m : doc.VatAmount;
+                    if (doc.ExpenseCategoryId.HasValue && nonClaimableAccountIds.Contains(doc.ExpenseCategoryId.Value))
+                        prohibitedVat = doc.VatAmount;
                 }
                 else
                 {
-                    prohibitedVat = 0m;
                     foreach (var l in doc.Lines)
                     {
                         var acct = l.AccountId ?? doc.ExpenseCategoryId;
                         if (acct.HasValue && nonClaimableAccountIds.Contains(acct.Value))
                             prohibitedVat += l.VatAmount;
                     }
-                    claimableVat = doc.VatAmount - prohibitedVat;
                 }
 
                 // ----- Rule A: tax-invoice 6-month age check -----
-                // Input VAT may be credited only within 6 months from the
-                // month after the tax-invoice date. If this report is being
-                // generated past that window the line is flagged (soft warning).
                 var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1)
                     .AddMonths(7).AddDays(-1);
                 var pastWindow = DateTime.UtcNow.Date > windowEnd;
 
-                inputVat += claimableVat;
+                // Both rules are advisory — the full VAT stays in the total;
+                // the accountant decides whether to keep or remove it.
+                inputVat += doc.VatAmount;
+
+                var warnings = new List<string>();
+                if (prohibitedVat > 0)
+                    warnings.Add($"มีภาษีซื้อต้องห้าม (ค่ารับรอง) {prohibitedVat:N2} โดยปกติเคลมไม่ได้");
+                if (pastWindow)
+                    warnings.Add("ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้");
 
                 var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}";
-                if (prohibitedVat > 0)
-                    desc += $" (ภาษีซื้อต้องห้าม {prohibitedVat:N2} ไม่นำมาเครดิต)";
-                if (pastWindow)
-                    desc = "⚠️ " + desc + " — ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้";
+                if (warnings.Count > 0)
+                    desc = $"⚠️ {desc} — {string.Join("; ", warnings)} (โปรดตรวจสอบ)";
 
                 report.Lines.Add(new TaxReportLine
                 {
@@ -292,7 +291,7 @@ public partial class TaxService : ITaxService
                     Description = desc,
                     IncomeAmount = doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                    TaxAmount = claimableVat,
+                    TaxAmount = doc.VatAmount,
                     DocumentId = doc.Id,
                     IncomeTypeCode = "INPUT"
                 });
