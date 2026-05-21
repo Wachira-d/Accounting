@@ -130,6 +130,15 @@ public partial class TaxService : ITaxService
                 && d.VatAmount != 0)
             .ToListAsync();
 
+        // Accounts whose input VAT is prohibited (ภาษีซื้อต้องห้าม, §82/5) —
+        // e.g. ค่ารับรอง. VAT on purchase lines posting here is excluded from
+        // the claimable ภ.พ.30 input total.
+        var nonClaimableAccountIds = (await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && !a.InputVatClaimable)
+            .Select(a => a.Id)
+            .ToListAsync())
+            .ToHashSet();
+
         decimal outputVat = 0, inputVat = 0;
         decimal vatExemptAmount = 0;
         var lineOrder = 1;
@@ -230,7 +239,49 @@ public partial class TaxService : ITaxService
                   || doc.DocumentType == DocumentType.Expense
                   || doc.DocumentType == DocumentType.CertificateInLieu)
             {
-                inputVat += doc.VatAmount;
+                // ----- Rule B: split claimable vs. prohibited input VAT -----
+                // Classify each line by the account it posts to (falling back
+                // to the document's expense category). VAT on lines hitting a
+                // prohibited account (ค่ารับรอง) is NOT credited on ภ.พ.30.
+                decimal lineVatTotal = doc.Lines.Sum(l => l.VatAmount);
+                decimal claimableVat, prohibitedVat;
+                if (Math.Abs(lineVatTotal) < 0.01m && doc.VatAmount != 0)
+                {
+                    // No per-line VAT detail — classify the whole doc by its
+                    // header expense category.
+                    var headerProhibited = doc.ExpenseCategoryId.HasValue
+                        && nonClaimableAccountIds.Contains(doc.ExpenseCategoryId.Value);
+                    prohibitedVat = headerProhibited ? doc.VatAmount : 0m;
+                    claimableVat = headerProhibited ? 0m : doc.VatAmount;
+                }
+                else
+                {
+                    prohibitedVat = 0m;
+                    foreach (var l in doc.Lines)
+                    {
+                        var acct = l.AccountId ?? doc.ExpenseCategoryId;
+                        if (acct.HasValue && nonClaimableAccountIds.Contains(acct.Value))
+                            prohibitedVat += l.VatAmount;
+                    }
+                    claimableVat = doc.VatAmount - prohibitedVat;
+                }
+
+                // ----- Rule A: tax-invoice 6-month age check -----
+                // Input VAT may be credited only within 6 months from the
+                // month after the tax-invoice date. If this report is being
+                // generated past that window the line is flagged (soft warning).
+                var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1)
+                    .AddMonths(7).AddDays(-1);
+                var pastWindow = DateTime.UtcNow.Date > windowEnd;
+
+                inputVat += claimableVat;
+
+                var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}";
+                if (prohibitedVat > 0)
+                    desc += $" (ภาษีซื้อต้องห้าม {prohibitedVat:N2} ไม่นำมาเครดิต)";
+                if (pastWindow)
+                    desc = "⚠️ " + desc + " — ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้";
+
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -238,10 +289,10 @@ public partial class TaxService : ITaxService
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.DocumentDate,
-                    Description = $"[ภาษีซื้อ] {doc.DocumentNumber}",
+                    Description = desc,
                     IncomeAmount = doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                    TaxAmount = doc.VatAmount,
+                    TaxAmount = claimableVat,
                     DocumentId = doc.Id,
                     IncomeTypeCode = "INPUT"
                 });

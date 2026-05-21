@@ -53,7 +53,8 @@ public partial class AccountingService : IAccountingService
             AccountType = request.AccountType,
             ParentAccountId = request.ParentAccountId,
             Level = level,
-            Description = request.Description
+            Description = request.Description,
+            InputVatClaimable = request.InputVatClaimable
         };
 
         _db.ChartOfAccounts.Add(account);
@@ -102,6 +103,7 @@ public partial class AccountingService : IAccountingService
         if (request.AccountNameEn != null) account.AccountNameEn = request.AccountNameEn;
         if (request.Description != null) account.Description = request.Description;
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
+        if (request.InputVatClaimable.HasValue) account.InputVatClaimable = request.InputVatClaimable.Value;
 
         await _db.SaveChangesAsync();
         return MapAccountToResponse(account);
@@ -246,7 +248,9 @@ public partial class AccountingService : IAccountingService
                     AccountType = tpl.Type,
                     Level = tpl.Level,
                     IsSystemAccount = true,
-                    IsActive = true
+                    IsActive = true,
+                    // Entertainment (ค่ารับรอง) input VAT is prohibited — see Rule §82/5.
+                    InputVatClaimable = !ChartOfAccountTemplates.IsProhibitedInputVatAccount(tpl.Code)
                 };
 
                 string? parentCode = tpl.Level switch
@@ -2080,7 +2084,8 @@ public partial class AccountingService : IAccountingService
 
     private static AccountResponse MapAccountToResponse(ChartOfAccount a) => new(
         a.Id, a.AccountCode, a.AccountName, a.AccountNameEn,
-        a.AccountType, (int)a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description);
+        a.AccountType, (int)a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description,
+        a.InputVatClaimable);
 
     private static JournalEntryResponse MapJournalEntryToResponse(JournalEntry j) =>
         MapJournalEntryToResponse(j, null, null);

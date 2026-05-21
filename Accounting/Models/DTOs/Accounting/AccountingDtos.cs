@@ -9,13 +9,17 @@ public record CreateAccountRequest(
     string? AccountNameEn,
     AccountType AccountType,
     Guid? ParentAccountId,
-    string? Description);
+    string? Description,
+    // False = input VAT on this account is prohibited (ภาษีซื้อต้องห้าม) and
+    // is excluded from the ภ.พ.30. Default true.
+    bool InputVatClaimable = true);
 
 public record UpdateAccountRequest(
     string? AccountName,
     string? AccountNameEn,
     string? Description,
-    bool? IsActive);
+    bool? IsActive,
+    bool? InputVatClaimable = null);
 
 public record AccountResponse(
     Guid Id,
@@ -28,7 +32,8 @@ public record AccountResponse(
     int Level,
     bool IsActive,
     bool IsSystemAccount,
-    string? Description);
+    string? Description,
+    bool InputVatClaimable = true);
 
 // ===== Journal Entry =====
 public record CreateJournalEntryRequest(

@@ -500,6 +500,15 @@ public static class ChartOfAccountTemplates
         new(IndustryType.Other, "อื่นๆ", "Other", "ประเภทอุตสาหกรรมอื่นๆ", "📋"),
     };
 
+    /// <summary>
+    /// True when input VAT posted to this account code is PROHIBITED
+    /// (ภาษีซื้อต้องห้าม) per Revenue Code §82/5 — currently the
+    /// entertainment / client-hospitality account (ค่ารับรอง, 54460).
+    /// Used at company seeding to set ChartOfAccount.InputVatClaimable.
+    /// </summary>
+    public static bool IsProhibitedInputVatAccount(string accountCode)
+        => accountCode.StartsWith("54460");
+
     /// <summary>สร้างผังบัญชีตามประเภทธุรกิจและอุตสาหกรรม</summary>
     public static List<AccountTemplate> GetTemplateByBusinessType(
         BusinessType businessType,

@@ -2371,6 +2371,20 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_DocumentLines_SourceLineId"
                 ON "DocumentLines" ("SourceLineId") WHERE "SourceLineId" IS NOT NULL;
             """,
+
+            // ===== ChartOfAccounts.InputVatClaimable: prohibited input VAT (ภาษีซื้อต้องห้าม) =====
+            """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "InputVatClaimable" boolean NOT NULL DEFAULT true;""",
+            // Back-fill: mark existing entertainment (ค่ารับรอง) accounts non-claimable
+            // so their input VAT stops being credited on the ภ.พ.30. Scoped to
+            // IsSystemAccount — those are seeded/managed by the system and cannot
+            // be edited by admins, so this stays safe to re-run on every startup
+            // without overriding a deliberate admin change on a custom account.
+            """
+            UPDATE "ChartOfAccounts" SET "InputVatClaimable" = false
+            WHERE ("AccountCode" LIKE '54460%' OR "AccountName" LIKE '%รับรอง%')
+              AND "IsSystemAccount" = true
+              AND "InputVatClaimable" = true;
+            """,
         };
 
         foreach (var sql in statements)
