@@ -105,6 +105,9 @@ public class PosOrderItem : BaseEntity
     public string ItemName { get; set; } = null!;
     public string? ItemCode { get; set; }
     public decimal Quantity { get; set; } = 1;
+    /// <summary>How much of this line has been refunded (partial refunds).
+    /// Refundable remaining = Quantity − RefundedQuantity.</summary>
+    public decimal RefundedQuantity { get; set; } = 0;
     public string? Unit { get; set; }                            // หน่วย: ชิ้น, แก้ว, ครั้ง
     public decimal UnitPrice { get; set; }
     public decimal DiscountAmount { get; set; }

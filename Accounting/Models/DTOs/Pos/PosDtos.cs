@@ -143,7 +143,8 @@ public record OrderItemResponse(
     PosItemStatus Status,
     string? Notes,
     List<ItemModifierResponse> Modifiers,
-    List<ServiceActivityResponse> ServiceActivities);
+    List<ServiceActivityResponse> ServiceActivities,
+    decimal RefundedQuantity = 0);
 
 // ===== POS Order Item Modifier =====
 public record CreateItemModifierRequest(
@@ -167,6 +168,14 @@ public record CreatePaymentRequest(
     decimal ReceivedAmount,
     string? ReferenceNo,
     string? CardLastFour);
+
+// ===== POS Refund (partial / full) =====
+public record RefundOrderRequest(
+    List<RefundLineRequest> Lines,
+    PaymentMethod RefundMethod,
+    string? Reason);
+
+public record RefundLineRequest(Guid ItemId, decimal Quantity);
 
 public record PaymentResponse(
     Guid Id,

@@ -241,6 +241,7 @@
         try {
           const res = await api.getPosOrder(id);
           const o = res.data;
+          this._detailOrder = o;
           document.getElementById('detailTitle').textContent = `ออเดอร์ ${o.orderNumber}`;
           document.getElementById('detailContent').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
@@ -276,8 +277,63 @@
                 <div style="font-size:20px;font-weight:700;color:var(--primary);margin-top:8px;">สุทธิ: ${Layout.money(o.netAmount)}</div>
               </div>
             </div>
+            ${o.status === 'Completed' ? `
+            <div style="margin-top:16px;border-top:1px dashed var(--gray-300);padding-top:12px;">
+              <button class="btn btn-sm btn-danger" onclick="Page.toggleRefund('${o.id}')">↩️ คืนเงิน (บางส่วน/ทั้งหมด)</button>
+              <div id="refundForm" style="display:none;margin-top:10px;"></div>
+            </div>` : ''}
           `;
         } catch (e) { document.getElementById('detailContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
+      },
+
+      toggleRefund() {
+        const box = document.getElementById('refundForm');
+        if (!box) return;
+        if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+        const o = this._detailOrder;
+        const rows = (o.items || []).map(i => {
+          const remaining = (i.quantity || 0) - (i.refundedQuantity || 0);
+          return `<tr>
+            <td>${Layout.esc(i.itemName)}</td>
+            <td class="text-right">${i.quantity}</td>
+            <td class="text-right">${i.refundedQuantity || 0}</td>
+            <td class="text-right font-semibold">${remaining}</td>
+            <td><input type="number" class="form-input" data-refund-item="${i.id}" min="0" max="${remaining}" step="any" value="0" style="width:84px" ${remaining <= 0 ? 'disabled' : ''}></td>
+          </tr>`;
+        }).join('');
+        box.innerHTML = `
+          <table class="table" style="font-size:13px;">
+            <thead><tr><th>รายการ</th><th class="text-right">ขาย</th><th class="text-right">คืนแล้ว</th><th class="text-right">คงเหลือ</th><th>คืนครั้งนี้</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+            <select id="refundMethod" class="filter-select"><option value="Cash">เงินสด</option><option value="PromptPay">พร้อมเพย์</option><option value="BankTransfer">โอน</option><option value="CreditCard">บัตร</option></select>
+            <input type="text" id="refundReason" class="search-input" placeholder="เหตุผลการคืนเงิน" style="flex:1;min-width:160px;">
+            <button class="btn btn-sm btn-danger" onclick="Page.submitRefund('${o.id}')">ยืนยันคืนเงิน</button>
+          </div>
+          <div class="text-xs text-gray-400" style="margin-top:6px;">ระบบจะกลับรายการบัญชี (รายได้/VAT/ต้นทุน) และคืนสต็อกตามสัดส่วนที่คืน</div>`;
+        box.style.display = '';
+      },
+
+      async submitRefund(orderId) {
+        const api = Layout.api(); if (!api) return;
+        const lines = [];
+        document.querySelectorAll('#refundForm input[data-refund-item]').forEach(inp => {
+          const q = parseFloat(inp.value) || 0;
+          if (q > 0) lines.push({ itemId: inp.dataset.refundItem, quantity: q });
+        });
+        if (!lines.length) { Layout.toast('กรุณาระบุจำนวนที่จะคืนอย่างน้อย 1 รายการ', 'warning'); return; }
+        if (!confirm('ยืนยันการคืนเงิน? ระบบจะกลับรายการบัญชีและคืนสต็อก')) return;
+        try {
+          await api.refundPosOrder(orderId, {
+            lines,
+            refundMethod: document.getElementById('refundMethod').value,
+            reason: document.getElementById('refundReason').value || null,
+          });
+          Layout.toast('คืนเงินสำเร็จ');
+          Layout.closeModal('orderDetailModal');
+          await this.loadOrders();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async loadCommission() {

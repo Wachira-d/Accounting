@@ -2391,6 +2391,9 @@ public static class DatabaseMigrationHelper
 
             // ===== Documents.IsOpeningBalance: migrated opening AR/AP subledger docs =====
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsOpeningBalance" boolean NOT NULL DEFAULT false;""",
+
+            // ===== PosOrderItems.RefundedQuantity: POS partial refunds =====
+            """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "RefundedQuantity" numeric NOT NULL DEFAULT 0;""",
         };
 
         foreach (var sql in statements)

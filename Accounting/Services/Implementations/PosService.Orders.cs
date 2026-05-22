@@ -192,6 +192,153 @@ public partial class PosService
         }
     }
 
+    public async Task<OrderResponse> RefundOrderAsync(Guid companyId, Guid orderId, RefundOrderRequest request, string userId)
+    {
+        var order = await _db.PosOrders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status != PosOrderStatus.Completed)
+            throw new InvalidOperationException("คืนเงินได้เฉพาะออเดอร์ที่ปิดบิลแล้ว");
+        if (request.Lines == null || request.Lines.Count == 0)
+            throw new InvalidOperationException("กรุณาเลือกรายการที่จะคืนเงิน");
+
+        // Validate + compute the refund (proportional to each line).
+        decimal refundGross = 0, refundVat = 0, refundCogs = 0;
+        var toRestore = new List<(PosOrderItem Item, decimal Qty)>();
+        foreach (var line in request.Lines)
+        {
+            if (line.Quantity <= 0) continue;
+            var item = order.Items.FirstOrDefault(i => i.Id == line.ItemId)
+                ?? throw new InvalidOperationException("ไม่พบรายการในออเดอร์นี้");
+            var remaining = item.Quantity - item.RefundedQuantity;
+            if (line.Quantity > remaining + 0.0001m)
+                throw new InvalidOperationException(
+                    $"รายการ '{item.ItemName}' คืนได้ไม่เกิน {remaining:0.##} (ขอคืน {line.Quantity:0.##})");
+
+            var ratio = item.Quantity > 0 ? line.Quantity / item.Quantity : 0m;
+            refundGross += item.TotalAmount * ratio;
+            refundVat += item.VatAmount * ratio;
+            toRestore.Add((item, line.Quantity));
+        }
+        if (toRestore.Count == 0)
+            throw new InvalidOperationException("ไม่มีรายการที่จะคืนเงิน");
+
+        refundGross = Math.Round(refundGross, 2, MidpointRounding.AwayFromZero);
+        refundVat = Math.Round(refundVat, 2, MidpointRounding.AwayFromZero);
+        var refundNet = refundGross - refundVat;
+
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // Restore stock + accumulate COGS for stock-tracked products.
+            foreach (var (item, qty) in toRestore)
+            {
+                item.RefundedQuantity += qty;
+                if (item.ProductId.HasValue)
+                {
+                    var product = await _db.Products.FindAsync(item.ProductId.Value);
+                    if (product?.TrackStock == true)
+                    {
+                        product.CurrentStock += qty;
+                        refundCogs += product.CostPrice * qty;
+                        _db.StockMovements.Add(new StockMovement
+                        {
+                            CompanyId = companyId,
+                            ProductId = product.Id,
+                            MovementDate = DateTime.UtcNow,
+                            MovementType = "IN",
+                            Quantity = qty,
+                            UnitCost = product.CostPrice,
+                            BalanceAfter = product.CurrentStock,
+                            Reference = $"REFUND-{order.OrderNumber}",
+                            Notes = "คืนสินค้าจากการคืนเงิน POS",
+                            CreatedBy = userId,
+                        });
+                    }
+                }
+            }
+            refundCogs = Math.Round(refundCogs, 2, MidpointRounding.AwayFromZero);
+
+            // Reversal journal entry — back out the refunded portion:
+            //   Dr รายได้ขาย / Dr ภาษีขาย   Cr เงินสด
+            //   Dr สินค้าคงเหลือ            Cr ต้นทุนขาย
+            await CreateRefundJournalEntryAsync(companyId, order, refundNet, refundVat, refundGross, refundCogs, userId);
+
+            // Record the cash-out as a negative payment so the shift/day
+            // cash reconciliation reflects it.
+            _db.Set<PosPayment>().Add(new PosPayment
+            {
+                OrderId = order.Id,
+                PaymentMethod = request.RefundMethod,
+                Amount = -refundGross,
+                ReceivedAmount = 0,
+                ChangeAmount = 0,
+                ReferenceNo = "คืนเงิน" + (string.IsNullOrWhiteSpace(request.Reason) ? "" : ": " + request.Reason.Trim()),
+                PaidAt = DateTime.UtcNow,
+            });
+
+            // Fully refunded → mark the order Refunded.
+            if (order.Items.All(i => i.RefundedQuantity >= i.Quantity - 0.0001m))
+                order.Status = PosOrderStatus.Refunded;
+
+            await _db.SaveChangesAsync();
+            await txn.CommitAsync();
+        }
+        catch
+        {
+            await txn.RollbackAsync();
+            throw;
+        }
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    private async Task CreateRefundJournalEntryAsync(Guid companyId, PosOrder order,
+        decimal refundNet, decimal refundVat, decimal refundGross, decimal refundCogs, string userId)
+    {
+        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11111")
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
+        var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
+        var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
+        if (cashAccount == null || salesAccount == null) return;
+
+        var lines = new List<Models.DTOs.Accounting.JournalLineRequest>
+        {
+            new(salesAccount.Id, refundNet, 0, $"คืนรายได้ขาย POS #{order.OrderNumber}"),
+        };
+        if (refundVat > 0 && vatAccount != null)
+            lines.Add(new(vatAccount.Id, refundVat, 0, $"คืนภาษีขาย POS #{order.OrderNumber}"));
+        lines.Add(new(cashAccount.Id, 0, refundGross, $"จ่ายคืนเงิน POS #{order.OrderNumber}"));
+
+        if (refundCogs > 0)
+        {
+            var cogsAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "51110")
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("511") && a.Level >= 4);
+            var inventoryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11500")
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115") && a.Level >= 4);
+            if (cogsAccount != null && inventoryAccount != null)
+            {
+                lines.Add(new(inventoryAccount.Id, refundCogs, 0, $"รับคืนสินค้าคงเหลือ POS #{order.OrderNumber}"));
+                lines.Add(new(cogsAccount.Id, 0, refundCogs, $"กลับต้นทุนขาย POS #{order.OrderNumber}"));
+            }
+        }
+
+        try
+        {
+            var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
+                DateTime.UtcNow, $"POS Refund #{order.OrderNumber}", $"REFUND-{order.OrderNumber}", lines);
+            var journal = await _accountingService.CreateJournalEntryAsync(companyId, journalRequest, userId);
+            await _accountingService.PostJournalEntryAsync(companyId, journal.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "POS refund journal creation failed for order {OrderNumber} in company {CompanyId}",
+                order.OrderNumber, companyId);
+        }
+    }
+
     // ==================== Order Items ====================
 
     public async Task<OrderResponse> AddOrderItemAsync(Guid companyId, Guid orderId, CreateOrderItemRequest request)
@@ -534,7 +681,8 @@ public partial class PosService
         i.Quantity, i.Unit, i.UnitPrice, i.DiscountAmount, i.DiscountPercent,
         i.SubTotal, i.VatAmount, i.TotalAmount, i.LineOrder, i.Status, i.Notes,
         i.Modifiers.Select(m => new ItemModifierResponse(m.Id, m.ModifierOptionId, m.ModifierGroupName, m.ModifierName, m.PriceAdjustment)).ToList(),
-        i.ServiceActivities.Select(a => new ServiceActivityResponse(a.Id, a.ComponentId, a.Component?.Name ?? "", a.Component?.StepOrder ?? 0, a.StaffId, a.StaffName, a.Status, a.StartedAt, a.CompletedAt, a.CommissionAmount, a.Notes)).ToList());
+        i.ServiceActivities.Select(a => new ServiceActivityResponse(a.Id, a.ComponentId, a.Component?.Name ?? "", a.Component?.StepOrder ?? 0, a.StaffId, a.StaffName, a.Status, a.StartedAt, a.CompletedAt, a.CommissionAmount, a.Notes)).ToList(),
+        i.RefundedQuantity);
 
     private static PaymentResponse MapPayment(PosPayment p) => new(
         p.Id, p.PaymentMethod, p.Amount, p.ReceivedAmount, p.ChangeAmount, p.ReferenceNo, p.CardLastFour, p.PaidAt);
