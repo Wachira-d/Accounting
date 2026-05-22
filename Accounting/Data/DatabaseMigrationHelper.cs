@@ -2388,6 +2388,9 @@ public static class DatabaseMigrationHelper
 
             // ===== TaxReportLines.IsExcluded: accountant include/exclude toggle =====
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "IsExcluded" boolean NOT NULL DEFAULT false;""",
+
+            // ===== Documents.IsOpeningBalance: migrated opening AR/AP subledger docs =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsOpeningBalance" boolean NOT NULL DEFAULT false;""",
         };
 
         foreach (var sql in statements)

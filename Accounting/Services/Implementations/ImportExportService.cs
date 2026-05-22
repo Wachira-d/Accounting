@@ -56,6 +56,12 @@ public class ImportExportService : IImportExportService
                     case "stock-opening":
                         await ImportStockOpeningAsync(companyId, row, performedBy);
                         break;
+                    case "opening-ar":
+                        await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: true);
+                        break;
+                    case "opening-ap":
+                        await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: false);
+                        break;
                     case "stock-adjustments":
                         await ImportStockAdjustmentAsync(companyId, row, performedBy);
                         break;
@@ -174,6 +180,18 @@ public class ImportExportService : IImportExportService
                 new List<Dictionary<string, string>>
                 {
                     new() { ["ProductCode"] = "P001", ["Quantity"] = "100", ["UnitCost"] = "60.00", ["OpeningDate"] = "2026-01-01", ["Notes"] = "ยกมาจากระบบเดิม" }
+                }),
+
+            "opening-ar" => new ImportTemplateResponse("opening-ar", GetTemplateFields("opening-ar")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["ContactName"] = "บริษัท ลูกค้า จำกัด", ["ContactTaxId"] = "0123456789012", ["InvoiceNumber"] = "INV-2025-001", ["InvoiceDate"] = "2025-11-20", ["DueDate"] = "2025-12-20", ["Amount"] = "53500.00", ["Description"] = "ลูกหนี้ยกมา" }
+                }),
+
+            "opening-ap" => new ImportTemplateResponse("opening-ap", GetTemplateFields("opening-ap")!,
+                new List<Dictionary<string, string>>
+                {
+                    new() { ["ContactName"] = "บริษัท ผู้ขาย จำกัด", ["ContactTaxId"] = "0987654321098", ["InvoiceNumber"] = "PINV-2025-044", ["InvoiceDate"] = "2025-11-25", ["DueDate"] = "2025-12-25", ["Amount"] = "21400.00", ["Description"] = "เจ้าหนี้ยกมา" }
                 }),
 
             "stock-adjustments" => new ImportTemplateResponse("stock-adjustments", GetTemplateFields("stock-adjustments")!,
@@ -582,6 +600,127 @@ public class ImportExportService : IImportExportService
             Notes = row.GetValueOrDefault("Notes") ?? "สต็อกยกมา (Import)",
             CreatedBy = performedBy
         });
+    }
+
+    /// <summary>
+    /// Import one opening AR (receivable) or AP (payable) subledger item.
+    /// Creates an already-Approved Document flagged IsOpeningBalance so the
+    /// item shows up in AR/AP aging + the contact ledger — but it is NEVER
+    /// auto-posted to the GL: opening docs are created directly (not via
+    /// ApproveDocumentAsync) so no journal entry is generated. The control
+    /// account total is carried by the TrialBalance migration's GL opening
+    /// balance; posting here too would double-count. Idempotent by a
+    /// deterministic DocumentNumber ("OB-AR:"/"OB-AP:" + InvoiceNumber).
+    /// </summary>
+    private async Task ImportOpeningSubledgerAsync(
+        Guid companyId, Dictionary<string, string> row, string performedBy, bool isReceivable)
+    {
+        var contactName = (row.GetValueOrDefault("ContactName") ?? "").Trim();
+        var contactTaxId = row.GetValueOrDefault("ContactTaxId")?.Trim();
+        if (string.IsNullOrWhiteSpace(contactName) && string.IsNullOrWhiteSpace(contactTaxId))
+            throw new InvalidOperationException("ต้องระบุ ContactName หรือ ContactTaxId");
+
+        var invoiceNumber = (row.GetValueOrDefault("InvoiceNumber") ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(invoiceNumber))
+            throw new InvalidOperationException("InvoiceNumber is required");
+
+        if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out var amount) || amount <= 0)
+            throw new InvalidOperationException("Amount ต้องเป็นตัวเลขมากกว่า 0");
+
+        var invoiceDate = DateTime.TryParse(row.GetValueOrDefault("InvoiceDate"), out var idt)
+            ? idt : throw new InvalidOperationException("InvoiceDate ไม่ถูกต้อง");
+        DateTime? dueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var dd) ? dd : null;
+
+        // Resolve or create the contact (migration convenience). The import
+        // runs many rows then SaveChanges once at the end — so also scan the
+        // change tracker, else two rows for the same new contact would each
+        // insert a duplicate.
+        Contact? contact = null;
+        if (!string.IsNullOrWhiteSpace(contactTaxId))
+            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == contactTaxId);
+        if (contact == null && !string.IsNullOrWhiteSpace(contactName))
+            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == contactName);
+        contact ??= _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity)
+            .FirstOrDefault(c => c.CompanyId == companyId && (
+                (!string.IsNullOrWhiteSpace(contactTaxId) && c.TaxId == contactTaxId) ||
+                (!string.IsNullOrWhiteSpace(contactName) && c.Name == contactName)));
+        if (contact == null)
+        {
+            contact = new Contact
+            {
+                CompanyId = companyId,
+                Name = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName,
+                TaxId = string.IsNullOrWhiteSpace(contactTaxId) ? null : contactTaxId,
+                IsCustomer = isReceivable,
+                IsSupplier = !isReceivable,
+                IsActive = true,
+                CreatedBy = performedBy,
+            };
+            _db.Contacts.Add(contact);
+        }
+        else if (isReceivable) { contact.IsCustomer = true; }
+        else { contact.IsSupplier = true; }
+
+        var docNumber = (isReceivable ? "OB-AR:" : "OB-AP:") + invoiceNumber;
+        var docType = isReceivable ? DocumentType.Invoice : DocumentType.PurchaseInvoice;
+        var notes = row.GetValueOrDefault("Description")
+            ?? $"ยอดยกมา (Opening {(isReceivable ? "ลูกหนี้" : "เจ้าหนี้")}) — Import";
+
+        var doc = _db.ChangeTracker.Entries<Document>().Select(e => e.Entity)
+            .FirstOrDefault(d => d.CompanyId == companyId && d.DocumentNumber == docNumber)
+            ?? await _db.Documents.Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.DocumentNumber == docNumber);
+
+        if (doc == null)
+        {
+            doc = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = docType,
+                DocumentDate = invoiceDate,
+                DueDate = dueDate,
+                ContactId = contact.Id,
+                Contact = contact,
+                Status = DocumentStatus.Approved,
+                IsOpeningBalance = true,
+                Reference = invoiceNumber,
+                Notes = notes,
+                CreatedBy = performedBy,
+            };
+            _db.Documents.Add(doc);
+        }
+        else
+        {
+            // Re-import — refresh in place so re-running the file is safe.
+            doc.DocumentDate = invoiceDate;
+            doc.DueDate = dueDate;
+            doc.ContactId = contact.Id;
+            doc.IsOpeningBalance = true;
+            doc.Notes = notes;
+            _db.DocumentLines.RemoveRange(doc.Lines);
+            doc.Lines.Clear();
+        }
+
+        // Opening AR/AP is a pure receivable/payable carry-over — single line,
+        // no new VAT/WHT (that belonged to the original invoice's period).
+        doc.Lines.Add(new DocumentLine
+        {
+            LineOrder = 1,
+            Description = notes,
+            Quantity = 1,
+            Unit = "งวด",
+            UnitPrice = amount,
+            Amount = amount,
+            VatRate = 0,
+            VatAmount = 0,
+        });
+        doc.SubTotal = amount;
+        doc.VatAmount = 0;
+        doc.WithholdingTaxAmount = 0;
+        doc.TotalAmount = amount;
+        doc.PaidAmount = 0;
+        doc.BalanceDue = amount;
     }
 
     private async Task ImportStockAdjustmentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
@@ -1127,6 +1266,18 @@ public class ImportExportService : IImportExportService
                 if (!decimal.TryParse(row.GetValueOrDefault("Quantity"), out _))
                     errors.Add(new ImportError(rowNumber, "Quantity", row.GetValueOrDefault("Quantity") ?? "", "จำนวนไม่ถูกต้อง"));
                 break;
+            case "opening-ar":
+            case "opening-ap":
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactName"))
+                    && string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactTaxId")))
+                    errors.Add(new ImportError(rowNumber, "ContactName", "", "ต้องระบุ ContactName หรือ ContactTaxId"));
+                if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("InvoiceNumber")))
+                    errors.Add(new ImportError(rowNumber, "InvoiceNumber", "", "จำเป็นต้องระบุเลขที่เอกสาร"));
+                if (!DateTime.TryParse(row.GetValueOrDefault("InvoiceDate"), out _))
+                    errors.Add(new ImportError(rowNumber, "InvoiceDate", row.GetValueOrDefault("InvoiceDate") ?? "", "วันที่เอกสารไม่ถูกต้อง"));
+                if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) || amt <= 0)
+                    errors.Add(new ImportError(rowNumber, "Amount", row.GetValueOrDefault("Amount") ?? "", "ยอดคงค้างต้องมากกว่า 0"));
+                break;
             case "stock-adjustments":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ProductCode")))
                     errors.Add(new ImportError(rowNumber, "ProductCode", "", "จำเป็นต้องระบุรหัสสินค้า"));
@@ -1475,6 +1626,12 @@ public class ImportExportService : IImportExportService
                     case "documents":
                         await ImportDocumentAsync(companyId, mappedRow, performedBy);
                         break;
+                    case "opening-ar":
+                        await ImportOpeningSubledgerAsync(companyId, mappedRow, performedBy, isReceivable: true);
+                        break;
+                    case "opening-ap":
+                        await ImportOpeningSubledgerAsync(companyId, mappedRow, performedBy, isReceivable: false);
+                        break;
                     default:
                         errors.Add(new ImportError(i + 1, "EntityType", session.EntityType,
                             $"ไม่รองรับการนำเข้า {session.EntityType}"));
@@ -1554,6 +1711,12 @@ public class ImportExportService : IImportExportService
             new("stock-opening", "สต็อกยกมา (Opening Stock)",
                 "นำเข้ายอดสต็อกตั้งต้น — ใช้ตอน migrate จากระบบเดิม",
                 GetTemplateFields("stock-opening")!),
+            new("opening-ar", "ลูกหนี้ยกมา (Opening AR)",
+                "นำเข้าใบแจ้งหนี้ค้างรับรายตัว — เข้ารายงานอายุลูกหนี้ + บัญชีแยกลูกหนี้ (ไม่ลง GL ซ้ำ)",
+                GetTemplateFields("opening-ar")!),
+            new("opening-ap", "เจ้าหนี้ยกมา (Opening AP)",
+                "นำเข้าใบแจ้งหนี้ค้างจ่ายรายตัว — เข้ารายงานอายุเจ้าหนี้ + บัญชีแยกเจ้าหนี้ (ไม่ลง GL ซ้ำ)",
+                GetTemplateFields("opening-ap")!),
             new("stock-adjustments", "ปรับสต็อก (Stock Adjustments)",
                 "เพิ่ม/ลดสต็อก พร้อมเหตุผล (เสียหาย, ปรับนับ, ฯลฯ)",
                 GetTemplateFields("stock-adjustments")!),
@@ -1852,6 +2015,16 @@ public class ImportExportService : IImportExportService
                 new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "ใช้เป็นต้นทุนของสต็อกยกมา (default = CostPrice ของ Product)", null),
                 new("OpeningDate", "วันยกมา", "date", false, "default = วันนี้", null),
                 new("Notes", "หมายเหตุ", "string", false, null, null),
+            },
+            "opening-ar" or "opening-ap" => new List<ImportField>
+            {
+                new("ContactName", "ชื่อลูกค้า/ผู้ขาย", "string", true, "จับคู่ผู้ติดต่อเดิม — ถ้าไม่พบจะสร้างใหม่ให้", null),
+                new("ContactTaxId", "เลขผู้เสียภาษี", "string", false, "ใช้จับคู่ผู้ติดต่อ (แม่นกว่าชื่อ)", null),
+                new("InvoiceNumber", "เลขที่เอกสารเดิม", "string", true, "เลขใบแจ้งหนี้จากระบบเก่า — ใช้กันการนำเข้าซ้ำ", null),
+                new("InvoiceDate", "วันที่เอกสาร", "date", true, "yyyy-MM-dd — ใช้คำนวณอายุหนี้", null),
+                new("DueDate", "วันครบกำหนด", "date", false, "yyyy-MM-dd", null),
+                new("Amount", "ยอดคงค้าง", "decimal", true, "ยอดที่ยังค้างชำระ ณ วันยกมา", null),
+                new("Description", "รายละเอียด", "string", false, null, null),
             },
             "stock-adjustments" => new List<ImportField>
             {
