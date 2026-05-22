@@ -268,6 +268,15 @@ public class AccountingController : ControllerBase
         return StatusCode(201, new ApiResponse<FiscalPeriodResponse>(true, result, "สร้างงวดบัญชีสำเร็จ"));
     }
 
+    /// <summary>สร้างงวดบัญชีรายเดือนที่ขาดของทั้งปีในคราวเดียว</summary>
+    [HttpPost("fiscal-periods/ensure-year")]
+    public async Task<ActionResult<ApiResponse<object>>> EnsureFiscalYear(Guid companyId, [FromQuery] int year)
+    {
+        var created = await _accountingService.EnsureFiscalYearPeriodsAsync(companyId, year);
+        return Ok(new ApiResponse<object>(true, new { year, created },
+            created > 0 ? $"สร้างงวดบัญชีปี {year} เพิ่ม {created} งวด" : $"งวดบัญชีปี {year} ครบอยู่แล้ว"));
+    }
+
     [HttpPost("fiscal-periods/{periodId:guid}/close")]
     public async Task<ActionResult<ApiResponse<string>>> CloseFiscalPeriod(Guid companyId, Guid periodId)
     {

@@ -459,6 +459,14 @@
         if (params.get('from') === 'scan') {
           await this._consumeScanHandoff();
         }
+
+        // Journal-entry "edit at source document" handoff — a doc-sourced JE
+        // can't be edited directly; the journal page links here with ?editDoc=.
+        const editDocId = params.get('editDoc');
+        if (editDocId) {
+          try { await this.openEdit(editDocId); }
+          catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
+        }
       },
 
       async _consumeScanHandoff() {

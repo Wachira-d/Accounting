@@ -13,6 +13,7 @@
       <div><h2 class="page-title">งวดบัญชี</h2><p class="page-subtitle">จัดการงวดบัญชี เปิด/ปิดรอบบัญชี + ปิดสิ้นปี (Year-End Close)</p></div>
       <div class="flex gap-2">
         <button class="btn btn-warning" onclick="Page.openYearEndModal()" title="ปิดงบประจำปี — สร้าง JE โอน P&L ไป Retained Earnings + ล็อกทุกเดือนในปี + roll opening balances">🏛️ ปิดสิ้นปี (Year-End)</button>
+        <button class="btn btn-secondary" onclick="Page.ensureYear()" title="สร้างงวดบัญชีรายเดือนที่ขาดทั้งปีในคราวเดียว">📅 สร้างงวดทั้งปี</button>
         <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงวดบัญชี</button>
       </div>
     </div>
@@ -144,6 +145,19 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       _editId: null,
+      async ensureYear() {
+        const api = Layout.api(); if (!api) return;
+        const def = new Date().getFullYear();
+        const input = prompt('สร้างงวดบัญชีรายเดือน (ม.ค.–ธ.ค.) ที่ยังขาดของปีใด?\nระบุปี ค.ศ. เช่น ' + def, def);
+        if (!input) return;
+        const year = parseInt(input.trim(), 10);
+        if (!year || year < 2000 || year > 2200) { Layout.toast('ปีไม่ถูกต้อง', 'error'); return; }
+        try {
+          const res = await api.ensureFiscalYear(year);
+          Layout.toast(res.message || 'สร้างงวดบัญชีสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
       openCreate() {
         this._editId = null;
         document.querySelector('#formModal .modal-title').textContent = 'สร้างงวดบัญชี';

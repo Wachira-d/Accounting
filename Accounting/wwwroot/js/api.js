@@ -167,6 +167,7 @@ const API = {
       cashFlow: (q = '') => API.get(`${base}/accounting/reports/cash-flow${q}`),
       getFiscalPeriods: () => API.get(`${base}/accounting/fiscal-periods`),
       createFiscalPeriod: (d) => API.post(`${base}/accounting/fiscal-periods`, d),
+      ensureFiscalYear: (year) => API.post(`${base}/accounting/fiscal-periods/ensure-year?year=${year}`),
       closeFiscalPeriod: (id) => API.post(`${base}/accounting/fiscal-periods/${id}/close`),
       // Documents
       getDocuments: (q = '') => API.get(`${base}/document${q}`),

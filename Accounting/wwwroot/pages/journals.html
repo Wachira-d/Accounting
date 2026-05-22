@@ -459,6 +459,8 @@
             // entries are skipped (edit at the document instead).
             if (!j.sourceDocumentId) {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.openEdit('${j.id}')" title="แก้ไขตัวเลข/ผังบัญชี">แก้ไข</button>`;
+            } else {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.editAtSource('${j.sourceDocumentId}')" title="รายการนี้สร้างจากเอกสาร — แก้ไขที่เอกสารต้นทาง">✏️ แก้ที่เอกสาร</button>`;
             }
             if (j.status === 'Posted') {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#d97706" onclick="Page.correctEntry('${j.id}')" title="แก้ไขด้วยการกลับรายการ (audit-safe)">กลับ-แก้</button>`;
@@ -542,6 +544,12 @@
         this.addLine(); this.addLine();
         this.calcTotals();
         Layout.openModal('formModal');
+      },
+      // A document-sourced JE mirrors its document — it cannot be edited
+      // directly; jump to the document and open it for editing instead.
+      editAtSource(documentId) {
+        if (!documentId) return;
+        window.location.href = `/pages/documents.html?editDoc=${encodeURIComponent(documentId)}`;
       },
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
@@ -691,6 +699,8 @@
           // existing "แก้ไข (กลับรายการ)" button still uses Reverse+Draft.
           if (!j.sourceDocumentId) {
             actions += ` <button class="btn btn-primary" onclick="Page.openEdit('${j.id}')">✏️ แก้ไขตัวเลข/ผังบัญชี</button>`;
+          } else {
+            actions += ` <button class="btn btn-primary" onclick="Page.editAtSource('${j.sourceDocumentId}')">✏️ แก้ไขที่เอกสารต้นทาง</button>`;
           }
           if (j.status === 'Draft') {
             actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;

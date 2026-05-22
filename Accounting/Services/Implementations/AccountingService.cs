@@ -1807,6 +1807,43 @@ public partial class AccountingService : IAccountingService
     }
 
     /// <summary>
+    /// Create every missing monthly period (1-12) for a calendar year in one
+    /// shot, so the user never has to add periods by hand each year. Existing
+    /// periods are left untouched. Returns the number created.
+    /// </summary>
+    public async Task<int> EnsureFiscalYearPeriodsAsync(Guid companyId, int year)
+    {
+        if (year < 2000 || year > 2200)
+            throw new InvalidOperationException("ปีไม่ถูกต้อง");
+
+        var existingMonths = (await _db.FiscalPeriods
+            .Where(f => f.CompanyId == companyId && f.Year == year)
+            .Select(f => f.Month)
+            .ToListAsync())
+            .ToHashSet();
+
+        var created = 0;
+        for (var m = 1; m <= 12; m++)
+        {
+            if (existingMonths.Contains(m)) continue;
+            var start = new DateTime(year, m, 1);
+            _db.FiscalPeriods.Add(new FiscalPeriod
+            {
+                CompanyId = companyId,
+                Name = $"{year}/{m:D2}",
+                Year = year,
+                Month = m,
+                StartDate = start,
+                EndDate = start.AddMonths(1).AddDays(-1),
+                Status = FiscalPeriodStatus.Open,
+            });
+            created++;
+        }
+        if (created > 0) await _db.SaveChangesAsync();
+        return created;
+    }
+
+    /// <summary>
     /// Fix a fiscal period that was created with the wrong start/end dates
     /// (or year/month). Allowed only when the period is still Open AND no
     /// data has landed in it yet — once anything's been posted into the
