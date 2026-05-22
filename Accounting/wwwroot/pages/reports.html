@@ -127,6 +127,23 @@
         const v = document.getElementById('projectFilter')?.value;
         return v ? `&projectId=${v}` : '';
       },
+      // Collapse/expand a report group (rows tagged data-grp="<key>").
+      toggleGrp(key) {
+        const rows = document.querySelectorAll(`tr[data-grp="${key}"]`);
+        if (!rows.length) return;
+        const hide = rows[0].style.display !== 'none';
+        rows.forEach(r => r.style.display = hide ? 'none' : '');
+        const caret = document.querySelector(`[data-grphdr="${key}"]`);
+        if (caret) caret.textContent = hide ? '▶' : '▼';
+      },
+      toggleAllGrps(collapse) {
+        document.querySelectorAll('[data-grphdr]').forEach(c => {
+          const key = c.getAttribute('data-grphdr');
+          const rows = document.querySelectorAll(`tr[data-grp="${key}"]`);
+          rows.forEach(r => r.style.display = collapse ? 'none' : '');
+          c.textContent = collapse ? '▶' : '▼';
+        });
+      },
       showReport(type, el) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -154,18 +171,40 @@
         const date = document.getElementById('asOfDate').value;
         const res = await api.trialBalance(`?asOfDate=${date}${this._projQuery()}`);
         const d = res.data;
+        const items = d.items || [];
+        // Group by account type (first-seen order — TB is code-ordered).
+        const order = [], map = {};
+        items.forEach(i => { const k = String(i.accountType); if (!map[k]) { map[k] = []; order.push(k); } map[k].push(i); });
+        let body = '';
+        order.forEach((k, gi) => {
+          const rows = map[k];
+          const subDr = rows.reduce((s, r) => s + Number(r.debitBalance || 0), 0);
+          const subCr = rows.reduce((s, r) => s + Number(r.creditBalance || 0), 0);
+          const gid = 'tb' + gi;
+          body += `<tr style="background:#eef2ff;cursor:pointer" onclick="Page.toggleGrp('${gid}')">
+            <td colspan="3" style="font-weight:700"><span data-grphdr="${gid}">▼</span> ${Layout.accountTypeLabel(rows[0].accountType)} <span class="text-xs text-gray-500">(${rows.length} บัญชี)</span></td>
+            <td class="text-right font-bold">${subDr > 0 ? Layout.money(subDr) : ''}</td>
+            <td class="text-right font-bold">${subCr > 0 ? Layout.money(subCr) : ''}</td></tr>`;
+          body += rows.map(i => `<tr data-grp="${gid}">
+            <td style="padding-left:24px">${i.accountCode}</td><td>${i.accountName}</td>
+            <td>${Layout.accountTypeLabel(i.accountType)}</td>
+            <td class="text-right">${i.debitBalance > 0 ? Layout.money(i.debitBalance) : ''}</td>
+            <td class="text-right">${i.creditBalance > 0 ? Layout.money(i.creditBalance) : ''}</td>
+          </tr>`).join('');
+        });
         el.innerHTML = `
-          <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบทดลอง</h3>
-          <p class="text-sm text-gray-500" style="margin-bottom:16px">ณ วันที่ ${Layout.date(d.asOfDate)}</p>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+            <div><h3 class="text-lg font-semibold" style="margin-bottom:2px">งบทดลอง</h3>
+            <p class="text-sm text-gray-500">ณ วันที่ ${Layout.date(d.asOfDate)}</p></div>
+            <div class="flex gap-1">
+              <button class="btn btn-sm btn-secondary" onclick="Page.toggleAllGrps(false)">⊞ ขยายทั้งหมด</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page.toggleAllGrps(true)">⊟ ย่อทั้งหมด</button>
+            </div>
+          </div>
           <div class="table-container">
             <table class="table">
               <thead><tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th data-i18n="common.type">ประเภท</th><th class="text-right">ยอดเดบิต</th><th class="text-right">ยอดเครดิต</th></tr></thead>
-              <tbody>${(d.items||[]).map(i => `<tr>
-                <td>${i.accountCode}</td><td>${i.accountName}</td>
-                <td>${Layout.accountTypeLabel(i.accountType)}</td>
-                <td class="text-right">${i.debitBalance > 0 ? Layout.money(i.debitBalance) : ''}</td>
-                <td class="text-right">${i.creditBalance > 0 ? Layout.money(i.creditBalance) : ''}</td>
-              </tr>`).join('')}</tbody>
+              <tbody>${body}</tbody>
               <tfoot><tr style="background:var(--gray-100)"><td colspan="3" class="font-bold">รวมทั้งสิ้น</td><td class="text-right font-bold">${Layout.money(d.totalDebit)}</td><td class="text-right font-bold">${Layout.money(d.totalCredit)}</td></tr></tfoot>
             </table>
           </div>
@@ -207,21 +246,27 @@
         const to = document.getElementById('toDate').value;
         const res = await api.profitLoss(`?fromDate=${from}&toDate=${to}${this._projQuery()}`);
         const d = res.data;
-        const renderItems = (items) => items ? items.map(s =>
-          `<tr><td>${s.accountCode || ''}</td><td>${s.accountName}</td><td class="text-right">${Layout.money(s.amount)}</td></tr>`
+        const renderItems = (items, gid) => items ? items.map(s =>
+          `<tr data-grp="${gid}"><td style="padding-left:24px">${s.accountCode || ''}</td><td>${s.accountName}</td><td class="text-right">${Layout.money(s.amount)}</td></tr>`
         ).join('') : '';
         el.innerHTML = `
-          <h3 class="text-lg font-semibold" style="margin-bottom:4px">งบกำไรขาดทุน</h3>
-          <p class="text-sm text-gray-500" style="margin-bottom:16px">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+            <div><h3 class="text-lg font-semibold" style="margin-bottom:2px">งบกำไรขาดทุน</h3>
+            <p class="text-sm text-gray-500">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p></div>
+            <div class="flex gap-1">
+              <button class="btn btn-sm btn-secondary" onclick="Page.toggleAllGrps(false)">⊞ ขยายทั้งหมด</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page.toggleAllGrps(true)">⊟ ย่อทั้งหมด</button>
+            </div>
+          </div>
           <div class="table-container">
             <table class="table">
               <thead><tr><th>รหัส</th><th data-i18n="common.items">รายการ</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>
-                <tr style="background:#ECFDF5"><td colspan="3" class="font-semibold">รายได้</td></tr>
-                ${renderItems(d.revenue)}
+                <tr style="background:#ECFDF5;cursor:pointer" onclick="Page.toggleGrp('pnl-rev')"><td colspan="3" class="font-semibold"><span data-grphdr="pnl-rev">▼</span> รายได้ <span class="text-xs text-gray-500">(${(d.revenue||[]).length} รายการ)</span></td></tr>
+                ${renderItems(d.revenue, 'pnl-rev')}
                 <tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมรายได้</td><td class="text-right font-bold text-success">${Layout.money(d.totalRevenue)}</td></tr>
-                <tr style="background:#FEF2F2"><td colspan="3" class="font-semibold">ค่าใช้จ่าย</td></tr>
-                ${renderItems(d.expenses)}
+                <tr style="background:#FEF2F2;cursor:pointer" onclick="Page.toggleGrp('pnl-exp')"><td colspan="3" class="font-semibold"><span data-grphdr="pnl-exp">▼</span> ค่าใช้จ่าย <span class="text-xs text-gray-500">(${(d.expenses||[]).length} รายการ)</span></td></tr>
+                ${renderItems(d.expenses, 'pnl-exp')}
                 <tr style="background:var(--gray-100)"><td colspan="2" class="font-bold">รวมค่าใช้จ่าย</td><td class="text-right font-bold text-danger">${Layout.money(d.totalExpenses)}</td></tr>
               </tbody>
               <tfoot><tr style="background:var(--primary);color:#fff"><td colspan="2" class="font-bold">กำไร(ขาดทุน)สุทธิ</td><td class="text-right font-bold">${Layout.money(d.netIncome)}</td></tr></tfoot>
