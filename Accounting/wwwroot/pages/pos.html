@@ -85,8 +85,10 @@
           </div>
           <div style="display:flex;gap:6px;">
             <select id="terminalSelect" class="form-select" style="font-size:13px;padding:6px 10px;" onchange="Page.onTerminalChange()"></select>
+            <button class="btn btn-sm btn-secondary" onclick="Page.openCreateTerminal()" title="สร้างเครื่องขาย (Terminal) ใหม่">+ เครื่องขาย</button>
             <button class="btn btn-sm btn-primary" id="btnSession" onclick="Page.toggleSession()">เปิดกะ</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.showDailySummary()">สรุปยอด</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.showGuide()" title="แนะนำการเริ่มใช้งาน POS">❓ เริ่มใช้งาน</button>
           </div>
         </div>
         <div class="pos-search">
@@ -149,9 +151,50 @@
       </div>
     </div>
 
+    <!-- Create Terminal Modal -->
+    <div class="modal-overlay" id="terminalModal">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-header"><h3 class="modal-title">สร้างเครื่องขาย (Terminal)</h3><button class="modal-close" onclick="Layout.closeModal('terminalModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อเครื่องขาย *</label><input type="text" class="form-input" id="fTermName" placeholder="เช่น เคาน์เตอร์ 1, สาขาสีลม"></div>
+          <div class="form-group"><label class="form-label">ประเภทธุรกิจ *</label>
+            <select class="form-select" id="fTermMode">
+              <option value="Trading">ซื้อมาขายไป (ค้าปลีก)</option>
+              <option value="Restaurant">ร้านอาหาร</option>
+              <option value="Cafe">คาเฟ่/เครื่องดื่ม</option>
+              <option value="Service">ธุรกิจบริการ</option>
+              <option value="Mixed">ผสม (สินค้า+บริการ)</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">ที่ตั้ง/สาขา</label><input type="text" class="form-input" id="fTermLocation" placeholder="ไม่บังคับ"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('terminalModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.createTerminal()">สร้างเครื่องขาย</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Getting-Started Guide Modal -->
+    <div class="modal-overlay" id="guideModal">
+      <div class="modal" style="max-width:560px;">
+        <div class="modal-header"><h3 class="modal-title">เริ่มใช้งาน POS — 6 ขั้นตอน</h3><button class="modal-close" onclick="Layout.closeModal('guideModal')">&times;</button></div>
+        <div class="modal-body">
+          <ol id="guideSteps" style="margin:0;padding-left:22px;line-height:1.9;font-size:14px"></ol>
+          <div style="margin-top:14px;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#92400e">
+            ⚠️ <strong>หมายเหตุสถานะ:</strong> POS ใช้ขายหน้าร้านได้จริง (ตัดสต็อก + ลงบัญชีอัตโนมัติ)
+            แต่ยังอยู่ระหว่างพัฒนา — ยังไม่มี: พิมพ์ใบเสร็จ/ใบกำกับภาษีอัตโนมัติ, คืนเงินบางส่วน,
+            สแกนบาร์โค้ด, โหมดออฟไลน์ แนะนำใช้ทดสอบ/งานจริงที่ยังไม่ต้องออกใบกำกับจาก POS โดยตรง
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="Layout.closeModal('guideModal')">เข้าใจแล้ว</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Open Session Modal -->
-    <div class="modal-overlay" id="sessionModal">
-      <div class="modal" style="max-width:400px;">
+    <div class="modal-overlay" id="sessionModal">      <div class="modal" style="max-width:400px;">
         <div class="modal-header"><h3 class="modal-title">เปิดกะขาย</h3><button class="modal-close" onclick="Layout.closeModal('sessionModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-group"><label class="form-label">เงินเปิดกะ</label><input type="number" class="form-input" id="fOpenBal" value="1000" step="0.01"></div>
@@ -224,9 +267,52 @@
           const sel = document.getElementById('terminalSelect');
           sel.innerHTML = this.terminals.length
             ? this.terminals.map(t => `<option value="${t.id}">${t.name}</option>`).join('')
-            : '<option value="">-- ยังไม่มี Terminal กรุณาสร้างก่อน --</option>';
-          if (this.terminals.length) await this.checkSession();
+            : '<option value="">-- ยังไม่มีเครื่องขาย กรุณาสร้างก่อน --</option>';
+          if (this.terminals.length) {
+            await this.checkSession();
+          } else if (!this._guideShown) {
+            // First-time setup — walk the user through getting started.
+            this._guideShown = true;
+            this.showGuide();
+          }
         } catch (e) { Layout.toast('โหลด Terminal ล้มเหลว: ' + e.message, 'error'); }
+      },
+
+      showGuide() {
+        const steps = [
+          'สร้าง <b>เครื่องขาย (Terminal)</b> — กดปุ่ม "+ เครื่องขาย" ตั้งชื่อ + เลือกประเภทธุรกิจ',
+          '<b>เปิดกะขาย</b> — เลือกเครื่องขาย แล้วกด "เปิดกะ" พร้อมระบุเงินสดตั้งต้นในลิ้นชัก',
+          'เตรียม <b>สินค้า/บริการ</b> — ถ้ายังไม่มี เพิ่มที่เมนูสินค้า (POS จะดึงมาแสดงอัตโนมัติ)',
+          '<b>ขายสินค้า</b> — คลิกสินค้าทางซ้ายเพื่อเพิ่มลงออเดอร์ ปรับจำนวน/ส่วนลดได้',
+          '<b>รับชำระเงิน</b> — เลือกวิธีชำระ (เงินสด/โอน/บัตร/พร้อมเพย์) กด "ชำระเงิน" แล้ว "ปิดบิล" — ระบบตัดสต็อก + ลงบัญชีให้อัตโนมัติ',
+          '<b>ปิดกะ</b> — สิ้นวันกด "ปิดกะ" นับเงินจริงในลิ้นชัก ระบบจะกระทบยอดเงินขาด/เกินให้',
+        ];
+        document.getElementById('guideSteps').innerHTML = steps.map(s => `<li>${s}</li>`).join('');
+        Layout.openModal('guideModal');
+      },
+
+      openCreateTerminal() {
+        document.getElementById('fTermName').value = '';
+        document.getElementById('fTermMode').value = 'Trading';
+        document.getElementById('fTermLocation').value = '';
+        Layout.openModal('terminalModal');
+      },
+
+      async createTerminal() {
+        const api = Layout.api(); if (!api) return;
+        const name = document.getElementById('fTermName').value.trim();
+        if (!name) { Layout.toast('กรุณาระบุชื่อเครื่องขาย', 'error'); return; }
+        try {
+          await api.createPosTerminal({
+            name,
+            businessMode: document.getElementById('fTermMode').value,
+            location: document.getElementById('fTermLocation').value.trim() || null,
+            settingsJson: null,
+          });
+          Layout.closeModal('terminalModal');
+          Layout.toast('สร้างเครื่องขายสำเร็จ');
+          await this.loadTerminals();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async checkSession() {
