@@ -121,7 +121,11 @@ public record DocumentResponse(
     RdComplianceStatus RdComplianceStatus = RdComplianceStatus.Pending,
     string? RdComplianceIssuesJson = null,
     bool OcrTenantMismatchFlag = false,
-    int? AgingDays = null);
+    int? AgingDays = null,
+    // Days a document has sat in a non-terminal status (Draft/WaitingApproval/
+    // Approved/Sent/Partially-paid) beyond the stale threshold — null when not
+    // stale. Surfaces "forgotten" documents (e.g. a PO left 3 months).
+    int? StaleDays = null);
 
 public record DocumentLineResponse(
     Guid Id,

@@ -60,6 +60,7 @@
         <option value="PartiallyPaid">ชำระบางส่วน</option>
         <option value="Overdue">เกินกำหนด</option>
         <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
+        <option value="stale">⚠️ คงค้างนาน (60+ วัน)</option>
       </select>
       <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
         <option value="">ทุกโครงการ</option>
@@ -756,7 +757,8 @@
           const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
           types.forEach(t => q += `&types=${t}`);
         }
-        if (status) q += `&status=${status}`;
+        if (status === 'stale') q += '&staleOnly=true';
+        else if (status) q += `&status=${status}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
         if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
@@ -795,6 +797,13 @@
               const color = d.agingDays >= 90 ? '#dc2626' : (d.agingDays >= 60 ? '#ea580c' : '#d97706');
               agingBadge = `<span title="ค้างชำระ ${d.agingDays} วัน" style="margin-left:6px;padding:1px 6px;background:${color};color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ ${tier}d</span>`;
             }
+            // Stale badge — document parked in a non-terminal status too long
+            // (e.g. a PO left for months). Independent of payment aging.
+            let staleBadge = '';
+            if (d.staleDays) {
+              const sc = d.staleDays >= 180 ? '#b91c1c' : (d.staleDays >= 90 ? '#dc2626' : '#ea580c');
+              staleBadge = `<span title="เอกสารคงค้างในสถานะนี้มา ${d.staleDays} วัน — ควรตรวจสอบ/อัปเดต" style="margin-left:6px;padding:1px 6px;background:${sc};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🕒 คงค้าง ${d.staleDays}d</span>`;
+            }
             // RD compliance dot (small).
             let rdBadge = '';
             if (d.rdComplianceStatus === 'Failed' || d.ocrTenantMismatchFlag) {
@@ -804,7 +813,7 @@
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${rdBadge}</td>
+            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${staleBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>

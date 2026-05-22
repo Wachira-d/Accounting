@@ -60,13 +60,16 @@ public class DocumentAgingBackgroundService : BackgroundService
 
         // PostgreSQL-native date arithmetic via raw SQL — portable across
         // EF Core versions and avoids the SqlServer-only DateDiffDay helper.
-        // Status enum: Approved = 1 in DocumentStatus (see AllEnums.cs).
+        // DocumentStatus (AllEnums.cs): Approved=2, Sent=3, PartiallyPaid=4,
+        // Overdue=7 — the posted-but-unpaid states that should age. (The old
+        // code used Status=1, which is WaitingApproval — a bug: approved
+        // unpaid invoices never aged.)
         var sqlUpdate = """
             UPDATE "Documents"
                SET "AgingDays" = EXTRACT(DAY FROM (CURRENT_DATE - "DocumentDate"))::int,
                    "AgingLastEvaluatedAt" = NOW()
              WHERE "IsDeleted" = false
-               AND "Status" = 1
+               AND "Status" IN (2, 3, 4, 7)
                AND "TotalAmount" > 0
                AND "PaidAmount" < "TotalAmount"
         """;
@@ -78,7 +81,7 @@ public class DocumentAgingBackgroundService : BackgroundService
                SET "AgingDays" = NULL,
                    "AgingLastEvaluatedAt" = NOW()
              WHERE "AgingDays" IS NOT NULL
-               AND ("IsDeleted" = true OR "Status" <> 1 OR "PaidAmount" >= "TotalAmount")
+               AND ("IsDeleted" = true OR "Status" NOT IN (2, 3, 4, 7) OR "PaidAmount" >= "TotalAmount")
         """;
         var cleared = await db.Database.ExecuteSqlRawAsync(sqlClear, ct);
 

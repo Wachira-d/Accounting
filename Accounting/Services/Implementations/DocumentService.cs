@@ -265,7 +265,7 @@ public class DocumentService : IDocumentService
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
@@ -294,6 +294,16 @@ public class DocumentService : IDocumentService
 
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<DocumentStatus>(status, true, out var statusEnum))
             query = query.Where(d => d.Status == statusEnum);
+
+        // Stale = parked in a non-terminal status past the threshold.
+        if (staleOnly)
+        {
+            var staleCutoff = DateTime.UtcNow.Date.AddDays(-StaleThresholdDays);
+            query = query.Where(d => d.DocumentDate < staleCutoff
+                && d.Status != DocumentStatus.Paid
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected);
+        }
 
         if (fromDate.HasValue)
             query = query.Where(d => d.DocumentDate >= fromDate.Value);
@@ -2866,7 +2876,20 @@ public class DocumentService : IDocumentService
         RdComplianceStatus: d.RdComplianceStatus,
         RdComplianceIssuesJson: d.RdComplianceIssuesJson,
         OcrTenantMismatchFlag: d.OcrTenantMismatchFlag,
-        AgingDays: d.AgingDays);
+        AgingDays: d.AgingDays,
+        StaleDays: ComputeStaleDays(d));
+
+    /// <summary>Days a document has been parked in a non-terminal status past
+    /// the stale threshold — null when fresh or in a terminal status.
+    /// Terminal = Paid / Voided / Rejected.</summary>
+    private const int StaleThresholdDays = 60;
+    private static int? ComputeStaleDays(Document d)
+    {
+        if (d.Status is DocumentStatus.Paid or DocumentStatus.Voided or DocumentStatus.Rejected)
+            return null;
+        var days = (int)(DateTime.UtcNow.Date - d.DocumentDate.Date).TotalDays;
+        return days > StaleThresholdDays ? days : null;
+    }
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
