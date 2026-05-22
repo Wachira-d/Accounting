@@ -92,7 +92,7 @@
           </div>
         </div>
         <div class="pos-search">
-          <input type="text" placeholder="ค้นหาสินค้า/บริการ..." id="searchInput" oninput="Page.filterItems()">
+          <input type="text" placeholder="ค้นหา หรือ สแกนบาร์โค้ด แล้วกด Enter…" id="searchInput" oninput="Page.filterItems()" onkeydown="if(event.key==='Enter'){event.preventDefault();Page.onScan();}" autocomplete="off">
         </div>
         <div class="pos-categories" id="categories"></div>
         <div class="pos-grid" id="productGrid">
@@ -405,8 +405,8 @@
           this.products = (prodRes.data?.items || prodRes.data || []).filter(p => p.isActive);
           this.packages = (pkgRes.data || []).filter(p => p.isActive);
           this.allItems = [
-            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, price:p.sellingPrice, category:p.category||'สินค้า' })),
-            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, price:p.price, category:p.category||'บริการ' }))
+            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า' })),
+            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ' }))
           ];
           this.buildCategories();
           this.filterItems();
@@ -425,6 +425,27 @@
         document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
         event.target.classList.add('active');
         this.filterItems();
+      },
+
+      // Barcode scan — a scanner types the code then sends Enter. On Enter,
+      // an exact barcode/code match is added straight to the cart; otherwise
+      // if the search has narrowed to a single item, that one is added.
+      onScan() {
+        const raw = (document.getElementById('searchInput').value || '').trim();
+        if (!raw) return;
+        const q = raw.toLowerCase();
+        let hit = this.allItems.find(i =>
+          (i.barcode && String(i.barcode).toLowerCase() === q) ||
+          (i.code && String(i.code).toLowerCase() === q));
+        if (!hit && this.filteredItems.length === 1) hit = this.filteredItems[0];
+        if (hit) {
+          this.addToCart(hit.type, hit.id);
+          document.getElementById('searchInput').value = '';
+          this.filterItems();
+          Layout.toast(`เพิ่ม: ${hit.name}`, 'success');
+        } else {
+          Layout.toast('ไม่พบสินค้าตามรหัส/บาร์โค้ดนี้', 'warning');
+        }
       },
 
       filterItems() {
