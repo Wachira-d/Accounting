@@ -145,7 +145,8 @@ public partial class PosService
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
         if (order.Status == PosOrderStatus.Voided) throw new InvalidOperationException("ออเดอร์นี้ถูกยกเลิกไปแล้ว");
 
-        if (order.Status == PosOrderStatus.Completed)
+        var wasCompleted = order.Status == PosOrderStatus.Completed;
+        if (wasCompleted)
         {
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
             {
@@ -172,6 +173,23 @@ public partial class PosService
 
         order.Status = PosOrderStatus.Voided;
         await _db.SaveChangesAsync();
+
+        // Reverse the sales journal entry — voiding a completed POS sale must
+        // back out the GL impact (cash/revenue/VAT/COGS), else revenue and
+        // cash stay overstated.
+        if (wasCompleted && order.JournalEntryId.HasValue)
+        {
+            try
+            {
+                await _accountingService.ReverseJournalEntryAsync(companyId, order.JournalEntryId.Value,
+                    DateTime.UtcNow, $"กลับรายการ POS ยกเลิกบิล #{order.OrderNumber}", true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "POS void: JE reversal failed for order {OrderNumber} in company {CompanyId}",
+                    order.OrderNumber, companyId);
+            }
+        }
     }
 
     // ==================== Order Items ====================
@@ -322,6 +340,34 @@ public partial class PosService
         // Credit: VAT Payable (if any)
         if (order.VatAmount > 0 && vatAccount != null)
             lines.Add(new(vatAccount.Id, 0, order.VatAmount, $"ภาษีขาย POS #{order.OrderNumber}"));
+
+        // COGS: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — record cost of goods sold so
+        // the P&L gross profit is correct (was previously omitted).
+        var prodIds = order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted)
+            .Select(i => i.ProductId!.Value).Distinct().ToList();
+        if (prodIds.Count > 0)
+        {
+            var costByProduct = await _db.Products
+                .Where(p => prodIds.Contains(p.Id) && p.TrackStock)
+                .ToDictionaryAsync(p => p.Id, p => p.CostPrice);
+            decimal totalCogs = 0;
+            foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
+                if (costByProduct.TryGetValue(item.ProductId!.Value, out var cost))
+                    totalCogs += item.Quantity * cost;
+            totalCogs = Math.Round(totalCogs, 2, MidpointRounding.AwayFromZero);
+            if (totalCogs > 0)
+            {
+                var cogsAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "51110")
+                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("511") && a.Level >= 4);
+                var inventoryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11500")
+                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115") && a.Level >= 4);
+                if (cogsAccount != null && inventoryAccount != null)
+                {
+                    lines.Add(new(cogsAccount.Id, totalCogs, 0, $"ต้นทุนขาย POS #{order.OrderNumber}"));
+                    lines.Add(new(inventoryAccount.Id, 0, totalCogs, $"ตัดสินค้าคงเหลือ POS #{order.OrderNumber}"));
+                }
+            }
+        }
 
         var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
             DateTime.UtcNow, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines);

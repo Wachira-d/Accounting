@@ -605,9 +605,73 @@
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.completePosOrder(orderId);
+          // Snapshot the bill BEFORE the cart is cleared, so we can print.
+          const snap = this._buildReceiptSnapshot(res?.data);
           Layout.toast('ปิดบิลสำเร็จ!');
           this.resetOrder();
+          this.printReceipt(snap);
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      _buildReceiptSnapshot(orderData) {
+        const subtotal = this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
+        const vat = Math.round(subtotal * 7 / 107 * 100) / 100;
+        const net = subtotal;
+        const paid = this.paidTotal || net;
+        return {
+          orderNumber: orderData?.orderNumber || this.currentOrder?.orderNumber || '-',
+          dateTime: new Date().toLocaleString('th-TH'),
+          customer: document.getElementById('fCustomerName')?.value || '',
+          items: this.cart.map(c => ({ name: c.name, qty: c.quantity, price: c.unitPrice, total: c.unitPrice * c.quantity })),
+          subtotal, vat, net, paid, change: Math.max(0, paid - net),
+        };
+      },
+
+      printReceipt(snap) {
+        if (!snap || !snap.items.length) return;
+        let company = {};
+        try { company = JSON.parse(localStorage.getItem('currentCompany') || '{}'); } catch {}
+        const m = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        const rows = snap.items.map(i =>
+          `<tr><td>${esc(i.name)}</td><td class="r">${i.qty}</td><td class="r">${m(i.price)}</td><td class="r">${m(i.total)}</td></tr>`).join('');
+        const html = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ใบเสร็จ ${esc(snap.orderNumber)}</title>
+          <style>
+            @page { size: 80mm auto; margin: 4mm; }
+            body { font-family: 'Tahoma','Sarabun',sans-serif; font-size: 12px; width: 72mm; margin: 0 auto; color: #000; }
+            h2 { text-align:center; margin: 2px 0; font-size: 14px; }
+            .c { text-align:center; } .r { text-align:right; } .muted { color:#444; font-size:11px; }
+            table { width:100%; border-collapse:collapse; margin: 6px 0; }
+            td,th { padding: 2px 0; }
+            .line { border-top: 1px dashed #000; margin: 4px 0; }
+            .tot td { padding: 1px 0; }
+          </style></head><body>
+          <h2>${esc(company.name || 'ใบเสร็จรับเงิน')}</h2>
+          <div class="c muted">${esc(company.taxId ? 'เลขผู้เสียภาษี ' + company.taxId : '')}</div>
+          <div class="c muted">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</div>
+          <div class="line"></div>
+          <div class="muted">เลขที่: ${esc(snap.orderNumber)}</div>
+          <div class="muted">วันที่: ${esc(snap.dateTime)}</div>
+          ${snap.customer ? `<div class="muted">ลูกค้า: ${esc(snap.customer)}</div>` : ''}
+          <div class="line"></div>
+          <table><thead><tr><th style="text-align:left">รายการ</th><th class="r">จำนวน</th><th class="r">ราคา</th><th class="r">รวม</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+          <div class="line"></div>
+          <table class="tot">
+            <tr><td>รวมเป็นเงิน</td><td class="r">${m(snap.subtotal)}</td></tr>
+            <tr><td>ภาษีมูลค่าเพิ่ม 7% (รวมในราคา)</td><td class="r">${m(snap.vat)}</td></tr>
+            <tr><td><b>ยอดสุทธิ</b></td><td class="r"><b>${m(snap.net)}</b></td></tr>
+            <tr><td>รับเงิน</td><td class="r">${m(snap.paid)}</td></tr>
+            <tr><td>เงินทอน</td><td class="r">${m(snap.change)}</td></tr>
+          </table>
+          <div class="line"></div>
+          <div class="c muted">ขอบคุณที่ใช้บริการ</div>
+          <script>window.onload=function(){window.print();}<\/script>
+          </body></html>`;
+        const w = window.open('', '_blank', 'width=380,height=600');
+        if (!w) { Layout.toast('เปิดหน้าต่างพิมพ์ไม่ได้ — โปรดอนุญาต popup', 'warning'); return; }
+        w.document.write(html);
+        w.document.close();
       },
 
       async voidOrder() {
