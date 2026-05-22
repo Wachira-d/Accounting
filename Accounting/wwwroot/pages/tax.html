@@ -266,6 +266,7 @@
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
             <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="Page.exportEFiling('${r.id}','${r.taxType}',${r.year},${r.month})" title="ดาวน์โหลดไฟล์ pipe-delimited สำหรับยื่น RD">📥 e-Filing</button>
+            <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="Page.exportXlsx('${r.id}')" title="ส่งออกรายงานเป็น Excel — VAT แยกชีตภาษีขาย/ภาษีซื้อ">📊 Excel</button>
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
@@ -566,6 +567,25 @@
           a.click();
           URL.revokeObjectURL(a.href);
           Layout.toast(`ดาวน์โหลด ${form} สำเร็จ — ไฟล์พร้อมส่ง RD`);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async exportXlsx(reportId) {
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        try {
+          const res = await fetch(`/api/companies/${cid}/tax/${reportId}/export-xlsx`,
+            { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) throw new Error(`ส่งออก Excel ล้มเหลว (${res.status})`);
+          const blob = await res.blob();
+          const cd = res.headers.get('content-disposition') || '';
+          const m = cd.match(/filename="?([^"]+)"?/);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = m ? m[1] : `TaxReport_${reportId}.xlsx`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          Layout.toast('ส่งออก Excel สำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 

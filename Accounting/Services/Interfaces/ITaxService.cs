@@ -19,6 +19,8 @@ public interface ITaxService
     Task<List<PullableDocumentDto>> GetPullableDocumentsAsync(Guid companyId, Guid reportId, string? search, DateTime? fromDate, DateTime? toDate);
     /// <summary>ดึงเอกสารเก่าเข้ารายงานภาษีงวดนี้เป็นบรรทัดใหม่</summary>
     Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId);
+    /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx) — VAT แยกชีตภาษีขาย/ภาษีซื้อ</summary>
+    Task<(byte[] Content, string FileName)> ExportTaxReportXlsxAsync(Guid companyId, Guid reportId);
 
     // Task 4 of ERP upgrade
     Task<Models.Entities.VatDeferral> DeferInputVatAsync(Guid companyId, Guid documentId, int deferredToPeriod, string? reason, string userId);

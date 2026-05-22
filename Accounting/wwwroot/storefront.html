@@ -190,7 +190,7 @@
           if (!siteId || !companyId) {
             const host = location.hostname.toLowerCase();
             const sub = pathSubdomain || params.get('subdomain') || (host.includes('.') ? host.split('.')[0] : host);
-            const resolved = await this.resolveSite(sub, host);
+            const resolved = await this.resolveSite(sub, host, this.pathBased);
             if (!resolved) {
               this.renderNotFound();
               return;
@@ -199,7 +199,7 @@
             companyId = resolved.companyId;
             this.site = resolved;
           } else {
-            const resolved = await this.resolveSite(params.get('subdomain') || pathSubdomain || '', location.hostname);
+            const resolved = await this.resolveSite(params.get('subdomain') || pathSubdomain || '', location.hostname, this.pathBased);
             this.site = resolved;
           }
 
@@ -232,12 +232,18 @@
         }
       },
 
-      async resolveSite(subdomain, host) {
-        // Try by full host first (custom domain), fall back to subdomain
-        try {
-          const r1 = await fetch(`/api/cms/resolve/domain/${encodeURIComponent(host)}`);
-          if (r1.ok) { const j = await r1.json(); if (j?.data) return j.data; }
-        } catch(_) {}
+      async resolveSite(subdomain, host, pathBased) {
+        // Path-based routing (/site/{key}) — the path key is authoritative.
+        // The host here is the SHARED app domain (e.g. nextacc.net), so a
+        // domain lookup would resolve to the wrong site (or the main app).
+        // Resolve strictly by the path subdomain/slug key in that case.
+        if (!pathBased) {
+          // Host-based routing — try the full host first (custom domain).
+          try {
+            const r1 = await fetch(`/api/cms/resolve/domain/${encodeURIComponent(host)}`);
+            if (r1.ok) { const j = await r1.json(); if (j?.data) return j.data; }
+          } catch(_) {}
+        }
         if (subdomain && subdomain !== 'localhost' && subdomain !== '127' && !subdomain.includes(':')) {
           try {
             const r2 = await fetch(`/api/cms/resolve/subdomain/${encodeURIComponent(subdomain)}`);

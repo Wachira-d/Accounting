@@ -81,6 +81,14 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "ดึงเอกสารเข้ารายงานสำเร็จ"));
     }
 
+    /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx)</summary>
+    [HttpGet("{reportId:guid}/export-xlsx")]
+    public async Task<IActionResult> ExportTaxReportXlsx(Guid companyId, Guid reportId)
+    {
+        var (content, fileName) = await _taxService.ExportTaxReportXlsxAsync(companyId, reportId);
+        return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+    }
+
     [HttpDelete("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> DeleteTaxReport(Guid companyId, Guid reportId)
     {
