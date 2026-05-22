@@ -924,21 +924,26 @@ public partial class TaxService : ITaxService
                 if (lineUpdate.TaxRate.HasValue) line.TaxRate = lineUpdate.TaxRate.Value;
                 if (lineUpdate.TaxAmount.HasValue) line.TaxAmount = lineUpdate.TaxAmount.Value;
                 if (lineUpdate.Description != null) line.Description = lineUpdate.Description;
+                if (lineUpdate.Excluded.HasValue) line.IsExcluded = lineUpdate.Excluded.Value;
                 line.UpdatedAt = DateTime.UtcNow;
             }
 
+            // Totals recalc — lines the accountant excluded (IsExcluded) are
+            // kept for audit but do NOT count toward the filed figures.
             if (report.TaxType == TaxType.VAT)
             {
-                var nonSummaryLines = report.Lines.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
+                var active = report.Lines.Where(l => !l.IsExcluded);
+                var nonSummaryLines = active.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
                 report.OutputVat = nonSummaryLines.Where(l => l.IncomeTypeCode != "INPUT").Sum(l => l.TaxAmount);
                 report.InputVat = nonSummaryLines.Where(l => l.IncomeTypeCode == "INPUT").Sum(l => l.TaxAmount);
-                var creditCf = report.Lines.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
+                var creditCf = active.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
                 report.NetVat = report.OutputVat - report.InputVat - creditCf;
             }
             else
             {
-                report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
-                report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
+                var active = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY");
+                report.TotalIncome = active.Sum(l => l.IncomeAmount);
+                report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
             }
         }
 
@@ -1103,6 +1108,6 @@ public partial class TaxService : ITaxService
         r.Lines.OrderBy(l => l.LineOrder).Select(l => new TaxReportLineResponse(
             l.Id, l.LineOrder, l.TaxPayerId, l.TaxPayerName,
             l.TransactionDate, l.Description, l.IncomeAmount,
-            l.TaxRate, l.TaxAmount, l.IncomeTypeCode)).ToList(),
+            l.TaxRate, l.TaxAmount, l.IncomeTypeCode, l.IsExcluded)).ToList(),
         r.Notes);
 }

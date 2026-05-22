@@ -2385,6 +2385,9 @@ public static class DatabaseMigrationHelper
               AND "IsSystemAccount" = true
               AND "InputVatClaimable" = true;
             """,
+
+            // ===== TaxReportLines.IsExcluded: accountant include/exclude toggle =====
+            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "IsExcluded" boolean NOT NULL DEFAULT false;""",
         };
 
         foreach (var sql in statements)

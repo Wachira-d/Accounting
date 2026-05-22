@@ -31,7 +31,8 @@ public record UpdateTaxReportLineRequest(
     decimal? IncomeAmount,
     decimal? TaxRate,
     decimal? TaxAmount,
-    string? Description);
+    string? Description,
+    bool? Excluded = null);
 
 public record TaxReportLineResponse(
     Guid Id,
@@ -43,4 +44,5 @@ public record TaxReportLineResponse(
     decimal IncomeAmount,
     decimal TaxRate,
     decimal TaxAmount,
-    string? IncomeTypeCode);
+    string? IncomeTypeCode,
+    bool IsExcluded = false);

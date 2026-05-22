@@ -279,16 +279,56 @@
             </div>
             <div id="vatDebugBox"></div>`;
           if (d.lines && d.lines.length) {
-            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px" data-i18n="common.detail">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>#</th><th data-i18n="common.items">รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
-            html += d.lines.map((ln, i) => `<tr>
-              <td>${ln.lineOrder}</td>
-              <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${(ln.description||'').replace(/"/g,'&quot;')}" style="min-width:120px">` : (ln.description || '-')}</td>
-              <td class="text-xs">${ln.taxPayerName || '-'}</td>
-              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
-              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:70px">` : ln.taxRate}</td>
-              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
-            </tr>`).join('');
-            html += '</tbody></table></div>';
+            const isVat = d.taxType === 'VAT';
+            // Classify each line by VAT side using its IncomeTypeCode
+            // (matches the server-side recalc grouping in UpdateTaxReportAsync).
+            const sideOf = (ln) => {
+              const c = ln.incomeTypeCode;
+              if (c === 'INPUT' || c === 'JE_INPUT') return 'input';
+              if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary';
+              return 'output';
+            };
+            const esc = (s) => (s || '').replace(/"/g, '&quot;');
+            const renderRow = (ln) => {
+              const ex = !!ln.isExcluded;
+              const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
+              const chk = editable
+                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
+                : (ex ? '✗' : '✓');
+              return `<tr style="${rowStyle}">
+                <td class="text-center">${chk}</td>
+                <td>${ln.lineOrder}</td>
+                <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${esc(ln.description)}" style="min-width:160px">` : (ln.description || '-')}</td>
+                <td class="text-xs">${ln.taxPayerName || '-'}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:64px">` : ln.taxRate}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
+              </tr>`;
+            };
+            const renderTable = (title, color, rows) => {
+              const sub = rows.filter(r => !r.isExcluded).reduce((s, r) => s + Number(r.taxAmount || 0), 0);
+              return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span></div>
+                <div class="table-container"><table class="table">
+                <thead><tr><th style="width:36px" title="เลือกใช้/ไม่ใช้">ใช้</th><th>#</th><th>รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead>
+                <tbody>${rows.map(renderRow).join('')}</tbody>
+                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="6" class="text-right">รวมภาษี (เฉพาะรายการที่เลือกใช้)</td><td class="text-right">${Layout.money(sub)}</td></tr></tfoot>
+                </table></div>`;
+            };
+            html += '<h4 class="text-sm font-semibold" style="margin:14px 0 0">รายละเอียด</h4>';
+            html += '<div class="text-xs text-gray-400" style="margin:2px 0 4px">ติ๊ก "ใช้" ออกเพื่อไม่นำรายการนั้นเข้ายอดรายงาน (รายการยังถูกเก็บไว้)</div>';
+            if (isVat) {
+              const groups = [
+                ['output', '📤 ภาษีขาย (Output VAT)', '#0369a1'],
+                ['input', '📥 ภาษีซื้อ (Input VAT)', '#7c3aed'],
+                ['summary', '➖ รายการยกเว้น / เครดิตยกมา', '#64748b'],
+              ];
+              for (const [key, title, color] of groups) {
+                const rows = d.lines.filter(l => sideOf(l) === key);
+                if (rows.length) html += renderTable(title, color, rows);
+              }
+            } else {
+              html += renderTable('รายการ', '#334155', d.lines);
+            }
           }
           html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${d.notes || ''}</textarea>` : `<div>${d.notes || '-'}</div>`}</div>`;
           if (d.filingReference) {
@@ -355,7 +395,9 @@
           const lid = inp.dataset.line;
           if (!lineMap[lid]) lineMap[lid] = { id: lid };
           const field = inp.dataset.field;
-          lineMap[lid][field] = field === 'description' ? inp.value : parseFloat(inp.value) || 0;
+          if (field === 'include') lineMap[lid].excluded = !inp.checked;
+          else if (field === 'description') lineMap[lid][field] = inp.value;
+          else lineMap[lid][field] = parseFloat(inp.value) || 0;
         });
         const lines = Object.values(lineMap);
         try {
