@@ -34,6 +34,18 @@ public record UpdateTaxReportLineRequest(
     string? Description,
     bool? Excluded = null);
 
+public record PullableDocumentDto(
+    Guid Id,
+    string DocumentNumber,
+    string DocumentType,
+    DateTime DocumentDate,
+    string ContactName,
+    decimal SubTotal,
+    decimal VatAmount,
+    bool IsInput);
+
+public record PullDocumentRequest(Guid DocumentId);
+
 public record TaxReportLineResponse(
     Guid Id,
     int LineOrder,

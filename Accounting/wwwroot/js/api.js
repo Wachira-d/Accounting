@@ -305,6 +305,8 @@ const API = {
       regenerateTaxReport: (id) => API.post(`${base}/tax/${id}/regenerate`),
       deleteTaxReport: (id) => API.del(`${base}/tax/${id}`),
       vatDebug: (year, month) => API.get(`${base}/tax/vat-debug?year=${year}&month=${month}`),
+      getPullableDocuments: (reportId, q = '') => API.get(`${base}/tax/${reportId}/pullable-documents${q}`),
+      pullDocumentIntoReport: (reportId, documentId) => API.post(`${base}/tax/${reportId}/pull-document`, { documentId }),
       // Tax Filing Export
       exportPnd1: (year, month) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}`,
       exportPnd3: (year, month) => `${base}/tax-filing-export/pnd3?year=${year}&month=${month}`,

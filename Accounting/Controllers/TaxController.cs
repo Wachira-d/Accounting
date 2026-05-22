@@ -62,6 +62,25 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีใหม่สำเร็จ"));
     }
 
+    /// <summary>เอกสารงวดอื่นที่มี VAT และยังไม่ถูกใช้ในรายงานใด — สำหรับเลือกดึงเข้างวดนี้</summary>
+    [HttpGet("{reportId:guid}/pullable-documents")]
+    public async Task<ActionResult<ApiResponse<List<PullableDocumentDto>>>> GetPullableDocuments(
+        Guid companyId, Guid reportId,
+        [FromQuery] string? search = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+    {
+        var result = await _taxService.GetPullableDocumentsAsync(companyId, reportId, search, fromDate, toDate);
+        return Ok(new ApiResponse<List<PullableDocumentDto>>(true, result));
+    }
+
+    /// <summary>ดึงเอกสารเก่าเข้ารายงานภาษีงวดนี้เป็นบรรทัดใหม่</summary>
+    [HttpPost("{reportId:guid}/pull-document")]
+    public async Task<ActionResult<ApiResponse<TaxReportResponse>>> PullDocument(
+        Guid companyId, Guid reportId, [FromBody] PullDocumentRequest request)
+    {
+        var result = await _taxService.PullDocumentIntoReportAsync(companyId, reportId, request.DocumentId);
+        return Ok(new ApiResponse<TaxReportResponse>(true, result, "ดึงเอกสารเข้ารายงานสำเร็จ"));
+    }
+
     [HttpDelete("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> DeleteTaxReport(Guid companyId, Guid reportId)
     {

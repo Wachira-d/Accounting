@@ -99,6 +99,24 @@
         <div class="modal-footer" id="detailFooter"></div>
       </div>
     </div>
+
+    <!-- Pull Document Modal -->
+    <div class="modal-overlay" id="pullDocModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header"><h3 class="modal-title">ดึงเอกสารเข้ารายงาน</h3><button class="modal-close" onclick="Layout.closeModal('pullDocModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="text-xs text-gray-400" style="margin-bottom:8px">เอกสารที่มี VAT จากงวดอื่นซึ่งยังไม่ถูกใช้ในรายงานภาษีใด — เลือกดึงเข้ารายงานงวดนี้</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <input class="form-input form-input-sm" id="pullSearch" placeholder="🔍 ค้นหาเลขที่/ชื่อผู้ติดต่อ" style="flex:1;min-width:160px" onkeydown="if(event.key==='Enter')Page.loadPullable()">
+            <input type="date" class="form-input form-input-sm" id="pullFrom" title="ตั้งแต่วันที่">
+            <input type="date" class="form-input form-input-sm" id="pullTo" title="ถึงวันที่">
+            <button class="btn btn-sm btn-secondary" onclick="Page.loadPullable()">ค้นหา</button>
+          </div>
+          <div id="pullDocList"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('pullDocModal')">ปิด</button></div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -337,7 +355,8 @@
           document.getElementById('detailContent').innerHTML = html;
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (editable) {
-            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button><button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
+            const pullBtn = d.taxType === 'VAT' ? `<button class="btn btn-secondary" onclick="Page.openPullDoc('${d.id}')" style="margin-right:8px">➕ ดึงเอกสาร</button>` : '';
+            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button>${pullBtn}<button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
@@ -405,6 +424,56 @@
           Layout.toast('บันทึกสำเร็จ');
           await this.load();
           await this.viewDetail(id);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _pullReportId: null,
+      openPullDoc(reportId) {
+        this._pullReportId = reportId;
+        document.getElementById('pullSearch').value = '';
+        const now = new Date();
+        const from = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+        document.getElementById('pullFrom').value = from.toISOString().slice(0, 10);
+        document.getElementById('pullTo').value = now.toISOString().slice(0, 10);
+        Layout.openModal('pullDocModal');
+        this.loadPullable();
+      },
+      async loadPullable() {
+        const api = Layout.api(); if (!api || !this._pullReportId) return;
+        const list = document.getElementById('pullDocList');
+        list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div>';
+        const p = new URLSearchParams();
+        const s = document.getElementById('pullSearch').value.trim();
+        const f = document.getElementById('pullFrom').value;
+        const t = document.getElementById('pullTo').value;
+        if (s) p.set('search', s);
+        if (f) p.set('fromDate', f);
+        if (t) p.set('toDate', t);
+        try {
+          const res = await api.getPullableDocuments(this._pullReportId, '?' + p.toString());
+          const docs = res.data || [];
+          if (!docs.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ไม่พบเอกสารที่ดึงได้</div>'; return; }
+          list.innerHTML = `<div class="table-container"><table class="table"><thead><tr>
+            <th>ประเภท</th><th>เลขที่</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">มูลค่า</th><th class="text-right">VAT</th><th></th>
+            </tr></thead><tbody>${docs.map(d => `<tr>
+            <td><span class="badge badge-${d.isInput ? 'primary' : 'success'}">${d.isInput ? 'ซื้อ' : 'ขาย'}</span></td>
+            <td>${d.documentNumber}</td>
+            <td class="text-xs">${Layout.date(d.documentDate)}</td>
+            <td class="text-xs">${d.contactName}</td>
+            <td class="text-right">${Layout.money(d.subTotal)}</td>
+            <td class="text-right">${Layout.money(d.vatAmount)}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="Page.pullDoc('${d.id}')">ดึง</button></td>
+            </tr>`).join('')}</tbody></table></div>`;
+        } catch (e) { list.innerHTML = `<div class="text-center text-danger" style="padding:20px">${e.message}</div>`; }
+      },
+      async pullDoc(documentId) {
+        const api = Layout.api(); if (!api || !this._pullReportId) return;
+        try {
+          await api.pullDocumentIntoReport(this._pullReportId, documentId);
+          Layout.toast('ดึงเอกสารเข้ารายงานสำเร็จ');
+          const rid = this._pullReportId;
+          Layout.closeModal('pullDocModal');
+          await this.load();
+          await this.viewDetail(rid);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async fileReport(id) {
