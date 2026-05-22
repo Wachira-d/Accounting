@@ -71,6 +71,12 @@
       .pos-layout { flex-direction:column; }
       .pos-right { width:100%; height:50vh; }
     }
+    /* ===== Kiosk mode — POS runs full-screen, no accounting sidebar/header ===== */
+    body.pos-mode .sidebar, body.pos-mode .sidebar-overlay, body.pos-mode .app-header { display:none !important; }
+    body.pos-mode .main-content { margin-left:0 !important; width:100% !important; }
+    body.pos-mode .pos-layout, body.pos-mode #pageContent { height:100vh; }
+    .pos-brand { font-weight:800; color:var(--primary); font-size:15px; }
+    .pos-brand .co { font-weight:500; color:var(--gray-500); font-size:12px; }
   </style>
 </head>
 <body>
@@ -80,15 +86,18 @@
       <div class="pos-left">
         <div class="pos-topbar">
           <div class="session-info" id="sessionInfo">
+            <span class="pos-brand">🛒 POS <span class="co" id="posCompany"></span></span>
             <span class="session-dot closed" id="sessionDot"></span>
             <span id="sessionText">ยังไม่เปิดกะ</span>
           </div>
-          <div style="display:flex;gap:6px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <select id="terminalSelect" class="form-select" style="font-size:13px;padding:6px 10px;" onchange="Page.onTerminalChange()"></select>
             <button class="btn btn-sm btn-secondary" onclick="Page.openCreateTerminal()" title="สร้างเครื่องขาย (Terminal) ใหม่">+ เครื่องขาย</button>
             <button class="btn btn-sm btn-primary" id="btnSession" onclick="Page.toggleSession()">เปิดกะ</button>
-            <button class="btn btn-sm btn-ghost" onclick="Page.showDailySummary()">สรุปยอด</button>
-            <button class="btn btn-sm btn-ghost" onclick="Page.showGuide()" title="แนะนำการเริ่มใช้งาน POS">❓ เริ่มใช้งาน</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.showDailySummary()">📊 สรุปยอด</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.openPrintSettings()" title="ตั้งค่าใบเสร็จ / เครื่องพิมพ์ Thermal">🖨️ ตั้งค่าพิมพ์</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.showGuide()" title="แนะนำการเริ่มใช้งาน POS">❓</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.exitPos()" title="กลับสู่ระบบบัญชี">🏠 ออก</button>
           </div>
         </div>
         <div class="pos-search">
@@ -147,6 +156,9 @@
             <button class="btn btn-complete" onclick="Page.completeOrder()">ปิดบิล</button>
             <button class="btn btn-void" onclick="Page.voidOrder()" data-i18n="common.cancel">ยกเลิก</button>
           </div>
+          <div class="btn-row">
+            <button class="btn btn-secondary" style="flex:1;font-size:13px;" onclick="Page.printKitchenTicket()" title="พิมพ์ใบออเดอร์ส่งครัว/บาร์">🍳 พิมพ์เข้าครัว/บาร์</button>
+          </div>
         </div>
       </div>
     </div>
@@ -189,6 +201,36 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-primary" onclick="Layout.closeModal('guideModal')">เข้าใจแล้ว</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Print Settings Modal -->
+    <div class="modal-overlay" id="printSettingsModal">
+      <div class="modal" style="max-width:440px;">
+        <div class="modal-header"><h3 class="modal-title">ตั้งค่าใบเสร็จ / เครื่องพิมพ์</h3><button class="modal-close" onclick="Layout.closeModal('printSettingsModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ขนาดกระดาษ</label>
+            <select class="form-select" id="psPaper">
+              <option value="80">80 มม. — เครื่องพิมพ์ Thermal มาตรฐาน</option>
+              <option value="58">58 มม. — เครื่องพิมพ์ Thermal เล็ก</option>
+              <option value="A4">A4 — เครื่องพิมพ์กระดาษปกติ</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">ขนาดตัวอักษร</label>
+            <select class="form-select" id="psFont"><option value="normal">ปกติ</option><option value="large">ใหญ่ (อ่านง่าย)</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">ข้อความหัวใบเสร็จ (เพิ่มจากชื่อร้าน)</label>
+            <textarea class="form-input" id="psHeader" rows="2" placeholder="เช่น ที่อยู่ร้าน · เบอร์โทร"></textarea></div>
+          <div class="form-group"><label class="form-label">ข้อความท้ายใบเสร็จ</label>
+            <input type="text" class="form-input" id="psFooter" placeholder="ขอบคุณที่ใช้บริการ"></div>
+          <div class="form-group"><label class="form-label" style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="psAutoPrint"> <span>พิมพ์ใบเสร็จอัตโนมัติเมื่อปิดบิล</span></label></div>
+          <div class="text-xs" style="color:var(--gray-400)">การตั้งค่านี้เก็บไว้ในเครื่องนี้ (แยกตามอุปกรณ์/เครื่องพิมพ์)</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Page.testPrint()">ทดสอบพิมพ์</button>
+          <button class="btn btn-primary" onclick="Page.savePrintSettings()">บันทึก</button>
         </div>
       </div>
     </div>
@@ -256,7 +298,67 @@
       async init() {
         if (!Layout.init('pos')) return;
         Layout.setTitle('POS หน้าขาย');
+        // Kiosk mode — hide the accounting sidebar/header for a focused
+        // full-screen cashier experience.
+        document.body.classList.add('pos-mode');
+        this._printSettings = this.loadPrintSettings();
+        try {
+          const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+          const el = document.getElementById('posCompany');
+          if (el) el.textContent = co.name ? '· ' + co.name : '';
+        } catch {}
         await this.load();
+      },
+
+      exitPos() {
+        document.body.classList.remove('pos-mode');
+        window.location.href = '/pages/dashboard.html';
+      },
+
+      // ===== Print settings (device-local — thermal printer is per-machine) =====
+      loadPrintSettings() {
+        const def = { paper: '80', font: 'normal', header: '', footer: 'ขอบคุณที่ใช้บริการ', autoPrint: true };
+        try { return { ...def, ...JSON.parse(localStorage.getItem('posPrintSettings') || '{}') }; }
+        catch { return def; }
+      },
+      openPrintSettings() {
+        const s = this._printSettings || this.loadPrintSettings();
+        document.getElementById('psPaper').value = s.paper;
+        document.getElementById('psFont').value = s.font;
+        document.getElementById('psHeader').value = s.header || '';
+        document.getElementById('psFooter').value = s.footer || '';
+        document.getElementById('psAutoPrint').checked = s.autoPrint !== false;
+        Layout.openModal('printSettingsModal');
+      },
+      savePrintSettings() {
+        this._printSettings = {
+          paper: document.getElementById('psPaper').value,
+          font: document.getElementById('psFont').value,
+          header: document.getElementById('psHeader').value.trim(),
+          footer: document.getElementById('psFooter').value.trim() || 'ขอบคุณที่ใช้บริการ',
+          autoPrint: document.getElementById('psAutoPrint').checked,
+        };
+        localStorage.setItem('posPrintSettings', JSON.stringify(this._printSettings));
+        Layout.closeModal('printSettingsModal');
+        Layout.toast('บันทึกการตั้งค่าพิมพ์แล้ว');
+      },
+      testPrint() {
+        // Preview with the values currently in the form (not yet saved).
+        const saved = this._printSettings;
+        this._printSettings = {
+          paper: document.getElementById('psPaper').value,
+          font: document.getElementById('psFont').value,
+          header: document.getElementById('psHeader').value.trim(),
+          footer: document.getElementById('psFooter').value.trim() || 'ขอบคุณที่ใช้บริการ',
+          autoPrint: document.getElementById('psAutoPrint').checked,
+        };
+        this.printReceipt({
+          orderNumber: 'TEST-0001', dateTime: new Date().toLocaleString('th-TH'), customer: '',
+          items: [{ name: 'สินค้าตัวอย่าง A', qty: 2, price: 50, total: 100 },
+                   { name: 'สินค้าตัวอย่าง B', qty: 1, price: 35, total: 35 }],
+          subtotal: 135, vat: 8.83, net: 135, paid: 200, change: 65,
+        });
+        this._printSettings = saved;
       },
 
       async loadTerminals() {
@@ -630,7 +732,8 @@
           const snap = this._buildReceiptSnapshot(res?.data);
           Layout.toast('ปิดบิลสำเร็จ!');
           this.resetOrder();
-          this.printReceipt(snap);
+          if ((this._printSettings || this.loadPrintSettings()).autoPrint !== false)
+            this.printReceipt(snap);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -648,27 +751,45 @@
         };
       },
 
+      // Open a print window with the given title + body, sized for the
+      // configured paper. Shared by the receipt and the kitchen ticket.
+      _openPrintWindow(title, paperKey, bodyFontPx, innerHtml) {
+        const paper = paperKey === '58' ? { page: '58mm auto', w: '52mm' }
+          : paperKey === 'A4' ? { page: 'A4', w: '78mm' }
+          : { page: '80mm auto', w: '72mm' };
+        const html = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${title}</title>
+          <style>
+            @page { size: ${paper.page}; margin: 4mm; }
+            body { font-family:'Tahoma','Sarabun',sans-serif; font-size:${bodyFontPx}px; width:${paper.w}; margin:0 auto; color:#000; }
+            h2 { text-align:center; margin:2px 0; font-size:${bodyFontPx + 3}px; }
+            .c { text-align:center; } .r { text-align:right; } .b { font-weight:700; }
+            .muted { color:#333; font-size:${bodyFontPx - 1}px; }
+            table { width:100%; border-collapse:collapse; margin:6px 0; }
+            td,th { padding:2px 0; vertical-align:top; }
+            .line { border-top:1px dashed #000; margin:4px 0; }
+            .big { font-size:${bodyFontPx + 4}px; font-weight:700; }
+          </style></head><body>${innerHtml}
+          <script>window.onload=function(){window.print();}<\/script></body></html>`;
+        const w = window.open('', '_blank', 'width=400,height=640');
+        if (!w) { Layout.toast('เปิดหน้าต่างพิมพ์ไม่ได้ — โปรดอนุญาต popup', 'warning'); return; }
+        w.document.write(html); w.document.close();
+      },
+
       printReceipt(snap) {
         if (!snap || !snap.items.length) return;
+        const s = this._printSettings || this.loadPrintSettings();
         let company = {};
         try { company = JSON.parse(localStorage.getItem('currentCompany') || '{}'); } catch {}
         const m = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        const headerLines = (s.header || '').split(/\r?\n/).filter(x => x.trim())
+          .map(x => `<div class="c muted">${esc(x)}</div>`).join('');
         const rows = snap.items.map(i =>
           `<tr><td>${esc(i.name)}</td><td class="r">${i.qty}</td><td class="r">${m(i.price)}</td><td class="r">${m(i.total)}</td></tr>`).join('');
-        const html = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ใบเสร็จ ${esc(snap.orderNumber)}</title>
-          <style>
-            @page { size: 80mm auto; margin: 4mm; }
-            body { font-family: 'Tahoma','Sarabun',sans-serif; font-size: 12px; width: 72mm; margin: 0 auto; color: #000; }
-            h2 { text-align:center; margin: 2px 0; font-size: 14px; }
-            .c { text-align:center; } .r { text-align:right; } .muted { color:#444; font-size:11px; }
-            table { width:100%; border-collapse:collapse; margin: 6px 0; }
-            td,th { padding: 2px 0; }
-            .line { border-top: 1px dashed #000; margin: 4px 0; }
-            .tot td { padding: 1px 0; }
-          </style></head><body>
+        const body = `
           <h2>${esc(company.name || 'ใบเสร็จรับเงิน')}</h2>
-          <div class="c muted">${esc(company.taxId ? 'เลขผู้เสียภาษี ' + company.taxId : '')}</div>
+          ${company.taxId ? `<div class="c muted">เลขผู้เสียภาษี ${esc(company.taxId)}</div>` : ''}
+          ${headerLines}
           <div class="c muted">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</div>
           <div class="line"></div>
           <div class="muted">เลขที่: ${esc(snap.orderNumber)}</div>
@@ -678,21 +799,42 @@
           <table><thead><tr><th style="text-align:left">รายการ</th><th class="r">จำนวน</th><th class="r">ราคา</th><th class="r">รวม</th></tr></thead>
           <tbody>${rows}</tbody></table>
           <div class="line"></div>
-          <table class="tot">
+          <table>
             <tr><td>รวมเป็นเงิน</td><td class="r">${m(snap.subtotal)}</td></tr>
             <tr><td>ภาษีมูลค่าเพิ่ม 7% (รวมในราคา)</td><td class="r">${m(snap.vat)}</td></tr>
-            <tr><td><b>ยอดสุทธิ</b></td><td class="r"><b>${m(snap.net)}</b></td></tr>
+            <tr><td class="b">ยอดสุทธิ</td><td class="r b">${m(snap.net)}</td></tr>
             <tr><td>รับเงิน</td><td class="r">${m(snap.paid)}</td></tr>
             <tr><td>เงินทอน</td><td class="r">${m(snap.change)}</td></tr>
           </table>
           <div class="line"></div>
-          <div class="c muted">ขอบคุณที่ใช้บริการ</div>
-          <script>window.onload=function(){window.print();}<\/script>
-          </body></html>`;
-        const w = window.open('', '_blank', 'width=380,height=600');
-        if (!w) { Layout.toast('เปิดหน้าต่างพิมพ์ไม่ได้ — โปรดอนุญาต popup', 'warning'); return; }
-        w.document.write(html);
-        w.document.close();
+          <div class="c muted">${esc(s.footer || 'ขอบคุณที่ใช้บริการ')}</div>`;
+        const fs = s.font === 'large' ? 14 : 12;
+        this._openPrintWindow(`ใบเสร็จ ${esc(snap.orderNumber)}`, s.paper, fs, body);
+      },
+
+      // Kitchen / bar ticket — printed from the current cart (no prices), so
+      // the kitchen knows what to prepare. Works before the bill is closed.
+      printKitchenTicket() {
+        if (!this.cart.length) { Layout.toast('ยังไม่มีรายการในออเดอร์', 'warning'); return; }
+        const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        const orderType = document.getElementById('orderType')?.value || '';
+        const typeLabel = { DineIn: 'ทานที่ร้าน', Takeaway: 'กลับบ้าน', Delivery: 'เดลิเวอรี่', Queue: 'คิว', Appointment: 'นัดหมาย' }[orderType] || orderType;
+        const table = document.getElementById('fTableNo')?.value || '';
+        const queue = document.getElementById('fQueueNo')?.value || '';
+        const cust = document.getElementById('fCustomerName')?.value || '';
+        const rows = this.cart.map(c =>
+          `<tr><td class="big">${c.quantity}×</td><td class="big">${esc(c.name)}</td></tr>`).join('');
+        const body = `
+          <h2>🍳 ออเดอร์เข้าครัว/บาร์</h2>
+          <div class="c b">${esc(typeLabel)}${table ? ' · โต๊ะ ' + esc(table) : ''}${queue ? ' · คิว ' + esc(queue) : ''}</div>
+          ${cust ? `<div class="c muted">ลูกค้า: ${esc(cust)}</div>` : ''}
+          <div class="c muted">เวลา: ${esc(new Date().toLocaleTimeString('th-TH'))}</div>
+          <div class="line"></div>
+          <table>${rows}</table>
+          <div class="line"></div>
+          <div class="c muted">รวม ${this.cart.reduce((s, c) => s + c.quantity, 0)} รายการ</div>`;
+        const s = this._printSettings || this.loadPrintSettings();
+        this._openPrintWindow('ออเดอร์ครัว', s.paper, 14, body);
       },
 
       async voidOrder() {
