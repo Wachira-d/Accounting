@@ -41,6 +41,22 @@ public class PayrollService : IPayrollService
     private const decimal SsoMaxBase = 15_000m;     // max salary base per month
     private const decimal SsoMaxContribution = 750m; // max monthly contribution
 
+    // Thai personal income tax allowances (Revenue Code §47).
+    // Simplified model — covers the deductions most SMEs configure:
+    //   • Personal allowance: ฿60,000 / year (everyone)
+    //   • Each Employee.TaxAllowances unit: ฿30,000 / year (spouse with no income
+    //     and each qualifying child use 60K and 30K respectively — we treat
+    //     TaxAllowances as a count of 30K-equivalent dependants which is the
+    //     pragmatic UI choice)
+    //   • SSO contributions are deductible up to the annual contribution cap
+    //     (฿9,000 = 12 × ฿750)
+    //   • Provident-fund employee contribution is deductible up to 15 % of
+    //     salary capped at ฿500,000 / yr; we use the actual annual contribution
+    //     subject to that cap.
+    private const decimal PitPersonalAllowance = 60_000m;
+    private const decimal PitPerDependantAllowance = 30_000m;
+    private const decimal PitPvdMaxDeductible = 500_000m;
+
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
@@ -543,7 +559,21 @@ public class PayrollService : IPayrollService
                 // Thai withholding tax: TRD-standard annualization = (YTD including this month) * 12 / elapsed months
                 var ytdIncome = cumulativeIncome + grossIncome;
                 var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
-                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedAnnualIncome);
+
+                // Apply Revenue Code §47 allowances before bracket lookup. Skipping
+                // these used to over-withhold by 5–15 % depending on income tier —
+                // employees ended up subsidising the company's cash flow until the
+                // year-end true-up that this system doesn't yet automate.
+                var annualSso = Math.Min(ssoEmployee * 12m, SsoMaxContribution * 12m);
+                var annualPvd = Math.Min(pvdEmployee * 12m, PitPvdMaxDeductible);
+                var personalDeductions =
+                    PitPersonalAllowance
+                    + (PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances))
+                    + annualSso
+                    + annualPvd;
+                var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
+
+                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome);
                 var remainingMonths = 13 - run.Month;
                 var monthlyTax = remainingMonths > 0
                     ? (estimatedAnnualTax - cumulativeTax) / remainingMonths
