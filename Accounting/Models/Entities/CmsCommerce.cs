@@ -277,6 +277,11 @@ public class SitePaymentGateway : TenantEntity
     public string? ApiKeyEncrypted { get; set; }
     public string? SecretKeyEncrypted { get; set; }
     public string? MerchantId { get; set; }
+    // Gateway webhook signing secret. The column kept the legacy name
+    // "WebhookSecret" but values MUST go through ISecretProtector when written
+    // (CmsCommerceService) and Unprotect()'d when verifying inbound signatures.
+    // Plaintext values from before the AES-256-GCM rollout still decrypt
+    // transparently via the IsEncrypted fallback in SecretProtector.
     public string? WebhookSecret { get; set; }
 
     // PromptPay specific

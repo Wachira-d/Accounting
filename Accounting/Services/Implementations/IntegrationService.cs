@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Integration;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -17,9 +18,11 @@ public class IntegrationService : IIntegrationService
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
     private readonly IDocumentService? _documentService;
     private readonly IWithholdingTaxCertService? _whtCertService;
+    private readonly ISecretProtector _secrets;
 
     public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        ISecretProtector secrets,
         IDocumentService? documentService = null,
         IWithholdingTaxCertService? whtCertService = null)
     {
@@ -27,6 +30,7 @@ public class IntegrationService : IIntegrationService
         _settingsService = settingsService;
         _logger = logger;
         _vendorIntel = vendorIntel;
+        _secrets = secrets;
         _documentService = documentService;
         _whtCertService = whtCertService;
     }
@@ -135,20 +139,20 @@ public class IntegrationService : IIntegrationService
             SystemType = request.SystemType,
             SystemVersion = request.SystemVersion,
             BaseUrl = request.BaseUrl,
-            ApiKey = rawKey, // Store temporarily — will be shown only once
+            // The raw API key is never persisted — only the BCrypt hash + a
+            // display prefix. Caller receives rawKey once in the response.
+            ApiKey = "",
             ApiKeyHash = keyHash,
             ApiKeyPrefix = keyPrefix,
-            SecretKey = secretKey,
+            // SecretKey is the HMAC signing secret for inbound integration
+            // calls; the server has to be able to read it back, so encrypt at rest.
+            SecretKey = _secrets.Protect(secretKey),
             RateLimitPerMinute = request.RateLimitPerMinute,
             WebhookUrl = request.WebhookUrl,
             WebhookEnabled = request.WebhookEnabled
         };
 
         _db.Set<ExternalIntegration>().Add(integration);
-        await _db.SaveChangesAsync();
-
-        // Clear raw key from entity (only the hash is stored permanently)
-        integration.ApiKey = "";
         await _db.SaveChangesAsync();
 
         return new IntegrationCreatedResponse(integration.Id, integration.SystemName, rawKey, keyPrefix, secretKey, integration.CreatedAt);

@@ -14,10 +14,12 @@ namespace Accounting.Controllers;
 public class AccountingController : ControllerBase
 {
     private readonly IAccountingService _accountingService;
+    private readonly ICompanyService _companyService;
 
-    public AccountingController(IAccountingService accountingService)
+    public AccountingController(IAccountingService accountingService, ICompanyService companyService)
     {
         _accountingService = accountingService;
+        _companyService = companyService;
     }
 
     // ===== Chart of Accounts =====
@@ -310,8 +312,9 @@ public class AccountingController : ControllerBase
     [HttpPost("fiscal-periods/{periodId:guid}/soft-close")]
     public async Task<ActionResult<ApiResponse<object>>> SoftClosePeriod(Guid companyId, Guid periodId)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var period = await _accountingService.SoftClosePeriodAsync(companyId, periodId, userId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var period = await _accountingService.SoftClosePeriodAsync(companyId, periodId, userId.ToString());
         return Ok(new ApiResponse<object>(true, new { period.Id, period.Status, period.ClosedAt }, "Soft-close งวดบัญชีสำเร็จ"));
     }
 
@@ -319,8 +322,9 @@ public class AccountingController : ControllerBase
     [HttpPost("fiscal-periods/{periodId:guid}/reopen")]
     public async Task<ActionResult<ApiResponse<object>>> ReopenPeriod(Guid companyId, Guid periodId)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var period = await _accountingService.ReopenPeriodAsync(companyId, periodId, userId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var period = await _accountingService.ReopenPeriodAsync(companyId, periodId, userId.ToString());
         return Ok(new ApiResponse<object>(true, new { period.Id, period.Status }, "เปิดงวดบัญชีอีกครั้งสำเร็จ"));
     }
 
@@ -335,8 +339,9 @@ public class AccountingController : ControllerBase
     [HttpPost("year-end-close")]
     public async Task<ActionResult<ApiResponse<object>>> YearEndClose(Guid companyId, [FromBody] YearEndCloseRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _accountingService.YearEndCloseAsync(companyId, request.FiscalYear, request.RetainedEarningsAccountId, request.ClosingDate, userId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var result = await _accountingService.YearEndCloseAsync(companyId, request.FiscalYear, request.RetainedEarningsAccountId, request.ClosingDate, userId.ToString());
         return Ok(new ApiResponse<object>(true,
             new { result.Id, result.FiscalYear, result.TransferredAmount, result.ClosingJournalEntryId },
             $"ปิดงบประจำปี {request.FiscalYear} สำเร็จ — โอน {result.TransferredAmount:N2} ไป Retained Earnings"));
@@ -349,8 +354,9 @@ public class AccountingController : ControllerBase
     [HttpPost("roll-opening-balances")]
     public async Task<ActionResult<ApiResponse<int>>> RollOpeningBalances(Guid companyId, [FromBody] RollOpeningBalancesRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var count = await _accountingService.RollOpeningBalancesAsync(companyId, request.Year, userId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var count = await _accountingService.RollOpeningBalancesAsync(companyId, request.Year, userId.ToString());
         return Ok(new ApiResponse<int>(true, count, $"อัพเดต Opening Balance {count} บัญชี"));
     }
 }

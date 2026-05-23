@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Webhook;
 using Accounting.Models.Entities;
@@ -17,12 +18,15 @@ public class WebhookService : IWebhookService
     private readonly AccountingDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IErrorLogService _errorLogService;
+    private readonly ISecretProtector _secrets;
 
-    public WebhookService(AccountingDbContext db, IHttpClientFactory httpClientFactory, IErrorLogService errorLogService)
+    public WebhookService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
+        IErrorLogService errorLogService, ISecretProtector secrets)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _errorLogService = errorLogService;
+        _secrets = secrets;
     }
 
     // ==================== Registration ====================
@@ -34,7 +38,7 @@ public class WebhookService : IWebhookService
             CompanyId = companyId,
             Name = request.Name,
             Url = request.Url,
-            Secret = request.Secret,
+            Secret = _secrets.Protect(request.Secret),
             EventTypes = request.EventTypes,
             MaxRetries = request.MaxRetries > 0 ? request.MaxRetries : 3,
             TimeoutSeconds = request.TimeoutSeconds > 0 ? request.TimeoutSeconds : 30,
@@ -67,7 +71,7 @@ public class WebhookService : IWebhookService
 
         if (request.Name is not null) registration.Name = request.Name;
         if (request.Url is not null) registration.Url = request.Url;
-        if (request.Secret is not null) registration.Secret = request.Secret;
+        if (request.Secret is not null) registration.Secret = _secrets.Protect(request.Secret);
         if (request.EventTypes is not null) registration.EventTypes = request.EventTypes;
         if (request.IsActive.HasValue) registration.IsActive = request.IsActive.Value;
         if (request.MaxRetries.HasValue) registration.MaxRetries = request.MaxRetries.Value;
@@ -293,10 +297,12 @@ public class WebhookService : IWebhookService
                 }
             }
 
-            // Add HMAC signature if secret is configured
-            if (!string.IsNullOrWhiteSpace(registration.Secret))
+            // Add HMAC signature if secret is configured. Secret is stored
+            // encrypted at rest — sign with the cleartext.
+            var clearSecret = _secrets.Unprotect(registration.Secret);
+            if (!string.IsNullOrWhiteSpace(clearSecret))
             {
-                var signature = ComputeHmacSha256(jsonPayload, registration.Secret);
+                var signature = ComputeHmacSha256(jsonPayload, clearSecret);
                 request.Headers.TryAddWithoutValidation("X-Webhook-Signature", $"sha256={signature}");
             }
 

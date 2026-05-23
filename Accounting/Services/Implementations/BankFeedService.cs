@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +11,7 @@ public class BankFeedService : IBankFeedService
     private readonly AccountingDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<BankFeedService> _logger;
+    private readonly ISecretProtector _secrets;
 
     private static readonly Dictionary<string, string> BankApiEndpoints = new()
     {
@@ -21,11 +23,13 @@ public class BankFeedService : IBankFeedService
         { "TTB", "https://api.ttbbank.com" }
     };
 
-    public BankFeedService(AccountingDbContext db, IHttpClientFactory httpClientFactory, ILogger<BankFeedService> logger)
+    public BankFeedService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
+        ILogger<BankFeedService> logger, ISecretProtector secrets)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _secrets = secrets;
     }
 
     public async Task<BankFeedConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankFeedConnectionRequest request)
@@ -41,8 +45,8 @@ public class BankFeedService : IBankFeedService
             ConnectionType = request.ConnectionType ?? "API",
             ApiEndpoint = request.ApiEndpoint ?? BankApiEndpoints.GetValueOrDefault(request.BankCode.ToUpper()),
             ClientId = request.ClientId,
-            EncryptedCredentials = request.ClientSecret,
-            AccessToken = request.AccessToken,
+            EncryptedCredentials = _secrets.Protect(request.ClientSecret),
+            AccessToken = _secrets.Protect(request.AccessToken),
             AutoSync = request.AutoSync,
             SyncIntervalMinutes = request.SyncIntervalMinutes,
             LinkedBankAccountId = request.LinkedBankAccountId,
@@ -203,9 +207,10 @@ public class BankFeedService : IBankFeedService
         try
         {
             var client = _httpClientFactory.CreateClient();
-            if (!string.IsNullOrEmpty(conn.AccessToken))
+            var token = _secrets.Unprotect(conn.AccessToken);
+            if (!string.IsNullOrEmpty(token))
                 client.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", conn.AccessToken);
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
             var endpoint = conn.ApiEndpoint ?? BankApiEndpoints.GetValueOrDefault(conn.BankCode, "");
             if (!string.IsNullOrEmpty(endpoint))
@@ -237,9 +242,10 @@ public class BankFeedService : IBankFeedService
     {
         var client = _httpClientFactory.CreateClient();
 
-        if (!string.IsNullOrEmpty(conn.AccessToken))
+        var token = _secrets.Unprotect(conn.AccessToken);
+        if (!string.IsNullOrEmpty(token))
             client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", conn.AccessToken);
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
         var fromDate = conn.LastSyncAt?.AddDays(-1) ?? DateTime.UtcNow.AddDays(-30);
         var toDate = DateTime.UtcNow;

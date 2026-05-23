@@ -237,7 +237,7 @@ public class CompanyService : ICompanyService
         await _db.SaveChangesAsync();
     }
 
-    private async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
+    public async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
     {
         // Platform SystemAdmin bypasses company-level owner check
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
