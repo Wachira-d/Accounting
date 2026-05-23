@@ -36,6 +36,14 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> Terminate(Guid companyId, Guid employeeId, [FromQuery] DateTime endDate)
     { await _service.TerminateEmployeeAsync(companyId, employeeId, endDate); return Ok(new ApiResponse<bool>(true, true)); }
 
+    /// <summary>คำนวณค่าชดเชยตามมาตรา 118 (preview เท่านั้น) — ใช้แสดงตัวเลขให้ HR
+    /// ดูก่อนออกใบเงินเดือนสุดท้ายหรือบันทึก Expense voucher; ไม่บันทึก GL.</summary>
+    [HttpPost("employees/{employeeId:guid}/severance-preview")]
+    public async Task<ActionResult<ApiResponse<SeverancePreviewResponse>>> PreviewSeverance(
+        Guid companyId, Guid employeeId, [FromBody] SeverancePreviewRequest request)
+        => Ok(new ApiResponse<SeverancePreviewResponse>(true,
+            await _service.PreviewSeverancePayAsync(companyId, employeeId, request)));
+
     // Payroll Items
     [HttpPost("items")]
     public async Task<ActionResult<ApiResponse<PayrollItemResponse>>> CreateItem(Guid companyId, [FromBody] CreatePayrollItemRequest request)
