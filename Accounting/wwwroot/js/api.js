@@ -801,6 +801,7 @@ const API = {
       updatePosOrderStatus: (id, d) => API.post(`${base}/pos/orders/${id}/status`, d),
       voidPosOrder: (id) => API.post(`${base}/pos/orders/${id}/void`),
       refundPosOrder: (id, d) => API.post(`${base}/pos/orders/${id}/refund`, d),
+      issuePosTaxInvoice: (id, d) => API.post(`${base}/pos/orders/${id}/issue-tax-invoice`, d),
       completePosOrder: (id) => API.post(`${base}/pos/orders/${id}/complete`),
       // POS - Order Items
       addPosOrderItem: (orderId, d) => API.post(`${base}/pos/orders/${orderId}/items`, d),

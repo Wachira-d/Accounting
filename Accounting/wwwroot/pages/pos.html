@@ -89,6 +89,7 @@
             <span class="pos-brand">🛒 POS <span class="co" id="posCompany"></span></span>
             <span class="session-dot closed" id="sessionDot"></span>
             <span id="sessionText">ยังไม่เปิดกะ</span>
+            <span id="posNetStatus" style="margin-left:10px;font-size:12px;font-weight:600;"></span>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <select id="terminalSelect" class="form-select" style="font-size:13px;padding:6px 10px;" onchange="Page.onTerminalChange()"></select>
@@ -302,6 +303,12 @@
         // full-screen cashier experience.
         document.body.classList.add('pos-mode');
         this._printSettings = this.loadPrintSettings();
+        // Online/offline indicator — the service worker (/sw.js) already
+        // caches the POS shell + assets so the page loads when offline,
+        // but transactions (complete bill, refund, etc.) require the API.
+        this._updateOnlineIndicator();
+        window.addEventListener('online', () => this._updateOnlineIndicator());
+        window.addEventListener('offline', () => this._updateOnlineIndicator());
         try {
           const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
           const el = document.getElementById('posCompany');
@@ -313,6 +320,19 @@
       exitPos() {
         document.body.classList.remove('pos-mode');
         window.location.href = '/pages/dashboard.html';
+      },
+
+      _updateOnlineIndicator() {
+        const el = document.getElementById('posNetStatus');
+        if (!el) return;
+        if (navigator.onLine) {
+          el.textContent = '🟢 ออนไลน์';
+          el.style.color = 'var(--success)';
+        } else {
+          el.textContent = '🔴 ออฟไลน์ — การปิดบิล/ชำระเงินจะรอจนต่อเน็ตกลับมา';
+          el.style.color = 'var(--danger)';
+          Layout.toast('เน็ตหลุด — หน้าจอ POS ใช้ดูได้แต่ยังปิดบิลไม่ได้', 'warning');
+        }
       },
 
       // ===== Print settings (device-local — thermal printer is per-machine) =====

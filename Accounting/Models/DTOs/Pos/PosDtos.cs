@@ -110,7 +110,17 @@ public record OrderResponse(
     DateTime? CompletedAt,
     DateTime CreatedAt,
     List<OrderItemResponse> Items,
-    List<PaymentResponse> Payments);
+    List<PaymentResponse> Payments,
+    Guid? DocumentId = null,
+    string? DocumentNumber = null);
+
+// ===== Issue full tax invoice for a completed POS order =====
+public record IssueTaxInvoiceRequest(
+    string BuyerName,
+    string? BuyerTaxId,
+    string? BuyerBranchCode,
+    string? BuyerAddress,
+    string? Notes);
 
 // ===== POS Order Item =====
 public record CreateOrderItemRequest(

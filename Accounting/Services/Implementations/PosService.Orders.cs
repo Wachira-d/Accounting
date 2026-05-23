@@ -339,6 +339,125 @@ public partial class PosService
         }
     }
 
+    public async Task<OrderResponse> IssueTaxInvoiceAsync(Guid companyId, Guid orderId, IssueTaxInvoiceRequest request, string userId)
+    {
+        var order = await _db.PosOrders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status != PosOrderStatus.Completed)
+            throw new InvalidOperationException("ออกใบกำกับเต็มรูปได้เฉพาะออเดอร์ที่ปิดบิลแล้ว");
+        if (order.DocumentId.HasValue)
+            throw new InvalidOperationException("ออกใบกำกับภาษีไปแล้ว — ไม่สามารถออกซ้ำได้");
+        var buyerName = (request.BuyerName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(buyerName))
+            throw new InvalidOperationException("กรุณาระบุชื่อผู้ซื้อ");
+
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // Resolve / create the buyer contact.
+            var taxId = request.BuyerTaxId?.Trim();
+            Models.Entities.Contact? contact = null;
+            if (!string.IsNullOrWhiteSpace(taxId))
+                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId);
+            contact ??= await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == buyerName);
+            if (contact == null)
+            {
+                contact = new Models.Entities.Contact
+                {
+                    CompanyId = companyId,
+                    Name = buyerName,
+                    TaxId = string.IsNullOrWhiteSpace(taxId) ? null : taxId,
+                    BranchCode = string.IsNullOrWhiteSpace(request.BuyerBranchCode) ? null : request.BuyerBranchCode!.Trim(),
+                    Address = string.IsNullOrWhiteSpace(request.BuyerAddress) ? null : request.BuyerAddress!.Trim(),
+                    IsCustomer = true,
+                    IsActive = true,
+                    CreatedBy = userId,
+                };
+                _db.Contacts.Add(contact);
+            }
+            else
+            {
+                contact.IsCustomer = true; // make sure the role is set
+            }
+
+            // Build the Document directly — POS already posted its own JE for
+            // this sale, so we must NOT go through ApproveDocumentAsync (would
+            // create a duplicate JE). We stamp the JE's SourceDocumentId at
+            // the end to suppress the VAT-report JE-fallback (avoids VAT
+            // double-count: the Document path counts it, the JE path skips it).
+            var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+                _db, companyId, Models.Enums.DocumentType.TaxInvoice);
+
+            var doc = new Models.Entities.Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = Models.Enums.DocumentType.TaxInvoice,
+                DocumentDate = order.CompletedAt ?? DateTime.UtcNow,
+                ContactId = contact.Id,
+                Contact = contact,
+                Status = Models.Enums.DocumentStatus.Approved,
+                IsOpeningBalance = false,
+                Reference = order.OrderNumber,
+                Notes = request.Notes ?? $"ใบกำกับภาษีเต็มรูปจาก POS — ออเดอร์ {order.OrderNumber}",
+                CreatedBy = userId,
+            };
+
+            decimal totalNet = 0, totalVat = 0;
+            var lineOrder = 1;
+            foreach (var i in order.Items.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder))
+            {
+                var lineGross = i.TotalAmount;
+                var lineVat = i.VatAmount;
+                var lineNet = lineGross - lineVat;
+                var unitPriceNet = i.Quantity > 0 ? Math.Round(lineNet / i.Quantity, 4, MidpointRounding.AwayFromZero) : 0m;
+                doc.Lines.Add(new Models.Entities.DocumentLine
+                {
+                    LineOrder = lineOrder++,
+                    ProductCode = i.ItemCode,
+                    Description = i.ItemName,
+                    Quantity = i.Quantity,
+                    Unit = i.Unit ?? "ชิ้น",
+                    UnitPrice = unitPriceNet,
+                    DiscountPercent = 0,
+                    DiscountAmount = 0,
+                    Amount = lineNet,
+                    VatRate = lineNet > 0 ? Math.Round(lineVat * 100 / lineNet, 2, MidpointRounding.AwayFromZero) : 0m,
+                    VatAmount = lineVat,
+                });
+                totalNet += lineNet;
+                totalVat += lineVat;
+            }
+            doc.SubTotal = totalNet;
+            doc.VatAmount = totalVat;
+            doc.TotalAmount = totalNet + totalVat;
+            doc.BalanceDue = 0;                 // POS already collected payment
+            doc.PaidAmount = doc.TotalAmount;
+            _db.Documents.Add(doc);
+            await _db.SaveChangesAsync();
+
+            // Link the order → document, and the JE → document so the VAT
+            // report counts via the Document path (not the JE fallback).
+            order.DocumentId = doc.Id;
+            if (order.JournalEntryId.HasValue)
+            {
+                var je = await _db.JournalEntries.FirstOrDefaultAsync(j => j.Id == order.JournalEntryId.Value);
+                if (je != null && je.SourceDocumentId == null) je.SourceDocumentId = doc.Id;
+            }
+
+            await _db.SaveChangesAsync();
+            await txn.CommitAsync();
+        }
+        catch
+        {
+            await txn.RollbackAsync();
+            throw;
+        }
+        return await GetOrderAsync(companyId, orderId);
+    }
+
     // ==================== Order Items ====================
 
     public async Task<OrderResponse> AddOrderItemAsync(Guid companyId, Guid orderId, CreateOrderItemRequest request)
@@ -674,7 +793,9 @@ public partial class PosService
         o.TotalAmount, o.RoundingAmount, o.NetAmount,
         o.Notes, o.Reference, o.JournalEntryId, o.CompletedAt, o.CreatedAt,
         o.Items.Where(i => !i.IsDeleted).Select(MapOrderItem).ToList(),
-        o.Payments.Select(MapPayment).ToList());
+        o.Payments.Select(MapPayment).ToList(),
+        DocumentId: o.DocumentId,
+        DocumentNumber: null);
 
     private static OrderItemResponse MapOrderItem(PosOrderItem i) => new(
         i.Id, i.ProductId, i.ServicePackageId, i.ItemName, i.ItemCode,

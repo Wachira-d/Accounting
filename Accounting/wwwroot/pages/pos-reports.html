@@ -278,10 +278,12 @@
               </div>
             </div>
             ${o.status === 'Completed' ? `
-            <div style="margin-top:16px;border-top:1px dashed var(--gray-300);padding-top:12px;">
+            <div style="margin-top:16px;border-top:1px dashed var(--gray-300);padding-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-sm btn-danger" onclick="Page.toggleRefund('${o.id}')">↩️ คืนเงิน (บางส่วน/ทั้งหมด)</button>
-              <div id="refundForm" style="display:none;margin-top:10px;"></div>
-            </div>` : ''}
+              ${o.documentId ? `<span class="badge badge-success" style="padding:6px 10px;">📄 ออกใบกำกับภาษีเต็มรูปแล้ว</span>` : `<button class="btn btn-sm btn-primary" onclick="Page.toggleIssueInvoice('${o.id}')">📄 ออกใบกำกับภาษีเต็มรูป</button>`}
+            </div>
+            <div id="refundForm" style="display:none;margin-top:10px;"></div>
+            <div id="issueInvoiceForm" style="display:none;margin-top:10px;"></div>` : ''}
           `;
         } catch (e) { document.getElementById('detailContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
       },
@@ -331,6 +333,55 @@
             reason: document.getElementById('refundReason').value || null,
           });
           Layout.toast('คืนเงินสำเร็จ');
+          Layout.closeModal('orderDetailModal');
+          await this.loadOrders();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      toggleIssueInvoice(orderId) {
+        const box = document.getElementById('issueInvoiceForm');
+        if (!box) return;
+        if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+        box.innerHTML = `
+          <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);padding:12px;">
+            <div style="font-weight:600;margin-bottom:8px;">ข้อมูลผู้ซื้อสำหรับใบกำกับภาษีเต็มรูป</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div><label class="text-xs text-gray-500">ชื่อผู้ซื้อ *</label>
+                <input type="text" class="form-input" id="invBuyerName" placeholder="บริษัท / บุคคล"></div>
+              <div><label class="text-xs text-gray-500">เลขผู้เสียภาษี (13 หลัก)</label>
+                <input type="text" class="form-input" id="invBuyerTaxId" placeholder="0123456789012" maxlength="13"></div>
+              <div><label class="text-xs text-gray-500">รหัสสาขา</label>
+                <input type="text" class="form-input" id="invBuyerBranch" placeholder="00000 = สำนักงานใหญ่"></div>
+              <div><label class="text-xs text-gray-500">ที่อยู่ผู้ซื้อ</label>
+                <input type="text" class="form-input" id="invBuyerAddr" placeholder="ที่อยู่"></div>
+            </div>
+            <div style="margin-top:8px;"><label class="text-xs text-gray-500">หมายเหตุ</label>
+              <input type="text" class="form-input" id="invNotes" placeholder="ไม่บังคับ"></div>
+            <div class="text-xs text-gray-400" style="margin-top:6px;">
+              ระบบจะสร้างเอกสารใบกำกับภาษี (TaxInvoice) ผูกกับออเดอร์นี้ + ผูก JE เดิมเข้ากับเอกสาร เพื่อกัน VAT ซ้ำใน ภพ.30
+            </div>
+            <div style="margin-top:8px;text-align:right;">
+              <button class="btn btn-sm btn-primary" onclick="Page.submitIssueInvoice('${orderId}')">ยืนยันออกใบกำกับ</button>
+            </div>
+          </div>`;
+        box.style.display = '';
+      },
+
+      async submitIssueInvoice(orderId) {
+        const api = Layout.api(); if (!api) return;
+        const name = document.getElementById('invBuyerName').value.trim();
+        if (!name) { Layout.toast('กรุณาระบุชื่อผู้ซื้อ', 'warning'); return; }
+        const taxId = document.getElementById('invBuyerTaxId').value.trim();
+        if (taxId && !/^\d{13}$/.test(taxId)) { Layout.toast('เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก', 'warning'); return; }
+        try {
+          await api.issuePosTaxInvoice(orderId, {
+            buyerName: name,
+            buyerTaxId: taxId || null,
+            buyerBranchCode: document.getElementById('invBuyerBranch').value.trim() || null,
+            buyerAddress: document.getElementById('invBuyerAddr').value.trim() || null,
+            notes: document.getElementById('invNotes').value.trim() || null,
+          });
+          Layout.toast('ออกใบกำกับภาษีเต็มรูปสำเร็จ');
           Layout.closeModal('orderDetailModal');
           await this.loadOrders();
         } catch (e) { Layout.toast(e.message, 'error'); }

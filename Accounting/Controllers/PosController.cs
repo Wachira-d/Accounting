@@ -96,6 +96,14 @@ public class PosController : ControllerBase
         return Ok(new ApiResponse<OrderResponse>(true, result, "คืนเงินสำเร็จ"));
     }
 
+    [HttpPost("orders/{orderId:guid}/issue-tax-invoice")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> IssueTaxInvoice(Guid companyId, Guid orderId, [FromBody] IssueTaxInvoiceRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _pos.IssueTaxInvoiceAsync(companyId, orderId, request, userId);
+        return Ok(new ApiResponse<OrderResponse>(true, result, "ออกใบกำกับภาษีเต็มรูปสำเร็จ"));
+    }
+
     // ===== Order Items =====
     [HttpPost("orders/{orderId:guid}/items")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddOrderItem(Guid companyId, Guid orderId, [FromBody] CreateOrderItemRequest request)
