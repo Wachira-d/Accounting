@@ -534,21 +534,43 @@ public class PayrollService : IPayrollService
             var earningItems = payrollItems.Where(i => i.ItemType == "Earning").ToList();
             var deductionItems = payrollItems.Where(i => i.ItemType == "Deduction").ToList();
 
+            // Batch-load per-employee lookups that previously ran one query per
+            // employee inside the loop — for a 100-person payroll that turned a
+            // single Calculate click into 200+ round-trips. We pre-fetch both
+            // the YTD PayrollDetails (prior months of the same fiscal year) and
+            // every approved leave overlapping this period, then materialise
+            // per-employee views in memory.
+            var employeeIds = employees.Select(e => e.Id).ToList();
+            var priorDetailsAll = await _db.Set<PayrollDetail>()
+                .Include(d => d.PayrollRun)
+                .Where(d => employeeIds.Contains(d.EmployeeId)
+                    && d.PayrollRun.CompanyId == companyId
+                    && d.PayrollRun.Year == run.Year
+                    && d.PayrollRun.Month < run.Month
+                    && d.PayrollRun.Status != "Voided")
+                .AsNoTracking()
+                .ToListAsync();
+            var priorDetailsByEmployee = priorDetailsAll.GroupBy(d => d.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
+            var approvedLeavesAll = await _db.Set<EmployeeLeave>()
+                .Where(l => employeeIds.Contains(l.EmployeeId)
+                    && l.CompanyId == companyId
+                    && l.Status == "Approved"
+                    && l.StartDate <= run.PeriodEnd && l.EndDate >= run.PeriodStart)
+                .AsNoTracking()
+                .ToListAsync();
+            var leavesByEmployee = approvedLeavesAll.GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
             decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
             decimal totalPvdEmp = 0, totalPvdEr = 0;
 
             foreach (var emp in employees)
             {
-                // Get cumulative income for this year (prior months)
-                var priorDetails = await _db.Set<PayrollDetail>()
-                    .Include(d => d.PayrollRun)
-                    .Where(d => d.EmployeeId == emp.Id
-                        && d.PayrollRun.CompanyId == companyId
-                        && d.PayrollRun.Year == run.Year
-                        && d.PayrollRun.Month < run.Month
-                        && d.PayrollRun.Status != "Voided")
-                    .ToListAsync();
+                // Get cumulative income for this year (prior months) — sourced
+                // from the batched lookup above; falls back to empty list when
+                // there are no prior runs.
+                var priorDetails = priorDetailsByEmployee.TryGetValue(emp.Id, out var pd) ? pd : new List<PayrollDetail>();
 
                 var cumulativeIncome = priorDetails.Sum(d => d.GrossIncome);
                 var cumulativeTax = priorDetails.Sum(d => d.WithholdingTax);
@@ -576,12 +598,8 @@ public class PayrollService : IPayrollService
                         allowances += amount;
                 }
 
-                // Calculate leave deductions
-                var approvedLeaves = await _db.Set<EmployeeLeave>()
-                    .Where(l => l.EmployeeId == emp.Id && l.CompanyId == companyId
-                        && l.Status == "Approved"
-                        && l.StartDate <= run.PeriodEnd && l.EndDate >= run.PeriodStart)
-                    .ToListAsync();
+                // Calculate leave deductions — sourced from the batched lookup.
+                var approvedLeaves = leavesByEmployee.TryGetValue(emp.Id, out var lv) ? lv : new List<EmployeeLeave>();
 
                 // Bound the displayed LeaveDays to this payroll period — old code
                 // showed total leave days regardless of overlap, so a one-week leave
