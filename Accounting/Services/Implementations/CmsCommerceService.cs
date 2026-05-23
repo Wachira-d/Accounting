@@ -344,14 +344,16 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<bool> ClearCartAsync(Guid companyId, Guid siteId, Guid cartId)
     {
+        // Storefront endpoint is [AllowAnonymous]; without the full scope check
+        // a visitor on site A could DELETE a cart guid from site B by guessing.
+        var cart = await _db.SiteCarts
+            .FirstOrDefaultAsync(c => c.Id == cartId && c.SiteId == siteId && c.CompanyId == companyId);
+        if (cart == null) return false;
+
         var items = await _db.SiteCartItems.Where(i => i.CartId == cartId).ToListAsync();
         _db.SiteCartItems.RemoveRange(items);
-        var cart = await _db.SiteCarts.FindAsync(cartId);
-        if (cart != null)
-        {
-            cart.SubTotal = 0; cart.VatAmount = 0; cart.TotalAmount = 0;
-            cart.DiscountAmount = 0; cart.CouponCode = null;
-        }
+        cart.SubTotal = 0; cart.VatAmount = 0; cart.TotalAmount = 0;
+        cart.DiscountAmount = 0; cart.CouponCode = null;
         await _db.SaveChangesAsync();
         return true;
     }

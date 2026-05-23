@@ -420,7 +420,11 @@ public class SignatureApprovalService : ISignatureApprovalService
         var allApproved = allApprovals.All(a => a.Status == ApprovalStatus.Approved);
         if (!allApproved) return;
 
-        var doc = await _db.Documents.FindAsync(documentId);
+        // Defence-in-depth: caller already passed companyId — make sure the
+        // approval flow can't be tricked into mutating a foreign document by
+        // mismatched IDs.
+        var doc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
         if (doc == null) return;
 
         doc.Status = DocumentStatus.Approved;

@@ -127,7 +127,11 @@ public class CmsCustomerService : ICmsCustomerService
 
     public async Task<bool> DeleteCustomerAsync(Guid companyId, Guid siteId, Guid customerId)
     {
-        var c = await _db.SiteCustomers.FirstOrDefaultAsync(c => c.Id == customerId && c.SiteId == siteId);
+        // Multi-tenant guard — the prior query trusted Site+Customer Ids alone,
+        // so a caller who guessed (or learned via another tenant) a customer
+        // GUID could soft-delete that record by hitting their own company's URL.
+        var c = await _db.SiteCustomers.FirstOrDefaultAsync(c =>
+            c.Id == customerId && c.SiteId == siteId && c.CompanyId == companyId);
         if (c == null) return false;
         c.IsDeleted = true;
         c.IsActive = false;

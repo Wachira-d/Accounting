@@ -677,10 +677,15 @@ public class IntegrationService : IIntegrationService
             // ใบลดหนี้ (ฝั่งรายรับ): Dr รายได้ + Dr ภาษีขาย, Cr ลูกหนี้การค้า
             var journalEntryId = await CreateCreditNoteJournalAsync(companyId, document);
 
-            // Update original document balance if linked
+            // Update original document balance if linked.
+            // CRITICAL: scope the lookup by companyId — FindAsync(id) would
+            // happily return another tenant's invoice and let an integration
+            // call authenticated as Company A silently mark Company B's
+            // invoice as Paid.
             if (relatedDocId.HasValue)
             {
-                var originalDoc = await _db.Documents.FindAsync(relatedDocId.Value);
+                var originalDoc = await _db.Documents
+                    .FirstOrDefaultAsync(d => d.Id == relatedDocId.Value && d.CompanyId == companyId);
                 if (originalDoc != null)
                 {
                     originalDoc.BalanceDue = Math.Max(0, originalDoc.BalanceDue - document.TotalAmount);
