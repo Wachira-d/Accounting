@@ -58,6 +58,16 @@
     .ticket-actions .btn:hover { background:#f4f4f5; }
     .ticket-actions .btn-primary { background:#2563eb; color:#fff; border-color:#2563eb; }
     .ticket-actions .btn-success { background:#10b981; color:#fff; border-color:#10b981; }
+
+    .ticket.new-ticket { animation:flashNew 1.6s ease-out 2; }
+    @keyframes flashNew {
+      0%, 100% { background:#fff; }
+      50%      { background:#fef3c7; box-shadow:0 0 0 4px #fbbf24, 0 2px 6px rgba(0,0,0,.4); }
+    }
+
+    .kds-topbar .audio-toggle { background:none; border:1px solid #444; color:#fff;
+      width:34px; height:30px; border-radius:6px; cursor:pointer; font-size:16px; }
+    .kds-topbar .audio-toggle.muted { opacity:.4; }
   </style>
 </head>
 <body>
@@ -74,6 +84,7 @@
             <option value="Takeaway">นำกลับ</option>
             <option value="Delivery">เดลิเวอรี่</option>
           </select>
+          <button class="audio-toggle" id="kdsAudioBtn" onclick="KDS.toggleAudio()" title="เปิด/ปิดเสียงเตือนเมื่อมีออเดอร์ใหม่">🔔</button>
           <button class="btn" onclick="KDS.refresh()">🔄 รีเฟรช</button>
           <button class="btn" onclick="window.location.href='/pages/pos.html'">← ออก</button>
         </div>
@@ -92,14 +103,59 @@
       pollTimer: null,
       clockTimer: null,
       pageSize: 50,
+      knownIds: new Set(),               // order ids we've already seen — used to flash + chime only on new ones
+      audioEnabled: localStorage.getItem('kdsAudio') !== '0',
+      _audioCtx: null,
+      _firstLoad: true,                  // skip the chime on the very first poll (everything is "new")
 
       async init() {
         document.body.classList.add('kds-mode');
+        this._applyAudioToggleUi();
         this.tickClock();
         this.clockTimer = setInterval(() => this.tickClock(), 1000);
         await this.refresh();
         // Auto-refresh every 10s — kitchen needs near-realtime, but server load matters
         this.pollTimer = setInterval(() => this.refresh(), 10000);
+      },
+
+      toggleAudio() {
+        this.audioEnabled = !this.audioEnabled;
+        localStorage.setItem('kdsAudio', this.audioEnabled ? '1' : '0');
+        this._applyAudioToggleUi();
+        // Browsers require a user gesture before AudioContext is allowed —
+        // bootstrap it here while we're inside a click handler.
+        if (this.audioEnabled) this._ensureAudio();
+      },
+
+      _applyAudioToggleUi() {
+        const b = document.getElementById('kdsAudioBtn');
+        if (!b) return;
+        b.classList.toggle('muted', !this.audioEnabled);
+        b.textContent = this.audioEnabled ? '🔔' : '🔕';
+      },
+
+      _ensureAudio() {
+        if (this._audioCtx || !window.AudioContext && !window.webkitAudioContext) return;
+        try { this._audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch { /* unsupported */ }
+      },
+
+      _chime() {
+        if (!this.audioEnabled || !this._audioCtx) return;
+        try {
+          // Two short tones — recognisably "order up" without being annoying
+          const ctx = this._audioCtx;
+          const beep = (when, freq) => {
+            const o = ctx.createOscillator(), g = ctx.createGain();
+            o.type = 'sine'; o.frequency.value = freq;
+            o.connect(g); g.connect(ctx.destination);
+            g.gain.setValueAtTime(0.0001, ctx.currentTime + when);
+            g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + when + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + when + 0.22);
+            o.start(ctx.currentTime + when); o.stop(ctx.currentTime + when + 0.25);
+          };
+          beep(0, 880); beep(0.22, 1175);
+        } catch { /* swallow — never break the screen over audio */ }
       },
 
       tickClock() {
@@ -120,6 +176,19 @@
           // Dedupe (paranoia — should not happen across status partitions)
           const seen = new Set();
           this.orders = all.filter(o => !seen.has(o.id) && seen.add(o.id));
+
+          // Detect newly-arrived orders since the last poll
+          const newIds = [];
+          for (const o of this.orders) {
+            if (!this.knownIds.has(o.id)) { newIds.push(o.id); this.knownIds.add(o.id); }
+          }
+          // Drop ids that have rolled off the open pipeline so the set doesn't grow forever
+          const stillOpen = new Set(this.orders.map(o => o.id));
+          for (const id of [...this.knownIds]) if (!stillOpen.has(id)) this.knownIds.delete(id);
+
+          if (newIds.length && !this._firstLoad) this._chime();
+          this._firstLoad = false;
+          this._newIds = new Set(newIds);
           this.render();
         } catch (e) {
           document.getElementById('kdsGrid').innerHTML =
@@ -147,6 +216,7 @@
         const elapsedMin = (Date.now() - new Date(o.orderDate).getTime()) / 60000;
         const elapsedClass = elapsedMin >= 15 ? 'elapsed-late'
                            : elapsedMin >= 5 ? 'elapsed-warn' : '';
+        const newClass = this._newIds && this._newIds.has(o.id) ? 'new-ticket' : '';
         const items = (o.items || []).filter(i => i.status !== 'Served' && i.status !== 'Cancelled');
         const meta = [];
         if (o.tableNumber) meta.push(`โต๊ะ ${this.esc(o.tableNumber)}`);
@@ -155,7 +225,7 @@
         if (o.orderType) meta.push(this.typeLabel(o.orderType));
 
         return `
-          <div class="ticket ${elapsedClass}">
+          <div class="ticket ${elapsedClass} ${newClass}">
             <div class="ticket-head">
               <span class="no">#${this.esc(o.orderNumber || '')}</span>
               <span class="time">${this.fmtTime(o.orderDate)} · ${Math.floor(elapsedMin)} นาที</span>

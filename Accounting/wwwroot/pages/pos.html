@@ -90,9 +90,9 @@
             <span class="session-dot closed" id="sessionDot"></span>
             <span id="sessionText">ยังไม่เปิดกะ</span>
             <span id="posNetStatus" style="margin-left:10px;font-size:12px;font-weight:600;"></span>
-            <button id="posOfflineQueue" type="button" onclick="Page._syncOfflineQueue()"
+            <button id="posOfflineQueue" type="button" onclick="Page.openOfflineQueue()"
               style="display:none;margin-left:10px;font-size:12px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:6px;padding:3px 8px;cursor:pointer;"
-              title="คลิกเพื่อ sync ออเดอร์ที่ค้างอยู่ทันที"></button>
+              title="คลิกเพื่อดู / sync ออเดอร์ที่ค้างอยู่"></button>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <select id="terminalSelect" class="form-select" style="font-size:13px;padding:6px 10px;" onchange="Page.onTerminalChange()"></select>
@@ -282,6 +282,22 @@
       <div class="modal" style="max-width:700px;">
         <div class="modal-header"><h3 class="modal-title">รายการออเดอร์</h3><button class="modal-close" onclick="Layout.closeModal('historyModal')">&times;</button></div>
         <div class="modal-body" id="historyContent"><p class="text-center text-gray-400" data-i18n="common.loading">กำลังโหลด...</p></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="offlineQueueModal">
+      <div class="modal" style="max-width:720px;">
+        <div class="modal-header">
+          <h3 class="modal-title">📤 ออเดอร์ออฟไลน์ที่รอ Sync</h3>
+          <button class="modal-close" onclick="Layout.closeModal('offlineQueueModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="offlineQueueContent">
+          <p class="text-center text-gray-400" style="padding:30px;">กำลังโหลด...</p>
+        </div>
+        <div class="modal-footer" style="padding:12px 16px;border-top:1px solid var(--gray-200);display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('offlineQueueModal')">ปิด</button>
+          <button class="btn btn-primary" id="offlineSyncAllBtn" onclick="Page.syncOfflineNow()">🔄 Sync ทั้งหมดเดี๋ยวนี้</button>
+        </div>
       </div>
     </div>
   </div>
@@ -814,7 +830,72 @@
           const list = await this._getOfflineQueue();
           if (list.length > 0) { el.style.display = ''; el.textContent = `📤 รอ sync ${list.length} ออเดอร์`; }
           else el.style.display = 'none';
+          // Re-render the modal too if it's open — caller may have deleted/synced from inside
+          if (document.getElementById('offlineQueueModal')?.classList.contains('active')) {
+            this._renderOfflineQueue(list);
+          }
         } catch { el.style.display = 'none'; }
+      },
+
+      async openOfflineQueue() {
+        Layout.openModal('offlineQueueModal');
+        let list = [];
+        try { list = await this._getOfflineQueue(); } catch (e) {
+          document.getElementById('offlineQueueContent').innerHTML =
+            `<p class="text-danger" style="padding:20px;">โหลดคิวไม่สำเร็จ: ${Layout.esc(e.message)}</p>`;
+          return;
+        }
+        this._renderOfflineQueue(list);
+      },
+
+      _renderOfflineQueue(list) {
+        const el = document.getElementById('offlineQueueContent');
+        const btn = document.getElementById('offlineSyncAllBtn');
+        if (!list.length) {
+          el.innerHTML = '<p class="text-center text-gray-400" style="padding:30px;">✅ ไม่มีออเดอร์ค้าง — sync ครบแล้ว</p>';
+          if (btn) btn.disabled = true;
+          return;
+        }
+        if (btn) btn.disabled = !navigator.onLine;
+        el.innerHTML = `
+          ${!navigator.onLine ? '<div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:13px;">🔴 ขณะนี้ออฟไลน์ — sync เมื่อกลับมาออนไลน์</div>' : ''}
+          <div style="max-height:55vh;overflow:auto;">
+            <table class="table table-sm" style="font-size:13px;">
+              <thead><tr>
+                <th>เวลา</th><th>โต๊ะ/คิว</th><th>รายการ</th>
+                <th class="text-right">รวม</th><th class="text-right">จ่าย</th><th></th>
+              </tr></thead>
+              <tbody>
+                ${list.map(p => `
+                  <tr>
+                    <td style="white-space:nowrap;">${new Date(p.completedAt).toLocaleString('th-TH', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})}</td>
+                    <td>${Layout.esc(p.tableNumber || p.queueNumber || '-')}</td>
+                    <td>${(p.items || []).length} รายการ</td>
+                    <td class="text-right">${Layout.money((p.items || []).reduce((s,i)=>s+(i.unitPrice||0)*(i.quantity||0),0))}</td>
+                    <td class="text-right">${Layout.money((p.payments || []).reduce((s,x)=>s+(x.amount||0),0))}</td>
+                    <td><button class="btn btn-sm btn-danger" onclick="Page.discardOfflineOrder('${p.clientOrderId}')" title="ลบ — ใช้เฉพาะกรณีรู้แน่ว่าออเดอร์นี้ไม่ต้องการแล้ว">🗑</button></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <p style="font-size:11px;color:var(--gray-500);margin-top:8px;">
+            ⚠️ ลบจะทำให้ยอดขายหายถาวร ใช้เฉพาะกรณีออเดอร์ทดสอบหรือผิดพลาดเท่านั้น
+          </p>`;
+      },
+
+      async syncOfflineNow() {
+        if (!navigator.onLine) { Layout.toast('ขณะนี้ออฟไลน์ — รอกลับมาออนไลน์ก่อน', 'warning'); return; }
+        await this._syncOfflineQueue();
+      },
+
+      async discardOfflineOrder(clientOrderId) {
+        if (!confirm('ยืนยันลบออเดอร์ออฟไลน์นี้? ยอดขายจะหายและจะไม่ถูก sync')) return;
+        try {
+          await this._removeOfflineOrder(clientOrderId);
+          await this._refreshOfflineBadge();
+          Layout.toast('ลบจากคิวแล้ว', 'success');
+        } catch (e) { Layout.toast('ลบไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async _syncOfflineQueue() {
         if (!navigator.onLine) return;
