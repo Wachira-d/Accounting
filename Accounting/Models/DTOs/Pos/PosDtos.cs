@@ -382,6 +382,20 @@ public record CommissionSummaryResponse(
     decimal RemainingAmount,
     bool IsPaid);
 
+/// <summary>คอมมิชชั่นรายกิจกรรม — ใช้ตรวจสอบ / audit ว่ามาจากออเดอร์ใด ทำเมื่อไหร่ คิดยังไง</summary>
+public record CommissionDetailResponse(
+    Guid ActivityId,
+    Guid OrderId,
+    string OrderNumber,
+    DateTime OrderDate,
+    Guid OrderItemId,
+    string ItemName,           // ชื่อบริการ/แพ็กเกจ
+    string ComponentName,      // ขั้นตอนย่อยที่ทำ
+    string Status,             // Pending / InProgress / Completed
+    DateTime? CompletedAt,
+    decimal CommissionAmount,
+    string? Notes);
+
 // ===== POS Daily Summary =====
 public record PosDailySummaryResponse(
     DateTime Date,

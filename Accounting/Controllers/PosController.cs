@@ -233,4 +233,10 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<CommissionSummaryResponse>>>> GetCommissionSummary(
         Guid companyId, [FromQuery] DateTime periodStart, [FromQuery] DateTime periodEnd)
         => Ok(new ApiResponse<List<CommissionSummaryResponse>>(true, await _pos.GetCommissionSummariesAsync(companyId, periodStart, periodEnd)));
+
+    [HttpGet("commission-detail")]
+    public async Task<ActionResult<ApiResponse<List<CommissionDetailResponse>>>> GetCommissionDetail(
+        Guid companyId, [FromQuery] Guid staffId, [FromQuery] DateTime periodStart, [FromQuery] DateTime periodEnd)
+        => Ok(new ApiResponse<List<CommissionDetailResponse>>(true,
+            await _pos.GetCommissionDetailsAsync(companyId, staffId, periodStart, periodEnd)));
 }

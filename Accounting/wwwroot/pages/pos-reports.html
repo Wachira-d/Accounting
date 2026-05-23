@@ -105,6 +105,14 @@
         <div class="modal-body" id="detailContent"></div>
       </div>
     </div>
+
+    <!-- Commission Detail Modal -->
+    <div class="modal-overlay" id="commissionDetailModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header"><h3 class="modal-title" id="commissionDetailTitle">คอมมิชชั่นรายกิจกรรม</h3><button class="modal-close" onclick="Layout.closeModal('commissionDetailModal')">&times;</button></div>
+        <div class="modal-body" id="commissionDetailContent"></div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -409,18 +417,75 @@
             ${items.map(s => `
               <div class="commission-card">
                 <div class="cc-header">
-                  <div class="cc-name">${s.staffName || 'พนักงาน ' + (s.staffId||'').slice(0,8)}</div>
-                  <div class="cc-total">${Layout.money(s.totalCommission)}</div>
+                  <div class="cc-name">${Layout.esc(s.staffName || 'พนักงาน ' + (s.staffId||'').slice(0,8))}</div>
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <div class="cc-total">${Layout.money(s.totalCommission)}</div>
+                    <button class="btn btn-sm btn-secondary"
+                      onclick="Page.openCommissionDetail('${s.staffId}','${Layout.esc(s.staffName||'')}')">
+                      🔍 ดูรายละเอียด
+                    </button>
+                  </div>
                 </div>
                 <div class="cc-detail">
                   <span>ออเดอร์: ${s.orderCount || '-'}</span>
-                  <span>รายการ: ${s.serviceCount || '-'}</span>
+                  <span>รายการ: ${s.totalActivities || s.serviceCount || '-'}</span>
                   <span>ยอดขาย: ${Layout.money(s.totalSales || 0)}</span>
                 </div>
               </div>
             `).join('')}
           `;
         } catch (e) { document.getElementById('commissionContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
+      },
+
+      async openCommissionDetail(staffId, staffName) {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        document.getElementById('commissionDetailTitle').textContent =
+          `คอมมิชชั่นรายกิจกรรม — ${staffName || ''}`;
+        const body = document.getElementById('commissionDetailContent');
+        body.innerHTML = '<p class="text-center text-gray-400" style="padding:40px;">กำลังโหลด...</p>';
+        Layout.openModal('commissionDetailModal');
+        try {
+          const res = await api.getPosCommissionDetail(
+            `?staffId=${encodeURIComponent(staffId)}&periodStart=${from}&periodEnd=${to}`);
+          const rows = res.data || [];
+          const total = rows.reduce((s, r) => s + (r.commissionAmount || 0), 0);
+          body.innerHTML = !rows.length
+            ? '<p class="text-center text-gray-400" style="padding:40px;">ไม่มีกิจกรรมในช่วงเวลานี้</p>'
+            : `
+              <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
+                รวมทั้งสิ้น <strong>${rows.length}</strong> กิจกรรม
+                รวมเป็นเงิน <strong style="color:var(--success);">${Layout.money(total)}</strong>
+              </div>
+              <div style="max-height:60vh;overflow:auto;">
+                <table class="table table-sm" style="font-size:13px;">
+                  <thead><tr>
+                    <th>วันที่</th><th>เลขออเดอร์</th><th>บริการ</th>
+                    <th>ขั้นตอน</th><th>สถานะ</th><th class="text-right">คอม</th>
+                  </tr></thead>
+                  <tbody>
+                    ${rows.map(r => `
+                      <tr>
+                        <td style="white-space:nowrap;">${new Date(r.orderDate).toLocaleDateString('th-TH')}</td>
+                        <td><a href="#" onclick="Layout.closeModal('commissionDetailModal');Page.showOrderDetail('${r.orderId}');return false;">${Layout.esc(r.orderNumber)}</a></td>
+                        <td>${Layout.esc(r.itemName)}</td>
+                        <td>${Layout.esc(r.componentName)}</td>
+                        <td>${this.activityStatusLabel(r.status)}</td>
+                        <td class="text-right">${Layout.money(r.commissionAmount)}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>`;
+        } catch (e) {
+          body.innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`;
+        }
+      },
+
+      activityStatusLabel(s) {
+        const m = { Pending: '⏳ รอ', InProgress: '🔄 กำลังทำ', Completed: '✅ เสร็จ', Cancelled: '❌ ยกเลิก' };
+        return m[s] || s;
       },
 
       payLabel(m) {

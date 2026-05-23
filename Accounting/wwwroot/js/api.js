@@ -834,6 +834,7 @@ const API = {
       // POS - Reports
       getPosDailySummary: (q = '') => API.get(`${base}/pos/daily-summary${q}`),
       getPosCommissionSummary: (q) => API.get(`${base}/pos/commission-summary${q}`),
+      getPosCommissionDetail: (q) => API.get(`${base}/pos/commission-detail${q}`),
       // Integration
       getIntegrations: () => API.get(`${base}/integrations`),
       createIntegration: (d) => API.post(`${base}/integrations`, d),

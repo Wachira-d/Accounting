@@ -66,4 +66,7 @@ public interface IPosService
     // Reports
     Task<PosDailySummaryResponse> GetDailySummaryAsync(Guid companyId, DateTime date);
     Task<List<CommissionSummaryResponse>> GetCommissionSummariesAsync(Guid companyId, DateTime periodStart, DateTime periodEnd);
+
+    /// <summary>คอมมิชชั่นรายกิจกรรม (per-activity audit trail) — ใช้ตรวจสอบว่ามาจากออเดอร์ใด ขั้นตอนใด คิดยังไง</summary>
+    Task<List<CommissionDetailResponse>> GetCommissionDetailsAsync(Guid companyId, Guid staffId, DateTime periodStart, DateTime periodEnd);
 }

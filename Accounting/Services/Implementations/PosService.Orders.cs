@@ -807,6 +807,44 @@ public partial class PosService
         )).ToList();
     }
 
+    public async Task<List<CommissionDetailResponse>> GetCommissionDetailsAsync(
+        Guid companyId, Guid staffId, DateTime periodStart, DateTime periodEnd)
+    {
+        // Join activity → orderItem → order, scoped to company + staff + period.
+        // Period filter is on Order.OrderDate so a single payout window matches
+        // the StaffCommissionSummaries row.
+        var rows = await (
+            from a in _db.Set<PosServiceActivity>().AsNoTracking()
+            join oi in _db.Set<PosOrderItem>().AsNoTracking() on a.OrderItemId equals oi.Id
+            join o in _db.Set<PosOrder>().AsNoTracking() on oi.OrderId equals o.Id
+            join c in _db.Set<ServiceComponent>().AsNoTracking() on a.ComponentId equals c.Id
+            where o.CompanyId == companyId
+                && a.StaffId == staffId
+                && o.OrderDate >= periodStart && o.OrderDate <= periodEnd
+            orderby o.OrderDate descending, o.OrderNumber, oi.LineOrder
+            select new
+            {
+                a.Id,
+                OrderId = o.Id,
+                o.OrderNumber,
+                o.OrderDate,
+                OrderItemId = oi.Id,
+                ItemName = oi.ItemName,
+                ComponentName = c.Name,
+                Status = a.Status,
+                a.CompletedAt,
+                a.CommissionAmount,
+                a.Notes
+            }
+        ).ToListAsync();
+
+        return rows.Select(r => new CommissionDetailResponse(
+            r.Id, r.OrderId, r.OrderNumber, r.OrderDate, r.OrderItemId,
+            r.ItemName, r.ComponentName, r.Status.ToString(), r.CompletedAt,
+            r.CommissionAmount, r.Notes
+        )).ToList();
+    }
+
     // ==================== Helpers ====================
 
     private async Task<decimal> GetCompanyVatRateAsync(Guid companyId)
