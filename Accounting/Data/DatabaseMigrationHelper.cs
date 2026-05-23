@@ -2394,6 +2394,13 @@ public static class DatabaseMigrationHelper
 
             // ===== PosOrderItems.RefundedQuantity: POS partial refunds =====
             """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "RefundedQuantity" numeric NOT NULL DEFAULT 0;""",
+
+            // ===== PosOrders.ClientOrderId: offline-sale idempotency key =====
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "ClientOrderId" uuid NULL;""",
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosOrders_CompanyId_ClientOrderId"
+                ON "PosOrders" ("CompanyId", "ClientOrderId") WHERE "ClientOrderId" IS NOT NULL;
+            """,
         };
 
         foreach (var sql in statements)

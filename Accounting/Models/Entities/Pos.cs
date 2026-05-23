@@ -83,6 +83,12 @@ public class PosOrder : TenantEntity
     public JournalEntry? JournalEntry { get; set; }
     public Guid? DocumentId { get; set; }                        // Link to receipt/tax invoice
 
+    /// <summary>Idempotency key set by the POS client for sales rung up
+    /// while offline. SyncOfflineOrderAsync uses (CompanyId, ClientOrderId)
+    /// to detect a retry of an already-synced sale and return it instead
+    /// of creating a duplicate. Null for normal online orders.</summary>
+    public Guid? ClientOrderId { get; set; }
+
     public DateTime? CompletedAt { get; set; }
 
     public ICollection<PosOrderItem> Items { get; set; } = new List<PosOrderItem>();

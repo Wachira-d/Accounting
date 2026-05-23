@@ -114,6 +114,27 @@ public record OrderResponse(
     Guid? DocumentId = null,
     string? DocumentNumber = null);
 
+// ===== Offline sale sync — atomic create+pay+complete, idempotent =====
+public record OfflineOrderRequest(
+    Guid ClientOrderId,
+    Guid SessionId,
+    PosOrderType OrderType,
+    Guid? CustomerId,
+    string? CustomerName,
+    string? TableNumber,
+    string? QueueNumber,
+    decimal DiscountPercent,
+    string? Notes,
+    DateTime CompletedAt,
+    List<CreateOrderItemRequest> Items,
+    List<OfflinePaymentRequest> Payments);
+
+public record OfflinePaymentRequest(
+    PaymentMethod PaymentMethod,
+    decimal Amount,
+    decimal ReceivedAmount,
+    string? ReferenceNo);
+
 // ===== Issue full tax invoice for a completed POS order =====
 public record IssueTaxInvoiceRequest(
     string BuyerName,

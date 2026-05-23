@@ -458,6 +458,121 @@ public partial class PosService
         return await GetOrderAsync(companyId, orderId);
     }
 
+    public async Task<OrderResponse> SyncOfflineOrderAsync(Guid companyId, OfflineOrderRequest request, string createdBy)
+    {
+        // Idempotency: replays from the offline queue land here with the
+        // same ClientOrderId. If we've already synced this sale, return it
+        // — never create a duplicate.
+        var existing = await _db.PosOrders.AsNoTracking()
+            .FirstOrDefaultAsync(o => o.CompanyId == companyId && o.ClientOrderId == request.ClientOrderId);
+        if (existing != null) return await GetOrderAsync(companyId, existing.Id);
+
+        var session = await _db.PosSessions.FirstOrDefaultAsync(s => s.Id == request.SessionId
+                && s.CompanyId == companyId && s.Status == PosSessionStatus.Open)
+            ?? throw new InvalidOperationException("กะที่บันทึกออเดอร์ออฟไลน์นี้ปิดไปแล้ว — ไม่สามารถ sync ได้");
+        if (request.Items == null || request.Items.Count == 0)
+            throw new InvalidOperationException("ออเดอร์ออฟไลน์ไม่มีรายการสินค้า");
+
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // Generate the official order number.
+            var posYm = DateTime.UtcNow.ToString("yyyyMM");
+            var posPrefix = $"POS-{posYm}-";
+            var maxPos = await _db.PosOrders.IgnoreQueryFilters()
+                .Where(o => o.CompanyId == companyId && o.OrderNumber.StartsWith(posPrefix))
+                .Select(o => o.OrderNumber).MaxAsync() as string;
+            var posSeq = 1;
+            if (maxPos != null)
+            {
+                var lastPart = maxPos.Substring(posPrefix.Length);
+                if (int.TryParse(lastPart, out var parsed)) posSeq = parsed + 1;
+            }
+
+            var order = new PosOrder
+            {
+                CompanyId = companyId,
+                SessionId = request.SessionId,
+                OrderNumber = $"{posPrefix}{posSeq:D4}",
+                OrderType = request.OrderType,
+                CustomerId = request.CustomerId,
+                CustomerName = request.CustomerName,
+                TableNumber = request.TableNumber,
+                QueueNumber = request.QueueNumber,
+                DiscountPercent = request.DiscountPercent,
+                Notes = request.Notes,
+                ClientOrderId = request.ClientOrderId,
+                Status = PosOrderStatus.Open,
+                CreatedBy = createdBy,
+            };
+            _db.PosOrders.Add(order);
+            await _db.SaveChangesAsync();
+
+            // Items + totals — re-use the same helpers the online flow uses.
+            var vatRate = await GetCompanyVatRateAsync(companyId);
+            for (var i = 0; i < request.Items.Count; i++)
+                await AddItemToOrder(order, request.Items[i], i + 1, vatRate);
+            RecalculateOrder(order, vatRate);
+
+            // Payments — fully provided by the client (they were collected at
+            // sale time offline). Total must cover the order.
+            decimal totalPaid = 0;
+            foreach (var p in request.Payments ?? new List<OfflinePaymentRequest>())
+            {
+                var change = Math.Max(0, p.ReceivedAmount - p.Amount);
+                order.Payments.Add(new PosPayment
+                {
+                    OrderId = order.Id,
+                    PaymentMethod = p.PaymentMethod,
+                    Amount = p.Amount,
+                    ReceivedAmount = p.ReceivedAmount,
+                    ChangeAmount = change,
+                    ReferenceNo = p.ReferenceNo,
+                    PaidAt = request.CompletedAt,
+                });
+                totalPaid += p.Amount;
+            }
+            if (totalPaid < order.NetAmount - 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดชำระออฟไลน์ ({totalPaid:N2}) ไม่ครบ ({order.NetAmount:N2})");
+
+            order.Status = PosOrderStatus.Completed;
+            order.CompletedAt = request.CompletedAt;
+
+            // GL + stock — same as the online CompleteOrderAsync.
+            await CreateSalesJournalEntryAsync(companyId, order, createdBy);
+            foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
+            {
+                var product = await _db.Products.FindAsync(item.ProductId);
+                if (product?.TrackStock == true)
+                {
+                    product.CurrentStock -= item.Quantity;
+                    _db.StockMovements.Add(new StockMovement
+                    {
+                        CompanyId = companyId,
+                        ProductId = product.Id,
+                        MovementDate = request.CompletedAt,
+                        MovementType = "OUT",
+                        Quantity = -item.Quantity,
+                        UnitCost = product.CostPrice,
+                        BalanceAfter = product.CurrentStock,
+                        Reference = order.OrderNumber,
+                        Notes = "POS Sale (offline sync)",
+                    });
+                }
+            }
+
+            await _db.SaveChangesAsync();
+            await txn.CommitAsync();
+            return await GetOrderAsync(companyId, order.Id);
+        }
+        catch
+        {
+            await txn.RollbackAsync();
+            throw;
+        }
+    }
+
     // ==================== Order Items ====================
 
     public async Task<OrderResponse> AddOrderItemAsync(Guid companyId, Guid orderId, CreateOrderItemRequest request)

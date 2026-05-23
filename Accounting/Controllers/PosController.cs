@@ -104,6 +104,14 @@ public class PosController : ControllerBase
         return Ok(new ApiResponse<OrderResponse>(true, result, "ออกใบกำกับภาษีเต็มรูปสำเร็จ"));
     }
 
+    [HttpPost("orders/sync-offline")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SyncOfflineOrder(Guid companyId, [FromBody] OfflineOrderRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _pos.SyncOfflineOrderAsync(companyId, request, userId);
+        return Ok(new ApiResponse<OrderResponse>(true, result, "Sync ออเดอร์ออฟไลน์สำเร็จ"));
+    }
+
     // ===== Order Items =====
     [HttpPost("orders/{orderId:guid}/items")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddOrderItem(Guid companyId, Guid orderId, [FromBody] CreateOrderItemRequest request)

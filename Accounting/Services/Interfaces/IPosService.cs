@@ -30,6 +30,8 @@ public interface IPosService
     Task<OrderResponse> RefundOrderAsync(Guid companyId, Guid orderId, RefundOrderRequest request, string userId);
     /// <summary>ออกใบกำกับภาษีเต็มรูปสำหรับออเดอร์ POS — สร้าง Document แบบ TaxInvoice + ผูก JE เดิมเข้ากับเอกสาร (กัน VAT ซ้ำใน ภพ.30)</summary>
     Task<OrderResponse> IssueTaxInvoiceAsync(Guid companyId, Guid orderId, IssueTaxInvoiceRequest request, string userId);
+    /// <summary>Sync ออเดอร์ที่บันทึกตอนออฟไลน์ — atomic create+pay+complete พร้อม idempotency จาก ClientOrderId</summary>
+    Task<OrderResponse> SyncOfflineOrderAsync(Guid companyId, OfflineOrderRequest request, string createdBy);
 
     // Payment
     Task<OrderResponse> AddPaymentAsync(Guid companyId, CreatePaymentRequest request, string userId);
