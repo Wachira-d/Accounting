@@ -572,8 +572,14 @@ public partial class TaxService : ITaxService
 
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
     {
-        var startDate = new DateTime(year, 1, 1);
-        var endDate = new DateTime(year, 12, 31);
+        // Honour Company.FiscalYearStartMonth — a Jul–Jun FY (start=7) for
+        // fiscal year 2025 covers Jul 1 2025 → Jun 30 2026, not Jan–Dec.
+        // Hard-coding Jan/Dec would make every non-calendar-FY filer report
+        // the wrong period to RD (illegal under Thai Revenue Code §65).
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var startMonth = company?.FiscalYearStartMonth is >= 1 and <= 12 ? company.FiscalYearStartMonth : 1;
+        var startDate = new DateTime(year, startMonth, 1);
+        var endDate = startDate.AddYears(1).AddDays(-1);
 
         // Calculate total revenue
         var revenueLines = await _db.JournalEntryLines

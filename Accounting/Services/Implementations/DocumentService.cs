@@ -489,6 +489,23 @@ public class DocumentService : IDocumentService
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // Pessimistic lock — two simultaneous Approve calls both saw
+                // Status=Draft and hasExistingJournal=false before, so both
+                // happily auto-posted, producing duplicate JEs and double-counting
+                // revenue/expense. FOR UPDATE serialises them on the document row.
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                    documentId, companyId);
+
+                // Re-read status under the lock — the prior reader may have
+                // already moved this Document past Draft.
+                var lockedStatus = await _db.Documents
+                    .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                    .Select(d => d.Status)
+                    .FirstAsync();
+                if (lockedStatus != DocumentStatus.Draft)
+                    throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+
                 // Idempotency guard INSIDE transaction to prevent race condition
                 var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
                     j.SourceDocumentId == documentId
@@ -1158,6 +1175,24 @@ public class DocumentService : IDocumentService
                 && j.Reference == payment.PaymentNumber)
             .Select(j => j.Id)
             .ToListAsync();
+
+        // Fail loud if the payment posted to GL but we can't find the JE to
+        // reverse — silently skipping leaves Cash/AR overstated. The most
+        // common cause is a Reference-format drift (whitespace, case). Log
+        // the discrepancy and surface a clear error so the operator can
+        // reverse the orphan JE manually instead of corrupting GL silently.
+        if (paymentJournals.Count == 0)
+        {
+            var anyJeForDoc = await _db.JournalEntries
+                .AnyAsync(j => j.SourceDocumentId == doc.Id
+                    && j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted);
+            if (anyJeForDoc)
+                throw new InvalidOperationException(
+                    $"ไม่พบ JE ที่ผูกกับใบรับเงิน {payment.PaymentNumber} (อาจถูกแก้ Reference ภายหลัง) — " +
+                    "กรุณากลับรายการ JE ด้วยมือก่อนทำการ Reverse Payment เพื่อไม่ให้ยอด Cash/AR ใน GL คลาดเคลื่อน");
+        }
+
         foreach (var jeId in paymentJournals)
         {
             await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
@@ -2242,6 +2277,16 @@ public class DocumentService : IDocumentService
     /// </summary>
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
+        // Multi-currency safety: the system stores Document.Currency but has
+        // no FX rate / conversion infrastructure yet. Posting a USD-denominated
+        // document's amounts straight into a THB GL would silently overstate
+        // every balance. Refuse to auto-post non-THB documents until a proper
+        // ExchangeRate field and conversion path are added.
+        if (!string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"ระบบยังไม่รองรับการบันทึกบัญชีอัตโนมัติสำหรับสกุลเงิน {doc.Currency} — " +
+                "กรุณาเปลี่ยนเป็น THB หรือลงรายการสมุดรายวันด้วยมือพร้อมแปลงค่าเงิน");
+
         // Resolve default fallback accounts up front — used when document lines
         // have no explicit AccountId (the UI doesn't expose per-line account selection yet).
         // The default Thai chart uses 41000 (sales) / 42000 (service) at level 4;
@@ -2646,7 +2691,15 @@ public class DocumentService : IDocumentService
         }
 
         if (pendingLines.Count < 2)
-            return; // ผังบัญชียังไม่ได้ seed — ไม่บันทึก แทนที่จะ throw เพื่อไม่บล็อกการอนุมัติ
+        {
+            // Fail fast — silently skipping the JE while marking the document
+            // Approved makes the GL miss revenue/expense for days/weeks until
+            // someone runs a TB reconciliation. Better to block the approval
+            // and force the operator to seed the missing COA accounts.
+            throw new InvalidOperationException(
+                "ไม่สามารถบันทึกบัญชีอัตโนมัติได้: ผังบัญชี (COA) ที่ใช้สำหรับเอกสารประเภทนี้ยังไม่ครบ. " +
+                "กรุณาเปิดเมนู ตั้งค่าผังบัญชี เพื่อ seed บัญชีที่จำเป็น (รายได้ / ค่าใช้จ่าย / VAT / AR / AP / เงินสด) ก่อนอนุมัติ");
+        }
 
         // Validate double-entry balance per Thai accounting standards (TAS 1)
         var totalDebit = pendingLines.Sum(l => l.Debit);
