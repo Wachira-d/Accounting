@@ -504,7 +504,10 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         }
 
         long baht = (long)Math.Floor(Math.Abs(amount));
-        int satang = (int)Math.Round((Math.Abs(amount) - baht) * 100);
+        // AwayFromZero so the printed "baht-text" on tax invoices never under-
+        // states the satang on half-boundaries (banker's rounding default would
+        // turn 0.005 → 0 satang instead of 1 satang).
+        int satang = (int)Math.Round((Math.Abs(amount) - baht) * 100, MidpointRounding.AwayFromZero);
         var text = ConvertGroup(baht, digits, units) + "บาท";
         text += satang > 0 ? ConvertGroup(satang, digits, units) + "สตางค์" : "ถ้วน";
         return text;

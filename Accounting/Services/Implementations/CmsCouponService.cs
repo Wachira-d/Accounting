@@ -152,7 +152,7 @@ public class CmsCouponService : ICmsCouponService
 
         decimal discount = coupon.DiscountType switch
         {
-            CouponDiscountType.Percentage => Math.Round(eligibleSubtotal * coupon.DiscountValue / 100m, 2),
+            CouponDiscountType.Percentage => Math.Round(eligibleSubtotal * coupon.DiscountValue / 100m, 2, MidpointRounding.AwayFromZero),
             CouponDiscountType.FixedAmount => Math.Min(coupon.DiscountValue, eligibleSubtotal),
             CouponDiscountType.FreeShipping => 0,
             _ => 0

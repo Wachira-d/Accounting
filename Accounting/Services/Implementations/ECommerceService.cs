@@ -356,8 +356,11 @@ public class ECommerceService : IECommerceService
             DocumentDate = order.OrderDate,
             DueDate = order.OrderDate,
             ContactId = contact.Id,
-            SubTotal = Math.Round(subTotal, 2),
-            VatAmount = Math.Round(vatAmount, 2),
+            // AwayFromZero matches the system-wide accounting rounding rule
+            // (see AccountingService / PayrollService); default banker's
+            // rounding would drift VAT by 1 satang at half-baht boundaries.
+            SubTotal = Math.Round(subTotal, 2, MidpointRounding.AwayFromZero),
+            VatAmount = Math.Round(vatAmount, 2, MidpointRounding.AwayFromZero),
             TotalAmount = order.TotalAmount,
             BalanceDue = 0,
             Reference = $"{order.OrderId}",
@@ -386,9 +389,9 @@ public class ECommerceService : IECommerceService
                 Description = item.Name,
                 Quantity = item.Quantity,
                 UnitPrice = item.UnitPrice,
-                Amount = Math.Round(lineSubTotal, 2),
+                Amount = Math.Round(lineSubTotal, 2, MidpointRounding.AwayFromZero),
                 VatRate = lineVatRate,
-                VatAmount = Math.Round(lineVatAmount, 2),
+                VatAmount = Math.Round(lineVatAmount, 2, MidpointRounding.AwayFromZero),
                 Unit = "ชิ้น"
             });
         }
