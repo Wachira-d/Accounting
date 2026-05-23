@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
@@ -29,6 +30,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     private readonly ILogger<EtaxInvoiceService> _logger;
     private readonly IPdfGenerationService _pdfService;
     private readonly IWebHostEnvironment _env;
+    private readonly ISecretProtector _secrets;
 
     public EtaxInvoiceService(
         AccountingDbContext db,
@@ -36,7 +38,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         IHttpClientFactory httpClientFactory,
         ILogger<EtaxInvoiceService> logger,
         IPdfGenerationService pdfService,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ISecretProtector secrets)
     {
         _db = db;
         _config = config;
@@ -44,6 +47,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         _logger = logger;
         _pdfService = pdfService;
         _env = env;
+        _secrets = secrets;
     }
 
     /// <summary>Get e-Tax config for a company: per-company settings override global config</summary>
@@ -57,9 +61,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         {
             return (
                 companySettings.EtaxCertificatePath,
-                companySettings.EtaxCertificatePassword,
+                _secrets.Unprotect(companySettings.EtaxCertificatePassword),
                 companySettings.EtaxRdApiKey,
-                companySettings.EtaxRdApiSecret,
+                _secrets.Unprotect(companySettings.EtaxRdApiSecret),
                 companySettings.EtaxTestMode,
                 companySettings.EtaxAutoSign,
                 companySettings.EtaxAutoSubmit,

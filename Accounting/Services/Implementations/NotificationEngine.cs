@@ -1,6 +1,7 @@
 using System.Net.Mail;
 using System.Net;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -32,14 +33,17 @@ public class NotificationEngine : INotificationEngine
     private readonly ILineNotifyService _line;
     private readonly IOrganizationService _organization;
     private readonly ILogger<NotificationEngine> _logger;
+    private readonly ISecretProtector _secrets;
 
     public NotificationEngine(AccountingDbContext db, ILineNotifyService line,
-        IOrganizationService organization, ILogger<NotificationEngine> logger)
+        IOrganizationService organization, ILogger<NotificationEngine> logger,
+        ISecretProtector secrets)
     {
         _db = db;
         _line = line;
         _organization = organization;
         _logger = logger;
+        _secrets = secrets;
     }
 
     public async Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context)
@@ -247,7 +251,7 @@ public class NotificationEngine : INotificationEngine
             {
                 EnableSsl = s.EmailSmtpUseSsl,
                 Credentials = !string.IsNullOrEmpty(s.EmailSmtpUsername)
-                    ? new NetworkCredential(s.EmailSmtpUsername, s.EmailSmtpPassword ?? "")
+                    ? new NetworkCredential(s.EmailSmtpUsername, _secrets.Unprotect(s.EmailSmtpPassword) ?? "")
                     : null,
             };
             await client.SendMailAsync(msg);

@@ -97,6 +97,7 @@ builder.Services.AddScoped<SubLedgerReconciliationService>();
 builder.Services.AddScoped<PreCloseChecklistService>();
 builder.Services.AddScoped<DocumentCompletenessService>();
 builder.Services.AddScoped<GlobalSearchService>();
+builder.Services.AddSingleton<Accounting.Helpers.ISecretProtector, Accounting.Helpers.SecretProtector>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();

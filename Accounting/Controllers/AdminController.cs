@@ -31,19 +31,22 @@ public class AdminController : ControllerBase
     private readonly IRecurringTransactionService _recurringService;
     private readonly IEmailSenderFactory _emailSenderFactory;
     private readonly IOcrQuotaService _ocrQuota;
+    private readonly ISecretProtector _secrets;
 
     public AdminController(
         AccountingDbContext db,
         ISubscriptionService subscriptionService,
         IRecurringTransactionService recurringService,
         IEmailSenderFactory emailSenderFactory,
-        IOcrQuotaService ocrQuota)
+        IOcrQuotaService ocrQuota,
+        ISecretProtector secrets)
     {
         _db = db;
         _subscriptionService = subscriptionService;
         _recurringService = recurringService;
         _emailSenderFactory = emailSenderFactory;
         _ocrQuota = ocrQuota;
+        _secrets = secrets;
     }
 
     // ===== Dashboard Analytics =====
@@ -1021,21 +1024,21 @@ public class AdminController : ControllerBase
             if (req.Smtp.Host != null) s.SystemSmtpHost = req.Smtp.Host;
             if (req.Smtp.Port.HasValue) s.SystemSmtpPort = req.Smtp.Port.Value;
             if (req.Smtp.Username != null) s.SystemSmtpUsername = req.Smtp.Username;
-            if (!string.IsNullOrEmpty(req.Smtp.Password)) s.SystemSmtpPassword = req.Smtp.Password;
+            if (!string.IsNullOrEmpty(req.Smtp.Password)) s.SystemSmtpPassword = _secrets.Protect(req.Smtp.Password);
             if (req.Smtp.UseSsl.HasValue) s.SystemSmtpUseSsl = req.Smtp.UseSsl.Value;
         }
         if (req.Microsoft != null)
         {
             if (req.Microsoft.TenantId != null) s.SystemMsTenantId = req.Microsoft.TenantId;
             if (req.Microsoft.ClientId != null) s.SystemMsClientId = req.Microsoft.ClientId;
-            if (!string.IsNullOrEmpty(req.Microsoft.ClientSecret)) s.SystemMsClientSecret = req.Microsoft.ClientSecret;
+            if (!string.IsNullOrEmpty(req.Microsoft.ClientSecret)) s.SystemMsClientSecret = _secrets.Protect(req.Microsoft.ClientSecret);
             if (req.Microsoft.SenderUpn != null) s.SystemMsSenderUpn = req.Microsoft.SenderUpn;
         }
         if (req.Gmail != null)
         {
             if (req.Gmail.ClientId != null) s.SystemGmailClientId = req.Gmail.ClientId;
-            if (!string.IsNullOrEmpty(req.Gmail.ClientSecret)) s.SystemGmailClientSecret = req.Gmail.ClientSecret;
-            if (!string.IsNullOrEmpty(req.Gmail.RefreshToken)) s.SystemGmailRefreshToken = req.Gmail.RefreshToken;
+            if (!string.IsNullOrEmpty(req.Gmail.ClientSecret)) s.SystemGmailClientSecret = _secrets.Protect(req.Gmail.ClientSecret);
+            if (!string.IsNullOrEmpty(req.Gmail.RefreshToken)) s.SystemGmailRefreshToken = _secrets.Protect(req.Gmail.RefreshToken);
         }
 
         s.SystemEmailConfigured = false;  // must re-test after change
