@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>หน้าหลัก - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* ===== Simple Mode: large, scannable, no jargon ===== */
+    body { font-family:'Noto Sans Thai', sans-serif; background:#f8fafc; }
+    .sm-shell { max-width:1000px; margin:0 auto; padding:20px 16px 40px; }
+
+    .sm-topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; gap:12px; }
+    .sm-topbar .greeting { font-size:18px; font-weight:600; color:#0f172a; }
+    .sm-topbar .meta { font-size:13px; color:#64748b; }
+    .sm-topbar .mode-toggle { background:#fff; border:1px solid #e2e8f0; border-radius:999px;
+      padding:4px; display:inline-flex; gap:2px; }
+    .sm-topbar .mode-toggle button { background:transparent; border:none; padding:6px 14px;
+      border-radius:999px; cursor:pointer; font-size:13px; font-weight:500; color:#64748b; }
+    .sm-topbar .mode-toggle button.active { background:#0f172a; color:#fff; }
+
+    /* ===== Money snapshot (this month) ===== */
+    .sm-kpi { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:24px; }
+    .sm-kpi .card { background:#fff; border-radius:14px; padding:18px; border:1px solid #e2e8f0; }
+    .sm-kpi .card .label { font-size:13px; color:#64748b; font-weight:500; }
+    .sm-kpi .card .amount { font-size:26px; font-weight:800; margin-top:6px; line-height:1.1; font-variant-numeric:tabular-nums; }
+    .sm-kpi .card .sub { font-size:12px; color:#94a3b8; margin-top:4px; }
+    .sm-kpi .in .amount  { color:#16a34a; }
+    .sm-kpi .out .amount { color:#dc2626; }
+    .sm-kpi .net .amount { color:#0ea5e9; }
+
+    /* ===== 4 big task cards ===== */
+    .sm-tasks { display:grid; grid-template-columns:repeat(2, 1fr); gap:16px; margin-bottom:24px; }
+    .sm-task { background:#fff; border-radius:16px; padding:22px; border:1px solid #e2e8f0;
+      text-decoration:none; color:inherit; cursor:pointer; transition:all .15s ease;
+      display:flex; gap:16px; align-items:flex-start; }
+    .sm-task:hover { transform:translateY(-2px); box-shadow:0 10px 24px rgba(15,23,42,.08); border-color:#cbd5e1; }
+    .sm-task .icon { font-size:42px; flex-shrink:0; line-height:1; }
+    .sm-task h3 { margin:0 0 6px; font-size:18px; font-weight:700; }
+    .sm-task p { margin:0; font-size:13px; color:#64748b; line-height:1.45; }
+    .sm-task .quick { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
+    .sm-task .quick a { display:inline-block; padding:4px 10px; background:#f1f5f9; border-radius:6px;
+      font-size:12px; text-decoration:none; color:#334155; }
+    .sm-task .quick a:hover { background:#e2e8f0; }
+
+    /* Single-column on mobile */
+    @media (max-width:720px) {
+      .sm-kpi  { grid-template-columns:1fr 1fr; }
+      .sm-tasks { grid-template-columns:1fr; }
+      .sm-kpi .net { grid-column:1/-1; }
+    }
+
+    /* ===== Bottom row: tax due + quick scan + getting-started ===== */
+    .sm-strip { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; }
+    .sm-strip a { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px;
+      text-decoration:none; color:inherit; display:flex; gap:10px; align-items:center; transition:all .15s; }
+    .sm-strip a:hover { border-color:#94a3b8; }
+    .sm-strip .ic { font-size:22px; }
+    .sm-strip .ti { font-size:14px; font-weight:600; }
+    .sm-strip .su { font-size:12px; color:#64748b; }
+    @media (max-width:720px) { .sm-strip { grid-template-columns:1fr; } }
+
+    /* Loading skeleton */
+    .skel { background:linear-gradient(90deg,#e2e8f0 25%,#f1f5f9 50%,#e2e8f0 75%);
+            background-size:200% 100%; animation:skel 1.4s infinite; border-radius:6px; height:1em; display:inline-block; min-width:80px; }
+    @keyframes skel { 0% { background-position:200% 0;} 100% { background-position:-200% 0;} }
+  </style>
+</head>
+<body>
+  <div class="sm-shell">
+
+    <div class="sm-topbar">
+      <div>
+        <div class="greeting" id="smGreeting">สวัสดีครับ</div>
+        <div class="meta" id="smCompanyName">—</div>
+      </div>
+      <div class="mode-toggle">
+        <button class="active" onclick="SimpleHome.setMode('simple')">😊 ง่าย</button>
+        <button onclick="SimpleHome.setMode('advanced')">⚙️ มืออาชีพ</button>
+      </div>
+    </div>
+
+    <!-- เงินเข้า / ออก / สุทธิ เดือนนี้ (no P&L jargon) -->
+    <div class="sm-kpi">
+      <div class="card in">
+        <div class="label">💰 เงินเข้าเดือนนี้</div>
+        <div class="amount"><span class="skel" id="kpiIn"></span></div>
+        <div class="sub" id="kpiInSub">เริ่มจากใบกำกับ + ใบเสร็จที่อนุมัติแล้ว</div>
+      </div>
+      <div class="card out">
+        <div class="label">💸 เงินออกเดือนนี้</div>
+        <div class="amount"><span class="skel" id="kpiOut"></span></div>
+        <div class="sub" id="kpiOutSub">รวมค่าใช้จ่ายและซื้อสินค้า</div>
+      </div>
+      <div class="card net">
+        <div class="label">📊 คงเหลือ (เข้า − ออก)</div>
+        <div class="amount"><span class="skel" id="kpiNet"></span></div>
+        <div class="sub">ยังไม่หักภาษีเงินได้</div>
+      </div>
+    </div>
+
+    <!-- 4 ภารกิจหลัก -->
+    <div class="sm-tasks">
+      <a class="sm-task" href="/pages/documents.html?side=revenue&create=Quotation">
+        <div class="icon">💰</div>
+        <div>
+          <h3>รับเงิน — ขายของ / ให้บริการ</h3>
+          <p>ออกใบเสนอราคา ใบกำกับภาษี ใบเสร็จ ให้ลูกค้า</p>
+          <div class="quick">
+            <a href="/pages/documents.html?side=revenue&create=Quotation" onclick="event.stopPropagation()">📋 ใบเสนอราคา</a>
+            <a href="/pages/documents.html?side=revenue&create=TaxInvoice" onclick="event.stopPropagation()">🧾 ใบกำกับภาษี</a>
+            <a href="/pages/pos.html" onclick="event.stopPropagation()">🛒 หน้าขาย POS</a>
+          </div>
+        </div>
+      </a>
+
+      <a class="sm-task" href="/pages/expense.html">
+        <div class="icon">🧾</div>
+        <div>
+          <h3>จ่ายเงิน — บันทึกค่าใช้จ่าย</h3>
+          <p>ถ่ายรูปใบเสร็จให้ AI อ่านอัตโนมัติ หรือกรอกเองก็ได้</p>
+          <div class="quick">
+            <a href="/pages/document-scan.html" onclick="event.stopPropagation()">📸 ถ่ายรูปบิล (AI)</a>
+            <a href="/pages/expense.html" onclick="event.stopPropagation()">✍️ กรอกเอง</a>
+            <a href="/pages/purchases.html?create=PurchaseInvoice" onclick="event.stopPropagation()">🛒 ซื้อสินค้า</a>
+          </div>
+        </div>
+      </a>
+
+      <a class="sm-task" href="/pages/bank.html">
+        <div class="icon">📊</div>
+        <div>
+          <h3>ดูเงินเข้า-ออก</h3>
+          <p>ยอดเงินคงเหลือในธนาคาร รายการรับ-จ่าย ค้างรับ ค้างจ่าย</p>
+          <div class="quick">
+            <a href="/pages/bank.html" onclick="event.stopPropagation()">🏦 บัญชีธนาคาร</a>
+            <a href="/pages/aging.html" onclick="event.stopPropagation()">⏰ ค้างรับ-ค้างจ่าย</a>
+            <a href="/pages/reports.html" onclick="event.stopPropagation()">📈 รายงาน</a>
+          </div>
+        </div>
+      </a>
+
+      <a class="sm-task" href="/pages/tax-calendar.html">
+        <div class="icon">🏛️</div>
+        <div>
+          <h3>ภาษี — ยื่นและจัดการ</h3>
+          <p>ดูปฏิทินภาษีว่าต้องยื่นอะไรเมื่อไหร่ + Export ไฟล์ส่งสรรพากร</p>
+          <div class="quick">
+            <a href="/pages/tax-calendar.html" onclick="event.stopPropagation()">📆 ปฏิทินภาษี</a>
+            <a href="/pages/tax.html" onclick="event.stopPropagation()">📋 ภพ.30</a>
+            <a href="/pages/wht.html" onclick="event.stopPropagation()">💼 ภงด. (หัก ณ ที่จ่าย)</a>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- Bottom helpful row -->
+    <div class="sm-strip">
+      <a href="/pages/getting-started.html">
+        <div class="ic">🚀</div>
+        <div><div class="ti">ตั้งค่าระบบ</div><div class="su">8 ขั้นเตรียมพร้อม</div></div>
+      </a>
+      <a href="#" onclick="SimpleHome.openScan(); return false;">
+        <div class="ic">📸</div>
+        <div><div class="ti">ถ่ายรูปบิลเร็ว ๆ</div><div class="su">AI อ่านและบันทึกให้</div></div>
+      </a>
+      <a href="/pages/contacts.html">
+        <div class="ic">👥</div>
+        <div><div class="ti">ลูกค้า / ผู้จำหน่าย</div><div class="su">เพิ่ม / แก้ไข / รายชื่อ</div></div>
+      </a>
+    </div>
+
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const SimpleHome = {
+      async init() {
+        // Greet + load company name
+        const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const hr = new Date().getHours();
+        const greet = hr < 12 ? 'สวัสดีตอนเช้า' : hr < 17 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น';
+        document.getElementById('smGreeting').textContent =
+          `${greet} ${user.fullName || user.name || ''}`.trim();
+        document.getElementById('smCompanyName').textContent =
+          co.name ? `${co.name}${co.taxId ? ' · เลขผู้เสียภาษี ' + co.taxId : ''}` : 'กรุณาเลือกบริษัท';
+
+        // Tick the mode toggle to match localStorage (default 'simple' on this page)
+        if (localStorage.getItem('uiMode') === 'advanced') {
+          // User chose advanced previously but landed here — let them switch easily
+          document.querySelectorAll('.mode-toggle button').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.mode-toggle button')[1].classList.add('active');
+        }
+
+        await this.loadKpis(co.id);
+      },
+
+      async loadKpis(companyId) {
+        if (!companyId) return;
+        const now = new Date();
+        const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+        const to = now.toISOString().slice(0, 10);
+        try {
+          // P&L = revenue (เงินเข้า) − expense (เงินออก). Easiest server-side source.
+          const res = await API.get(`/api/companies/${companyId}/accounting/reports/profit-loss?fromDate=${from}&toDate=${to}`);
+          const pl = res.data || res;
+          const inAmt = Number(pl?.totalRevenue || 0);
+          const outAmt = Number(pl?.totalExpenses || 0);
+          this._renderAmount('kpiIn', inAmt);
+          this._renderAmount('kpiOut', outAmt);
+          this._renderAmount('kpiNet', inAmt - outAmt);
+        } catch (e) {
+          // Fail soft — hide skeletons and show "—"
+          ['kpiIn', 'kpiOut', 'kpiNet'].forEach(id => {
+            document.getElementById(id).outerHTML = '<span>—</span>';
+          });
+          document.getElementById('kpiInSub').textContent = 'โหลดข้อมูลไม่สำเร็จ (' + e.message + ')';
+        }
+      },
+
+      _renderAmount(id, n) {
+        const el = document.getElementById(id);
+        el.outerHTML = `<span id="${id}">${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿</span>`;
+      },
+
+      setMode(mode) {
+        localStorage.setItem('uiMode', mode);
+        if (mode === 'advanced') {
+          window.location.href = '/app.html';
+        } else {
+          window.location.reload();
+        }
+      },
+
+      openScan() {
+        window.location.href = '/pages/document-scan.html';
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => SimpleHome.init());
+  </script>
+</body>
+</html>

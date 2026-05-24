@@ -102,7 +102,7 @@
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           localStorage.removeItem('currentCompany');
           API.token = token;
-          window.location.href = '/app.html';
+          _loginRedirect();
         } else {
           throw new Error(res.message || 'เข้าสู่ระบบไม่สำเร็จ');
         }
@@ -175,7 +175,7 @@
           } else {
             localStorage.removeItem('passwordWeakNotice');
           }
-          window.location.href = '/app.html';
+          _loginRedirect();
         } else {
           throw new Error(res.message || 'เข้าสู่ระบบไม่สำเร็จ');
         }
@@ -188,9 +188,15 @@
       }
     }
 
-    // Redirect if already logged in
+    // Redirect if already logged in — honour the user's saved UI mode.
     if (localStorage.getItem('token')) {
-      window.location.href = '/app.html';
+      const uiMode = localStorage.getItem('uiMode') || 'simple';
+      window.location.href = uiMode === 'advanced' ? '/app.html' : '/simple.html';
+    }
+
+    function _loginRedirect() {
+      const uiMode = localStorage.getItem('uiMode') || 'simple';
+      window.location.href = uiMode === 'advanced' ? '/app.html' : '/simple.html';
     }
 
     // Apply site settings (logo, background, colors)
