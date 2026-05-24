@@ -194,7 +194,7 @@ const Layout = {
     // the bottom (which flips uiMode → advanced and reloads).
     const uiMode = localStorage.getItem('uiMode') || 'simple';
     const SIMPLE_ALLOWED = new Set([
-      'dashboard',          // หน้าหลัก (Simple Mode home overrides via custom link below)
+      'dashboard',          // หน้าหลัก (Simple Mode home overrides via custom link)
       'documents',          // ขาย
       'expense',            // จ่าย
       'pos',                // หน้าขาย POS
@@ -203,13 +203,21 @@ const Layout = {
       'products',           // สินค้า
       'tax',                // ภพ.30
       'tax-calendar',       // ปฏิทินภาษี
-      'reports',            // รายงาน
-      'settings',           // ตั้งค่า (rendered via header user menu — kept here too)
+      'reports',            // งบการเงิน
+      'aging',              // ค้างรับ-ค้างจ่าย (linked from Simple Mode home)
+      'document-scan',      // OCR ถ่ายรูปบิล
+      'settings',           // ตั้งค่าบริษัท
+    ]);
+    const SIMPLE_SECTIONS = new Set([
+      'ขาย / รายรับ', 'ซื้อ / รายจ่าย', 'POS หน้าร้าน',
+      'การเงิน / ธนาคาร', 'ผู้ติดต่อ & สินค้า',
+      'ภาษี & e-Filing', 'รายงาน / วิเคราะห์', 'ตั้งค่า & ผู้ใช้',
+      'ออนไลน์ & เครื่องมือ',  // hosts document-scan (OCR) which the home strip links to
     ]);
     const items = this.navItems.filter(item => {
-      // section headers + non-item entries pass through; we trim sections that
-      // end up empty in the render loop below via a post-pass.
-      if (item.section) return uiMode !== 'simple' || ['ขาย / รายรับ', 'ซื้อ / รายจ่าย', 'POS หน้าร้าน', 'การเงิน / ธนาคาร', 'ผู้ติดต่อ & สินค้า', 'ภาษี & e-Filing'].includes(item.section);
+      // section headers + non-item entries pass through; the render loop's
+      // flush() then drops sections that end up empty after item filtering.
+      if (item.section) return uiMode !== 'simple' || SIMPLE_SECTIONS.has(item.section);
       const visible =
         (!item.id || !hidden.includes(item.id))
         && (!item.id || this.hasMenuAccess(item.id))
