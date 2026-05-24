@@ -96,12 +96,57 @@ public class LineBotService : ILineBotService
             return "👋 ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\n" +
                    "ผูก {รหัส 6 หลัก}";
 
-        // Pick the user's first active company. Multi-company: future work.
-        var companyId = await _db.CompanyUsers
+        // Resolve the active company for this LINE user.
+        // - Single-company users: use that company silently.
+        // - Multi-company: use the saved active company; if none saved, prompt
+        //   to pick one with "เลือกบริษัท {N}".
+        // - "เลือกบริษัท" itself is intercepted here so it can update state.
+        var companies = await _db.CompanyUsers
             .Where(cu => cu.UserId == user.Id)
-            .Select(cu => (Guid?)cu.CompanyId)
-            .FirstOrDefaultAsync();
-        if (companyId == null) return "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
+            .Include(cu => cu.Company)
+            .Select(cu => new { cu.CompanyId, Name = cu.Company.Name })
+            .ToListAsync();
+        if (companies.Count == 0) return "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
+
+        var state = await _db.LineUserStates.FirstOrDefaultAsync(s => s.LineUserId == lineUserId);
+        if (state == null)
+        {
+            state = new LineUserState { LineUserId = lineUserId, UserId = user.Id };
+            _db.LineUserStates.Add(state);
+        }
+        state.LastInteractionAt = DateTime.UtcNow;
+
+        // "เลือกบริษัท N" — switch active company by 1-based index.
+        if (msg.StartsWith("เลือกบริษัท") || msg.StartsWith("เลือก") || msg.StartsWith("switch"))
+        {
+            var n = new string(msg.Where(char.IsDigit).ToArray());
+            if (int.TryParse(n, out var idx) && idx >= 1 && idx <= companies.Count)
+            {
+                state.ActiveCompanyId = companies[idx - 1].CompanyId;
+                await _db.SaveChangesAsync();
+                return $"✅ เลือกบริษัท: {companies[idx - 1].Name}";
+            }
+            return BuildCompanyMenu(companies, "เลือกบริษัท:");
+        }
+
+        // Determine which company this command operates against.
+        Guid companyId;
+        if (companies.Count == 1)
+        {
+            companyId = companies[0].CompanyId;
+            if (state.ActiveCompanyId != companyId) state.ActiveCompanyId = companyId;
+        }
+        else if (state.ActiveCompanyId.HasValue && companies.Any(c => c.CompanyId == state.ActiveCompanyId.Value))
+        {
+            companyId = state.ActiveCompanyId.Value;
+        }
+        else
+        {
+            await _db.SaveChangesAsync();
+            return BuildCompanyMenu(companies,
+                "👤 คุณมีหลายบริษัท — กรุณาเลือกบริษัทก่อน (ส่ง 'เลือกบริษัท 1' เป็นต้น):");
+        }
+        await _db.SaveChangesAsync();
 
         // 3) "ดูยอด" — quick this-month summary.
         if (msg.StartsWith("ดูยอด") || msg.Equals("ยอด", StringComparison.OrdinalIgnoreCase))
@@ -110,7 +155,7 @@ public class LineBotService : ILineBotService
             var from = new DateTime(now.Year, now.Month, 1);
             var lines = await _db.JournalEntryLines
                 .Include(l => l.JournalEntry).Include(l => l.Account)
-                .Where(l => l.JournalEntry.CompanyId == companyId.Value
+                .Where(l => l.JournalEntry.CompanyId == companyId
                     && l.JournalEntry.Status == Models.Enums.JournalEntryStatus.Posted
                     && l.JournalEntry.EntryDate >= from
                     && l.JournalEntry.EntryDate <= now)
@@ -129,6 +174,7 @@ public class LineBotService : ILineBotService
             return "📖 คำสั่งที่ใช้ได้:\n" +
                    "• บันทึก {ร้าน} {จำนวน} — เช่น 'บันทึก เซเว่น 250'\n" +
                    "• ดูยอด — เงินเข้า/ออกเดือนนี้\n" +
+                   (companies.Count > 1 ? "• เลือกบริษัท {เลข} — สลับบริษัท\n" : "") +
                    "• ผูก {รหัส} — เชื่อมบัญชีใหม่";
         }
 
@@ -141,17 +187,17 @@ public class LineBotService : ILineBotService
 
             // Find or auto-create the vendor as a Supplier contact.
             var contact = await _db.Contacts.FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId.Value && c.Name.ToLower() == vendor.ToLower() && c.IsSupplier);
+                c.CompanyId == companyId && c.Name.ToLower() == vendor.ToLower() && c.IsSupplier);
             if (contact == null)
             {
-                contact = new Contact { CompanyId = companyId.Value, Name = vendor, IsSupplier = true, IsCustomer = false };
+                contact = new Contact { CompanyId = companyId, Name = vendor, IsSupplier = true, IsCustomer = false };
                 _db.Contacts.Add(contact);
                 await _db.SaveChangesAsync();
             }
 
             try
             {
-                var doc = await _docService.CreateDocumentAsync(companyId.Value, new CreateDocumentRequest(
+                var doc = await _docService.CreateDocumentAsync(companyId, new CreateDocumentRequest(
                     DocumentType: Models.Enums.DocumentType.Expense,
                     DocumentDate: DateTime.UtcNow.Date,
                     DueDate: DateTime.UtcNow.Date,
@@ -162,7 +208,7 @@ public class LineBotService : ILineBotService
                         new("ค่าใช้จ่ายจาก " + vendor, 1, "รายการ", amount.Value, 0, 0)
                     }
                 ), createdBy: user.Email);
-                try { await _docService.ApproveDocumentAsync(companyId.Value, doc.Id, user.Email); } catch { /* show success even if approve hiccups */ }
+                try { await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email); } catch { /* show success even if approve hiccups */ }
                 return $"✅ บันทึกแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {doc.DocumentNumber}";
             }
             catch (Exception ex)
@@ -173,6 +219,20 @@ public class LineBotService : ILineBotService
         }
 
         return "❓ ไม่เข้าใจคำสั่ง — ลองส่ง 'ช่วยเหลือ' เพื่อดูคำสั่งที่ใช้ได้";
+    }
+
+    /// <summary>Render the company picker as a numbered list reply.</summary>
+    private static string BuildCompanyMenu<T>(List<T> companies, string title) where T : class
+    {
+        var lines = new System.Text.StringBuilder();
+        lines.AppendLine(title);
+        for (var i = 0; i < companies.Count; i++)
+        {
+            var name = companies[i].GetType().GetProperty("Name")?.GetValue(companies[i])?.ToString() ?? "";
+            lines.AppendLine($"  {i + 1}. {name}");
+        }
+        lines.Append("\nส่ง: เลือกบริษัท 1 (หรือเลขที่ต้องการ)");
+        return lines.ToString();
     }
 
     /// <summary>Parse "บันทึก เซเว่น 250" → ("เซเว่น", 250).</summary>

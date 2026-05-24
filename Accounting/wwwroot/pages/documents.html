@@ -131,15 +131,15 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
-            <div class="form-group"><label class="form-label">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+            <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
+            <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
-          <div class="form-row">
+          <div class="form-row advanced-only">
             <div class="form-group">
-              <label class="form-label">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
+              <label class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
               <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
             </div>
-            <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+            <div class="form-group"><label class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
@@ -182,7 +182,7 @@
             </div>
           </div>
 
-          <details style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+          <details class="advanced-only" style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
             <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">📝 หมายเหตุท้ายเอกสาร / เงื่อนไขเฉพาะฉบับนี้ (override ค่าเริ่มต้นจากบริษัท)</summary>
             <div style="margin-top:12px;display:grid;gap:10px">
               <div>

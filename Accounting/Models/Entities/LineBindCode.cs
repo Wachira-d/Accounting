@@ -15,3 +15,18 @@ public class LineBindCode : BaseEntity
     public DateTime? UsedAt { get; set; }
     public string? UsedByLineUserId { get; set; }
 }
+
+/// <summary>
+/// Per-LINE-user state — most importantly, the active CompanyId selected
+/// for users who belong to more than one company. Updated by the bot on
+/// "เลือกบริษัท {N}" / on bind / on first message.
+/// </summary>
+public class LineUserState : BaseEntity
+{
+    public string LineUserId { get; set; } = "";
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid? ActiveCompanyId { get; set; }
+    public Company? ActiveCompany { get; set; }
+    public DateTime? LastInteractionAt { get; set; }
+}

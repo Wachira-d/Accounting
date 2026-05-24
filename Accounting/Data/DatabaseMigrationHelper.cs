@@ -2448,6 +2448,23 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_LineBindCodes_Code" ON "LineBindCodes" ("Code") WHERE "UsedAt" IS NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Users_LineUserId" ON "Users" ("LineUserId") WHERE "LineUserId" IS NOT NULL;""",
+
+            // ===== LineUserStates — multi-company active selection per LINE user =====
+            """
+            CREATE TABLE IF NOT EXISTS "LineUserStates" (
+                "Id" uuid PRIMARY KEY,
+                "LineUserId" varchar(64) NOT NULL,
+                "UserId" uuid NOT NULL REFERENCES "Users"("Id") ON DELETE CASCADE,
+                "ActiveCompanyId" uuid NULL REFERENCES "Companies"("Id") ON DELETE SET NULL,
+                "LastInteractionAt" timestamptz NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" varchar(64) NULL,
+                "UpdatedBy" varchar(64) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LineUserStates_LineUserId" ON "LineUserStates" ("LineUserId");""",
         };
 
         foreach (var sql in statements)
