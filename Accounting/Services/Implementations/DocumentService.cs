@@ -511,28 +511,21 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
 
-        // Enforce CompanySettings.RequireApprovalForDocuments: if the company
-        // has turned on the approval rail and this document's amount crosses
-        // the configured threshold, refuse the direct Approve and require the
-        // multi-step SignatureApproval flow instead. Without this check the
-        // setting was dead UI — toggleable but unwired.
+        // Enforce CompanySettings.RequireApprovalForDocuments: when the
+        // approval rail is on and the document's amount crosses the threshold,
+        // refuse direct approve and force the multi-step SignatureApproval
+        // flow. SignatureApprovalService finalises documents by setting
+        // doc.Status = Approved directly (it doesn't re-enter this method),
+        // so the workflow path is not impacted.
         var settings = await _db.CompanySettings.AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (settings is { RequireApprovalForDocuments: true })
         {
             var threshold = settings.ApprovalThresholdAmount ?? 0m;
             if (doc.TotalAmount >= threshold)
-            {
-                // Allow the bypass only when the direct caller is acting via the
-                // signature-approval finalisation path (it sets the doc through
-                // WaitingApproval first). For anyone else, force them into it.
-                var alreadyWaiting = await _db.Set<DocumentApproval>()
-                    .AnyAsync(a => a.DocumentId == documentId && !a.IsDeleted);
-                if (!alreadyWaiting)
-                    throw new InvalidOperationException(
-                        $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติอัตโนมัติ ({threshold:N2}) — " +
-                        "กรุณาส่งเข้ากระบวนการอนุมัติหลายชั้นก่อน (เมนู Approval)");
-            }
+                throw new InvalidOperationException(
+                    $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติอัตโนมัติ ({threshold:N2}) — " +
+                    "กรุณาส่งเข้ากระบวนการอนุมัติหลายชั้นก่อน (เมนู Approval)");
         }
 
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>

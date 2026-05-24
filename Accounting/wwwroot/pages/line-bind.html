@@ -85,7 +85,7 @@
       },
       async issueCode() {
         try {
-          const res = await API.post('/api/line-webhook/issue-bind-code', {});
+          const res = await API.post('/api/line-bot/issue-bind-code', {});
           const code = res?.data?.code;
           if (code) {
             // Format as "123 456" for readability

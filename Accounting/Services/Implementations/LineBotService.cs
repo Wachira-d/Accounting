@@ -108,11 +108,21 @@ public class LineBotService : ILineBotService
             .ToListAsync();
         if (companies.Count == 0) return "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
 
+        // Upsert the per-LINE-user state row. Two webhook events arriving
+        // simultaneously for a new user would both see "null" and both try
+        // to INSERT, hitting the UNIQUE index on LineUserId. We catch the
+        // race and re-read on the second attempt.
         var state = await _db.LineUserStates.FirstOrDefaultAsync(s => s.LineUserId == lineUserId);
         if (state == null)
         {
             state = new LineUserState { LineUserId = lineUserId, UserId = user.Id };
             _db.LineUserStates.Add(state);
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                _db.Entry(state).State = EntityState.Detached;
+                state = await _db.LineUserStates.FirstAsync(s => s.LineUserId == lineUserId);
+            }
         }
         state.LastInteractionAt = DateTime.UtcNow;
 
