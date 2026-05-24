@@ -1541,10 +1541,39 @@ public partial class AccountingService : IAccountingService
 
     public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
+        // Pick the OpeningBalance baseline anchored to the most recent fiscal
+        // period that has begun on/before asOfDate. RollOpeningBalancesAsync
+        // stores compounded balances (year N+1 opening = year N opening +
+        // year N net movements), so reading the latest one and adding the
+        // movements within its period up to asOfDate yields the correct
+        // closing balance — and crucially, picks up balances imported via the
+        // migration wizard that have no inception JE history. When no opening
+        // exists (a company that's only ever used the system from day one),
+        // fall back to summing every JE from inception (legacy behaviour).
+        var asOf = asOfDate.Date.AddDays(1);
+        var anchorPeriod = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.StartDate <= asOfDate.Date)
+            .OrderByDescending(p => p.StartDate)
+            .FirstOrDefaultAsync();
+
+        var openingByAccount = anchorPeriod == null
+            ? new Dictionary<Guid, (decimal Debit, decimal Credit)>()
+            : await _db.OpeningBalances.AsNoTracking()
+                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == anchorPeriod.Id)
+                .GroupBy(o => o.AccountId)
+                .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.OpeningDebit), Credit = g.Sum(x => x.OpeningCredit) })
+                .ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
+
+        // Posted JE lines — when an OpeningBalance baseline is present, limit
+        // movements to the period [anchor.StartDate, asOfDate]; otherwise pull
+        // everything up to asOfDate (legacy mode).
+        var movementStart = openingByAccount.Count > 0 ? (DateTime?)anchorPeriod!.StartDate : null;
+
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
                 && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
-                && j.EntryDate < asOfDate.Date.AddDays(1))
+                && j.EntryDate < asOf
+                && (!movementStart.HasValue || j.EntryDate >= movementStart.Value))
             .Select(j => j.Id);
 
         var lineQuery = _db.JournalEntryLines
@@ -1561,18 +1590,39 @@ public partial class AccountingService : IAccountingService
 
         var postedLines = await lineQuery.ToListAsync();
 
-        var grouped = postedLines
+        // Merge movements with the OpeningBalance baseline — every account that
+        // either has an opening row or saw movement in the window appears.
+        var byAccount = postedLines
             .Where(l => l.Account != null)
             .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
-            .Select(g => new TrialBalanceItem(
-                g.Key.AccountCode,
-                g.Key.AccountName,
-                g.Key.AccountType,
-                (int)g.Key.AccountType,
-                g.Sum(l => l.DebitAmount),
-                g.Sum(l => l.CreditAmount)))
-            .OrderBy(i => i.AccountCode)
-            .ToList();
+            .ToDictionary(g => g.Key, g => (Debit: g.Sum(l => l.DebitAmount), Credit: g.Sum(l => l.CreditAmount)));
+
+        // For accounts that have opening but no movement, fetch their COA detail.
+        var openingOnlyAccountIds = openingByAccount.Keys
+            .Where(aid => !byAccount.Keys.Any(k => k.AccountId == aid)).ToList();
+        var coaDetail = openingOnlyAccountIds.Count == 0
+            ? new List<(Guid AccountId, string AccountCode, string AccountName, AccountType AccountType)>()
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && openingOnlyAccountIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
+                .ToListAsync()
+                .ContinueWith(t => t.Result.Select(a => (a.Id, a.AccountCode, a.AccountName, a.AccountType)).ToList());
+
+        var items = new List<TrialBalanceItem>();
+        foreach (var (key, value) in byAccount)
+        {
+            var (od, oc) = openingByAccount.TryGetValue(key.AccountId, out var ob) ? ob : (0m, 0m);
+            items.Add(new TrialBalanceItem(
+                key.AccountCode, key.AccountName, key.AccountType, (int)key.AccountType,
+                value.Debit + od, value.Credit + oc));
+        }
+        foreach (var (accountId, code, name, type) in coaDetail)
+        {
+            var (od, oc) = openingByAccount[accountId];
+            items.Add(new TrialBalanceItem(code, name, type, (int)type, od, oc));
+        }
+
+        var grouped = items.OrderBy(i => i.AccountCode).ToList();
 
         return new TrialBalanceResponse(
             asOfDate, grouped,
