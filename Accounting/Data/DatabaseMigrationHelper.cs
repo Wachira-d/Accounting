@@ -2429,6 +2429,25 @@ public static class DatabaseMigrationHelper
             // Document.ExchangeRate — multi-currency FX rate persisted per doc
             // so JE auto-post can convert non-THB amounts to THB consistently.
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NOT NULL DEFAULT 1;""",
+
+            // ===== LineBindCodes — LINE bot user-to-account linking =====
+            """
+            CREATE TABLE IF NOT EXISTS "LineBindCodes" (
+                "Id" uuid PRIMARY KEY,
+                "UserId" uuid NOT NULL REFERENCES "Users"("Id") ON DELETE CASCADE,
+                "Code" varchar(10) NOT NULL,
+                "ExpiresAt" timestamptz NOT NULL,
+                "UsedAt" timestamptz NULL,
+                "UsedByLineUserId" varchar(64) NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" varchar(64) NULL,
+                "UpdatedBy" varchar(64) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_LineBindCodes_Code" ON "LineBindCodes" ("Code") WHERE "UsedAt" IS NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Users_LineUserId" ON "Users" ("LineUserId") WHERE "LineUserId" IS NOT NULL;""",
         };
 
         foreach (var sql in statements)

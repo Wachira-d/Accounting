@@ -10,6 +10,7 @@ public class AccountingDbContext : DbContext
 
     // Core
     public DbSet<User> Users => Set<User>();
+    public DbSet<LineBindCode> LineBindCodes => Set<LineBindCode>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
     public DbSet<CompanyRole> CompanyRoles => Set<CompanyRole>();
