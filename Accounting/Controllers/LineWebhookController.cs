@@ -69,25 +69,11 @@ public class LineWebhookController : ControllerBase
         return Ok();
     }
 
-    /// <summary>Authenticated user requests a one-shot 6-digit bind code
-    /// they can send to the bot as "ผูก {code}". Lives in a separate
-    /// controller so the class-level [AllowAnonymous] on the webhook
-    /// receiver doesn't override [Authorize] here — Microsoft documents
-    /// that [AllowAnonymous] always wins regardless of attribute order.</summary>
-    [HttpPost("issue-bind-code")]
-    [Authorize]
-    public async Task<ActionResult<ApiResponse<object>>> IssueBindCode()
-    {
-        // Belt-and-braces: throw explicitly if somehow reached unauthenticated
-        // (User principal is unauthenticated when no/invalid JWT was provided).
-        if (User.Identity == null || !User.Identity.IsAuthenticated)
-            return Unauthorized(new ApiResponse<object>(false, null, "กรุณาเข้าสู่ระบบ"));
-        var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
-        var code = await _bot.IssueBindCodeAsync(userId);
-        return Ok(new ApiResponse<object>(true,
-            new { code, expiresInMinutes = 10 },
-            "ส่งข้อความ 'ผูก " + code + "' ให้บอทใน LINE ภายใน 10 นาที"));
-    }
+    // NOTE: the authenticated "issue-bind-code" endpoint lives in
+    // LineBotBindController below — not on this controller — because the
+    // class-level [AllowAnonymous] on the webhook receiver would override
+    // any method-level [Authorize] (Microsoft docs: [AllowAnonymous]
+    // short-circuits all authorization).
 }
 
 /// <summary>
@@ -98,18 +84,18 @@ public class LineWebhookController : ControllerBase
 /// </summary>
 [ApiController]
 [Route("api/line-bot")]
-[Microsoft.AspNetCore.Authorization.Authorize]
+[Authorize]
 public class LineBotBindController : ControllerBase
 {
-    private readonly Accounting.Services.Interfaces.ILineBotService _bot;
-    public LineBotBindController(Accounting.Services.Interfaces.ILineBotService bot) => _bot = bot;
+    private readonly ILineBotService _bot;
+    public LineBotBindController(ILineBotService bot) => _bot = bot;
 
     [HttpPost("issue-bind-code")]
-    public async Task<ActionResult<Accounting.Models.DTOs.ApiResponse<object>>> IssueBindCode()
+    public async Task<ActionResult<ApiResponse<object>>> IssueBindCode()
     {
         var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
         var code = await _bot.IssueBindCodeAsync(userId);
-        return Ok(new Accounting.Models.DTOs.ApiResponse<object>(true,
+        return Ok(new ApiResponse<object>(true,
             new { code, expiresInMinutes = 10 },
             "ส่งข้อความ 'ผูก " + code + "' ให้บอทใน LINE ภายใน 10 นาที"));
     }
