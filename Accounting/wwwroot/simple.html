@@ -236,10 +236,37 @@
 
       openScan() {
         window.location.href = '/pages/document-scan.html';
+      },
+
+      // One-shot welcome bubble for first-time visitors. Stored flag so it
+      // never bothers the user twice. "เริ่มต้นใช้งาน" deep-links into the
+      // existing onboarding checklist for the full guided setup.
+      maybeShowWelcome() {
+        if (localStorage.getItem('simpleWelcomeShown') === '1') return;
+        const div = document.createElement('div');
+        div.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:520px;width:calc(100% - 32px);background:#0f172a;color:#fff;border-radius:14px;padding:18px 22px;box-shadow:0 12px 36px rgba(0,0,0,.3);z-index:9999;display:flex;gap:14px;align-items:flex-start;';
+        div.innerHTML = `
+          <div style="font-size:28px;line-height:1;">👋</div>
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:16px;margin-bottom:6px;">ยินดีต้อนรับสู่ Next Acc</div>
+            <div style="font-size:13px;line-height:1.5;color:#cbd5e1;margin-bottom:10px;">
+              4 การ์ดด้านบนครอบคลุมงานประจำวันทั้งหมด · กดเข้าได้เลย<br>
+              ปุ่ม <strong>＋</strong> เขียวที่มุมขวาล่าง — ขาย/จ่ายเร็วจากหน้าไหนก็ได้
+            </div>
+            <div style="display:flex;gap:8px;">
+              <a href="/pages/getting-started.html" style="background:#16a34a;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">🚀 ตั้งค่าระบบก่อน</a>
+              <button onclick="this.closest('div[style*=fixed]').remove(); localStorage.setItem('simpleWelcomeShown','1');" style="background:transparent;color:#cbd5e1;border:1px solid #475569;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">เริ่มเลย</button>
+            </div>
+          </div>
+          <button onclick="this.parentElement.remove(); localStorage.setItem('simpleWelcomeShown','1');" style="background:transparent;color:#94a3b8;border:none;font-size:20px;cursor:pointer;line-height:1;padding:0;">×</button>`;
+        document.body.appendChild(div);
       }
     };
 
-    document.addEventListener('DOMContentLoaded', () => SimpleHome.init());
+    document.addEventListener('DOMContentLoaded', () => {
+      SimpleHome.init();
+      setTimeout(() => SimpleHome.maybeShowWelcome(), 800);
+    });
   </script>
 </body>
 </html>
