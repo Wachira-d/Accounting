@@ -39,6 +39,7 @@ const Layout = {
 
     this.currentPage = pageName;
     this._initialized = true;
+    this._installGlobalErrorHandler();
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
     // Restore cached subscription so menu renders correctly on first paint
@@ -1420,6 +1421,34 @@ const Layout = {
     const menu = document.getElementById('fabMenu');
     if (!menu) return;
     menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+  },
+
+  // Catch any Promise rejection that bubbles up without being handled —
+  // typically an API call where the caller forgot to .catch. Showing a
+  // toast beats the previous "silent failure or raw alert()" experience.
+  _installGlobalErrorHandler() {
+    if (this._errHandlerInstalled) return;
+    window.addEventListener('unhandledrejection', (e) => {
+      const r = e.reason;
+      if (!r) return;
+      // Ignore aborted fetches / cancelled requests
+      if (r.name === 'AbortError') return;
+      const raw = (r.message || String(r));
+      // Strip the "Server returned non-JSON…" technical noise — replace
+      // with a short message and keep the detail in the console for debugging.
+      const friendly = /non-JSON|HTTP 5\d\d|<!doctype/i.test(raw)
+        ? 'เซิร์ฟเวอร์มีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง หรือรีเฟรชหน้านี้'
+        : raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
+      if (this.toast) this.toast(friendly, 'error');
+      console.error('[unhandled]', r);
+    });
+    window.addEventListener('error', (e) => {
+      // Only catch script errors that escape — DOM/resource errors stay silent.
+      if (!e.error) return;
+      if (this.toast) this.toast('เกิดข้อผิดพลาดในหน้า: ' + (e.error.message || e.message || ''), 'error');
+      console.error('[window.error]', e.error);
+    });
+    this._errHandlerInstalled = true;
   },
 
   toast(msg, type = 'success') {
