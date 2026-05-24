@@ -657,3 +657,19 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .tour-pop .tour-skip:hover { color:#0f172a; }
 .tour-pop .tour-next, .tour-pop .tour-done { background:#16a34a; color:#fff; }
 .tour-pop .tour-next:hover, .tour-pop .tour-done:hover { background:#15803d; }
+
+/* ===== Simple Mode global hide for advanced-only sections ===== */
+/* Pages can mark optional / power-user sections with class="advanced-only"
+   to fade them out when the user is in Simple Mode. Body class is set by
+   layout.js on init based on localStorage.uiMode. */
+body.ui-mode-simple .advanced-only { display: none !important; }
+
+/* ===== POS / KDS mobile touch polish ===== */
+@media (max-width: 720px) {
+  .pos-layout .order-item, .pos-layout .pos-product-card { min-height: 52px; }
+  .pos-layout button, .pos-layout .btn { min-height: 44px; font-size: 15px; }
+  .pos-layout input[type="number"], .pos-layout input[type="text"] { min-height: 44px; font-size: 16px; }
+  .ticket-head .no { font-size: 18px; }
+  .ticket-item .name { font-size: 16px; }
+  .ticket-item .qty { font-size: 14px; padding: 4px 10px; }
+}

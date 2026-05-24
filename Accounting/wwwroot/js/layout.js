@@ -40,6 +40,9 @@ const Layout = {
     this.currentPage = pageName;
     this._initialized = true;
     this._installGlobalErrorHandler();
+    // Reflect ui-mode on <body> so pages can hide advanced-only sections via CSS.
+    const uiMode = localStorage.getItem('uiMode') || 'simple';
+    document.body.classList.toggle('ui-mode-simple', uiMode === 'simple');
     // Mount help icons once layout is rendered + after DOM mutations from pages.
     setTimeout(() => this._mountHelpIcons(), 200);
     document.addEventListener('DOMContentLoaded', () => setTimeout(() => this._mountHelpIcons(), 200));
