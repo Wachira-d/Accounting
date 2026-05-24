@@ -1261,13 +1261,18 @@ public class DocumentService : IDocumentService
                 systemTriggered: true);
         }
 
-        // Reverse bank balance
+        // Reverse bank balance — payment.Amount is in the document's currency;
+        // BankAccount.CurrentBalance is in THB, so apply the document's FX rate
+        // before adjusting. Mirrors the conversion in CreatePaymentJournalAsync.
         if (payment.BankAccountId.HasValue)
         {
             var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
                 or DocumentType.Receipt or DocumentType.ReceiptVoucher
                 or DocumentType.DebitNote or DocumentType.BillingNote;
-            var delta = isInflow ? -payment.Amount : payment.Amount;
+            var thbAmount = doc.ExchangeRate == 1m
+                ? payment.Amount
+                : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+            var delta = isInflow ? -thbAmount : thbAmount;
             await _db.BankAccounts
                 .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
                 .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
@@ -2234,13 +2239,18 @@ public class DocumentService : IDocumentService
 
             await _db.SaveChangesAsync();
 
-            // Sync BankAccount.CurrentBalance
+            // Sync BankAccount.CurrentBalance — convert from doc currency to THB
+            // at the document's captured FX rate (BankAccount.CurrentBalance is
+            // always THB in this iteration). Same conversion as the GL posting.
             if (payment.BankAccountId.HasValue)
             {
                 var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
                     or DocumentType.Receipt or DocumentType.ReceiptVoucher
                     or DocumentType.DebitNote or DocumentType.BillingNote;
-                var delta = isInflow ? payment.Amount : -payment.Amount;
+                var thbAmount = doc.ExchangeRate == 1m
+                    ? payment.Amount
+                    : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+                var delta = isInflow ? thbAmount : -thbAmount;
                 await _db.BankAccounts
                     .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
                     .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));

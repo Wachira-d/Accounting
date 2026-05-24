@@ -1551,23 +1551,36 @@ public partial class AccountingService : IAccountingService
         // exists (a company that's only ever used the system from day one),
         // fall back to summing every JE from inception (legacy behaviour).
         var asOf = asOfDate.Date.AddDays(1);
-        var anchorPeriod = await _db.FiscalPeriods.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && p.StartDate <= asOfDate.Date)
-            .OrderByDescending(p => p.StartDate)
-            .FirstOrDefaultAsync();
+        // Find the latest fiscal period that BOTH started on/before asOfDate AND
+        // actually has OpeningBalance rows. Without the "actually has rows"
+        // filter, monthly-period companies (whose only OpeningBalances live on
+        // the first period of each fiscal year) would never trigger the baseline
+        // path because the nearest period contains no rows.
+        var anchorPeriodId = await (
+            from p in _db.FiscalPeriods.AsNoTracking()
+            join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
+            where p.CompanyId == companyId && p.StartDate <= asOfDate.Date
+            orderby p.StartDate descending
+            select (Guid?)p.Id
+        ).FirstOrDefaultAsync();
 
-        var openingByAccount = anchorPeriod == null
-            ? new Dictionary<Guid, (decimal Debit, decimal Credit)>()
-            : await _db.OpeningBalances.AsNoTracking()
-                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == anchorPeriod.Id)
+        DateTime? anchorStart = null;
+        var openingByAccount = new Dictionary<Guid, (decimal Debit, decimal Credit)>();
+        if (anchorPeriodId.HasValue)
+        {
+            anchorStart = await _db.FiscalPeriods.AsNoTracking()
+                .Where(p => p.Id == anchorPeriodId.Value).Select(p => p.StartDate).FirstAsync();
+            openingByAccount = await _db.OpeningBalances.AsNoTracking()
+                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == anchorPeriodId.Value)
                 .GroupBy(o => o.AccountId)
                 .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.OpeningDebit), Credit = g.Sum(x => x.OpeningCredit) })
                 .ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
+        }
 
         // Posted JE lines — when an OpeningBalance baseline is present, limit
         // movements to the period [anchor.StartDate, asOfDate]; otherwise pull
         // everything up to asOfDate (legacy mode).
-        var movementStart = openingByAccount.Count > 0 ? (DateTime?)anchorPeriod!.StartDate : null;
+        var movementStart = anchorStart;
 
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
@@ -1597,16 +1610,20 @@ public partial class AccountingService : IAccountingService
             .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
             .ToDictionary(g => g.Key, g => (Debit: g.Sum(l => l.DebitAmount), Credit: g.Sum(l => l.CreditAmount)));
 
-        // For accounts that have opening but no movement, fetch their COA detail.
+        // For accounts that have opening but no movement, fetch their COA detail
+        // so they still appear in the report (otherwise the opening balance
+        // would be silently dropped).
         var openingOnlyAccountIds = openingByAccount.Keys
             .Where(aid => !byAccount.Keys.Any(k => k.AccountId == aid)).ToList();
-        var coaDetail = openingOnlyAccountIds.Count == 0
-            ? new List<(Guid AccountId, string AccountCode, string AccountName, AccountType AccountType)>()
-            : await _db.ChartOfAccounts.AsNoTracking()
+        var coaDetail = new List<(Guid AccountId, string AccountCode, string AccountName, AccountType AccountType)>();
+        if (openingOnlyAccountIds.Count > 0)
+        {
+            var rows = await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && openingOnlyAccountIds.Contains(a.Id))
                 .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
-                .ToListAsync()
-                .ContinueWith(t => t.Result.Select(a => (a.Id, a.AccountCode, a.AccountName, a.AccountType)).ToList());
+                .ToListAsync();
+            coaDetail = rows.Select(a => (a.Id, a.AccountCode, a.AccountName, a.AccountType)).ToList();
+        }
 
         var items = new List<TrialBalanceItem>();
         foreach (var (key, value) in byAccount)

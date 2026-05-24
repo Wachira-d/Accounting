@@ -126,7 +126,7 @@ public class LineBotService : ILineBotService
                 await _db.SaveChangesAsync();
                 return $"✅ เลือกบริษัท: {companies[idx - 1].Name}";
             }
-            return BuildCompanyMenu(companies, "เลือกบริษัท:");
+            return BuildCompanyMenu(companies, "เลือกบริษัท:", c => c.Name);
         }
 
         // Determine which company this command operates against.
@@ -144,7 +144,8 @@ public class LineBotService : ILineBotService
         {
             await _db.SaveChangesAsync();
             return BuildCompanyMenu(companies,
-                "👤 คุณมีหลายบริษัท — กรุณาเลือกบริษัทก่อน (ส่ง 'เลือกบริษัท 1' เป็นต้น):");
+                "👤 คุณมีหลายบริษัท — กรุณาเลือกบริษัทก่อน (ส่ง 'เลือกบริษัท 1' เป็นต้น):",
+                c => c.Name);
         }
         await _db.SaveChangesAsync();
 
@@ -221,16 +222,15 @@ public class LineBotService : ILineBotService
         return "❓ ไม่เข้าใจคำสั่ง — ลองส่ง 'ช่วยเหลือ' เพื่อดูคำสั่งที่ใช้ได้";
     }
 
-    /// <summary>Render the company picker as a numbered list reply.</summary>
-    private static string BuildCompanyMenu<T>(List<T> companies, string title) where T : class
+    /// <summary>Render the company picker as a numbered list reply. Caller
+    /// passes a selector so we don't rely on reflection (which would break
+    /// under AOT / trimming).</summary>
+    private static string BuildCompanyMenu<T>(IReadOnlyList<T> companies, string title, Func<T, string> nameOf)
     {
         var lines = new System.Text.StringBuilder();
         lines.AppendLine(title);
         for (var i = 0; i < companies.Count; i++)
-        {
-            var name = companies[i].GetType().GetProperty("Name")?.GetValue(companies[i])?.ToString() ?? "";
-            lines.AppendLine($"  {i + 1}. {name}");
-        }
+            lines.AppendLine($"  {i + 1}. {nameOf(companies[i])}");
         lines.Append("\nส่ง: เลือกบริษัท 1 (หรือเลขที่ต้องการ)");
         return lines.ToString();
     }
