@@ -180,11 +180,37 @@ const Layout = {
     if (!nav) return;
     const hidden = this.getHiddenMenuItems();
     const isAdminUser = this.myPermissions?.isOwnerOrAdmin === true;
-    const items = this.navItems.filter(item =>
-      (!item.id || !hidden.includes(item.id))
-      && (!item.id || this.hasMenuAccess(item.id))
-      && (!item.adminOnly || isAdminUser)
-    );
+
+    // Simple mode collapses the 14-section, 64-item sidebar to a hand-picked
+    // shortlist so non-technical users aren't drowned in options. The full
+    // navItems are still available via the "ดูเมนูทั้งหมด" link injected at
+    // the bottom (which flips uiMode → advanced and reloads).
+    const uiMode = localStorage.getItem('uiMode') || 'simple';
+    const SIMPLE_ALLOWED = new Set([
+      'dashboard',          // หน้าหลัก (Simple Mode home overrides via custom link below)
+      'documents',          // ขาย
+      'expense',            // จ่าย
+      'pos',                // หน้าขาย POS
+      'bank',               // ธนาคาร
+      'contacts',           // ลูกค้า/ผู้จำหน่าย
+      'products',           // สินค้า
+      'tax',                // ภพ.30
+      'tax-calendar',       // ปฏิทินภาษี
+      'reports',            // รายงาน
+      'settings',           // ตั้งค่า (rendered via header user menu — kept here too)
+    ]);
+    const items = this.navItems.filter(item => {
+      // section headers + non-item entries pass through; we trim sections that
+      // end up empty in the render loop below via a post-pass.
+      if (item.section) return uiMode !== 'simple' || ['ขาย / รายรับ', 'ซื้อ / รายจ่าย', 'POS หน้าร้าน', 'การเงิน / ธนาคาร', 'ผู้ติดต่อ & สินค้า', 'ภาษี & e-Filing'].includes(item.section);
+      const visible =
+        (!item.id || !hidden.includes(item.id))
+        && (!item.id || this.hasMenuAccess(item.id))
+        && (!item.adminOnly || isAdminUser);
+      if (!visible) return false;
+      if (uiMode === 'simple' && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
+      return true;
+    });
 
     // Walk the list: top-level items (no section ancestor) render directly;
     // section markers open a collapsible <details> that wraps every
@@ -192,6 +218,16 @@ const Layout = {
     const collapsedState = this._loadCollapsedSections();
     const html = [];
     html.push(this._renderNavSearch());
+
+    // Simple-mode shortcuts at the top: หน้าหลัก + the two express flows.
+    // Renders as plain nav-items so the existing CSS / active-state styling
+    // applies without bespoke selectors.
+    if (uiMode === 'simple') {
+      html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
+      html.push(`<a class="nav-item" href="/pages/quick-sale.html"><span class="icon">⚡</span><span class="label">ขายเร็ว</span></a>`);
+      html.push(`<a class="nav-item" href="/pages/quick-expense.html"><span class="icon">🧾</span><span class="label">จ่ายเร็ว</span></a>`);
+      html.push(`<div style="height:1px;background:#e2e8f0;margin:10px 12px;"></div>`);
+    }
 
     let inGroup = false;
     let groupItems = [];
@@ -235,6 +271,25 @@ const Layout = {
       }
     }
     flush();
+
+    // Mode-switch footer — gives users a visible way out of either mode.
+    if (uiMode === 'simple') {
+      html.push(`
+        <div style="margin:18px 12px 8px;padding-top:14px;border-top:1px solid #e2e8f0;">
+          <a class="nav-item" href="#" onclick="localStorage.setItem('uiMode','advanced'); window.location.reload(); return false;"
+             title="แสดงเมนูครบ 64 รายการของระบบบัญชี">
+            <span class="icon">⚙️</span><span class="label">ดูเมนูทั้งหมด (มืออาชีพ)</span>
+          </a>
+        </div>`);
+    } else {
+      html.push(`
+        <div style="margin:18px 12px 8px;padding-top:14px;border-top:1px solid #e2e8f0;">
+          <a class="nav-item" href="#" onclick="localStorage.setItem('uiMode','simple'); window.location.href='/simple.html'; return false;"
+             title="ซ่อนเมนูซับซ้อน ใช้งานแบบง่าย ๆ">
+            <span class="icon">😊</span><span class="label">โหมดง่าย</span>
+          </a>
+        </div>`);
+    }
 
     nav.innerHTML = html.join('');
     this._wireNavSearch();
@@ -766,6 +821,45 @@ const Layout = {
     tc.className = 'toast-container';
     tc.id = 'toastContainer';
     document.body.appendChild(tc);
+
+    // Floating Action Button (FAB) — universal shortcut to the two most
+    // common tasks (sell, expense) from any page. Sits in the bottom-right
+    // corner; expands into a small radial menu on tap. Hidden on the POS
+    // page (which has its own primary action) and on the auth pages.
+    const noFabPages = ['pos', 'pos-kds', 'login', 'register'];
+    if (!noFabPages.includes(this.currentPage)) {
+      const fab = document.createElement('div');
+      fab.id = 'globalFab';
+      fab.innerHTML = `
+        <div class="fab-menu" id="fabMenu" style="display:none">
+          <a class="fab-item" href="/pages/quick-sale.html" title="ขายเร็ว">
+            <span class="fab-ic">💰</span><span class="fab-lbl">ขายเร็ว</span>
+          </a>
+          <a class="fab-item" href="/pages/quick-expense.html" title="จ่ายเร็ว">
+            <span class="fab-ic">🧾</span><span class="fab-lbl">จ่ายเร็ว</span>
+          </a>
+          <a class="fab-item" href="/pages/document-scan.html" title="ถ่ายรูปบิล">
+            <span class="fab-ic">📸</span><span class="fab-lbl">ถ่ายรูปบิล</span>
+          </a>
+        </div>
+        <button class="fab-main" onclick="Layout._toggleFab()" title="ทำรายการเร็ว">＋</button>`;
+      document.body.appendChild(fab);
+
+      // Mobile bottom-nav for Simple Mode — provides thumb-reachable nav on
+      // phones where the sidebar is hidden behind the hamburger. Only renders
+      // when uiMode=simple so power users keep their full sidebar UX.
+      if ((localStorage.getItem('uiMode') || 'simple') === 'simple') {
+        const bn = document.createElement('nav');
+        bn.id = 'mobileBottomNav';
+        bn.innerHTML = `
+          <a href="/simple.html"><span>🏠</span><span>หน้าหลัก</span></a>
+          <a href="/pages/quick-sale.html"><span>💰</span><span>ขาย</span></a>
+          <a href="/pages/quick-expense.html"><span>🧾</span><span>จ่าย</span></a>
+          <a href="/pages/bank.html"><span>🏦</span><span>เงิน</span></a>
+          <a href="/pages/tax-calendar.html"><span>🏛️</span><span>ภาษี</span></a>`;
+        document.body.appendChild(bn);
+      }
+    }
 
     // Notification panel
     const np = document.createElement('div');
@@ -1322,6 +1416,12 @@ const Layout = {
 
   // Toast notifications (with deduplication - max 3 visible, no duplicate messages)
   _activeToasts: new Map(),
+  _toggleFab() {
+    const menu = document.getElementById('fabMenu');
+    if (!menu) return;
+    menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+  },
+
   toast(msg, type = 'success') {
     const container = document.getElementById('toastContainer');
     if (!container) return;
