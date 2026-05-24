@@ -74,7 +74,7 @@
     <div id="successBanner" class="qs-success"></div>
 
     <div class="qs-card">
-      <h2 style="font-size:16px;">1. เลือกประเภทเอกสาร</h2>
+      <h2 style="font-size:16px;" data-help="ใบเสนอราคา: ยังไม่ขายจริง ใช้เสนอลูกค้า · ใบกำกับภาษี: ขายแล้ว ต้องส่งกรมสรรพากร · ใบเสร็จ: รับเงินสด ไม่จด VAT" data-tour-step="1" data-tour-text="ขั้นแรก เลือกประเภทเอกสาร — ส่วนใหญ่ใช้ 'ใบกำกับภาษี' (ขายแล้ว)">1. เลือกประเภทเอกสาร</h2>
       <div class="qs-doctype" id="docTypeBox">
         <button data-type="Quotation">📋 ใบเสนอราคา<span class="hint">เสนอราคา ยังไม่ขายจริง</span></button>
         <button data-type="TaxInvoice" class="active">🧾 ใบกำกับภาษี<span class="hint">ขายแล้ว — ใช้บ่อยสุด</span></button>
@@ -83,7 +83,7 @@
     </div>
 
     <div class="qs-card">
-      <h2 style="font-size:16px;">2. ลูกค้า</h2>
+      <h2 style="font-size:16px;" data-help="พิมพ์ชื่อลูกค้า — ถ้ามีอยู่แล้วระบบจะแสดงให้เลือก ถ้ายังไม่มีจะสร้างให้อัตโนมัติเมื่อกดบันทึก" data-tour-step="2" data-tour-text="พิมพ์ชื่อลูกค้า — ถ้ายังไม่มีในระบบ ไม่ต้องไปเพิ่มก่อน ระบบสร้างให้เลย">2. ลูกค้า</h2>
       <div class="qs-row">
         <label>ชื่อลูกค้า</label>
         <div style="position:relative;">
@@ -95,7 +95,7 @@
     </div>
 
     <div class="qs-card">
-      <h2 style="font-size:16px;">3. รายการที่ขาย</h2>
+      <h2 style="font-size:16px;" data-help="แต่ละบรรทัด = สินค้า/บริการ 1 อย่าง · ใส่รายละเอียด จำนวน ราคา/หน่วย · กด + เพื่อเพิ่มบรรทัด" data-tour-step="3" data-tour-text="ใส่รายการที่ขาย — ระบบคิด VAT ให้อัตโนมัติ ถ้าราคารวม VAT แล้วให้ติ๊กกล่องด้านล่าง">3. รายการที่ขาย</h2>
       <div class="qs-lines" id="linesBox"></div>
       <button class="qs-add-line" onclick="QS.addLine()">+ เพิ่มรายการ</button>
 
@@ -117,6 +117,61 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <!-- Lightweight tour + help runner only (no sidebar; the page intentionally
+       stands alone for the express flow). We poly-fill the helpers inline so
+       layout.js doesn't have to render its full chrome on this page. -->
+  <script>
+    // Minimal stand-in for Layout's tour + help so we don't pull in layout.js
+    // (which would re-render sidebar/topbar over this clean express page).
+    window.MiniTour = {
+      _esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));},
+      mountHelp() {
+        document.querySelectorAll('[data-help]:not([data-help-mounted])').forEach(el => {
+          el.setAttribute('data-help-mounted', '1');
+          const ic = document.createElement('button');
+          ic.type='button'; ic.className='help-icon'; ic.textContent='ⓘ';
+          ic.onclick = e => { e.preventDefault(); e.stopPropagation();
+            const old = document.getElementById('helpBubble'); if (old) old.remove();
+            const b = document.createElement('div'); b.id='helpBubble';
+            b.innerHTML = `<div class="hb-text">${this._esc(el.getAttribute('data-help'))}</div><button class="hb-close" onclick="this.parentElement.remove()">×</button>`;
+            document.body.appendChild(b);
+            const r = ic.getBoundingClientRect();
+            b.style.top = (r.bottom + 8) + 'px';
+            b.style.left = Math.max(8, Math.min(window.innerWidth - b.offsetWidth - 8, r.left)) + 'px';
+            setTimeout(() => { const off = ev => { if (!b.contains(ev.target)) { b.remove(); document.removeEventListener('click', off); } }; document.addEventListener('click', off); }, 0);
+          };
+          el.appendChild(ic);
+        });
+      },
+      start(pageKey) {
+        const steps = Array.from(document.querySelectorAll('[data-tour-step]'))
+          .map(el => ({el, n:parseInt(el.getAttribute('data-tour-step')||'0',10), text:el.getAttribute('data-tour-text')||''}))
+          .filter(s => s.n > 0).sort((a,b)=>a.n-b.n);
+        if (!steps.length) return;
+        let i = 0;
+        const overlay = document.createElement('div'); overlay.id = 'tourOverlay';
+        document.body.appendChild(overlay);
+        const render = () => {
+          const s = steps[i]; const r = s.el.getBoundingClientRect();
+          overlay.innerHTML = `
+            <div class="tour-mask" style="top:${r.top-6}px;left:${r.left-6}px;width:${r.width+12}px;height:${r.height+12}px;"></div>
+            <div class="tour-pop" style="top:${r.bottom+12}px;left:${Math.max(8, r.left)}px;">
+              <div class="tour-text">${this._esc(s.text)}</div>
+              <div class="tour-actions">
+                <span class="tour-progress">${i+1} / ${steps.length}</span><div style="flex:1;"></div>
+                <button class="tour-skip">ข้าม</button>
+                ${i < steps.length-1 ? '<button class="tour-next">ถัดไป →</button>' : '<button class="tour-done">เสร็จสิ้น ✓</button>'}
+              </div>
+            </div>`;
+          overlay.querySelector('.tour-skip').onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:'+pageKey,'1'); };
+          const nx = overlay.querySelector('.tour-next'); if (nx) nx.onclick = () => { i++; s.el.scrollIntoView({block:'center',behavior:'smooth'}); setTimeout(render, 250); };
+          const dn = overlay.querySelector('.tour-done'); if (dn) dn.onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:'+pageKey,'1'); };
+        };
+        steps[0].el.scrollIntoView({block:'center',behavior:'smooth'});
+        setTimeout(render, 300);
+      }
+    };
+  </script>
   <script>
     const QS = {
       docType: 'TaxInvoice',
@@ -276,6 +331,10 @@
     document.addEventListener('DOMContentLoaded', () => {
       API.init();
       QS.init();
+      MiniTour.mountHelp();
+      if (!localStorage.getItem('tour:quick-sale')) {
+        setTimeout(() => MiniTour.start('quick-sale'), 600);
+      }
     });
   </script>
 </body>

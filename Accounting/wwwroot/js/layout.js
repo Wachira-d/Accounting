@@ -40,6 +40,9 @@ const Layout = {
     this.currentPage = pageName;
     this._initialized = true;
     this._installGlobalErrorHandler();
+    // Mount help icons once layout is rendered + after DOM mutations from pages.
+    setTimeout(() => this._mountHelpIcons(), 200);
+    document.addEventListener('DOMContentLoaded', () => setTimeout(() => this._mountHelpIcons(), 200));
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
     // Restore cached subscription so menu renders correctly on first paint
@@ -1417,6 +1420,88 @@ const Layout = {
 
   // Toast notifications (with deduplication - max 3 visible, no duplicate messages)
   _activeToasts: new Map(),
+  // Help tooltip: any element with `data-help="…"` gets a small ⓘ icon
+  // injected next to it; clicking the icon shows a bubble with the help
+  // text. Mounted once at init; auto-rescanned when pages dynamically
+  // re-render content (call Layout._mountHelpIcons() to rescan).
+  _mountHelpIcons() {
+    document.querySelectorAll('[data-help]:not([data-help-mounted])').forEach(el => {
+      el.setAttribute('data-help-mounted', '1');
+      const help = el.getAttribute('data-help');
+      if (!help) return;
+      const ic = document.createElement('button');
+      ic.type = 'button';
+      ic.className = 'help-icon';
+      ic.setAttribute('aria-label', 'ดูคำอธิบาย');
+      ic.textContent = 'ⓘ';
+      ic.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this._showHelpBubble(ic, help); };
+      el.appendChild(ic);
+    });
+  },
+  _showHelpBubble(anchor, text) {
+    const old = document.getElementById('helpBubble');
+    if (old) old.remove();
+    const b = document.createElement('div');
+    b.id = 'helpBubble';
+    b.innerHTML = `<div class="hb-text">${this.esc(text)}</div><button class="hb-close" onclick="this.parentElement.remove()">×</button>`;
+    document.body.appendChild(b);
+    const r = anchor.getBoundingClientRect();
+    // Position below the icon; flip up if it would clip the viewport bottom.
+    const w = b.offsetWidth, h = b.offsetHeight;
+    let top = r.bottom + 8, left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left));
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    b.style.top = top + 'px'; b.style.left = left + 'px';
+    // Auto-close on outside click
+    setTimeout(() => {
+      const off = (ev) => { if (!b.contains(ev.target)) { b.remove(); document.removeEventListener('click', off); } };
+      document.addEventListener('click', off);
+    }, 0);
+  },
+
+  // Guided tour runner. Any page can opt-in by marking elements with
+  //   <element data-tour-step="1" data-tour-text="..."></element>
+  // and (optionally) data-tour-position="top|bottom|left|right".
+  // Call Layout.startTour() from page code or auto-trigger on first visit:
+  //   if (!localStorage.getItem('tour:'+pageName)) Layout.startTour(pageName);
+  startTour(pageKey) {
+    const steps = Array.from(document.querySelectorAll('[data-tour-step]'))
+      .map(el => ({ el, n: parseInt(el.getAttribute('data-tour-step') || '0', 10),
+                    text: el.getAttribute('data-tour-text') || '',
+                    pos: el.getAttribute('data-tour-position') || 'bottom' }))
+      .filter(s => s.n > 0 && s.text)
+      .sort((a, b) => a.n - b.n);
+    if (steps.length === 0) return;
+    let i = 0;
+    const overlay = document.createElement('div');
+    overlay.id = 'tourOverlay';
+    document.body.appendChild(overlay);
+    const renderStep = () => {
+      const s = steps[i];
+      const r = s.el.getBoundingClientRect();
+      // Highlight ring
+      overlay.innerHTML = `
+        <div class="tour-mask" style="top:${r.top - 6}px;left:${r.left - 6}px;width:${r.width + 12}px;height:${r.height + 12}px;"></div>
+        <div class="tour-pop tour-pos-${s.pos}" style="top:${r.bottom + 12}px;left:${Math.max(8, r.left)}px;">
+          <div class="tour-text">${this.esc(s.text)}</div>
+          <div class="tour-actions">
+            <span class="tour-progress">${i + 1} / ${steps.length}</span>
+            <div style="flex:1;"></div>
+            <button class="tour-skip" type="button">ข้าม</button>
+            ${i < steps.length - 1
+              ? '<button class="tour-next" type="button">ถัดไป →</button>'
+              : '<button class="tour-done" type="button">เสร็จสิ้น ✓</button>'}
+          </div>
+        </div>`;
+      overlay.querySelector('.tour-skip').onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:' + pageKey, '1'); };
+      const next = overlay.querySelector('.tour-next');
+      if (next) next.onclick = () => { i++; s.el.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(renderStep, 250); };
+      const done = overlay.querySelector('.tour-done');
+      if (done) done.onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:' + pageKey, '1'); };
+    };
+    steps[0].el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(renderStep, 300);
+  },
+
   _toggleFab() {
     const menu = document.getElementById('fabMenu');
     if (!menu) return;
