@@ -44,6 +44,10 @@ public class Document : TenantEntity
 
     // Amounts
     public string Currency { get; set; } = "THB";
+    /// <summary>FX rate at the time of document creation (1 unit of Currency = X THB).
+    /// 1.0 when Currency = THB. Captured on Create so JE posting uses the same
+    /// rate that was shown to the user on the document.</summary>
+    public decimal ExchangeRate { get; set; } = 1m;
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal VatAmount { get; set; }

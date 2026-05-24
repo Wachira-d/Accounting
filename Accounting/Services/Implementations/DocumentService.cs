@@ -25,6 +25,7 @@ public class DocumentService : IDocumentService
     private readonly INotificationEngine? _notify;
     private readonly IBankService? _bankService;
     private readonly ITaxService? _taxService;
+    private readonly IBotExchangeRateService? _fxRates;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -34,7 +35,8 @@ public class DocumentService : IDocumentService
         CrossTenantWorkflowService crossTenantWorkflow,
         INotificationEngine? notify = null,
         IBankService? bankService = null,
-        ITaxService? taxService = null)
+        ITaxService? taxService = null,
+        IBotExchangeRateService? fxRates = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -48,6 +50,31 @@ public class DocumentService : IDocumentService
         _notify = notify;
         _bankService = bankService;
         _taxService = taxService;
+        _fxRates = fxRates;
+    }
+
+    /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
+    /// override wins; otherwise auto-fetch the BoT mid-rate at DocumentDate.
+    /// Throws if BoT lookup fails — silent fallback to 1 on non-THB would
+    /// corrupt the GL.</summary>
+    private async Task<decimal> ResolveExchangeRateAsync(string? currency, decimal? overrideRate, DateTime documentDate)
+    {
+        var cur = (currency ?? "THB").ToUpperInvariant();
+        if (cur == "THB") return 1m;
+        if (overrideRate is decimal r)
+        {
+            if (r <= 0m) throw new InvalidOperationException("อัตราแลกเปลี่ยนต้องมากกว่า 0");
+            return r;
+        }
+        if (_fxRates == null)
+            throw new InvalidOperationException(
+                $"เอกสารสกุล {cur} ต้องระบุ ExchangeRate (ไม่ได้กำหนดบริการอัตรา ธ.ปท.)");
+        var rate = await _fxRates.GetRateAsync(cur, documentDate);
+        if (rate == null || rate.MidRate <= 0m)
+            throw new InvalidOperationException(
+                $"ไม่พบอัตราแลกเปลี่ยน {cur} ของวันที่ {documentDate:yyyy-MM-dd} จาก ธ.ปท. " +
+                "กรุณาระบุ ExchangeRate ในคำขอ");
+        return rate.MidRate;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -144,12 +171,21 @@ public class DocumentService : IDocumentService
         {
             var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, request.DocumentType);
 
+            // Resolve FX up front so the rate the user sees on the document
+            // is exactly what posts to the GL on Approve. THB → always 1.
+            // Non-THB: caller's override wins; otherwise auto-fetch BoT mid-rate
+            // at DocumentDate. If BoT lookup fails, refuse — silent fallback to
+            // 1 would corrupt the GL.
+            var fxRate = await ResolveExchangeRateAsync(request.Currency, request.ExchangeRate, request.DocumentDate);
+
             var doc = new Document
             {
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = request.DocumentType,
                 DocumentDate = request.DocumentDate,
+                Currency = string.IsNullOrWhiteSpace(request.Currency) ? "THB" : request.Currency.ToUpperInvariant(),
+                ExchangeRate = fxRate,
                 DueDate = request.DueDate,
                 ContactId = request.ContactId,
                 Reference = request.Reference,
@@ -2301,15 +2337,15 @@ public class DocumentService : IDocumentService
     /// </summary>
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
-        // Multi-currency safety: the system stores Document.Currency but has
-        // no FX rate / conversion infrastructure yet. Posting a USD-denominated
-        // document's amounts straight into a THB GL would silently overstate
-        // every balance. Refuse to auto-post non-THB documents until a proper
-        // ExchangeRate field and conversion path are added.
-        if (!string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+        // Multi-currency: every Baht amount that hits the GL must be converted
+        // from the document's currency at the rate captured on Create. Validate
+        // the rate is sane (positive, finite, non-zero) — corrupt FX = corrupt GL.
+        if (doc.ExchangeRate <= 0m)
             throw new InvalidOperationException(
-                $"ระบบยังไม่รองรับการบันทึกบัญชีอัตโนมัติสำหรับสกุลเงิน {doc.Currency} — " +
-                "กรุณาเปลี่ยนเป็น THB หรือลงรายการสมุดรายวันด้วยมือพร้อมแปลงค่าเงิน");
+                $"อัตราแลกเปลี่ยนไม่ถูกต้อง ({doc.ExchangeRate}) — กรุณาแก้ไขเอกสารและระบุอัตราที่ถูกต้องก่อนอนุมัติ");
+        if (!string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase) && doc.ExchangeRate == 1m)
+            throw new InvalidOperationException(
+                $"เอกสารสกุลเงิน {doc.Currency} ต้องระบุอัตราแลกเปลี่ยนก่อนอนุมัติ (พบ ExchangeRate = 1)");
 
         // Resolve default fallback accounts up front — used when document lines
         // have no explicit AccountId (the UI doesn't expose per-line account selection yet).
@@ -2371,9 +2407,14 @@ public class DocumentService : IDocumentService
         // lines (AR/VAT/Cash/AP/WHT) inherit doc.ProjectId; per-line revenue/expense
         // can override via docLine.ProjectId.
         var lineProjects = new List<Guid?>();
+        // Multi-currency: every amount fed into AddLine is in the document's
+        // currency. Convert to THB (base) at the captured rate; AwayFromZero
+        // to match the system-wide rounding convention.
+        var fx = doc.ExchangeRate;
+        decimal Conv(decimal amount) => fx == 1m ? amount : Math.Round(amount * fx, 2, MidpointRounding.AwayFromZero);
         void AddLine(Guid accountId, decimal debit, decimal credit, string? desc, Guid? proj = null)
         {
-            pendingLines.Add((accountId, debit, credit, desc));
+            pendingLines.Add((accountId, Conv(debit), Conv(credit), desc));
             lineProjects.Add(proj ?? doc.ProjectId);
         }
 
@@ -2838,19 +2879,24 @@ public class DocumentService : IDocumentService
         if (cashAccount == null) return;
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
+        // Convert payment to THB (base) at the document's captured FX rate.
+        // Note: this uses the doc rate, not a settlement-day rate, so FX gain/loss
+        // on settlement isn't booked yet (separate feature when needed).
+        var fx = doc.ExchangeRate;
+        var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
         if (isRevenue)
         {
-            pendingLines.Add((cashAccount.Id, payment.Amount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            pendingLines.Add((cashAccount.Id, thbAmount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                pendingLines.Add((arAccount.Id, 0, payment.Amount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+                pendingLines.Add((arAccount.Id, 0, thbAmount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
         }
         else
         {
             var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
-                pendingLines.Add((apAccount.Id, payment.Amount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
-            pendingLines.Add((cashAccount.Id, 0, payment.Amount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+                pendingLines.Add((apAccount.Id, thbAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+            pendingLines.Add((cashAccount.Id, 0, thbAmount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
         }
 
         if (pendingLines.Count < 2) return;
@@ -2954,7 +3000,9 @@ public class DocumentService : IDocumentService
         RdComplianceIssuesJson: d.RdComplianceIssuesJson,
         OcrTenantMismatchFlag: d.OcrTenantMismatchFlag,
         AgingDays: d.AgingDays,
-        StaleDays: ComputeStaleDays(d));
+        StaleDays: ComputeStaleDays(d),
+        Currency: d.Currency,
+        ExchangeRate: d.ExchangeRate);
 
     /// <summary>Days a document has been parked in a non-terminal status past
     /// the stale threshold — null when fresh or in a terminal status.

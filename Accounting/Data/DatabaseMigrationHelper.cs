@@ -2401,6 +2401,34 @@ public static class DatabaseMigrationHelper
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosOrders_CompanyId_ClientOrderId"
                 ON "PosOrders" ("CompanyId", "ClientOrderId") WHERE "ClientOrderId" IS NOT NULL;
             """,
+
+            // ===== Composite indexes for hot read paths flagged by the perf audit =====
+            // Every TenantEntity query filters by CompanyId first; the secondary
+            // filter is usually a foreign key + date. Single-column FKs alone
+            // make Postgres seq-scan within the FK group.
+            """
+            CREATE INDEX IF NOT EXISTS "IX_BankTransactions_CompanyId_BankAccount_Date"
+                ON "BankTransactions" ("CompanyId", "BankAccountId", "TransactionDate" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_StockMovements_CompanyId_Product_Date"
+                ON "StockMovements" ("CompanyId", "ProductId", "CreatedAt" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_EmployeeLeaves_Employee_Status_StartDate"
+                ON "EmployeeLeaves" ("EmployeeId", "Status", "StartDate");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_JournalEntries_CompanyId_EntryDate"
+                ON "JournalEntries" ("CompanyId", "EntryDate" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_Type_Date"
+                ON "Documents" ("CompanyId", "DocumentType", "DocumentDate" DESC);
+            """,
+            // Document.ExchangeRate — multi-currency FX rate persisted per doc
+            // so JE auto-post can convert non-THB amounts to THB consistently.
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NOT NULL DEFAULT 1;""",
         };
 
         foreach (var sql in statements)

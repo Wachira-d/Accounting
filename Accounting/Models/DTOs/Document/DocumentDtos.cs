@@ -26,7 +26,13 @@ public record CreateDocumentRequest(
     string? CertifierPosition = null,
     string? WitnessName = null,
     string? WitnessPosition = null,
-    DateTime? PaymentDate = null);
+    DateTime? PaymentDate = null,
+    // ===== สกุลเงิน + อัตราแลกเปลี่ยน =====
+    // Currency defaults to THB; ExchangeRate to 1. For non-THB docs the
+    // service auto-fetches the BoT mid-rate at DocumentDate if ExchangeRate
+    // is omitted; callers can override with a contracted rate.
+    string Currency = "THB",
+    decimal? ExchangeRate = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -125,7 +131,11 @@ public record DocumentResponse(
     // Days a document has sat in a non-terminal status (Draft/WaitingApproval/
     // Approved/Sent/Partially-paid) beyond the stale threshold — null when not
     // stale. Surfaces "forgotten" documents (e.g. a PO left 3 months).
-    int? StaleDays = null);
+    int? StaleDays = null,
+    // Multi-currency — Currency is doc's denomination; ExchangeRate is THB per
+    // 1 unit of Currency captured at Create. Both default to ("THB", 1).
+    string Currency = "THB",
+    decimal ExchangeRate = 1m);
 
 public record DocumentLineResponse(
     Guid Id,
