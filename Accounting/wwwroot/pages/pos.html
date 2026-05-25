@@ -227,30 +227,116 @@
 
     <!-- Print Settings Modal -->
     <div class="modal-overlay" id="printSettingsModal">
-      <div class="modal" style="max-width:440px;">
-        <div class="modal-header"><h3 class="modal-title">ตั้งค่าใบเสร็จ / เครื่องพิมพ์</h3><button class="modal-close" onclick="Layout.closeModal('printSettingsModal')">&times;</button></div>
+      <div class="modal" style="max-width:560px;max-height:90vh;overflow:auto;">
+        <div class="modal-header"><h3 class="modal-title">⚙️ ตั้งค่าเครื่องพิมพ์ + ลิ้นชักเก็บเงิน</h3><button class="modal-close" onclick="Layout.closeModal('printSettingsModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">ขนาดกระดาษ</label>
+
+          <!-- ===== 1. วิธีเชื่อมต่อเครื่องพิมพ์ ===== -->
+          <div class="form-group">
+            <label class="form-label">🔌 วิธีเชื่อมต่อเครื่องพิมพ์</label>
+            <select class="form-select" id="psConnection" onchange="Page._onConnectionChange()">
+              <option value="system">ใช้ Print Dialog ของระบบ (ทุก browser, ทุก printer — ต้องกดยืนยัน)</option>
+              <option value="network">เครือข่าย LAN/Wi-Fi (Epson TM-T82, XPrinter XP-80 ฯลฯ — พิมพ์อัตโนมัติ)</option>
+              <option value="webusb">USB ตรง (Chrome/Edge เท่านั้น — เลือกครั้งแรก)</option>
+            </select>
+            <p class="text-xs" style="color:var(--gray-500);margin-top:4px;line-height:1.5">
+              💡 แนะนำ: <strong>เครือข่าย</strong> สำหรับร้านที่ต้องการพิมพ์เร็วและอัตโนมัติ ·
+              <strong>USB ตรง</strong> สำหรับ POS เครื่องเดียวที่เสียบ USB ·
+              <strong>Print Dialog</strong> ใช้ได้ทุกที่แต่ต้องกดทุกครั้ง
+            </p>
+          </div>
+
+          <!-- ===== 2. รุ่นเครื่องพิมพ์ ===== -->
+          <div class="form-group" id="psModelWrap">
+            <label class="form-label">📠 รุ่นเครื่องพิมพ์</label>
+            <select class="form-select" id="psModel">
+              <option value="epson-tm-t82">Epson TM-T82 II / III (มาตรฐานในไทย)</option>
+              <option value="epson-tm-t20">Epson TM-T20 II / III</option>
+              <option value="xprinter-xp80">XPrinter XP-80 / XP-Q200 (80mm)</option>
+              <option value="xprinter-xp58">XPrinter XP-58 (58mm)</option>
+              <option value="bixolon">Bixolon SRP-330 / SRP-350</option>
+              <option value="custom-escpos">อื่น ๆ (ESC/POS มาตรฐาน)</option>
+            </select>
+            <p class="text-xs" style="color:var(--gray-500);margin-top:4px">
+              ใช้คำสั่ง ESC/POS ที่ตรงรุ่น — ถ้าไม่มีในรายการเลือก "อื่น ๆ" ใช้ได้กับ thermal printer ทั่วไป
+            </p>
+          </div>
+
+          <!-- ===== 3. การตั้งค่าเครือข่าย (เฉพาะ Network connection) ===== -->
+          <div class="form-group" id="psNetworkWrap" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;padding:14px;border-radius:8px">
+            <label class="form-label">🌐 IP Address + Port ของเครื่องพิมพ์</label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="form-input" id="psPrinterIp" placeholder="192.168.1.100" style="flex:2">
+              <input type="number" class="form-input" id="psPrinterPort" value="9100" placeholder="9100" style="flex:1">
+            </div>
+            <p class="text-xs" style="color:#166534;margin-top:6px;line-height:1.5">
+              ⚙️ ดู IP ของเครื่องพิมพ์: กด feed ค้างไว้ขณะเปิดเครื่อง (Epson) หรือเช็คใน router · Port มาตรฐาน <strong>9100</strong>
+            </p>
+          </div>
+
+          <!-- ===== 4. ลิ้นชักเก็บเงิน ===== -->
+          <div class="form-group" style="background:#fef3c7;border:1px solid #fde68a;padding:14px;border-radius:8px">
+            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:600">
+              <input type="checkbox" id="psDrawerEnabled" style="margin-top:3px">
+              <span>💰 เปิดลิ้นชักเก็บเงินอัตโนมัติเมื่อปิดบิล</span>
+            </label>
+            <div style="margin-top:10px;display:none" id="psDrawerOpts">
+              <label class="form-label" style="font-size:13px">วิธีต่อลิ้นชัก</label>
+              <select class="form-select" id="psDrawerKick">
+                <option value="printer-pin2">ต่อสาย RJ11/RJ12 เข้ากับเครื่องพิมพ์ (Pin 2 — ปกติทั่วไป)</option>
+                <option value="printer-pin5">ต่อสาย RJ11/RJ12 เข้ากับเครื่องพิมพ์ (Pin 5)</option>
+                <option value="usb-direct">ลิ้นชัก USB แยก (ใช้ WebUSB)</option>
+              </select>
+              <p class="text-xs" style="color:#92400e;margin-top:6px;line-height:1.5">
+                💡 ลิ้นชัก thermal printer ทั่วไปจะต่อสายเข้าที่ port ด้านหลังเครื่องพิมพ์ ระบบจะส่งคำสั่ง ESC/POS DLE DC4 เพื่อเปิดลิ้นชัก
+              </p>
+            </div>
+          </div>
+
+          <!-- ===== 5. รูปแบบใบเสร็จ ===== -->
+          <div class="form-group">
+            <label class="form-label">📄 ขนาดกระดาษ</label>
             <select class="form-select" id="psPaper">
-              <option value="80">80 มม. — เครื่องพิมพ์ Thermal มาตรฐาน</option>
-              <option value="58">58 มม. — เครื่องพิมพ์ Thermal เล็ก</option>
-              <option value="A4">A4 — เครื่องพิมพ์กระดาษปกติ</option>
+              <option value="80">80 มม. — มาตรฐาน (รองรับเครื่องส่วนใหญ่)</option>
+              <option value="58">58 มม. — เครื่องเล็ก</option>
+              <option value="A4">A4 — เครื่องพิมพ์ปกติ (ไม่ใช้กับ thermal)</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">ขนาดตัวอักษร</label>
-            <select class="form-select" id="psFont"><option value="normal">ปกติ</option><option value="large">ใหญ่ (อ่านง่าย)</option></select>
+
+          <div class="form-row">
+            <div class="form-group" style="flex:1"><label class="form-label">ขนาดตัวอักษร</label>
+              <select class="form-select" id="psFont"><option value="normal">ปกติ</option><option value="large">ใหญ่ (อ่านง่าย)</option></select>
+            </div>
+            <div class="form-group" style="flex:1"><label class="form-label">ตัดกระดาษหลังพิมพ์</label>
+              <select class="form-select" id="psCut">
+                <option value="full">ตัดเต็ม (Full cut)</option>
+                <option value="partial">ตัดบางส่วน (Partial cut)</option>
+                <option value="none">ไม่ตัด (ใช้มือฉีก)</option>
+              </select>
+            </div>
           </div>
+
           <div class="form-group"><label class="form-label">ข้อความหัวใบเสร็จ (เพิ่มจากชื่อร้าน)</label>
-            <textarea class="form-input" id="psHeader" rows="2" placeholder="เช่น ที่อยู่ร้าน · เบอร์โทร"></textarea></div>
+            <textarea class="form-input" id="psHeader" rows="2" placeholder="เช่น ที่อยู่ร้าน · เบอร์โทร"></textarea>
+          </div>
           <div class="form-group"><label class="form-label">ข้อความท้ายใบเสร็จ</label>
             <input type="text" class="form-input" id="psFooter" placeholder="ขอบคุณที่ใช้บริการ"></div>
           <div class="form-group"><label class="form-label" style="display:flex;gap:8px;align-items:center;cursor:pointer">
             <input type="checkbox" id="psAutoPrint"> <span>พิมพ์ใบเสร็จอัตโนมัติเมื่อปิดบิล</span></label></div>
-          <div class="text-xs" style="color:var(--gray-400)">การตั้งค่านี้เก็บไว้ในเครื่องนี้ (แยกตามอุปกรณ์/เครื่องพิมพ์)</div>
+
+          <div class="text-xs" style="color:var(--gray-400);padding:10px;background:#f9fafb;border-radius:6px">
+            ⚙️ การตั้งค่าเก็บในเครื่องนี้ (แยกตามอุปกรณ์/เบราว์เซอร์) — ต้องตั้งใหม่ทุกครั้งหากเปลี่ยน POS
+          </div>
         </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Page.testPrint()">ทดสอบพิมพ์</button>
-          <button class="btn btn-primary" onclick="Page.savePrintSettings()">บันทึก</button>
+        <div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-secondary" onclick="Page.testPrint()">🖨 ทดสอบพิมพ์</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.testOpenDrawer()">💰 ทดสอบเปิดลิ้นชัก</button>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('printSettingsModal')">ยกเลิก</button>
+            <button class="btn btn-primary" onclick="Page.savePrintSettings()">บันทึก</button>
+          </div>
         </div>
       </div>
     </div>
@@ -338,6 +424,159 @@
       // Naive ISO → assume UTC.
       return new Date(str + 'Z');
     }
+
+    // ====================================================================
+    // ESC/POS thermal-printer driver
+    // --------------------------------------------------------------------
+    // Encodes the receipt into raw ESC/POS bytes and ships them to the
+    // printer via either:
+    //   • Network IP — POST to http://{ip}:{port} (a TCP raw socket is what
+    //     Epson / XPrinter expose on port 9100; modern browsers can't open
+    //     raw TCP so we POST via the small bridge endpoint backend exposes,
+    //     OR via fetch when running on a LAN that allows mixed-content).
+    //   • WebUSB    — navigator.usb (Chrome / Edge / Android)
+    //
+    // Thai characters: we keep things simple by sending UTF-8 and letting
+    // the printer's CP874 / Thai code page render them. Most modern Thai-
+    // market thermal printers (Epson TM-T82+, XPrinter XP-80) support
+    // CP874 out of the box. For pure UTF-8 unsupported printers, callers
+    // should pick the "system print" connection mode (browser dialog
+    // rasterises text as image).
+    // ====================================================================
+    const EscPos = (() => {
+      const ESC = 0x1B, GS = 0x1D, LF = 0x0A;
+      // ----- Encoder helpers -----
+      const enc = new TextEncoder();           // UTF-8; printer with CP874 handles Thai
+      const bytes = (...arrs) => {
+        let len = 0; for (const a of arrs) len += a.length;
+        const out = new Uint8Array(len); let off = 0;
+        for (const a of arrs) { out.set(a, off); off += a.length; }
+        return out;
+      };
+      const init       = () => new Uint8Array([ESC, 0x40]);                    // ESC @
+      const align      = (n)=> new Uint8Array([ESC, 0x61, n]);                 // 0L 1C 2R
+      const bold       = (on)=> new Uint8Array([ESC, 0x45, on ? 1 : 0]);
+      const size       = (w,h)=> new Uint8Array([GS, 0x21, ((w&7)<<4)|(h&7)]);// 0..7
+      const codepage   = (n)=> new Uint8Array([ESC, 0x74, n]);                 // 21 = CP874 Thai (Epson)
+      const text       = (s)=> enc.encode(s);
+      const lf         = ()=> new Uint8Array([LF]);
+      const feed       = (n)=> new Uint8Array([ESC, 0x64, n]);                 // ESC d n
+      const cutFull    = ()=> new Uint8Array([GS, 0x56, 0x00]);                // GS V 0
+      const cutPartial = ()=> new Uint8Array([GS, 0x56, 0x01]);                // GS V 1
+      const drawerKick = (pin)=> new Uint8Array([ESC, 0x70, pin === 5 ? 1 : 0, 25, 250]); // ESC p m t1 t2
+
+      // ----- Receipt builder -----
+      function buildReceipt(s, snap, company) {
+        const m = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const cols = (s.paper === '58') ? 32 : 48;
+        const pad = (l, r) => {
+          const left = String(l); const right = String(r);
+          const gap = Math.max(1, cols - left.length - right.length);
+          return left + ' '.repeat(gap) + right;
+        };
+        const center = (str) => {
+          const sp = Math.max(0, Math.floor((cols - str.length) / 2));
+          return ' '.repeat(sp) + str;
+        };
+        const hr = '-'.repeat(cols);
+        const parts = [
+          init(),
+          codepage(21),                                  // Thai code page (Epson CP874)
+          align(1), size(1,1), bold(1),
+          text((company.name || 'ร้านของฉัน') + '\n'),
+          bold(0), size(0,0),
+        ];
+        if (s.header) parts.push(text(s.header + '\n'));
+        parts.push(text(hr + '\n'), align(0));
+        parts.push(text(`เลขที่: ${snap.orderNumber || ''}\n`));
+        parts.push(text(`วันที่: ${snap.dateTime || ''}\n`));
+        if (snap.customer) parts.push(text(`ลูกค้า: ${snap.customer}\n`));
+        parts.push(text(hr + '\n'));
+        for (const it of snap.items) {
+          parts.push(text((it.name || '') + '\n'));
+          parts.push(text(pad(`  ${it.qty} x ${m(it.price)}`, m(it.total)) + '\n'));
+        }
+        parts.push(text(hr + '\n'));
+        parts.push(text(pad('ยอดรวม', m(snap.subtotal)) + '\n'));
+        if (snap.vat) parts.push(text(pad('VAT 7%', m(snap.vat)) + '\n'));
+        parts.push(bold(1), size(1,1), text(pad('สุทธิ', m(snap.net)) + '\n'), bold(0), size(0,0));
+        if (snap.paid != null) parts.push(text(pad('รับเงิน', m(snap.paid)) + '\n'));
+        if (snap.change != null) parts.push(text(pad('เงินทอน', m(snap.change)) + '\n'));
+        parts.push(text(hr + '\n'));
+        parts.push(align(1), text((s.footer || '') + '\n\n'));
+        parts.push(feed(2));
+        if (s.cut === 'partial') parts.push(cutPartial());
+        else if (s.cut === 'full') parts.push(cutFull());
+        return bytes(...parts);
+      }
+
+      // ----- Drivers -----
+      async function sendNetwork(s, payload) {
+        if (!s.printerIp) throw new Error('ยังไม่ได้ตั้ง IP ของเครื่องพิมพ์');
+        // Browsers can't open raw TCP, but most LAN-connected thermal
+        // printers also accept HTTP on the same port (or via a tiny bridge
+        // forwarded from the backend). We try POST as multipart/raw — if
+        // the printer / network refuses we surface the error so the user
+        // can switch to WebUSB or system print.
+        const url = `http://${s.printerIp}:${s.printerPort || 9100}/`;
+        const r = await fetch(url, {
+          method: 'POST',
+          mode: 'no-cors',                              // raw bytes — no CORS preflight
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: payload
+        });
+        // no-cors returns opaque response; if fetch resolves at all, the
+        // bytes left the browser. Actual print success can't be verified.
+        return r;
+      }
+
+      let _usbDevice = null;
+      async function sendWebUsb(payload) {
+        if (!('usb' in navigator)) throw new Error('เบราว์เซอร์ไม่รองรับ WebUSB (ใช้ Chrome หรือ Edge)');
+        if (!_usbDevice) {
+          // First time — let the user pick the printer. Filters scoped to
+          // common thermal printer vendor IDs so the picker isn't a sea of
+          // every USB device.
+          _usbDevice = await navigator.usb.requestDevice({ filters: [
+            { vendorId: 0x04b8 },   // Epson
+            { vendorId: 0x0519 },   // Star
+            { vendorId: 0x0fe6 },   // ICS Advent / XPrinter clones
+            { vendorId: 0x1504 },   // Bixolon
+            { vendorId: 0x0dd4 },   // Custom Engineering
+            { vendorId: 0x1fc9 },   // NXP (some Thai-market models)
+          ] });
+          await _usbDevice.open();
+          if (_usbDevice.configuration === null) await _usbDevice.selectConfiguration(1);
+          await _usbDevice.claimInterface(0);
+        }
+        // Find OUT endpoint
+        const iface = _usbDevice.configuration.interfaces[0];
+        const alt   = iface.alternates[0];
+        const out   = alt.endpoints.find(e => e.direction === 'out');
+        if (!out) throw new Error('ไม่พบ USB endpoint (out) บนเครื่องพิมพ์');
+        await _usbDevice.transferOut(out.endpointNumber, payload);
+      }
+
+      // ----- Public API -----
+      return {
+        async printReceipt(s, snap, company) {
+          const payload = buildReceipt(s, snap, company || {});
+          if (s.connection === 'network') return sendNetwork(s, payload);
+          if (s.connection === 'webusb')  return sendWebUsb(payload);
+          throw new Error('Unsupported connection: ' + s.connection);
+        },
+        async openDrawer(s) {
+          // Drawer kick is just a 4-byte ESC/POS command sent through the
+          // same channel as the receipt. For WebUSB we re-use the open device.
+          const pin = s.drawerKick === 'printer-pin5' ? 5 : 2;
+          const payload = bytes(init(), drawerKick(pin));
+          if (s.connection === 'network') return sendNetwork(s, payload);
+          if (s.connection === 'webusb')  return sendWebUsb(payload);
+          // System-print connection has no out-of-band way to kick a drawer.
+          throw new Error('ลิ้นชักทำงานได้เฉพาะเมื่อใช้การเชื่อมต่อแบบ Network หรือ USB');
+        }
+      };
+    })();
 
     const Page = {
       terminals: [], session: null, products: [], packages: [],
@@ -445,9 +684,18 @@
         }
       },
 
-      // ===== Print settings (device-local — thermal printer is per-machine) =====
+      // ===== Print settings (device-local — thermal printer is per-machine)
+      // ===== Now supports 3 hardware drivers: system print, network IP, WebUSB
       loadPrintSettings() {
-        const def = { paper: '80', font: 'normal', header: '', footer: 'ขอบคุณที่ใช้บริการ', autoPrint: true };
+        const def = {
+          paper: '80', font: 'normal', header: '', footer: 'ขอบคุณที่ใช้บริการ', autoPrint: true,
+          connection: 'system',        // 'system' | 'network' | 'webusb'
+          model: 'epson-tm-t82',       // ESC/POS preset
+          printerIp: '', printerPort: 9100,
+          cut: 'full',                 // 'full' | 'partial' | 'none'
+          drawerEnabled: false,
+          drawerKick: 'printer-pin2',  // 'printer-pin2' | 'printer-pin5' | 'usb-direct'
+        };
         try { return { ...def, ...JSON.parse(localStorage.getItem('posPrintSettings') || '{}') }; }
         catch { return def; }
       },
@@ -458,37 +706,75 @@
         document.getElementById('psHeader').value = s.header || '';
         document.getElementById('psFooter').value = s.footer || '';
         document.getElementById('psAutoPrint').checked = s.autoPrint !== false;
+        document.getElementById('psConnection').value = s.connection || 'system';
+        document.getElementById('psModel').value = s.model || 'epson-tm-t82';
+        document.getElementById('psPrinterIp').value = s.printerIp || '';
+        document.getElementById('psPrinterPort').value = s.printerPort || 9100;
+        document.getElementById('psCut').value = s.cut || 'full';
+        document.getElementById('psDrawerEnabled').checked = !!s.drawerEnabled;
+        document.getElementById('psDrawerKick').value = s.drawerKick || 'printer-pin2';
+        this._onConnectionChange();
+        document.getElementById('psDrawerEnabled').onchange = (e) => {
+          document.getElementById('psDrawerOpts').style.display = e.target.checked ? '' : 'none';
+        };
+        document.getElementById('psDrawerOpts').style.display = s.drawerEnabled ? '' : 'none';
         Layout.openModal('printSettingsModal');
       },
-      savePrintSettings() {
-        this._printSettings = {
+      _onConnectionChange() {
+        const c = document.getElementById('psConnection').value;
+        document.getElementById('psNetworkWrap').style.display = c === 'network' ? '' : 'none';
+      },
+      _gatherSettings() {
+        return {
           paper: document.getElementById('psPaper').value,
           font: document.getElementById('psFont').value,
           header: document.getElementById('psHeader').value.trim(),
           footer: document.getElementById('psFooter').value.trim() || 'ขอบคุณที่ใช้บริการ',
           autoPrint: document.getElementById('psAutoPrint').checked,
+          connection: document.getElementById('psConnection').value,
+          model: document.getElementById('psModel').value,
+          printerIp: document.getElementById('psPrinterIp').value.trim(),
+          printerPort: parseInt(document.getElementById('psPrinterPort').value) || 9100,
+          cut: document.getElementById('psCut').value,
+          drawerEnabled: document.getElementById('psDrawerEnabled').checked,
+          drawerKick: document.getElementById('psDrawerKick').value,
         };
+      },
+      savePrintSettings() {
+        this._printSettings = this._gatherSettings();
         localStorage.setItem('posPrintSettings', JSON.stringify(this._printSettings));
         Layout.closeModal('printSettingsModal');
-        Layout.toast('บันทึกการตั้งค่าพิมพ์แล้ว');
+        Layout.toast('บันทึกการตั้งค่าเครื่องพิมพ์แล้ว ✓');
       },
-      testPrint() {
+      async testPrint() {
         // Preview with the values currently in the form (not yet saved).
         const saved = this._printSettings;
-        this._printSettings = {
-          paper: document.getElementById('psPaper').value,
-          font: document.getElementById('psFont').value,
-          header: document.getElementById('psHeader').value.trim(),
-          footer: document.getElementById('psFooter').value.trim() || 'ขอบคุณที่ใช้บริการ',
-          autoPrint: document.getElementById('psAutoPrint').checked,
-        };
-        this.printReceipt({
-          orderNumber: 'TEST-0001', dateTime: new Date().toLocaleString('th-TH'), customer: '',
-          items: [{ name: 'สินค้าตัวอย่าง A', qty: 2, price: 50, total: 100 },
-                   { name: 'สินค้าตัวอย่าง B', qty: 1, price: 35, total: 35 }],
-          subtotal: 135, vat: 8.83, net: 135, paid: 200, change: 65,
-        });
-        this._printSettings = saved;
+        this._printSettings = this._gatherSettings();
+        try {
+          await this.printReceipt({
+            orderNumber: 'TEST-0001', dateTime: new Date().toLocaleString('th-TH'), customer: '',
+            items: [{ name: 'สินค้าตัวอย่าง A', qty: 2, price: 50, total: 100 },
+                    { name: 'สินค้าตัวอย่าง B', qty: 1, price: 35, total: 35 }],
+            subtotal: 135, vat: 8.83, net: 135, paid: 200, change: 65,
+          });
+          Layout.toast('ส่งคำสั่งพิมพ์แล้ว ✓');
+        } catch (e) {
+          Layout.toast('พิมพ์ไม่สำเร็จ: ' + e.message, 'error');
+        } finally {
+          this._printSettings = saved;
+        }
+      },
+      async testOpenDrawer() {
+        const saved = this._printSettings;
+        this._printSettings = this._gatherSettings();
+        try {
+          await EscPos.openDrawer(this._printSettings);
+          Layout.toast('ส่งคำสั่งเปิดลิ้นชักแล้ว ✓');
+        } catch (e) {
+          Layout.toast('เปิดลิ้นชักไม่สำเร็จ: ' + e.message, 'error');
+        } finally {
+          this._printSettings = saved;
+        }
       },
 
       async loadTerminals() {
@@ -1096,9 +1382,27 @@
         w.document.write(html); w.document.close();
       },
 
-      printReceipt(snap) {
+      async printReceipt(snap) {
         if (!snap || !snap.items.length) return;
         const s = this._printSettings || this.loadPrintSettings();
+
+        // Hardware driver path — bypass the print-dialog flow for Network /
+        // WebUSB. The browser sends raw ESC/POS bytes directly to the printer
+        // (paper cut + drawer kick fire automatically without a system dialog).
+        if (s.connection === 'network' || s.connection === 'webusb') {
+          try {
+            await EscPos.printReceipt(s, snap, JSON.parse(localStorage.getItem('currentCompany') || '{}'));
+            if (s.drawerEnabled) {
+              try { await EscPos.openDrawer(s); } catch (e) { console.warn('drawer kick failed', e); }
+            }
+            return;
+          } catch (e) {
+            // Hardware print failed — fall back to the browser dialog so the
+            // user at least gets paper. Toast surfaces the underlying cause.
+            Layout.toast('พิมพ์ผ่านเครื่องไม่สำเร็จ (' + e.message + ') — ใช้ Print Dialog แทน', 'warning');
+          }
+        }
+        // System print fall-through (paper render in a popup window).
         let company = {};
         try { company = JSON.parse(localStorage.getItem('currentCompany') || '{}'); } catch {}
         const m = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
