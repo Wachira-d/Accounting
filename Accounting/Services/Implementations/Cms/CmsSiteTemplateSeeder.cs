@@ -29,10 +29,18 @@ public static class CmsSiteTemplateSeeder
         var plan = industry switch
         {
             IndustryType.Restaurant or IndustryType.Cafe => RestaurantPlan(),
-            IndustryType.Retail or IndustryType.Ecommerce => RetailPlan(),
+            IndustryType.Retail or IndustryType.Ecommerce or IndustryType.Trading
+                or IndustryType.Agriculture => RetailPlan(),
             IndustryType.Beauty => BeautyPlan(),
             IndustryType.Healthcare => HealthcarePlan(),
             IndustryType.Service or IndustryType.Freelance => ServicePlan(),
+            IndustryType.Construction => ConstructionPlan(),
+            IndustryType.RealEstate => RealEstatePlan(),
+            IndustryType.Technology => TechnologyPlan(),
+            IndustryType.Education => EducationPlan(),
+            IndustryType.Transportation => TransportationPlan(),
+            IndustryType.Hotel => HotelPlan(),
+            IndustryType.Manufacturing => ManufacturingPlan(),
             _ => GeneralPlan()
         };
 
@@ -450,4 +458,385 @@ public static class CmsSiteTemplateSeeder
 
     // ----- Generic Service business -----
     private static List<(PageMeta, List<BlockMeta>)> ServicePlan() => GeneralPlan();
+
+    // ----- Construction / Contractor -----
+    private static List<(PageMeta, List<BlockMeta>)> ConstructionPlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "บริการรับเหมาก่อสร้าง ครบวงจร"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "รับเหมาก่อสร้าง คุณภาพ ตรงเวลา",
+                subheadline = "ทีมงานวิศวกร + ช่างมืออาชีพ · ทำงานตามแบบ ภายในงบ ครบกำหนด",
+                ctaText = "ขอใบเสนอราคา", ctaUrl = "/quote"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🏗️ ประเภทงานที่รับ</h2>
+<ul>
+  <li>สร้างบ้านพักอาศัย / ทาวน์เฮาส์ / อาคารพาณิชย์</li>
+  <li>ปรับปรุง / ต่อเติม / รีโนเวท</li>
+  <li>งานโครงสร้างเหล็ก / คอนกรีต</li>
+  <li>งานออกแบบ + รับเหมาเบ็ดเสร็จ (Design + Build)</li>
+</ul>"
+            })),
+            new(CmsBlockType.Testimonials, J(new {
+                headline = "ผลงานจากลูกค้าจริง",
+                testimonials = new[] {
+                    new { quote = "งานเสร็จก่อนกำหนด คุณภาพดี", author = "คุณสุริยา", role = "บ้านพักอาศัย 2 ชั้น" },
+                    new { quote = "ทีมงานสุภาพ ทำงานเป็นระบบ", author = "คุณนภา", role = "ต่อเติมร้านอาหาร" }
+                }
+            })),
+            new(CmsBlockType.CallToAction, J(new {
+                headline = "มีโครงการในใจ?", subheadline = "ปรึกษาฟรี ส่งภาพหน้างาน ตอบใบเสนอราคาภายใน 3 วัน",
+                ctaText = "ขอใบเสนอราคาฟรี", ctaUrl = "/quote"
+            }))
+        }),
+        (new("ผลงานที่ผ่านมา", "portfolio", PageType.Standard, "ตัวอย่างงานก่อสร้างของเรา"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "ผลงานที่ผ่านมา", subheadline = "ทุกโครงการคือเครื่องการันตีคุณภาพ" })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>📸 ผลงานเด่น</h2>
+<p>เพิ่มรูปผลงานของคุณตรงนี้ (ใช้ block Image หรือ Gallery จาก editor)</p>
+<ul>
+  <li><strong>บ้านเดี่ยว สไตล์โมเดิร์น</strong> — 2 ชั้น · 240 ตรม. · 8 เดือน</li>
+  <li><strong>ปรับปรุงร้านกาแฟ</strong> — 80 ตรม. · 1 เดือน</li>
+  <li><strong>สำนักงาน 3 ชั้น</strong> — 600 ตรม. · 14 เดือน</li>
+</ul>"
+            }))
+        }),
+        (new("ขอใบเสนอราคา", "quote", PageType.Standard, "ขอใบเสนอราคาฟรี"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "ขอใบเสนอราคา (ฟรี)",
+                subheadline = "กรอกรายละเอียดงาน ทีมงานจะติดต่อสำรวจหน้างานภายใน 24 ชม."
+            })),
+            new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดโครงการ", submitText = "ส่งคำขอใบเสนอราคา" }))
+        }),
+        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อเรา"), new() {
+            new(CmsBlockType.RichText, J(new {
+                content = "<h2>📞 ติดต่อทีมงาน</h2><p>โทร: 02-XXX-XXXX · LINE: @construct</p>"
+            })),
+            new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
+        })
+    };
+
+    // ----- Real Estate -----
+    private static List<(PageMeta, List<BlockMeta>)> RealEstatePlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "อสังหาฯ ที่ดิน บ้าน คอนโด"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "บ้าน / ที่ดิน / คอนโด ทำเลดี",
+                subheadline = "นายหน้ามืออาชีพ ให้คำแนะนำตรงไปตรงมา ปิดดีลเร็ว",
+                ctaText = "ดูรายการขาย", ctaUrl = "/listings"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🏘️ บริการของเรา</h2>
+<ul>
+  <li>ซื้อ-ขาย-เช่า บ้าน คอนโด ที่ดิน</li>
+  <li>ประเมินราคาทรัพย์สิน (ฟรี)</li>
+  <li>ที่ปรึกษาด้านสินเชื่อ + กฎหมาย</li>
+  <li>บริหารโครงการเช่า (สำหรับเจ้าของ)</li>
+</ul>"
+            })),
+            new(CmsBlockType.Testimonials, J(new {
+                headline = "ลูกค้าที่ปิดดีลแล้ว",
+                testimonials = new[] {
+                    new { quote = "ขายบ้านได้ภายใน 3 อาทิตย์ ราคาดี", author = "คุณวีระ" },
+                    new { quote = "ตรงไปตรงมา ดูแลทุกขั้นตอนจบที่กรมที่ดิน", author = "คุณมาลี" }
+                }
+            }))
+        }),
+        (new("รายการขาย / เช่า", "listings", PageType.Standard, "อสังหาฯ ทั้งหมดที่กำลังขาย"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "รายการทรัพย์" })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🏠 ทรัพย์เด่น</h2>
+<p>เพิ่มรายการทรัพย์จริงตรงนี้ (ใช้ block Image / Gallery / RichText)</p>
+<ul>
+  <li><strong>บ้านเดี่ยว ซอย XX</strong> — 4 ห้องนอน · 120 ตรว. · 8.5 ล้าน</li>
+  <li><strong>คอนโด ใจกลางเมือง</strong> — 1 ห้องนอน · 35 ตรม. · 3.2 ล้าน</li>
+  <li><strong>ที่ดิน ติดถนน</strong> — 200 ตรว. · 15 ล้าน</li>
+</ul>"
+            }))
+        }),
+        (new("นัดดูทรัพย์", "viewing", PageType.Standard, "นัดดูบ้าน คอนโด ที่ดิน"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "นัดดูทรัพย์", subheadline = "เลือกวันเวลาที่สะดวก เราจะพาชมทรัพย์ตามที่ระบุ" })),
+            new(CmsBlockType.ContactForm, J(new { headline = "นัดหมาย", submitText = "ส่งคำขอนัด" }))
+        }),
+        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อนายหน้า"), new() {
+            new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · LINE: @realestate</p>" })),
+            new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
+        })
+    };
+
+    // ----- Technology / SaaS / Software house -----
+    private static List<(PageMeta, List<BlockMeta>)> TechnologyPlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "ซอฟต์แวร์ที่ทำให้ธุรกิจคุณเติบโต"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "ซอฟต์แวร์ที่ลูกค้ารัก",
+                subheadline = "ออกแบบมาเพื่อ SME ไทย · ใช้งานง่าย · ราคาเป็นมิตร · ทีมซัพพอร์ตคนไทย",
+                ctaText = "ทดลองใช้ฟรี 14 วัน", ctaUrl = "/signup"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>✨ ฟีเจอร์เด่น</h2>
+<ul>
+  <li>⚡ ใช้งานได้ทันที — ไม่ต้องติดตั้ง ไม่ต้องอัพเดท</li>
+  <li>🔒 ปลอดภัยมาตรฐานสากล (SSL, encryption, daily backup)</li>
+  <li>📱 ใช้ได้ทุกอุปกรณ์ — มือถือ แท็บเล็ต คอม</li>
+  <li>🤝 ทีมซัพพอร์ตภาษาไทย ตอบ LINE / โทร / อีเมล</li>
+</ul>"
+            })),
+            new(CmsBlockType.PricingTable, J(new {
+                headline = "แพ็กเกจสำหรับทุกขนาดธุรกิจ",
+                plans = new[] {
+                    new { name = "Starter", price = "ฟรี",
+                          features = new[] { "ผู้ใช้ 1 คน", "เก็บข้อมูล 100 รายการ/เดือน", "ซัพพอร์ตอีเมล" } },
+                    new { name = "Business", price = "฿990/เดือน",
+                          features = new[] { "ผู้ใช้ 10 คน", "ไม่จำกัดข้อมูล", "ซัพพอร์ต LINE + โทร", "Export Excel" } },
+                    new { name = "Enterprise", price = "ติดต่อขอราคา",
+                          features = new[] { "ไม่จำกัดผู้ใช้", "API integration", "Account Manager เฉพาะคุณ", "SLA 99.9%" } }
+                }
+            })),
+            new(CmsBlockType.Testimonials, J(new {
+                headline = "ลูกค้าที่ใช้แล้วบอกต่อ",
+                testimonials = new[] {
+                    new { quote = "ลดเวลาทำงานได้ครึ่งหนึ่ง", author = "คุณวรพล", role = "ร้านขายส่ง" },
+                    new { quote = "ใช้งานง่ายมาก พนักงานเรียนรู้ได้ในวันเดียว", author = "คุณวรรณา", role = "ร้านอาหาร" }
+                }
+            })),
+            new(CmsBlockType.Faq, J(new {
+                headline = "คำถามที่พบบ่อย",
+                items = new[] {
+                    new { q = "มีให้ทดลองใช้ฟรีไหม?", a = "ทดลองใช้ฟีเจอร์ครบทั้งหมด 14 วัน ไม่ต้องใส่บัตรเครดิต" },
+                    new { q = "ยกเลิกได้เมื่อไหร่?", a = "ยกเลิกได้ทุกเวลา ไม่มีค่าธรรมเนียม" },
+                    new { q = "ข้อมูลของฉันปลอดภัยไหม?", a = "Encrypt ทั้งหมด + backup ทุกวัน + เซิร์ฟเวอร์ในไทย" }
+                }
+            }))
+        }),
+        (new("ฟีเจอร์", "features", PageType.Standard, "ฟีเจอร์ทั้งหมด"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "ฟีเจอร์ทั้งหมด" })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<p>อธิบายแต่ละฟีเจอร์ของผลิตภัณฑ์ของคุณตรงนี้ (ใช้ block RichText / Image / Video เพิ่มได้)</p>"
+            }))
+        }),
+        (new("ราคา", "pricing", PageType.Standard, "แพ็กเกจราคา"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "ราคาโปร่งใส ไม่มีค่าใช้จ่ายแฝง" })),
+            new(CmsBlockType.PricingTable, J(new {
+                plans = new[] {
+                    new { name = "Starter", price = "ฟรี", features = new[] { "ผู้ใช้ 1 คน", "100 รายการ/เดือน" } },
+                    new { name = "Business", price = "฿990/เดือน", features = new[] { "ผู้ใช้ 10 คน", "ไม่จำกัดข้อมูล" } },
+                    new { name = "Enterprise", price = "ติดต่อ", features = new[] { "ไม่จำกัดผู้ใช้", "API" } }
+                }
+            }))
+        }),
+        (new("ติดต่อขาย / เดโม", "contact", PageType.Contact, "นัดเดโม / ขอใบเสนอราคา"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "อยากดูเดโม?", subheadline = "ทีมขายจะติดต่อภายใน 1 วันทำการ" })),
+            new(CmsBlockType.ContactForm, J(new { headline = "นัดเดโม / สอบถามราคา", submitText = "ส่ง" }))
+        })
+    };
+
+    // ----- Education / Training / School -----
+    private static List<(PageMeta, List<BlockMeta>)> EducationPlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "หลักสูตร / สถาบันสอน"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "เรียนรู้กับผู้เชี่ยวชาญ",
+                subheadline = "หลักสูตรครอบคลุม · ผู้สอนมืออาชีพ · ใบประกาศนียบัตรหลังเรียนจบ",
+                ctaText = "ดูหลักสูตรทั้งหมด", ctaUrl = "/courses"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🎓 หลักสูตรเปิดสอน</h2>
+<ul>
+  <li>หลักสูตรพื้นฐาน — สำหรับผู้เริ่มต้น</li>
+  <li>หลักสูตรขั้นสูง — สำหรับมืออาชีพ</li>
+  <li>คอร์สเฉพาะทาง — ออกแบบให้บริษัท / ทีมงาน</li>
+</ul>
+<h2>🏆 ทำไมเลือกเรา</h2>
+<ul>
+  <li>ผู้สอนมีประสบการณ์จริงในอุตสาหกรรม 10+ ปี</li>
+  <li>สอนแบบ workshop ลงมือทำจริง ไม่ใช่แค่บรรยาย</li>
+  <li>มี community ของศิษย์เก่าให้ปรึกษาต่อเนื่อง</li>
+</ul>"
+            })),
+            new(CmsBlockType.Testimonials, J(new {
+                headline = "ความคิดเห็นจากผู้เรียน",
+                testimonials = new[] {
+                    new { quote = "เปลี่ยนชีวิตการทำงานเลย", author = "คุณเจมส์", role = "ศิษย์รุ่น 8" },
+                    new { quote = "ได้งานตรงสายภายใน 3 เดือนหลังจบคอร์ส", author = "คุณดาว", role = "ศิษย์รุ่น 12" }
+                }
+            }))
+        }),
+        (new("หลักสูตร", "courses", PageType.Standard, "หลักสูตรทั้งหมด"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "หลักสูตรทั้งหมด" })),
+            new(CmsBlockType.PricingTable, J(new {
+                headline = "เลือกหลักสูตรที่ใช่",
+                plans = new[] {
+                    new { name = "พื้นฐาน", price = "฿4,900", features = new[] { "เรียน 8 ชม.", "เอกสารประกอบ", "ใบประกาศ" } },
+                    new { name = "ขั้นกลาง", price = "฿9,900", features = new[] { "เรียน 16 ชม.", "workshop", "ที่ปรึกษา 1:1 1 ครั้ง", "ใบประกาศ" } },
+                    new { name = "ขั้นสูง", price = "฿18,900", features = new[] { "เรียน 32 ชม.", "Project จริง", "Mentor 3 เดือน", "ใบประกาศ + แนะนำงาน" } }
+                }
+            }))
+        }),
+        (new("สมัครเรียน", "register", PageType.Standard, "ลงทะเบียนเรียน"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "สมัครเรียน", subheadline = "เลือกหลักสูตร + รอบเรียน → กรอกข้อมูล → ชำระเงิน" })),
+            new(CmsBlockType.ContactForm, J(new { headline = "ลงทะเบียน", submitText = "ส่งใบสมัคร" }))
+        }),
+        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อสถาบัน"), new() {
+            new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · LINE: @school · 🕐 จ-ส 9:00-18:00</p>" })),
+            new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
+        })
+    };
+
+    // ----- Transportation / Logistics -----
+    private static List<(PageMeta, List<BlockMeta>)> TransportationPlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "บริการขนส่ง โลจิสติกส์"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "ขนส่งทั่วไทย ตรงเวลา ปลอดภัย",
+                subheadline = "รับ-ส่งทั่วประเทศ · ติดตามสถานะออนไลน์ · ประกันความเสียหาย",
+                ctaText = "ขอราคา / จองรถ", ctaUrl = "/quote"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🚚 บริการของเรา</h2>
+<ul>
+  <li><strong>ส่งของพัสดุ</strong> — ทั่วประเทศ · 1-3 วัน</li>
+  <li><strong>รถบรรทุก 4 ล้อ / 6 ล้อ / 10 ล้อ</strong> — เหมารายเที่ยว / รายวัน / รายเดือน</li>
+  <li><strong>ขนย้ายบ้าน / สำนักงาน</strong> — ครบทีมงาน รถ + คนยก</li>
+  <li><strong>ขนส่งสินค้าเย็น</strong> — ห้องเย็นอุณหภูมิควบคุม</li>
+</ul>"
+            })),
+            new(CmsBlockType.Faq, J(new {
+                headline = "คำถามที่พบบ่อย",
+                items = new[] {
+                    new { q = "ส่งของเสียหายต้องทำอย่างไร?", a = "เรามีประกันสูงสุด 100,000 บาทต่อเที่ยว แจ้งภายใน 24 ชม." },
+                    new { q = "มี COD ไหม?", a = "รองรับเก็บเงินปลายทาง คืนยอดภายใน 2 วันทำการ" },
+                    new { q = "เช็คสถานะของได้ที่ไหน?", a = "ผ่านระบบ tracking ออนไลน์ — กรอกเลข tracking" }
+                }
+            }))
+        }),
+        (new("บริการ", "services", PageType.Standard, "บริการขนส่งทั้งหมด"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "บริการของเรา" })),
+            new(CmsBlockType.PricingTable, J(new {
+                headline = "ราคาเริ่มต้น",
+                plans = new[] {
+                    new { name = "พัสดุ", price = "เริ่ม ฿35", features = new[] { "ในเขตกรุงเทพ", "1 วัน", "ไม่เกิน 5 กก." } },
+                    new { name = "รถ 4 ล้อ", price = "เริ่ม ฿1,500/เที่ยว", features = new[] { "บรรทุกได้ 1 ตัน", "คนขับ + คนยก 1 คน" } },
+                    new { name = "รถ 6 ล้อ", price = "เริ่ม ฿3,500/เที่ยว", features = new[] { "บรรทุกได้ 4 ตัน", "คนขับ + คนยก 2 คน" } }
+                }
+            }))
+        }),
+        (new("ขอราคา / จองรถ", "quote", PageType.Standard, "ขอราคาขนส่ง"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "ขอราคา / จองรถ", subheadline = "ตอบกลับภายใน 30 นาที" })),
+            new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดงานขนส่ง", submitText = "ส่งคำขอ" }))
+        }),
+        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อ"), new() {
+            new(CmsBlockType.RichText, J(new {
+                content = "<p>📞 02-XXX-XXXX · 📱 081-XXX-XXXX (24 ชม.) · LINE: @logistics</p>"
+            })),
+            new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
+        })
+    };
+
+    // ----- Hotel / Resort / Homestay -----
+    private static List<(PageMeta, List<BlockMeta>)> HotelPlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "โรงแรม / ที่พัก"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "พักผ่อนเหมือนกลับบ้าน",
+                subheadline = "ห้องสะอาด บรรยากาศดี ทำเลใจกลางเมือง · จองตรงรับส่วนลด 10%",
+                ctaText = "จองห้องพัก", ctaUrl = "/booking"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🏨 ห้องพักของเรา</h2>
+<ul>
+  <li><strong>Standard Room</strong> — 1 เตียง 6 ฟุต · ห้องน้ำในตัว · WiFi</li>
+  <li><strong>Deluxe Room</strong> — 1 เตียงคิงไซส์ · วิวเมือง · เครื่องชงกาแฟ</li>
+  <li><strong>Suite</strong> — ห้องนอน + นั่งเล่นแยก · อ่างอาบน้ำ · มินิบาร์</li>
+</ul>
+<h2>🎁 สิ่งอำนวยความสะดวก</h2>
+<ul>
+  <li>WiFi ฟรีทุกพื้นที่ · อาหารเช้าฟรี · ที่จอดรถ · 24/7 ฟร้อนท์</li>
+  <li>สระว่ายน้ำ · ฟิตเนส · สปา · บริการรถรับส่งสนามบิน</li>
+</ul>"
+            })),
+            new(CmsBlockType.Testimonials, J(new {
+                headline = "รีวิวจากแขก",
+                testimonials = new[] {
+                    new { quote = "ห้องสะอาดมาก พนักงานน่ารัก จะกลับมาแน่นอน", author = "Sarah J.", role = "อังกฤษ" },
+                    new { quote = "ทำเลดีมาก เดินไปกินข้าวได้รอบ ๆ", author = "คุณภัทร", role = "กรุงเทพฯ" }
+                }
+            }))
+        }),
+        (new("ห้องพัก", "rooms", PageType.Standard, "ห้องพักและราคา"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "ห้องพัก" })),
+            new(CmsBlockType.PricingTable, J(new {
+                headline = "ราคาห้องพัก (ต่อคืน)",
+                plans = new[] {
+                    new { name = "Standard", price = "฿1,500", features = new[] { "เตียง 6 ฟุต", "อาหารเช้า 2 ท่าน", "WiFi" } },
+                    new { name = "Deluxe", price = "฿2,500", features = new[] { "คิงไซส์", "วิวเมือง", "อาหารเช้า 2 ท่าน", "เครื่องชงกาแฟ" } },
+                    new { name = "Suite", price = "฿4,500", features = new[] { "ห้องนั่งเล่นแยก", "อ่างอาบน้ำ", "มินิบาร์", "Late checkout" } }
+                }
+            }))
+        }),
+        (new("จองห้องพัก", "booking", PageType.Standard, "จองห้อง"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "จองห้องพัก", subheadline = "จองตรงรับส่วนลด 10% — ไม่มีค่าธรรมเนียม" })),
+            new(CmsBlockType.ContactForm, J(new { headline = "จองห้อง", submitText = "ส่งคำขอจอง" }))
+        }),
+        (new("ติดต่อ / ที่ตั้ง", "contact", PageType.Contact, "ที่ตั้ง"), new() {
+            new(CmsBlockType.RichText, J(new {
+                content = "<p>📞 02-XXX-XXXX · 24 ชม. · LINE: @hotel</p>"
+            })),
+            new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
+        })
+    };
+
+    // ----- Manufacturing / Factory / OEM -----
+    private static List<(PageMeta, List<BlockMeta>)> ManufacturingPlan() => new()
+    {
+        (new("หน้าหลัก", "home", PageType.Home, "โรงงานผลิต OEM"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "โรงงานผลิตคุณภาพ มาตรฐานสากล",
+                subheadline = "รับ OEM / ODM · ผลิตตามแบบ · ส่งออกทั่วโลก · ISO 9001",
+                ctaText = "ส่งแบบขอใบเสนอราคา", ctaUrl = "/rfq"
+            })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>🏭 ความสามารถในการผลิต</h2>
+<ul>
+  <li>กำลังการผลิต — 100,000 ชิ้น/เดือน</li>
+  <li>โรงงานพื้นที่ 5,000 ตรม. · เครื่องจักรอัตโนมัติ</li>
+  <li>QC ทุกขั้นตอน · ส่งของตรงเวลา 99%</li>
+  <li>มาตรฐาน ISO 9001 · GMP · มอก.</li>
+</ul>
+<h2>📦 ประเภทสินค้าที่ผลิต</h2>
+<ul>
+  <li>แก้ไขรายการให้ตรงกับโรงงานของคุณ</li>
+  <li>สินค้าหมวด A / B / C</li>
+  <li>บรรจุภัณฑ์พร้อมโลโก้ลูกค้า</li>
+</ul>"
+            })),
+            new(CmsBlockType.Testimonials, J(new {
+                headline = "ลูกค้าที่ไว้วางใจ",
+                testimonials = new[] {
+                    new { quote = "ส่งของตรงเวลา ทุก lot คุณภาพคงที่", author = "ABC Trading", role = "5 ปีติดต่อกัน" },
+                    new { quote = "ทีมงานช่วยพัฒนาสูตรให้เราด้วย", author = "XYZ Brand" }
+                }
+            }))
+        }),
+        (new("ความสามารถ", "capabilities", PageType.Standard, "ความสามารถในการผลิต"), new() {
+            new(CmsBlockType.Hero, J(new { headline = "ความสามารถในการผลิต" })),
+            new(CmsBlockType.RichText, J(new {
+                content = @"<h2>เครื่องจักร + กำลังผลิต</h2>
+<p>(แก้ไขรายละเอียดเครื่องจักร · กำลังผลิตต่อเดือน · มาตรฐาน)</p>"
+            }))
+        }),
+        (new("ส่งแบบขอใบเสนอราคา (RFQ)", "rfq", PageType.Standard, "RFQ"), new() {
+            new(CmsBlockType.Hero, J(new {
+                headline = "Request for Quote (RFQ)",
+                subheadline = "ส่งแบบ / spec / จำนวน — ทีมงานติดต่อกลับภายใน 2 วันทำการ"
+            })),
+            new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดผลิตภัณฑ์", submitText = "ส่ง RFQ" }))
+        }),
+        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อโรงงาน"), new() {
+            new(CmsBlockType.RichText, J(new {
+                content = "<p>📞 02-XXX-XXXX · 📧 sales@factory.com · LINE: @factory</p>"
+            })),
+            new(CmsBlockType.Map, J(new { address = "นิคมอุตสาหกรรม ประเทศไทย" }))
+        })
+    };
 }

@@ -118,14 +118,23 @@
               <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(เลือกเพื่อให้ระบบใส่เนื้อหาตัวอย่างที่เหมาะกับธุรกิจ)</span></label>
               <select class="form-input" id="fIndustry">
                 <option value="0">ทั่วไป / บริการ</option>
+                <option value="2">บริการมืออาชีพ</option>
+                <option value="17">ฟรีแลนซ์ / ที่ปรึกษา</option>
                 <option value="4">ร้านอาหาร</option>
                 <option value="5">คาเฟ่ / เครื่องดื่ม</option>
                 <option value="6">ค้าปลีก / Retail</option>
                 <option value="16">ขายออนไลน์ / E-commerce</option>
+                <option value="1">ซื้อมาขายไป / Trading</option>
+                <option value="14">เกษตร</option>
                 <option value="12">สปา / ทำเล็บ / ความงาม</option>
                 <option value="10">คลินิก / สุขภาพ</option>
-                <option value="2">บริการมืออาชีพ</option>
-                <option value="17">ฟรีแลนซ์ / ที่ปรึกษา</option>
+                <option value="11">การศึกษา / สอนพิเศษ</option>
+                <option value="7">รับเหมาก่อสร้าง</option>
+                <option value="8">อสังหาริมทรัพย์</option>
+                <option value="9">เทคโนโลยี / SaaS</option>
+                <option value="13">ขนส่ง / โลจิสติกส์</option>
+                <option value="15">โรงแรม / ที่พัก</option>
+                <option value="3">โรงงาน / OEM</option>
                 <option value="99">อื่น ๆ</option>
               </select>
             </div>
@@ -311,6 +320,62 @@
             ]
           }
         ]
+      },
+      construction: {
+        name: 'รับเหมาก่อสร้าง',
+        nameEn: 'Construction',
+        icon: '🏗️',
+        thumbClass: 'construction',
+        description: 'หน้าหลัก · ผลงาน · ขอใบเสนอราคา · ติดต่อ — สำหรับผู้รับเหมา',
+        siteType: 1, industryType: 7, seedTemplate: true
+      },
+      realestate: {
+        name: 'อสังหาริมทรัพย์',
+        nameEn: 'Real Estate',
+        icon: '🏘️',
+        thumbClass: 'realestate',
+        description: 'นายหน้า — รายการขาย/เช่า บ้าน คอนโด ที่ดิน + นัดดูทรัพย์',
+        siteType: 1, industryType: 8, seedTemplate: true
+      },
+      technology: {
+        name: 'เทคโนโลยี / ซอฟต์แวร์',
+        nameEn: 'Tech / SaaS',
+        icon: '💻',
+        thumbClass: 'tech',
+        description: 'หน้าหลัก · ฟีเจอร์ · ราคา · ติดต่อเดโม — แพ็กเกจ + รีวิว',
+        siteType: 1, industryType: 9, seedTemplate: true
+      },
+      education: {
+        name: 'สถาบันสอน / คอร์ส',
+        nameEn: 'Education',
+        icon: '🎓',
+        thumbClass: 'education',
+        description: 'หน้าหลัก · หลักสูตร · สมัครเรียน · ติดต่อ — รวมราคาคอร์ส',
+        siteType: 1, industryType: 11, seedTemplate: true
+      },
+      transportation: {
+        name: 'ขนส่ง / โลจิสติกส์',
+        nameEn: 'Transportation',
+        icon: '🚚',
+        thumbClass: 'transport',
+        description: 'หน้าหลัก · บริการ · ขอราคา/จองรถ · ติดต่อ',
+        siteType: 1, industryType: 13, seedTemplate: true
+      },
+      hotel: {
+        name: 'โรงแรม / ที่พัก',
+        nameEn: 'Hotel',
+        icon: '🏨',
+        thumbClass: 'hotel',
+        description: 'หน้าหลัก · ห้องพัก · จองห้อง · ติดต่อ — รวมรีวิวแขก',
+        siteType: 3, industryType: 15, seedTemplate: true
+      },
+      manufacturing: {
+        name: 'โรงงาน / OEM',
+        nameEn: 'Manufacturing',
+        icon: '🏭',
+        thumbClass: 'manufacturing',
+        description: 'หน้าหลัก · ความสามารถ · RFQ · ติดต่อ',
+        siteType: 1, industryType: 3, seedTemplate: true
       }
     };
 
