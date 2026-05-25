@@ -442,6 +442,25 @@ app.UseMiddleware<ApiErrorLoggingMiddleware>();
 
 app.MapControllers();
 
+// CMS storefront — explicit endpoint that ALWAYS serves storefront.html for
+// /site/{key} and /site/{key}/{**slug} URLs, regardless of whether the
+// CmsSiteRoutingMiddleware rewrote the path. Without this, a stale build
+// or a middleware short-circuit could land users on the main marketing
+// index.html. The storefront's JS then re-parses location.pathname and
+// calls /api/cms/resolve/subdomain/{key} to fetch the site content (or
+// render its own 404 page if the key doesn't match a site).
+app.MapGet("/site/{**catchAll}", context =>
+{
+    context.Response.Headers["X-CMS-Site-Match"] = "explicit-endpoint:storefront.html";
+    // Prevent the browser + any intermediate cache from holding onto a stale
+    // marketing-page response under this URL.
+    context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+    return Results.File(
+        Path.Combine(app.Environment.WebRootPath, "storefront.html"),
+        "text/html"
+    ).ExecuteAsync(context);
+});
+
 // SignalR hubs
 app.MapHub<NotificationHub>("/hubs/notifications");
 
