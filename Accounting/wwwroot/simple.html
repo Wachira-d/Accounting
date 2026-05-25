@@ -39,6 +39,7 @@
     .sm-task { background:#fff; border-radius:16px; padding:22px; border:1px solid #e2e8f0;
       text-decoration:none; color:inherit; cursor:pointer; transition:all .15s ease;
       display:flex; gap:16px; align-items:flex-start; }
+    .sm-task > div:last-child { flex:1; min-width:0; } /* prevent long Thai text from blowing grid */
     .sm-task:hover { transform:translateY(-2px); box-shadow:0 10px 24px rgba(15,23,42,.08); border-color:#cbd5e1; }
     .sm-task .icon { font-size:42px; flex-shrink:0; line-height:1; }
     .sm-task h3 { margin:0 0 6px; font-size:18px; font-weight:700; }
@@ -110,7 +111,12 @@
     <div class="sm-tasks"
          data-tour-step="2"
          data-tour-text="4 การ์ดนี้คือทุกอย่างที่ใช้งานในแต่ละวัน — รับเงิน, จ่ายเงิน, ดูเงิน, จัดการภาษี กดเข้าได้เลยไม่ต้องคิดมาก">
-      <a class="sm-task" href="/pages/quick-sale.html">
+      <!-- Each card is a <div> not <a>: HTML forbids nested anchors, and
+           putting the quick chips (<a>) inside an outer <a class="sm-task">
+           caused the browser parser to close the outer link before the
+           chips, scattering them outside the grid item — which is what
+           made the layout look "มั่ว". The card click goes via JS instead. -->
+      <div class="sm-task" onclick="window.location.href='/pages/quick-sale.html'" role="link" tabindex="0">
         <div class="icon">💰</div>
         <div>
           <h3>รับเงิน — ขายของ / ให้บริการ</h3>
@@ -121,9 +127,9 @@
             <a href="/pages/pos.html" onclick="event.stopPropagation()">🛒 POS</a>
           </div>
         </div>
-      </a>
+      </div>
 
-      <a class="sm-task" href="/pages/quick-expense.html">
+      <div class="sm-task" onclick="window.location.href='/pages/quick-expense.html'" role="link" tabindex="0">
         <div class="icon">🧾</div>
         <div>
           <h3>จ่ายเงิน — บันทึกค่าใช้จ่าย</h3>
@@ -134,9 +140,9 @@
             <a href="/pages/purchases.html?create=PurchaseInvoice" onclick="event.stopPropagation()">🛒 ซื้อสินค้า</a>
           </div>
         </div>
-      </a>
+      </div>
 
-      <a class="sm-task" href="/pages/bank.html">
+      <div class="sm-task" onclick="window.location.href='/pages/bank.html'" role="link" tabindex="0">
         <div class="icon">📊</div>
         <div>
           <h3>ดูเงินเข้า-ออก</h3>
@@ -147,9 +153,9 @@
             <a href="/pages/reports.html" onclick="event.stopPropagation()">📈 รายงาน</a>
           </div>
         </div>
-      </a>
+      </div>
 
-      <a class="sm-task" href="/pages/tax-calendar.html">
+      <div class="sm-task" onclick="window.location.href='/pages/tax-calendar.html'" role="link" tabindex="0">
         <div class="icon">🏛️</div>
         <div>
           <h3>ภาษี — ยื่นและจัดการ</h3>
@@ -160,7 +166,7 @@
             <a href="/pages/wht.html" onclick="event.stopPropagation()">💼 ภงด. (หัก ณ ที่จ่าย)</a>
           </div>
         </div>
-      </a>
+      </div>
     </div>
 
     <!-- Bottom helpful row -->
@@ -280,6 +286,13 @@
     document.addEventListener('DOMContentLoaded', () => {
       SimpleHome.init();
       setTimeout(() => SimpleHome.maybeShowWelcome(), 800);
+      // Keyboard activation for the role="link" task cards — Tab focuses
+      // them naturally, Enter/Space follow the click handler.
+      document.querySelectorAll('.sm-task[role="link"]').forEach(card => {
+        card.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
+        });
+      });
     });
   </script>
 </body>
