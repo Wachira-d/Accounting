@@ -269,10 +269,19 @@
           const items = res?.data?.items || [];
           const list = document.getElementById('customerList');
           if (!items.length) { list.style.display = 'none'; return; }
+          // Use data-* attributes + a single delegated click handler instead
+          // of inline onclick. JSON.stringify embedded inside an HTML attribute
+          // tripped on the double-quote it produces — the attribute ended
+          // mid-name and the click no-op'd. data-* is safely HTML-escaped
+          // by _esc and read back via dataset at click time.
           list.innerHTML = items.map(c => `
-            <div class="item" onclick="QS.pickCustomer('${c.id}', ${JSON.stringify(c.name).replace(/'/g, '&#39;')})">
+            <div class="item" data-id="${this._esc(c.id)}" data-name="${this._esc(c.name)}">
               ${this._esc(c.name)}${c.taxId ? `<div class="sub">เลขผู้เสียภาษี ${this._esc(c.taxId)}</div>` : ''}
             </div>`).join('');
+          list.onclick = (e) => {
+            const item = e.target.closest('.item'); if (!item) return;
+            this.pickCustomer(item.dataset.id, item.dataset.name);
+          };
           list.style.display = '';
         } catch { /* search is best-effort */ }
       },
