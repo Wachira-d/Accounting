@@ -216,7 +216,10 @@ public class LineBotService : ILineBotService
                     Reference: "LINE-bot",
                     Notes: $"บันทึกผ่าน LINE: {msg}",
                     Lines: new List<DocumentLineRequest> {
-                        new("ค่าใช้จ่ายจาก " + vendor, 1, "รายการ", amount.Value, 0, 0)
+                        // Positional order: Description, Quantity, Unit, UnitPrice,
+                        // DiscountPercent, VatRate, WithholdingTaxRate, AccountId
+                        // (rest are optional with defaults).
+                        new("ค่าใช้จ่ายจาก " + vendor, 1, "รายการ", amount.Value, 0, 0, 0, null)
                     }
                 ), createdBy: user.Email);
                 try { await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email); } catch { /* show success even if approve hiccups */ }

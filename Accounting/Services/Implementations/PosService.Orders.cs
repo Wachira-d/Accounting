@@ -811,8 +811,8 @@ public partial class PosService
         Guid companyId, Guid staffId, DateTime periodStart, DateTime periodEnd)
     {
         // Join activity → orderItem → order, scoped to company + staff + period.
-        // Period filter is on Order.OrderDate so a single payout window matches
-        // the StaffCommissionSummaries row.
+        // Period filter uses Order.OpenedAt (the natural "order created" date)
+        // so a single payout window matches the StaffCommissionSummaries row.
         var rows = await (
             from a in _db.Set<PosServiceActivity>().AsNoTracking()
             join oi in _db.Set<PosOrderItem>().AsNoTracking() on a.OrderItemId equals oi.Id
@@ -820,14 +820,14 @@ public partial class PosService
             join c in _db.Set<ServiceComponent>().AsNoTracking() on a.ComponentId equals c.Id
             where o.CompanyId == companyId
                 && a.StaffId == staffId
-                && o.OrderDate >= periodStart && o.OrderDate <= periodEnd
-            orderby o.OrderDate descending, o.OrderNumber, oi.LineOrder
+                && o.OpenedAt >= periodStart && o.OpenedAt <= periodEnd
+            orderby o.OpenedAt descending, o.OrderNumber, oi.LineOrder
             select new
             {
                 a.Id,
                 OrderId = o.Id,
                 o.OrderNumber,
-                o.OrderDate,
+                OrderDate = o.OpenedAt,
                 OrderItemId = oi.Id,
                 ItemName = oi.ItemName,
                 ComponentName = c.Name,
