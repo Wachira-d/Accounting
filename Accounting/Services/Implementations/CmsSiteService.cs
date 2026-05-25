@@ -78,6 +78,30 @@ public class CmsSiteService : ICmsSiteService
         });
 
         await _db.SaveChangesAsync();
+
+        // Optional: seed industry-specific starter pages so the customer
+        // lands on a complete, working site instead of a blank canvas.
+        // The template is plain SitePage + PageBlock rows — fully editable
+        // through the CMS editor afterwards.
+        if (request.SeedTemplate)
+        {
+            try
+            {
+                var pages = Cms.CmsSiteTemplateSeeder.BuildSeed(companyId, site.Id, request.IndustryType, userId);
+                _db.SitePages.AddRange(pages);
+                await _db.SaveChangesAsync();
+                _logger.LogInformation("Seeded {Count} starter pages for site {SiteId} (industry={Industry})",
+                    pages.Count, site.Id, request.IndustryType);
+            }
+            catch (Exception ex)
+            {
+                // Seeding is best-effort — the site itself was created
+                // successfully, so a template failure shouldn't fail the
+                // whole request. Logged so we can spot template issues.
+                _logger.LogWarning(ex, "Site template seeding failed for site {SiteId}", site.Id);
+            }
+        }
+
         _logger.LogInformation("Site '{Name}' created for company {CompanyId}", site.Name, companyId);
 
         return await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve created site.");
