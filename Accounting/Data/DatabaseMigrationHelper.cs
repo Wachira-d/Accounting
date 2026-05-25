@@ -9,7 +9,7 @@ namespace Accounting.Data;
 /// </summary>
 public static class DatabaseMigrationHelper
 {
-    public static void ApplyMissingColumns(AccountingDbContext db)
+    public static void ApplyMissingColumns(AccountingDbContext db, ILogger? logger = null)
     {
         var statements = GetAlterStatements();
         foreach (var sql in statements)
@@ -18,9 +18,21 @@ public static class DatabaseMigrationHelper
             {
                 db.Database.ExecuteSqlRaw(sql);
             }
-            catch
+            catch (Exception ex)
             {
-                // Column may already exist or table may not exist yet — safe to skip
+                // Existing-column / existing-index errors are expected and benign
+                // (idempotent ALTER ADD COLUMN IF NOT EXISTS still triggers a
+                // benign "already exists" on some PG versions). Anything else —
+                // syntax error in a new statement, FK constraint refusing the
+                // CREATE TABLE — used to silently disappear and we'd only learn
+                // about it when runtime queries failed. Log everything so
+                // genuine breakage is visible in the startup log.
+                var msg = ex.Message ?? "";
+                var benign = msg.Contains("already exists", StringComparison.OrdinalIgnoreCase)
+                          || msg.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+                if (!benign)
+                    logger?.LogWarning(ex, "[DbMigration] Statement failed (continuing): {Sql}",
+                        sql.Length > 200 ? sql[..200] + "…" : sql);
             }
         }
     }

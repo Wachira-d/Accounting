@@ -245,6 +245,17 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<ProfitAndLossResponse>(true, result));
     }
 
+    /// <summary>Lean (revenue, expense, net) for a date window — used by the
+    /// Simple Mode home page so it doesn't pay for the full P&L hydration
+    /// (Lines × Account joins). Server-aggregates with a single GROUP BY.</summary>
+    [HttpGet("reports/month-snapshot")]
+    public async Task<ActionResult<ApiResponse<object>>> GetMonthSnapshot(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+    {
+        var (rev, exp) = await _accountingService.GetSnapshotTotalsAsync(companyId, fromDate, toDate);
+        return Ok(new ApiResponse<object>(true, new { totalRevenue = rev, totalExpenses = exp, net = rev - exp }));
+    }
+
     [HttpGet("reports/cash-flow")]
     public async Task<ActionResult<ApiResponse<CashFlowStatementResponse>>> GetCashFlowStatement(
         Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,

@@ -21,7 +21,7 @@
   --gray-900: #111827;
   --sidebar-width: 260px;
   --header-height: 64px;
-  --font-sans: 'Noto Sans Thai', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Noto Sans Thai', 'Sarabun', 'Tahoma', 'Sukhumvit Set', 'Inter', 'Helvetica Neue', Arial, system-ui, -apple-system, sans-serif;
   --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
   --shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06);
   --shadow-md: 0 4px 6px rgba(0,0,0,.1), 0 2px 4px rgba(0,0,0,.06);

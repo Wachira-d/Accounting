@@ -1,0 +1,29 @@
+{
+  "id": "/pages/pos.html",
+  "name": "Next Acc POS — หน้าขาย",
+  "short_name": "Next Acc POS",
+  "description": "หน้าขาย POS แบบ kiosk — ใช้งานออฟไลน์ได้ ขายผ่านได้แม้เน็ตล่ม",
+  "start_url": "/pages/pos.html",
+  "scope": "/pages/pos",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#16a34a",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["business", "finance", "shopping"],
+  "shortcuts": [
+    {
+      "name": "หน้าขาย POS",
+      "url": "/pages/pos.html",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "หน้าจอครัว (KDS)",
+      "url": "/pages/pos-kds.html",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
