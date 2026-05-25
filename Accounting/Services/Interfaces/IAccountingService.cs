@@ -49,6 +49,12 @@ public interface IAccountingService
     Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
     Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
     Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
+
+    /// <summary>Lean (Revenue, Expense) totals for a date window — one SQL
+    /// GROUP BY, no Lines / Account hydration. Used by the Simple Mode
+    /// home KPI cards where the full P&L call was visibly slow.</summary>
+    Task<(decimal Revenue, decimal Expense)> GetSnapshotTotalsAsync(Guid companyId, DateTime fromDate, DateTime toDate);
+
     Task<CashFlowStatementResponse> GetCashFlowStatementAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
 
     // Fiscal Period

@@ -8,7 +8,11 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     /* ===== Simple Mode: large, scannable, no jargon ===== */
-    body { font-family:'Noto Sans Thai', sans-serif; background:#f8fafc; }
+    /* Robust font stack: when Google Fonts (Noto Sans Thai) can't load —
+       firewall, slow network, captive portal — fall back to OS-native Thai
+       fonts so text stays readable instead of rendering as empty boxes
+       (sans-serif → Arial on Windows has no Thai glyphs). */
+    body { font-family:'Noto Sans Thai','Sarabun','Tahoma','Sukhumvit Set','Helvetica Neue',Arial,sans-serif; background:#f8fafc; }
     .sm-shell { max-width:1000px; margin:0 auto; padding:20px 16px 40px; }
 
     .sm-topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; gap:12px; }
@@ -214,7 +218,7 @@
         const to = now.toISOString().slice(0, 10);
         try {
           // P&L = revenue (เงินเข้า) − expense (เงินออก). Easiest server-side source.
-          const res = await API.get(`/api/companies/${companyId}/accounting/reports/profit-loss?fromDate=${from}&toDate=${to}`);
+          const res = await API.get(`/api/companies/${companyId}/accounting/reports/month-snapshot?fromDate=${from}&toDate=${to}`);
           const pl = res.data || res;
           const inAmt = Number(pl?.totalRevenue || 0);
           const outAmt = Number(pl?.totalExpenses || 0);
