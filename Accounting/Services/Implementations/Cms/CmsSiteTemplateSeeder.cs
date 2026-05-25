@@ -814,7 +814,7 @@ public static class CmsSiteTemplateSeeder
                 headline = "ลูกค้าที่ไว้วางใจ",
                 testimonials = new[] {
                     new { quote = "ส่งของตรงเวลา ทุก lot คุณภาพคงที่", author = "ABC Trading", role = "5 ปีติดต่อกัน" },
-                    new { quote = "ทีมงานช่วยพัฒนาสูตรให้เราด้วย", author = "XYZ Brand" }
+                    new { quote = "ทีมงานช่วยพัฒนาสูตรให้เราด้วย", author = "XYZ Brand", role = "" }
                 }
             }))
         }),
