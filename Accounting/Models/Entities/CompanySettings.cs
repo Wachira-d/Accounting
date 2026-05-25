@@ -98,13 +98,13 @@ public class CompanySettings : TenantEntity
     public string? EmailSmtpHost { get; set; }
     public int EmailSmtpPort { get; set; } = 587;
     public string? EmailSmtpUsername { get; set; }
-    public string? EmailSmtpPassword { get; set; }                    // encrypted at rest (TODO)
+    public string? EmailSmtpPassword { get; set; }                    // AES-256-GCM at rest via SecretProtector
     public bool EmailSmtpUseSsl { get; set; } = true;
 
     // Microsoft Graph API (OAuth2 client credentials, app-only)
     public string? EmailMsTenantId { get; set; }
     public string? EmailMsClientId { get; set; }
-    public string? EmailMsClientSecret { get; set; }                  // encrypted at rest (TODO)
+    public string? EmailMsClientSecret { get; set; }                  // AES-256-GCM at rest via SecretProtector
     public string? EmailMsSenderUpn { get; set; }                     // mailbox to send from (UserPrincipalName)
 
     // Gmail API (OAuth2 with refresh token, or service account)

@@ -53,7 +53,8 @@ public partial class AccountingService : IAccountingService
             AccountType = request.AccountType,
             ParentAccountId = request.ParentAccountId,
             Level = level,
-            Description = request.Description
+            Description = request.Description,
+            InputVatClaimable = request.InputVatClaimable
         };
 
         _db.ChartOfAccounts.Add(account);
@@ -102,6 +103,7 @@ public partial class AccountingService : IAccountingService
         if (request.AccountNameEn != null) account.AccountNameEn = request.AccountNameEn;
         if (request.Description != null) account.Description = request.Description;
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
+        if (request.InputVatClaimable.HasValue) account.InputVatClaimable = request.InputVatClaimable.Value;
 
         await _db.SaveChangesAsync();
         return MapAccountToResponse(account);
@@ -246,7 +248,9 @@ public partial class AccountingService : IAccountingService
                     AccountType = tpl.Type,
                     Level = tpl.Level,
                     IsSystemAccount = true,
-                    IsActive = true
+                    IsActive = true,
+                    // Entertainment (ค่ารับรอง) input VAT is prohibited — see Rule §82/5.
+                    InputVatClaimable = !ChartOfAccountTemplates.IsProhibitedInputVatAccount(tpl.Code)
                 };
 
                 string? parentCode = tpl.Level switch
@@ -1537,10 +1541,52 @@ public partial class AccountingService : IAccountingService
 
     public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
+        // Pick the OpeningBalance baseline anchored to the most recent fiscal
+        // period that has begun on/before asOfDate. RollOpeningBalancesAsync
+        // stores compounded balances (year N+1 opening = year N opening +
+        // year N net movements), so reading the latest one and adding the
+        // movements within its period up to asOfDate yields the correct
+        // closing balance — and crucially, picks up balances imported via the
+        // migration wizard that have no inception JE history. When no opening
+        // exists (a company that's only ever used the system from day one),
+        // fall back to summing every JE from inception (legacy behaviour).
+        var asOf = asOfDate.Date.AddDays(1);
+        // Find the latest fiscal period that BOTH started on/before asOfDate AND
+        // actually has OpeningBalance rows. Without the "actually has rows"
+        // filter, monthly-period companies (whose only OpeningBalances live on
+        // the first period of each fiscal year) would never trigger the baseline
+        // path because the nearest period contains no rows.
+        var anchorPeriodId = await (
+            from p in _db.FiscalPeriods.AsNoTracking()
+            join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
+            where p.CompanyId == companyId && p.StartDate <= asOfDate.Date
+            orderby p.StartDate descending
+            select (Guid?)p.Id
+        ).FirstOrDefaultAsync();
+
+        DateTime? anchorStart = null;
+        var openingByAccount = new Dictionary<Guid, (decimal Debit, decimal Credit)>();
+        if (anchorPeriodId.HasValue)
+        {
+            anchorStart = await _db.FiscalPeriods.AsNoTracking()
+                .Where(p => p.Id == anchorPeriodId.Value).Select(p => p.StartDate).FirstAsync();
+            openingByAccount = await _db.OpeningBalances.AsNoTracking()
+                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == anchorPeriodId.Value)
+                .GroupBy(o => o.AccountId)
+                .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.OpeningDebit), Credit = g.Sum(x => x.OpeningCredit) })
+                .ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
+        }
+
+        // Posted JE lines — when an OpeningBalance baseline is present, limit
+        // movements to the period [anchor.StartDate, asOfDate]; otherwise pull
+        // everything up to asOfDate (legacy mode).
+        var movementStart = anchorStart;
+
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
                 && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
-                && j.EntryDate < asOfDate.Date.AddDays(1))
+                && j.EntryDate < asOf
+                && (!movementStart.HasValue || j.EntryDate >= movementStart.Value))
             .Select(j => j.Id);
 
         var lineQuery = _db.JournalEntryLines
@@ -1557,18 +1603,43 @@ public partial class AccountingService : IAccountingService
 
         var postedLines = await lineQuery.ToListAsync();
 
-        var grouped = postedLines
+        // Merge movements with the OpeningBalance baseline — every account that
+        // either has an opening row or saw movement in the window appears.
+        var byAccount = postedLines
             .Where(l => l.Account != null)
             .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
-            .Select(g => new TrialBalanceItem(
-                g.Key.AccountCode,
-                g.Key.AccountName,
-                g.Key.AccountType,
-                (int)g.Key.AccountType,
-                g.Sum(l => l.DebitAmount),
-                g.Sum(l => l.CreditAmount)))
-            .OrderBy(i => i.AccountCode)
-            .ToList();
+            .ToDictionary(g => g.Key, g => (Debit: g.Sum(l => l.DebitAmount), Credit: g.Sum(l => l.CreditAmount)));
+
+        // For accounts that have opening but no movement, fetch their COA detail
+        // so they still appear in the report (otherwise the opening balance
+        // would be silently dropped).
+        var openingOnlyAccountIds = openingByAccount.Keys
+            .Where(aid => !byAccount.Keys.Any(k => k.AccountId == aid)).ToList();
+        var coaDetail = new List<(Guid AccountId, string AccountCode, string AccountName, AccountType AccountType)>();
+        if (openingOnlyAccountIds.Count > 0)
+        {
+            var rows = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && openingOnlyAccountIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
+                .ToListAsync();
+            coaDetail = rows.Select(a => (a.Id, a.AccountCode, a.AccountName, a.AccountType)).ToList();
+        }
+
+        var items = new List<TrialBalanceItem>();
+        foreach (var (key, value) in byAccount)
+        {
+            var (od, oc) = openingByAccount.TryGetValue(key.AccountId, out var ob) ? ob : (0m, 0m);
+            items.Add(new TrialBalanceItem(
+                key.AccountCode, key.AccountName, key.AccountType, (int)key.AccountType,
+                value.Debit + od, value.Credit + oc));
+        }
+        foreach (var (accountId, code, name, type) in coaDetail)
+        {
+            var (od, oc) = openingByAccount[accountId];
+            items.Add(new TrialBalanceItem(code, name, type, (int)type, od, oc));
+        }
+
+        var grouped = items.OrderBy(i => i.AccountCode).ToList();
 
         return new TrialBalanceResponse(
             asOfDate, grouped,
@@ -1800,6 +1871,43 @@ public partial class AccountingService : IAccountingService
             .ToListAsync();
 
         return periods.Select(MapPeriodToResponse).ToList();
+    }
+
+    /// <summary>
+    /// Create every missing monthly period (1-12) for a calendar year in one
+    /// shot, so the user never has to add periods by hand each year. Existing
+    /// periods are left untouched. Returns the number created.
+    /// </summary>
+    public async Task<int> EnsureFiscalYearPeriodsAsync(Guid companyId, int year)
+    {
+        if (year < 2000 || year > 2200)
+            throw new InvalidOperationException("ปีไม่ถูกต้อง");
+
+        var existingMonths = (await _db.FiscalPeriods
+            .Where(f => f.CompanyId == companyId && f.Year == year)
+            .Select(f => f.Month)
+            .ToListAsync())
+            .ToHashSet();
+
+        var created = 0;
+        for (var m = 1; m <= 12; m++)
+        {
+            if (existingMonths.Contains(m)) continue;
+            var start = new DateTime(year, m, 1);
+            _db.FiscalPeriods.Add(new FiscalPeriod
+            {
+                CompanyId = companyId,
+                Name = $"{year}/{m:D2}",
+                Year = year,
+                Month = m,
+                StartDate = start,
+                EndDate = start.AddMonths(1).AddDays(-1),
+                Status = FiscalPeriodStatus.Open,
+            });
+            created++;
+        }
+        if (created > 0) await _db.SaveChangesAsync();
+        return created;
     }
 
     /// <summary>
@@ -2080,7 +2188,8 @@ public partial class AccountingService : IAccountingService
 
     private static AccountResponse MapAccountToResponse(ChartOfAccount a) => new(
         a.Id, a.AccountCode, a.AccountName, a.AccountNameEn,
-        a.AccountType, (int)a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description);
+        a.AccountType, (int)a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description,
+        a.InputVatClaimable);
 
     private static JournalEntryResponse MapJournalEntryToResponse(JournalEntry j) =>
         MapJournalEntryToResponse(j, null, null);

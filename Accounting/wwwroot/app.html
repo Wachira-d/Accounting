@@ -28,6 +28,10 @@
         <button class="btn btn-primary" onclick="Dashboard.load()" data-i18n="common.loadData">โหลดข้อมูล</button>
         <button class="btn btn-ghost" onclick="Dashboard.toggleCustomize()" title="ปรับแต่งวิดเจ็ต">⚙️</button>
         <button class="btn btn-ghost" onclick="Dashboard.exportPDF()" title="ส่งออก PDF">📄</button>
+        <button class="btn btn-secondary" title="กลับสู่หน้าง่าย"
+                onclick="localStorage.setItem('uiMode','simple'); window.location.href='/simple.html';">
+          😊 หน้าง่าย
+        </button>
       </div>
     </div>
 
@@ -45,6 +49,7 @@
 
     <!-- Quick Actions -->
     <div class="dash-widget" data-widget="quickActions" style="margin-bottom:24px;display:flex;gap:10px;flex-wrap:wrap">
+      <a href="/pages/getting-started.html" class="btn btn-primary" style="gap:6px">🚀 เริ่มต้นใช้งาน</a>
       <a href="/pages/documents.html?side=revenue&create=Quotation" class="btn btn-outline" style="gap:6px">📋 สร้างใบเสนอราคา</a>
       <a href="/pages/documents.html?side=revenue&create=TaxInvoice" class="btn btn-outline" style="gap:6px">🧾 สร้างใบกำกับภาษี</a>
       <a href="/pages/purchases.html?create=PurchaseInvoice" class="btn btn-outline" style="gap:6px">🛒 บันทึกซื้อสินค้า</a>

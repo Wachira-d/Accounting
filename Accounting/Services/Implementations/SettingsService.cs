@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Settings;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -11,10 +12,12 @@ namespace Accounting.Services.Implementations;
 public class SettingsService : ISettingsService
 {
     private readonly AccountingDbContext _db;
+    private readonly ISecretProtector _secrets;
 
-    public SettingsService(AccountingDbContext db)
+    public SettingsService(AccountingDbContext db, ISecretProtector secrets)
     {
         _db = db;
+        _secrets = secrets;
     }
 
     public async Task<CompanySettingsResponse> GetSettingsAsync(Guid companyId)
@@ -57,9 +60,9 @@ public class SettingsService : ISettingsService
         // e-Tax settings
         if (request.EtaxEnabled.HasValue) settings.EtaxEnabled = request.EtaxEnabled.Value;
         if (request.EtaxCertificatePath != null) settings.EtaxCertificatePath = request.EtaxCertificatePath;
-        if (request.EtaxCertificatePassword != null) settings.EtaxCertificatePassword = request.EtaxCertificatePassword;
+        if (request.EtaxCertificatePassword != null) settings.EtaxCertificatePassword = _secrets.Protect(request.EtaxCertificatePassword);
         if (request.EtaxRdApiKey != null) settings.EtaxRdApiKey = request.EtaxRdApiKey;
-        if (request.EtaxRdApiSecret != null) settings.EtaxRdApiSecret = request.EtaxRdApiSecret;
+        if (request.EtaxRdApiSecret != null) settings.EtaxRdApiSecret = _secrets.Protect(request.EtaxRdApiSecret);
         if (request.EtaxTestMode.HasValue) settings.EtaxTestMode = request.EtaxTestMode.Value;
         if (request.EtaxAutoSign.HasValue) settings.EtaxAutoSign = request.EtaxAutoSign.Value;
         if (request.EtaxAutoSubmit.HasValue) settings.EtaxAutoSubmit = request.EtaxAutoSubmit.Value;

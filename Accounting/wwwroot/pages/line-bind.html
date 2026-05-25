@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เชื่อมต่อ LINE Bot - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { font-family:'Noto Sans Thai', sans-serif; background:#f8fafc; }
+    .lb-shell { max-width:680px; margin:0 auto; padding:24px 16px 60px; }
+    .lb-card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:20px; margin-bottom:14px; }
+    .lb-code { font-size:42px; font-weight:800; letter-spacing:.18em; text-align:center; padding:18px;
+      background:#0f172a; color:#fff; border-radius:12px; font-variant-numeric:tabular-nums; }
+    .lb-step { display:flex; gap:14px; padding:12px 0; border-bottom:1px solid #f1f5f9; }
+    .lb-step:last-child { border-bottom:none; }
+    .lb-step .num { width:32px; height:32px; border-radius:50%; background:#0ea5e9; color:#fff;
+      display:flex; align-items:center; justify-content:center; font-weight:700; flex-shrink:0; }
+    .lb-step h4 { margin:0 0 4px; font-size:15px; }
+    .lb-step p { margin:0; font-size:13px; color:#64748b; line-height:1.5; }
+    .lb-cmds { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px; font-size:13px; line-height:1.7; }
+    .lb-cmds code { background:#fff; padding:2px 6px; border-radius:4px; font-family:monospace; }
+  </style>
+</head>
+<body>
+  <div class="lb-shell">
+    <a href="/simple.html" style="display:inline-block;color:#64748b;text-decoration:none;font-size:14px;margin-bottom:10px;">← กลับหน้าหลัก</a>
+
+    <div class="lb-card">
+      <h2 style="margin:0 0 8px;font-size:22px;">📱 เชื่อมต่อ LINE Bot</h2>
+      <p style="margin:0;color:#64748b;font-size:14px;">เพิ่มบอทเป็นเพื่อนแล้วใช้คำสั่งง่าย ๆ บันทึกค่าใช้จ่ายผ่าน LINE ได้เลย</p>
+    </div>
+
+    <div class="lb-card">
+      <h3 style="margin:0 0 8px;font-size:14px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">รหัสเชื่อมต่อ (หมดอายุใน <span id="ttl">10 นาที</span>)</h3>
+      <div class="lb-code" id="bindCode">- - - - - -</div>
+      <div style="text-align:center;margin-top:10px;">
+        <button onclick="LB.issueCode()" id="reissueBtn" style="background:transparent;border:1px solid #cbd5e1;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">🔄 ขอรหัสใหม่</button>
+      </div>
+    </div>
+
+    <div class="lb-card">
+      <h3 style="margin:0 0 4px;font-size:16px;">วิธีเชื่อมต่อ</h3>
+      <div class="lb-step">
+        <div class="num">1</div>
+        <div>
+          <h4>เพิ่มบอทเป็นเพื่อน</h4>
+          <p>สแกน QR ของ Next Acc Bot หรือค้นหา <strong>@nextacc-bot</strong> ใน LINE แล้วกดเพิ่มเพื่อน</p>
+        </div>
+      </div>
+      <div class="lb-step">
+        <div class="num">2</div>
+        <div>
+          <h4>ส่งคำสั่งเชื่อมต่อ</h4>
+          <p>ในแชตของบอท ส่งข้อความ <strong>"ผูก [รหัส 6 หลัก]"</strong> เช่น <code id="exampleCode">ผูก 123456</code></p>
+        </div>
+      </div>
+      <div class="lb-step">
+        <div class="num">3</div>
+        <div>
+          <h4>เริ่มใช้งาน!</h4>
+          <p>บอทตอบกลับ "เชื่อมต่อสำเร็จ" — ลองส่ง <code>ดูยอด</code> หรือ <code>บันทึก เซเว่น 250</code></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lb-card">
+      <h3 style="margin:0 0 10px;font-size:16px;">📖 คำสั่งที่ใช้ได้</h3>
+      <div class="lb-cmds">
+        • <code>บันทึก {ร้าน} {จำนวน}</code> — บันทึกค่าใช้จ่าย เช่น <code>บันทึก เซเว่น 250</code><br>
+        • <code>ดูยอด</code> — ดูเงินเข้า / ออก / คงเหลือเดือนนี้<br>
+        • <code>ช่วยเหลือ</code> — แสดงคำสั่งทั้งหมด<br>
+        • <code>ผูก {รหัส}</code> — เชื่อมบัญชี (เฉพาะครั้งแรก)
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const LB = {
+      ttl: 600, timer: null,
+      async init() {
+        API.init();
+        await this.issueCode();
+      },
+      async issueCode() {
+        try {
+          const res = await API.post('/api/line-bot/issue-bind-code', {});
+          const code = res?.data?.code;
+          if (code) {
+            // Format as "123 456" for readability
+            const fmt = code.replace(/(\d{3})(\d{3})/, '$1 $2');
+            document.getElementById('bindCode').textContent = fmt;
+            document.getElementById('exampleCode').textContent = `ผูก ${code}`;
+            this.startTimer();
+          } else throw new Error(res?.message || 'ไม่สามารถสร้างรหัสได้');
+        } catch (e) {
+          document.getElementById('bindCode').textContent = '❌ ' + e.message;
+        }
+      },
+      startTimer() {
+        this.ttl = 600;
+        if (this.timer) clearInterval(this.timer);
+        this.timer = setInterval(() => {
+          this.ttl--;
+          const m = Math.floor(this.ttl / 60), s = this.ttl % 60;
+          document.getElementById('ttl').textContent = `${m}:${String(s).padStart(2, '0')} นาที`;
+          if (this.ttl <= 0) {
+            clearInterval(this.timer);
+            document.getElementById('bindCode').textContent = '⏰ หมดอายุ — กดขอรหัสใหม่';
+          }
+        }, 1000);
+      }
+    };
+    document.addEventListener('DOMContentLoaded', () => LB.init());
+  </script>
+</body>
+</html>

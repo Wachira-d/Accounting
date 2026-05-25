@@ -28,8 +28,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             taxFormType = DetermineTaxFormType(contact);
         }
 
-        var whtYearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var whtPrefix = $"WHT-{whtYearMonth}-";
+        // Cert# anchored on the *tax year* (CE), not the issue month — so a 50ทวิ
+        // issued in Jan 2026 for Dec 2025 still lands in the 2025 sequence and the
+        // year segment matches what's printed on the form. RD's e-Filing doesn't
+        // mandate a format, but it does require uniqueness within company × tax year.
+        var whtPrefix = $"WHT-{request.TaxYear}-";
         var maxWht = await _db.WithholdingTaxCerts
             .IgnoreQueryFilters()
             .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(whtPrefix))

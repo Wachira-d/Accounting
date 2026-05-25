@@ -60,6 +60,7 @@
         <option value="PartiallyPaid">ชำระบางส่วน</option>
         <option value="Overdue">เกินกำหนด</option>
         <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
+        <option value="stale">⚠️ คงค้างนาน (60+ วัน)</option>
       </select>
       <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
         <option value="">ทุกโครงการ</option>
@@ -130,15 +131,15 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
-            <div class="form-group"><label class="form-label">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+            <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
+            <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
-          <div class="form-row">
+          <div class="form-row advanced-only">
             <div class="form-group">
-              <label class="form-label">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
+              <label class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
               <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
             </div>
-            <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+            <div class="form-group"><label class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
@@ -181,7 +182,7 @@
             </div>
           </div>
 
-          <details style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+          <details class="advanced-only" style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
             <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">📝 หมายเหตุท้ายเอกสาร / เงื่อนไขเฉพาะฉบับนี้ (override ค่าเริ่มต้นจากบริษัท)</summary>
             <div style="margin-top:12px;display:grid;gap:10px">
               <div>
@@ -457,6 +458,14 @@
         // can review/edit before saving.
         if (params.get('from') === 'scan') {
           await this._consumeScanHandoff();
+        }
+
+        // Journal-entry "edit at source document" handoff — a doc-sourced JE
+        // can't be edited directly; the journal page links here with ?editDoc=.
+        const editDocId = params.get('editDoc');
+        if (editDocId) {
+          try { await this.openEdit(editDocId); }
+          catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
         }
       },
 
@@ -756,7 +765,8 @@
           const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
           types.forEach(t => q += `&types=${t}`);
         }
-        if (status) q += `&status=${status}`;
+        if (status === 'stale') q += '&staleOnly=true';
+        else if (status) q += `&status=${status}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
         if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
@@ -795,6 +805,13 @@
               const color = d.agingDays >= 90 ? '#dc2626' : (d.agingDays >= 60 ? '#ea580c' : '#d97706');
               agingBadge = `<span title="ค้างชำระ ${d.agingDays} วัน" style="margin-left:6px;padding:1px 6px;background:${color};color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ ${tier}d</span>`;
             }
+            // Stale badge — document parked in a non-terminal status too long
+            // (e.g. a PO left for months). Independent of payment aging.
+            let staleBadge = '';
+            if (d.staleDays) {
+              const sc = d.staleDays >= 180 ? '#b91c1c' : (d.staleDays >= 90 ? '#dc2626' : '#ea580c');
+              staleBadge = `<span title="เอกสารคงค้างในสถานะนี้มา ${d.staleDays} วัน — ควรตรวจสอบ/อัปเดต" style="margin-left:6px;padding:1px 6px;background:${sc};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🕒 คงค้าง ${d.staleDays}d</span>`;
+            }
             // RD compliance dot (small).
             let rdBadge = '';
             if (d.rdComplianceStatus === 'Failed' || d.ocrTenantMismatchFlag) {
@@ -804,7 +821,7 @@
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${rdBadge}</td>
+            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${staleBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>

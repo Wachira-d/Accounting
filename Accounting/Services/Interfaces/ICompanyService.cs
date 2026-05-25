@@ -14,4 +14,9 @@ public interface ICompanyService
     Task AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
     Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);
+
+    /// <summary>Throws UnauthorizedAccessException if the user is not an Owner of the given
+    /// company (or a platform SystemAdmin). Use to guard sensitive endpoints like period close,
+    /// API-key creation, webhook registration — operations that should be Owner-only.</summary>
+    Task EnsureOwnerAccessAsync(Guid companyId, Guid userId);
 }

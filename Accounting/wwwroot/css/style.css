@@ -573,3 +573,103 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 
 /* App header lang switcher */
 .header .lang-switcher { margin-right: 8px; }
+
+/* ===== Global FAB (Floating Action Button) ===== */
+#globalFab { position: fixed; right: 20px; bottom: 84px; z-index: 1200; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+@media (min-width: 720px) { #globalFab { bottom: 28px; } } /* no mobile bottom-nav on desktop → lower */
+#globalFab .fab-main {
+  width: 60px; height: 60px; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: #fff;
+  font-size: 32px; font-weight: 300; box-shadow: 0 8px 24px rgba(22, 163, 74, .45);
+  transition: transform .15s ease, box-shadow .15s ease; line-height: 1;
+}
+#globalFab .fab-main:hover { transform: translateY(-2px) scale(1.05); box-shadow: 0 12px 28px rgba(22, 163, 74, .55); }
+#globalFab .fab-main:active { transform: scale(.95); }
+#globalFab .fab-menu { display: flex; flex-direction: column; gap: 8px; }
+#globalFab .fab-item {
+  display: flex; align-items: center; gap: 10px; background: #fff;
+  padding: 10px 16px; border-radius: 28px; text-decoration: none; color: #0f172a;
+  font-size: 14px; font-weight: 600; box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
+  border: 1px solid #e2e8f0; transition: all .12s;
+}
+#globalFab .fab-item:hover { background: #f1f5f9; transform: translateX(-3px); }
+#globalFab .fab-item .fab-ic { font-size: 18px; }
+
+/* ===== Mobile bottom nav (Simple Mode only) ===== */
+#mobileBottomNav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 1100;
+  background: #fff; border-top: 1px solid #e2e8f0;
+  display: none; /* hidden on desktop */
+  padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, .04);
+}
+#mobileBottomNav a {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 4px; text-decoration: none; color: #64748b; font-size: 11px; font-weight: 500;
+}
+#mobileBottomNav a:active { background: #f1f5f9; }
+#mobileBottomNav a > span:first-child { font-size: 22px; line-height: 1; }
+@media (max-width: 720px) {
+  #mobileBottomNav { display: flex; }
+  /* keep page content above the bar */
+  body { padding-bottom: 68px; }
+}
+
+/* ===== Help icon + tooltip bubble ===== */
+.help-icon {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:18px; height:18px; margin-left:6px; border-radius:50%;
+  background:#e2e8f0; color:#475569; border:none; cursor:pointer;
+  font-size:12px; font-weight:700; line-height:1; vertical-align:middle;
+  transition:all .12s;
+}
+.help-icon:hover { background:#0ea5e9; color:#fff; transform:scale(1.1); }
+
+#helpBubble {
+  position:fixed; z-index:10000; background:#0f172a; color:#fff;
+  padding:12px 14px; border-radius:10px; max-width:320px; font-size:13px;
+  line-height:1.5; box-shadow:0 12px 32px rgba(15,23,42,.25);
+  display:flex; gap:10px; align-items:flex-start;
+}
+#helpBubble .hb-text { flex:1; }
+#helpBubble .hb-close {
+  background:transparent; border:none; color:#94a3b8; font-size:18px;
+  cursor:pointer; line-height:1; padding:0; flex-shrink:0;
+}
+#helpBubble .hb-close:hover { color:#fff; }
+
+/* ===== Guided tour ===== */
+#tourOverlay { position:fixed; inset:0; z-index:10001; pointer-events:none; }
+#tourOverlay::before { content:''; position:absolute; inset:0; background:rgba(15,23,42,.55); }
+.tour-mask {
+  position:absolute; border-radius:10px; box-shadow:0 0 0 9999px rgba(15,23,42,.55), 0 0 0 4px #fbbf24;
+  pointer-events:auto; transition:all .2s; z-index:1;
+}
+.tour-pop {
+  position:absolute; background:#fff; border-radius:12px; padding:16px;
+  max-width:340px; box-shadow:0 12px 32px rgba(0,0,0,.3); pointer-events:auto; z-index:2;
+}
+.tour-pop .tour-text { font-size:14px; line-height:1.5; margin-bottom:12px; }
+.tour-pop .tour-actions { display:flex; gap:8px; align-items:center; }
+.tour-pop .tour-progress { font-size:12px; color:#64748b; }
+.tour-pop button { padding:6px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; border:none; }
+.tour-pop .tour-skip { background:transparent; color:#64748b; }
+.tour-pop .tour-skip:hover { color:#0f172a; }
+.tour-pop .tour-next, .tour-pop .tour-done { background:#16a34a; color:#fff; }
+.tour-pop .tour-next:hover, .tour-pop .tour-done:hover { background:#15803d; }
+
+/* ===== Simple Mode global hide for advanced-only sections ===== */
+/* Pages can mark optional / power-user sections with class="advanced-only"
+   to fade them out when the user is in Simple Mode. Body class is set by
+   layout.js on init based on localStorage.uiMode. */
+body.ui-mode-simple .advanced-only { display: none !important; }
+
+/* ===== POS / KDS mobile touch polish ===== */
+@media (max-width: 720px) {
+  .pos-layout .order-item, .pos-layout .pos-product-card { min-height: 52px; }
+  .pos-layout button, .pos-layout .btn { min-height: 44px; font-size: 15px; }
+  .pos-layout input[type="number"], .pos-layout input[type="text"] { min-height: 44px; font-size: 16px; }
+  .ticket-head .no { font-size: 18px; }
+  .ticket-item .name { font-size: 16px; }
+  .ticket-item .qty { font-size: 14px; padding: 4px 10px; }
+}

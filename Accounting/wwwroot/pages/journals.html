@@ -84,7 +84,7 @@
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">ประเภทสมุดรายวัน *</label>
+              <label class="form-label" data-help="แยกประเภทสมุดเพื่อให้รายงานสะดวก — JV: ปรับปรุงทั่วไป (เช่น ดอกเบี้ย / ค่าเสื่อม) · SV: ขาย · UV: ซื้อ · RV: รับเงิน · PV: จ่ายเงิน">ประเภทสมุดรายวัน *</label>
               <select class="form-select" id="fType">
                 <option value="General">JV - สมุดรายวันทั่วไป</option>
                 <option value="Sales">SV - สมุดรายวันขาย</option>
@@ -99,12 +99,12 @@
             <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
             <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
-          <div class="form-row">
+          <div class="form-row advanced-only">
             <div class="form-group">
-              <label class="form-label">โครงการ</label>
+              <label class="form-label" data-help="ผูก JE เข้ากับโครงการเพื่อให้รายงานต้นทุน/กำไรต่อโครงการคำนวณถูกต้อง">โครงการ</label>
               <select class="form-select" id="fProject"><option value="">-- ไม่ระบุ --</option></select>
             </div>
-            <div class="form-group"><label class="form-label">แท็ก (คั่นด้วย ,)</label><input type="text" class="form-input" id="fTags" placeholder="เช่น audit,2026Q1"></div>
+            <div class="form-group"><label class="form-label" data-help="แท็กอิสระ สำหรับกรองรายงาน เช่น audit, 2026Q1 — คั่นด้วย comma">แท็ก (คั่นด้วย ,)</label><input type="text" class="form-input" id="fTags" placeholder="เช่น audit,2026Q1"></div>
           </div>
           <div class="form-group">
             <label class="form-label">เลขเอกสารอ้างอิง</label>
@@ -459,6 +459,8 @@
             // entries are skipped (edit at the document instead).
             if (!j.sourceDocumentId) {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.openEdit('${j.id}')" title="แก้ไขตัวเลข/ผังบัญชี">แก้ไข</button>`;
+            } else {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.editAtSource('${j.sourceDocumentId}')" title="รายการนี้สร้างจากเอกสาร — แก้ไขที่เอกสารต้นทาง">✏️ แก้ที่เอกสาร</button>`;
             }
             if (j.status === 'Posted') {
               actBtns += `<button class="btn btn-sm btn-ghost" style="color:#d97706" onclick="Page.correctEntry('${j.id}')" title="แก้ไขด้วยการกลับรายการ (audit-safe)">กลับ-แก้</button>`;
@@ -542,6 +544,12 @@
         this.addLine(); this.addLine();
         this.calcTotals();
         Layout.openModal('formModal');
+      },
+      // A document-sourced JE mirrors its document — it cannot be edited
+      // directly; jump to the document and open it for editing instead.
+      editAtSource(documentId) {
+        if (!documentId) return;
+        window.location.href = `/pages/documents.html?editDoc=${encodeURIComponent(documentId)}`;
       },
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
@@ -691,6 +699,8 @@
           // existing "แก้ไข (กลับรายการ)" button still uses Reverse+Draft.
           if (!j.sourceDocumentId) {
             actions += ` <button class="btn btn-primary" onclick="Page.openEdit('${j.id}')">✏️ แก้ไขตัวเลข/ผังบัญชี</button>`;
+          } else {
+            actions += ` <button class="btn btn-primary" onclick="Page.editAtSource('${j.sourceDocumentId}')">✏️ แก้ไขที่เอกสารต้นทาง</button>`;
           }
           if (j.status === 'Draft') {
             actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;

@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Email;
 using Accounting.Models.Entities;
@@ -17,11 +18,13 @@ public class EmailConfigController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly IDocumentEmailService _emailService;
+    private readonly ISecretProtector _secrets;
 
-    public EmailConfigController(AccountingDbContext db, IDocumentEmailService emailService)
+    public EmailConfigController(AccountingDbContext db, IDocumentEmailService emailService, ISecretProtector secrets)
     {
         _db = db;
         _emailService = emailService;
+        _secrets = secrets;
     }
 
     [HttpGet]
@@ -46,21 +49,21 @@ public class EmailConfigController : ControllerBase
             if (req.Smtp.Host != null) s.EmailSmtpHost = req.Smtp.Host;
             if (req.Smtp.Port.HasValue) s.EmailSmtpPort = req.Smtp.Port.Value;
             if (req.Smtp.Username != null) s.EmailSmtpUsername = req.Smtp.Username;
-            if (!string.IsNullOrEmpty(req.Smtp.Password)) s.EmailSmtpPassword = req.Smtp.Password;
+            if (!string.IsNullOrEmpty(req.Smtp.Password)) s.EmailSmtpPassword = _secrets.Protect(req.Smtp.Password);
             if (req.Smtp.UseSsl.HasValue) s.EmailSmtpUseSsl = req.Smtp.UseSsl.Value;
         }
         if (req.Microsoft != null)
         {
             if (req.Microsoft.TenantId != null) s.EmailMsTenantId = req.Microsoft.TenantId;
             if (req.Microsoft.ClientId != null) s.EmailMsClientId = req.Microsoft.ClientId;
-            if (!string.IsNullOrEmpty(req.Microsoft.ClientSecret)) s.EmailMsClientSecret = req.Microsoft.ClientSecret;
+            if (!string.IsNullOrEmpty(req.Microsoft.ClientSecret)) s.EmailMsClientSecret = _secrets.Protect(req.Microsoft.ClientSecret);
             if (req.Microsoft.SenderUpn != null) s.EmailMsSenderUpn = req.Microsoft.SenderUpn;
         }
         if (req.Gmail != null)
         {
             if (req.Gmail.ClientId != null) s.EmailGmailClientId = req.Gmail.ClientId;
-            if (!string.IsNullOrEmpty(req.Gmail.ClientSecret)) s.EmailGmailClientSecret = req.Gmail.ClientSecret;
-            if (!string.IsNullOrEmpty(req.Gmail.RefreshToken)) s.EmailGmailRefreshToken = req.Gmail.RefreshToken;
+            if (!string.IsNullOrEmpty(req.Gmail.ClientSecret)) s.EmailGmailClientSecret = _secrets.Protect(req.Gmail.ClientSecret);
+            if (!string.IsNullOrEmpty(req.Gmail.RefreshToken)) s.EmailGmailRefreshToken = _secrets.Protect(req.Gmail.RefreshToken);
         }
 
         s.UpdatedAt = DateTime.UtcNow;

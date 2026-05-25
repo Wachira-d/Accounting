@@ -25,6 +25,7 @@ public class DocumentService : IDocumentService
     private readonly INotificationEngine? _notify;
     private readonly IBankService? _bankService;
     private readonly ITaxService? _taxService;
+    private readonly IBotExchangeRateService? _fxRates;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -34,7 +35,8 @@ public class DocumentService : IDocumentService
         CrossTenantWorkflowService crossTenantWorkflow,
         INotificationEngine? notify = null,
         IBankService? bankService = null,
-        ITaxService? taxService = null)
+        ITaxService? taxService = null,
+        IBotExchangeRateService? fxRates = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -48,6 +50,31 @@ public class DocumentService : IDocumentService
         _notify = notify;
         _bankService = bankService;
         _taxService = taxService;
+        _fxRates = fxRates;
+    }
+
+    /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
+    /// override wins; otherwise auto-fetch the BoT mid-rate at DocumentDate.
+    /// Throws if BoT lookup fails — silent fallback to 1 on non-THB would
+    /// corrupt the GL.</summary>
+    private async Task<decimal> ResolveExchangeRateAsync(string? currency, decimal? overrideRate, DateTime documentDate)
+    {
+        var cur = (currency ?? "THB").ToUpperInvariant();
+        if (cur == "THB") return 1m;
+        if (overrideRate is decimal r)
+        {
+            if (r <= 0m) throw new InvalidOperationException("อัตราแลกเปลี่ยนต้องมากกว่า 0");
+            return r;
+        }
+        if (_fxRates == null)
+            throw new InvalidOperationException(
+                $"เอกสารสกุล {cur} ต้องระบุ ExchangeRate (ไม่ได้กำหนดบริการอัตรา ธ.ปท.)");
+        var rate = await _fxRates.GetRateAsync(cur, documentDate);
+        if (rate == null || rate.MidRate <= 0m)
+            throw new InvalidOperationException(
+                $"ไม่พบอัตราแลกเปลี่ยน {cur} ของวันที่ {documentDate:yyyy-MM-dd} จาก ธ.ปท. " +
+                "กรุณาระบุ ExchangeRate ในคำขอ");
+        return rate.MidRate;
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
@@ -144,12 +171,21 @@ public class DocumentService : IDocumentService
         {
             var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, request.DocumentType);
 
+            // Resolve FX up front so the rate the user sees on the document
+            // is exactly what posts to the GL on Approve. THB → always 1.
+            // Non-THB: caller's override wins; otherwise auto-fetch BoT mid-rate
+            // at DocumentDate. If BoT lookup fails, refuse — silent fallback to
+            // 1 would corrupt the GL.
+            var fxRate = await ResolveExchangeRateAsync(request.Currency, request.ExchangeRate, request.DocumentDate);
+
             var doc = new Document
             {
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = request.DocumentType,
                 DocumentDate = request.DocumentDate,
+                Currency = string.IsNullOrWhiteSpace(request.Currency) ? "THB" : request.Currency.ToUpperInvariant(),
+                ExchangeRate = fxRate,
                 DueDate = request.DueDate,
                 ContactId = request.ContactId,
                 Reference = request.Reference,
@@ -265,7 +301,7 @@ public class DocumentService : IDocumentService
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
@@ -294,6 +330,16 @@ public class DocumentService : IDocumentService
 
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<DocumentStatus>(status, true, out var statusEnum))
             query = query.Where(d => d.Status == statusEnum);
+
+        // Stale = parked in a non-terminal status past the threshold.
+        if (staleOnly)
+        {
+            var staleCutoff = DateTime.UtcNow.Date.AddDays(-StaleThresholdDays);
+            query = query.Where(d => d.DocumentDate < staleCutoff
+                && d.Status != DocumentStatus.Paid
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected);
+        }
 
         if (fromDate.HasValue)
             query = query.Where(d => d.DocumentDate >= fromDate.Value);
@@ -465,6 +511,23 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
 
+        // Enforce CompanySettings.RequireApprovalForDocuments: when the
+        // approval rail is on and the document's amount crosses the threshold,
+        // refuse direct approve and force the multi-step SignatureApproval
+        // flow. SignatureApprovalService finalises documents by setting
+        // doc.Status = Approved directly (it doesn't re-enter this method),
+        // so the workflow path is not impacted.
+        var settings = await _db.CompanySettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (settings is { RequireApprovalForDocuments: true })
+        {
+            var threshold = settings.ApprovalThresholdAmount ?? 0m;
+            if (doc.TotalAmount >= threshold)
+                throw new InvalidOperationException(
+                    $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติอัตโนมัติ ({threshold:N2}) — " +
+                    "กรุณาส่งเข้ากระบวนการอนุมัติหลายชั้นก่อน (เมนู Approval)");
+        }
+
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId &&
             f.StartDate <= doc.DocumentDate &&
@@ -479,6 +542,23 @@ public class DocumentService : IDocumentService
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // Pessimistic lock — two simultaneous Approve calls both saw
+                // Status=Draft and hasExistingJournal=false before, so both
+                // happily auto-posted, producing duplicate JEs and double-counting
+                // revenue/expense. FOR UPDATE serialises them on the document row.
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                    documentId, companyId);
+
+                // Re-read status under the lock — the prior reader may have
+                // already moved this Document past Draft.
+                var lockedStatus = await _db.Documents
+                    .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                    .Select(d => d.Status)
+                    .FirstAsync();
+                if (lockedStatus != DocumentStatus.Draft)
+                    throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+
                 // Idempotency guard INSIDE transaction to prevent race condition
                 var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
                     j.SourceDocumentId == documentId
@@ -1148,6 +1228,24 @@ public class DocumentService : IDocumentService
                 && j.Reference == payment.PaymentNumber)
             .Select(j => j.Id)
             .ToListAsync();
+
+        // Fail loud if the payment posted to GL but we can't find the JE to
+        // reverse — silently skipping leaves Cash/AR overstated. The most
+        // common cause is a Reference-format drift (whitespace, case). Log
+        // the discrepancy and surface a clear error so the operator can
+        // reverse the orphan JE manually instead of corrupting GL silently.
+        if (paymentJournals.Count == 0)
+        {
+            var anyJeForDoc = await _db.JournalEntries
+                .AnyAsync(j => j.SourceDocumentId == doc.Id
+                    && j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted);
+            if (anyJeForDoc)
+                throw new InvalidOperationException(
+                    $"ไม่พบ JE ที่ผูกกับใบรับเงิน {payment.PaymentNumber} (อาจถูกแก้ Reference ภายหลัง) — " +
+                    "กรุณากลับรายการ JE ด้วยมือก่อนทำการ Reverse Payment เพื่อไม่ให้ยอด Cash/AR ใน GL คลาดเคลื่อน");
+        }
+
         foreach (var jeId in paymentJournals)
         {
             await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
@@ -1156,13 +1254,18 @@ public class DocumentService : IDocumentService
                 systemTriggered: true);
         }
 
-        // Reverse bank balance
+        // Reverse bank balance — payment.Amount is in the document's currency;
+        // BankAccount.CurrentBalance is in THB, so apply the document's FX rate
+        // before adjusting. Mirrors the conversion in CreatePaymentJournalAsync.
         if (payment.BankAccountId.HasValue)
         {
             var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
                 or DocumentType.Receipt or DocumentType.ReceiptVoucher
                 or DocumentType.DebitNote or DocumentType.BillingNote;
-            var delta = isInflow ? -payment.Amount : payment.Amount;
+            var thbAmount = doc.ExchangeRate == 1m
+                ? payment.Amount
+                : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+            var delta = isInflow ? -thbAmount : thbAmount;
             await _db.BankAccounts
                 .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
                 .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
@@ -2129,13 +2232,18 @@ public class DocumentService : IDocumentService
 
             await _db.SaveChangesAsync();
 
-            // Sync BankAccount.CurrentBalance
+            // Sync BankAccount.CurrentBalance — convert from doc currency to THB
+            // at the document's captured FX rate (BankAccount.CurrentBalance is
+            // always THB in this iteration). Same conversion as the GL posting.
             if (payment.BankAccountId.HasValue)
             {
                 var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
                     or DocumentType.Receipt or DocumentType.ReceiptVoucher
                     or DocumentType.DebitNote or DocumentType.BillingNote;
-                var delta = isInflow ? payment.Amount : -payment.Amount;
+                var thbAmount = doc.ExchangeRate == 1m
+                    ? payment.Amount
+                    : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+                var delta = isInflow ? thbAmount : -thbAmount;
                 await _db.BankAccounts
                     .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
                     .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
@@ -2232,6 +2340,16 @@ public class DocumentService : IDocumentService
     /// </summary>
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
+        // Multi-currency: every Baht amount that hits the GL must be converted
+        // from the document's currency at the rate captured on Create. Validate
+        // the rate is sane (positive, finite, non-zero) — corrupt FX = corrupt GL.
+        if (doc.ExchangeRate <= 0m)
+            throw new InvalidOperationException(
+                $"อัตราแลกเปลี่ยนไม่ถูกต้อง ({doc.ExchangeRate}) — กรุณาแก้ไขเอกสารและระบุอัตราที่ถูกต้องก่อนอนุมัติ");
+        if (!string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase) && doc.ExchangeRate == 1m)
+            throw new InvalidOperationException(
+                $"เอกสารสกุลเงิน {doc.Currency} ต้องระบุอัตราแลกเปลี่ยนก่อนอนุมัติ (พบ ExchangeRate = 1)");
+
         // Resolve default fallback accounts up front — used when document lines
         // have no explicit AccountId (the UI doesn't expose per-line account selection yet).
         // The default Thai chart uses 41000 (sales) / 42000 (service) at level 4;
@@ -2292,9 +2410,14 @@ public class DocumentService : IDocumentService
         // lines (AR/VAT/Cash/AP/WHT) inherit doc.ProjectId; per-line revenue/expense
         // can override via docLine.ProjectId.
         var lineProjects = new List<Guid?>();
+        // Multi-currency: every amount fed into AddLine is in the document's
+        // currency. Convert to THB (base) at the captured rate; AwayFromZero
+        // to match the system-wide rounding convention.
+        var fx = doc.ExchangeRate;
+        decimal Conv(decimal amount) => fx == 1m ? amount : Math.Round(amount * fx, 2, MidpointRounding.AwayFromZero);
         void AddLine(Guid accountId, decimal debit, decimal credit, string? desc, Guid? proj = null)
         {
-            pendingLines.Add((accountId, debit, credit, desc));
+            pendingLines.Add((accountId, Conv(debit), Conv(credit), desc));
             lineProjects.Add(proj ?? doc.ProjectId);
         }
 
@@ -2636,7 +2759,15 @@ public class DocumentService : IDocumentService
         }
 
         if (pendingLines.Count < 2)
-            return; // ผังบัญชียังไม่ได้ seed — ไม่บันทึก แทนที่จะ throw เพื่อไม่บล็อกการอนุมัติ
+        {
+            // Fail fast — silently skipping the JE while marking the document
+            // Approved makes the GL miss revenue/expense for days/weeks until
+            // someone runs a TB reconciliation. Better to block the approval
+            // and force the operator to seed the missing COA accounts.
+            throw new InvalidOperationException(
+                "ไม่สามารถบันทึกบัญชีอัตโนมัติได้: ผังบัญชี (COA) ที่ใช้สำหรับเอกสารประเภทนี้ยังไม่ครบ. " +
+                "กรุณาเปิดเมนู ตั้งค่าผังบัญชี เพื่อ seed บัญชีที่จำเป็น (รายได้ / ค่าใช้จ่าย / VAT / AR / AP / เงินสด) ก่อนอนุมัติ");
+        }
 
         // Validate double-entry balance per Thai accounting standards (TAS 1)
         var totalDebit = pendingLines.Sum(l => l.Debit);
@@ -2751,19 +2882,24 @@ public class DocumentService : IDocumentService
         if (cashAccount == null) return;
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
+        // Convert payment to THB (base) at the document's captured FX rate.
+        // Note: this uses the doc rate, not a settlement-day rate, so FX gain/loss
+        // on settlement isn't booked yet (separate feature when needed).
+        var fx = doc.ExchangeRate;
+        var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
         if (isRevenue)
         {
-            pendingLines.Add((cashAccount.Id, payment.Amount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            pendingLines.Add((cashAccount.Id, thbAmount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                pendingLines.Add((arAccount.Id, 0, payment.Amount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+                pendingLines.Add((arAccount.Id, 0, thbAmount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
         }
         else
         {
             var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
-                pendingLines.Add((apAccount.Id, payment.Amount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
-            pendingLines.Add((cashAccount.Id, 0, payment.Amount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+                pendingLines.Add((apAccount.Id, thbAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+            pendingLines.Add((cashAccount.Id, 0, thbAmount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
         }
 
         if (pendingLines.Count < 2) return;
@@ -2866,7 +3002,22 @@ public class DocumentService : IDocumentService
         RdComplianceStatus: d.RdComplianceStatus,
         RdComplianceIssuesJson: d.RdComplianceIssuesJson,
         OcrTenantMismatchFlag: d.OcrTenantMismatchFlag,
-        AgingDays: d.AgingDays);
+        AgingDays: d.AgingDays,
+        StaleDays: ComputeStaleDays(d),
+        Currency: d.Currency,
+        ExchangeRate: d.ExchangeRate);
+
+    /// <summary>Days a document has been parked in a non-terminal status past
+    /// the stale threshold — null when fresh or in a terminal status.
+    /// Terminal = Paid / Voided / Rejected.</summary>
+    private const int StaleThresholdDays = 60;
+    private static int? ComputeStaleDays(Document d)
+    {
+        if (d.Status is DocumentStatus.Paid or DocumentStatus.Voided or DocumentStatus.Rejected)
+            return null;
+        var days = (int)(DateTime.UtcNow.Date - d.DocumentDate.Date).TotalDays;
+        return days > StaleThresholdDays ? days : null;
+    }
 
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,

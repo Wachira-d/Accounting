@@ -41,6 +41,22 @@ public class PayrollService : IPayrollService
     private const decimal SsoMaxBase = 15_000m;     // max salary base per month
     private const decimal SsoMaxContribution = 750m; // max monthly contribution
 
+    // Thai personal income tax allowances (Revenue Code §47).
+    // Simplified model — covers the deductions most SMEs configure:
+    //   • Personal allowance: ฿60,000 / year (everyone)
+    //   • Each Employee.TaxAllowances unit: ฿30,000 / year (spouse with no income
+    //     and each qualifying child use 60K and 30K respectively — we treat
+    //     TaxAllowances as a count of 30K-equivalent dependants which is the
+    //     pragmatic UI choice)
+    //   • SSO contributions are deductible up to the annual contribution cap
+    //     (฿9,000 = 12 × ฿750)
+    //   • Provident-fund employee contribution is deductible up to 15 % of
+    //     salary capped at ฿500,000 / yr; we use the actual annual contribution
+    //     subject to that cap.
+    private const decimal PitPersonalAllowance = 60_000m;
+    private const decimal PitPerDependantAllowance = 30_000m;
+    private const decimal PitPvdMaxDeductible = 500_000m;
+
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
@@ -290,6 +306,75 @@ public class PayrollService : IPayrollService
         return await GetEmployeeAsync(companyId, employee.Id);
     }
 
+    public async Task<SeverancePreviewResponse> PreviewSeverancePayAsync(
+        Guid companyId, Guid employeeId, SeverancePreviewRequest request)
+    {
+        var employee = await _db.Set<Employee>().AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        var (days, eligible, explanation) = ComputeSeveranceDays(
+            employee.StartDate, request.EndDate, request.TerminationReason);
+        var years = (decimal)((request.EndDate - employee.StartDate).TotalDays / 365.25);
+        // §118 ใช้ค่าจ้างวันสุดท้าย (last daily rate). System stores monthly BaseSalary →
+        // divide by 30 per RD's labour-court convention.
+        var dailyRate = Math.Round(employee.BaseSalary / 30m, 2, MidpointRounding.AwayFromZero);
+        var amount = eligible ? dailyRate * days : 0m;
+
+        return new SeverancePreviewResponse(
+            employee.Id,
+            $"{employee.TitleTh}{employee.FirstNameTh} {employee.LastNameTh}".Trim(),
+            employee.StartDate,
+            request.EndDate,
+            Math.Round(years, 2, MidpointRounding.AwayFromZero),
+            days,
+            dailyRate,
+            Math.Round(amount, 2, MidpointRounding.AwayFromZero),
+            eligible,
+            explanation);
+    }
+
+    /// <summary>Number of calendar days the leave covers inside [periodStart, periodEnd].
+    /// Replaces the old <c>l.TotalDays</c> Sum which double-counted leaves spanning
+    /// multiple months (a 60-day maternity leave would deduct 60 days from every
+    /// month it touched).</summary>
+    private static decimal DaysInPeriod(EmployeeLeave leave, DateTime periodStart, DateTime periodEnd)
+    {
+        var from = leave.StartDate.Date > periodStart.Date ? leave.StartDate.Date : periodStart.Date;
+        var to = leave.EndDate.Date < periodEnd.Date ? leave.EndDate.Date : periodEnd.Date;
+        if (to < from) return 0m;
+        return (decimal)((to - from).TotalDays + 1);
+    }
+
+    /// <summary>Labor Code §118 bracket lookup. Returns (days, eligible, reason).</summary>
+    private static (int Days, bool Eligible, string Reason) ComputeSeveranceDays(
+        DateTime startDate, DateTime endDate, string? terminationReason)
+    {
+        // §583 / §119: employer-with-cause terminations (gross misconduct,
+        // dishonesty, intentional damage, repeated negligence after warning,
+        // criminal conviction, abandonment ≥3 working days) AND voluntary
+        // resignation get no severance.
+        var reason = (terminationReason ?? "").Trim().ToLowerInvariant();
+        var noSeveranceFlags = new[] {
+            "resign", "voluntary", "ลาออก",
+            "misconduct", "gross misconduct", "dishonesty", "ทุจริต",
+            "criminal", "abandon", "ทอดทิ้ง",
+            "probation", "ทดลองงาน"  // probation period termination also exempt
+        };
+        if (noSeveranceFlags.Any(f => reason.Contains(f)))
+            return (0, false, $"ไม่มีสิทธิ์ค่าชดเชยตามมาตรา 119 / 583 (เหตุผล: {terminationReason})");
+
+        var totalDays = (endDate - startDate).TotalDays;
+        // §118 brackets (post-2019 amendment added the 400-day tier for >20y)
+        if (totalDays < 120) return (0, false, "อายุงานน้อยกว่า 120 วัน — ไม่อยู่ในเกณฑ์ §118");
+        if (totalDays < 365) return (30, true, "อายุงาน 120 วัน – 1 ปี → 30 วัน");
+        if (totalDays < 365 * 3) return (90, true, "อายุงาน 1 – 3 ปี → 90 วัน");
+        if (totalDays < 365 * 6) return (180, true, "อายุงาน 3 – 6 ปี → 180 วัน");
+        if (totalDays < 365 * 10) return (240, true, "อายุงาน 6 – 10 ปี → 240 วัน");
+        if (totalDays < 365 * 20) return (300, true, "อายุงาน 10 – 20 ปี → 300 วัน");
+        return (400, true, "อายุงานเกิน 20 ปี → 400 วัน (Labor Code §118 หลังแก้ไข พ.ศ. 2562)");
+    }
+
     public async Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate)
     {
         var employee = await _db.Set<Employee>()
@@ -449,21 +534,43 @@ public class PayrollService : IPayrollService
             var earningItems = payrollItems.Where(i => i.ItemType == "Earning").ToList();
             var deductionItems = payrollItems.Where(i => i.ItemType == "Deduction").ToList();
 
+            // Batch-load per-employee lookups that previously ran one query per
+            // employee inside the loop — for a 100-person payroll that turned a
+            // single Calculate click into 200+ round-trips. We pre-fetch both
+            // the YTD PayrollDetails (prior months of the same fiscal year) and
+            // every approved leave overlapping this period, then materialise
+            // per-employee views in memory.
+            var employeeIds = employees.Select(e => e.Id).ToList();
+            var priorDetailsAll = await _db.Set<PayrollDetail>()
+                .Include(d => d.PayrollRun)
+                .Where(d => employeeIds.Contains(d.EmployeeId)
+                    && d.PayrollRun.CompanyId == companyId
+                    && d.PayrollRun.Year == run.Year
+                    && d.PayrollRun.Month < run.Month
+                    && d.PayrollRun.Status != "Voided")
+                .AsNoTracking()
+                .ToListAsync();
+            var priorDetailsByEmployee = priorDetailsAll.GroupBy(d => d.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
+            var approvedLeavesAll = await _db.Set<EmployeeLeave>()
+                .Where(l => employeeIds.Contains(l.EmployeeId)
+                    && l.CompanyId == companyId
+                    && l.Status == "Approved"
+                    && l.StartDate <= run.PeriodEnd && l.EndDate >= run.PeriodStart)
+                .AsNoTracking()
+                .ToListAsync();
+            var leavesByEmployee = approvedLeavesAll.GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
             decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
             decimal totalPvdEmp = 0, totalPvdEr = 0;
 
             foreach (var emp in employees)
             {
-                // Get cumulative income for this year (prior months)
-                var priorDetails = await _db.Set<PayrollDetail>()
-                    .Include(d => d.PayrollRun)
-                    .Where(d => d.EmployeeId == emp.Id
-                        && d.PayrollRun.CompanyId == companyId
-                        && d.PayrollRun.Year == run.Year
-                        && d.PayrollRun.Month < run.Month
-                        && d.PayrollRun.Status != "Voided")
-                    .ToListAsync();
+                // Get cumulative income for this year (prior months) — sourced
+                // from the batched lookup above; falls back to empty list when
+                // there are no prior runs.
+                var priorDetails = priorDetailsByEmployee.TryGetValue(emp.Id, out var pd) ? pd : new List<PayrollDetail>();
 
                 var cumulativeIncome = priorDetails.Sum(d => d.GrossIncome);
                 var cumulativeTax = priorDetails.Sum(d => d.WithholdingTax);
@@ -491,14 +598,13 @@ public class PayrollService : IPayrollService
                         allowances += amount;
                 }
 
-                // Calculate leave deductions
-                var approvedLeaves = await _db.Set<EmployeeLeave>()
-                    .Where(l => l.EmployeeId == emp.Id && l.CompanyId == companyId
-                        && l.Status == "Approved"
-                        && l.StartDate <= run.PeriodEnd && l.EndDate >= run.PeriodStart)
-                    .ToListAsync();
+                // Calculate leave deductions — sourced from the batched lookup.
+                var approvedLeaves = leavesByEmployee.TryGetValue(emp.Id, out var lv) ? lv : new List<EmployeeLeave>();
 
-                var leaveDays = approvedLeaves.Sum(l => l.TotalDays);
+                // Bound the displayed LeaveDays to this payroll period — old code
+                // showed total leave days regardless of overlap, so a one-week leave
+                // crossing month-end inflated next month's report too.
+                var leaveDays = approvedLeaves.Sum(l => DaysInPeriod(l, run.PeriodStart, run.PeriodEnd));
                 var workDaysInMonth = DateTime.DaysInMonth(run.Year, run.Month);
 
                 // Calculate other deductions from PayrollItems
@@ -511,10 +617,36 @@ public class PayrollService : IPayrollService
                     otherDeductions += amount;
                 }
 
-                // Deduct unpaid leave from base salary
+                // Deduct unpaid leave from base salary.
+                //
+                // Thai Labor Code §41 + SSO Act §67: maternity is 98 days/yr;
+                // employer pays full salary for the FIRST 45 days; the next 45
+                // are reimbursed by SSO (50% of insured wage) — not the employer;
+                // anything beyond 90 is unpaid by employer. The previous code
+                // paid the full 98 days as if it were a paid leave type, which
+                // over-paid the employer's share by up to 53 calendar days.
+                //
+                // We compute, for each Maternity leave overlapping this month:
+                //   employerPaid = clamp(45 - daysAlreadyConsumed, 0, daysThisMonth)
+                //   sso/unpaid   = daysThisMonth − employerPaid
+                // The sso/unpaid portion is added to the unpaid-leave bucket so
+                // the salary is pro-rated down accordingly.
                 var unpaidLeaveDays = approvedLeaves
                     .Where(l => l.LeaveType == "UnpaidLeave" || l.LeaveType == "ลาไม่รับค่าจ้าง")
-                    .Sum(l => l.TotalDays);
+                    .Sum(l => DaysInPeriod(l, run.PeriodStart, run.PeriodEnd));
+
+                var maternityLeaves = approvedLeaves
+                    .Where(l => l.LeaveType == "Maternity" || l.LeaveType == "ลาคลอด");
+                foreach (var ml in maternityLeaves)
+                {
+                    var daysBeforeMonth = Math.Max(0,
+                        (decimal)Math.Min(45, (run.PeriodStart.AddDays(-1) - ml.StartDate).TotalDays + 1));
+                    var daysThisMonth = DaysInPeriod(ml, run.PeriodStart, run.PeriodEnd);
+                    var employerPaidThisMonth = Math.Max(0m, Math.Min(45m - daysBeforeMonth, daysThisMonth));
+                    var unpaidEmployerThisMonth = daysThisMonth - employerPaidThisMonth;
+                    if (unpaidEmployerThisMonth > 0) unpaidLeaveDays += unpaidEmployerThisMonth;
+                }
+
                 var leaveDeduction = workDaysInMonth > 0
                     ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2, MidpointRounding.AwayFromZero)
                     : 0m;
@@ -543,7 +675,21 @@ public class PayrollService : IPayrollService
                 // Thai withholding tax: TRD-standard annualization = (YTD including this month) * 12 / elapsed months
                 var ytdIncome = cumulativeIncome + grossIncome;
                 var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
-                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedAnnualIncome);
+
+                // Apply Revenue Code §47 allowances before bracket lookup. Skipping
+                // these used to over-withhold by 5–15 % depending on income tier —
+                // employees ended up subsidising the company's cash flow until the
+                // year-end true-up that this system doesn't yet automate.
+                var annualSso = Math.Min(ssoEmployee * 12m, SsoMaxContribution * 12m);
+                var annualPvd = Math.Min(pvdEmployee * 12m, PitPvdMaxDeductible);
+                var personalDeductions =
+                    PitPersonalAllowance
+                    + (PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances))
+                    + annualSso
+                    + annualPvd;
+                var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
+
+                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome);
                 var remainingMonths = 13 - run.Month;
                 var monthlyTax = remainingMonths > 0
                     ? (estimatedAnnualTax - cumulativeTax) / remainingMonths

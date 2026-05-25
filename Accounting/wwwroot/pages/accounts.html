@@ -116,6 +116,13 @@
             <label class="form-label" data-i18n="common.description">คำอธิบาย</label>
             <textarea class="form-textarea" id="fDesc" rows="2"></textarea>
           </div>
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="fInputVatClaimable" checked>
+              <span>ภาษีซื้อของบัญชีนี้เครดิตได้ (ภพ.30)</span>
+            </label>
+            <div class="text-xs text-gray-400" style="margin-top:2px">ติ๊กออกสำหรับบัญชีภาษีซื้อต้องห้าม เช่น ค่ารับรอง / รถยนต์นั่ง — ระบบจะเตือนใน ภพ.30</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -224,6 +231,7 @@
             <span class="coa-meta">
               <span class="badge badge-${this._typeBadge(a.accountType)}">${Layout.accountTypeLabel(a.accountType)}</span>
               ${a.isActive ? '' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
+              ${a.inputVatClaimable === false ? '<span class="badge badge-danger" title="ภาษีซื้อของบัญชีนี้เครดิตไม่ได้ใน ภพ.30">ภาษีซื้อต้องห้าม</span>' : ''}
               ${a.isSystemAccount ? '' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>`}
             </span>
           </div>
@@ -266,6 +274,7 @@
             <span class="coa-name">${node.accountName}${node.accountNameEn ? `<span class="coa-name-en">${node.accountNameEn}</span>` : ''}</span>
             <span class="coa-meta">
               ${!node.isActive ? '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>' : ''}
+              ${node.inputVatClaimable === false ? '<span class="badge badge-danger" title="ภาษีซื้อของบัญชีนี้เครดิตไม่ได้ใน ภพ.30">ภาษีซื้อต้องห้าม</span>' : ''}
               ${!node.isSystemAccount ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${node.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
             </span>
           </div>`;
@@ -330,6 +339,7 @@
         document.getElementById('fType').value = 'Asset';
         document.getElementById('fParent').value = '';
         document.getElementById('fDesc').value = '';
+        document.getElementById('fInputVatClaimable').checked = true;
         Layout.openModal('formModal');
       },
       openEdit(id) {
@@ -343,6 +353,7 @@
         document.getElementById('fType').value = a.accountType;
         document.getElementById('fParent').value = a.parentAccountId || '';
         document.getElementById('fDesc').value = a.description || '';
+        document.getElementById('fInputVatClaimable').checked = a.inputVatClaimable !== false;
         Layout.openModal('formModal');
       },
       async save() {
@@ -354,6 +365,7 @@
               accountName: document.getElementById('fName').value,
               accountNameEn: document.getElementById('fNameEn').value || null,
               description: document.getElementById('fDesc').value || null,
+              inputVatClaimable: document.getElementById('fInputVatClaimable').checked,
             });
           } else {
             await api.createAccount({
@@ -363,6 +375,7 @@
               accountType: document.getElementById('fType').value,
               parentAccountId: document.getElementById('fParent').value || null,
               description: document.getElementById('fDesc').value || null,
+              inputVatClaimable: document.getElementById('fInputVatClaimable').checked,
             });
           }
           Layout.closeModal('formModal');

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Mail;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -14,14 +15,17 @@ public class EmailService : IEmailService
     private readonly ILogger<EmailService> _logger;
     private readonly IErrorLogService _errorLogService;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ISecretProtector _secrets;
 
     public EmailService(IConfiguration config, ILogger<EmailService> logger,
-        IErrorLogService errorLogService, IServiceScopeFactory scopeFactory)
+        IErrorLogService errorLogService, IServiceScopeFactory scopeFactory,
+        ISecretProtector secrets)
     {
         _config = config;
         _logger = logger;
         _errorLogService = errorLogService;
         _scopeFactory = scopeFactory;
+        _secrets = secrets;
     }
 
     /// <summary>
@@ -42,7 +46,7 @@ public class EmailService : IEmailService
                     SmtpHost = s.SystemSmtpHost,
                     SmtpPort = s.SystemSmtpPort,
                     SmtpUsername = s.SystemSmtpUsername,
-                    SmtpPassword = s.SystemSmtpPassword,
+                    SmtpPassword = _secrets.Unprotect(s.SystemSmtpPassword),
                     SmtpUseSsl = s.SystemSmtpUseSsl,
                     FromAddress = s.SystemEmailFromAddress ?? "noreply@nextacc.com",
                     FromName = s.SystemEmailFromName ?? s.SiteName ?? "Next Acc",

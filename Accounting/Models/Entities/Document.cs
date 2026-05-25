@@ -44,6 +44,10 @@ public class Document : TenantEntity
 
     // Amounts
     public string Currency { get; set; } = "THB";
+    /// <summary>FX rate at the time of document creation (1 unit of Currency = X THB).
+    /// 1.0 when Currency = THB. Captured on Create so JE posting uses the same
+    /// rate that was shown to the user on the document.</summary>
+    public decimal ExchangeRate { get; set; } = 1m;
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal VatAmount { get; set; }
@@ -107,6 +111,13 @@ public class Document : TenantEntity
     /// cached here so list views don't recompute on every fetch.</summary>
     public int? AgingDays { get; set; }
     public DateTime? AgingLastEvaluatedAt { get; set; }
+
+    /// <summary>True = an opening-balance subledger document imported during
+    /// migration (open AR/AP carried over from a previous system). It is
+    /// created already-Approved and is deliberately NEVER auto-posted to the
+    /// GL — the control-account total is carried by the GL opening balance
+    /// (TrialBalance migration), so posting it would double-count.</summary>
+    public bool IsOpeningBalance { get; set; } = false;
 
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();

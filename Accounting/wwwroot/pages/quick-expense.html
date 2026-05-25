@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บันทึกค่าใช้จ่ายเร็ว - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { font-family:'Noto Sans Thai', sans-serif; background:#f8fafc; min-height:100vh; }
+    .qe-shell { max-width:680px; margin:0 auto; padding:20px 16px 60px; }
+    .qe-back { display:inline-block; padding:6px 12px; color:#64748b; text-decoration:none; font-size:14px; margin-bottom:10px; }
+    .qe-back:hover { color:#0f172a; }
+    .qe-card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:20px; margin-bottom:14px; }
+    .qe-card h2 { margin:0 0 10px; font-size:18px; font-weight:700; }
+
+    .qe-categories { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:8px; }
+    .qe-categories button { padding:14px 8px; background:#f1f5f9; border:2px solid transparent; border-radius:10px;
+      cursor:pointer; font-size:13px; font-weight:600; color:#334155; text-align:center; transition:all .15s;
+      display:flex; flex-direction:column; align-items:center; gap:4px; }
+    .qe-categories button.active { background:#0f172a; color:#fff; border-color:#0f172a; }
+    .qe-categories button .em { font-size:22px; }
+
+    .qe-row { display:grid; grid-template-columns:140px 1fr; gap:12px; margin-bottom:12px; align-items:center; }
+    .qe-row label { font-size:14px; color:#475569; font-weight:500; }
+    .qe-row input, .qe-row textarea { width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px;
+      font-size:15px; font-family:inherit; }
+    .qe-row input:focus, .qe-row textarea:focus { outline:none; border-color:#0f172a; box-shadow:0 0 0 3px rgba(15,23,42,.08); }
+    .qe-row .hint { font-size:12px; color:#94a3b8; }
+    @media (max-width:560px) { .qe-row { grid-template-columns:1fr; gap:4px; } }
+
+    .qe-amount-big { font-size:32px; text-align:center; font-weight:700; padding:14px; border:2px solid #e2e8f0; border-radius:12px; }
+
+    .qe-vat-toggle { display:flex; gap:8px; align-items:center; margin-bottom:12px; padding:10px; background:#eff6ff; border-radius:8px; font-size:13px; color:#1e40af; }
+    .qe-vat-toggle input { margin:0; }
+
+    .qe-submit { width:100%; background:#dc2626; color:#fff; border:none; border-radius:12px; padding:16px;
+      font-size:17px; font-weight:700; cursor:pointer; transition:all .15s; }
+    .qe-submit:hover:not(:disabled) { background:#b91c1c; transform:translateY(-1px); }
+    .qe-submit:disabled { background:#94a3b8; cursor:not-allowed; }
+
+    .qe-scan-cta { background:#fef3c7; border:2px dashed #f59e0b; border-radius:14px; padding:16px;
+      text-align:center; margin-bottom:14px; }
+    .qe-scan-cta a { display:inline-flex; gap:8px; align-items:center; padding:12px 18px;
+      background:#f59e0b; color:#fff; border-radius:8px; text-decoration:none; font-weight:600; }
+    .qe-scan-cta a:hover { background:#d97706; }
+
+    .qe-error { background:#fee2e2; color:#991b1b; padding:10px 14px; border-radius:8px; margin-bottom:12px; font-size:14px; display:none; }
+    .qe-success { background:#dcfce7; color:#166534; padding:14px; border-radius:10px; margin-bottom:14px; font-size:15px; display:none; }
+  </style>
+</head>
+<body>
+  <div class="qe-shell">
+    <a class="qe-back" href="/simple.html">← กลับหน้าหลัก</a>
+
+    <div class="qe-card">
+      <h2>🧾 บันทึกค่าใช้จ่ายเร็ว</h2>
+      <p style="color:#64748b;font-size:13px;margin:0;">เลือกหมวด · ใส่จำนวน · กดบันทึก</p>
+    </div>
+
+    <div class="qe-scan-cta">
+      <div style="font-size:14px;color:#92400e;margin-bottom:8px;">📸 มีรูปใบเสร็จ? ให้ AI อ่านให้ · 🎤 หรือพูดเป็นเสียงก็ได้</div>
+      <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+        <a href="/pages/document-scan.html">📷 ถ่ายรูปบิล</a>
+        <button onclick="QE.startVoice()" id="voiceBtn" type="button" style="display:inline-flex;gap:8px;align-items:center;padding:12px 18px;background:#0ea5e9;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-family:inherit;font-size:14px;">
+          🎤 พูดบันทึก
+        </button>
+      </div>
+      <div id="voiceStatus" style="font-size:12px;color:#92400e;margin-top:8px;display:none;"></div>
+    </div>
+
+    <div id="errBanner" class="qe-error"></div>
+    <div id="successBanner" class="qe-success"></div>
+
+    <div class="qe-card">
+      <h2>1. หมวดค่าใช้จ่าย</h2>
+      <div class="qe-categories" id="catBox"></div>
+    </div>
+
+    <div class="qe-card">
+      <h2>2. รายละเอียด</h2>
+      <div class="qe-row">
+        <label>จากร้าน / ผู้ขาย</label>
+        <input type="text" id="vendor" placeholder="เช่น 7-Eleven, ห้างฯ, ปั๊มน้ำมัน" autocomplete="off">
+      </div>
+      <div class="qe-row">
+        <label>วันที่</label>
+        <input type="date" id="docDate">
+      </div>
+      <div class="qe-row">
+        <label>หมายเหตุ</label>
+        <input type="text" id="notes" placeholder="เช่น ค่ากาแฟพาลูกค้า, ค่าน้ำมันรถ" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="qe-card">
+      <h2>3. จำนวนเงิน</h2>
+      <input type="number" id="amount" class="qe-amount-big" placeholder="0.00" step="0.01">
+      <div class="qe-vat-toggle" style="margin-top:14px;">
+        <input type="checkbox" id="hasVat" onchange="QE.recalc()">
+        <label for="hasVat">📊 เป็นใบกำกับภาษี (มี VAT 7% สามารถเครดิตได้)</label>
+      </div>
+      <div class="qe-vat-toggle" style="background:#fef3c7;color:#92400e;display:none;" id="vatBreakdown">
+        <span>📑 ราคาก่อน VAT: <strong id="vatNet">—</strong> + VAT: <strong id="vatTax">—</strong></span>
+      </div>
+    </div>
+
+    <button class="qe-submit" id="submitBtn" onclick="QE.submit()">💾 บันทึกค่าใช้จ่าย</button>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    // Categories map to expense account codes commonly seeded in the Thai
+    // CoA template. The actual booking uses Document type=Expense which
+    // falls back to a default expense account if no per-line account is
+    // specified — so these are mostly for the description hint right now.
+    const Categories = [
+      { key:'transport', emoji:'🚗', label:'เดินทาง / น้ำมัน', accountCode:'54440' },
+      { key:'food',      emoji:'🍽️', label:'อาหาร / รับรอง',  accountCode:'54460' },
+      { key:'office',    emoji:'📎', label:'อุปกรณ์สำนักงาน', accountCode:'54420' },
+      { key:'utility',   emoji:'💡', label:'ค่าน้ำ-ไฟ-เน็ต',   accountCode:'54320' },
+      { key:'comm',      emoji:'📞', label:'ค่าโทรศัพท์',     accountCode:'54330' },
+      { key:'rent',      emoji:'🏠', label:'ค่าเช่า',         accountCode:'54310' },
+      { key:'repair',    emoji:'🔧', label:'ซ่อมบำรุง',       accountCode:'54430' },
+      { key:'pro',       emoji:'⚖️', label:'ค่าบริการวิชาชีพ', accountCode:'54630' },
+      { key:'mkt',       emoji:'📣', label:'การตลาด / โฆษณา', accountCode:'54210' },
+      { key:'other',     emoji:'📝', label:'อื่น ๆ',          accountCode:null },
+    ];
+
+    // Convert Thai number words → integer.
+    // Handles "สองร้อยห้าสิบ" → 250, "สามพันห้าร้อย" → 3500, etc.
+    function thaiWordsToNumber(s) {
+      if (!s) return null;
+      const digits = { 'ศูนย์':0, 'หนึ่ง':1, 'สอง':2, 'สาม':3, 'สี่':4, 'ห้า':5, 'หก':6, 'เจ็ด':7, 'แปด':8, 'เก้า':9, 'เอ็ด':1, 'ยี่':2 };
+      const units = { 'สิบ':10, 'ร้อย':100, 'พัน':1000, 'หมื่น':10000, 'แสน':100000, 'ล้าน':1000000 };
+      let total = 0, current = 0;
+      let i = 0; const tokens = [];
+      while (i < s.length) {
+        let matched = false;
+        for (const w of [...Object.keys(units), ...Object.keys(digits)]) {
+          if (s.startsWith(w, i)) { tokens.push(w); i += w.length; matched = true; break; }
+        }
+        if (!matched) i++;
+      }
+      for (const t of tokens) {
+        if (t in digits) current = digits[t];
+        else if (t in units) {
+          if (current === 0) current = 1;
+          total += current * units[t]; current = 0;
+        }
+      }
+      return total + current;
+    }
+
+    const QE = {
+      category: null,
+      recognition: null,
+
+      init() {
+        // Render categories
+        document.getElementById('catBox').innerHTML = Categories.map(c => `
+          <button data-key="${c.key}" onclick="QE.pickCat('${c.key}')">
+            <span class="em">${c.emoji}</span>
+            <span>${c.label}</span>
+          </button>`).join('');
+        // Default to today
+        document.getElementById('docDate').value = new Date().toISOString().slice(0, 10);
+        // Pre-pick 'food' as a sensible default — most common SME expense
+        this.pickCat('food');
+        // Recalc on amount input
+        document.getElementById('amount').addEventListener('input', () => this.recalc());
+      },
+
+      pickCat(key) {
+        this.category = Categories.find(c => c.key === key);
+        document.querySelectorAll('#catBox button').forEach(b => b.classList.toggle('active', b.dataset.key === key));
+      },
+
+      // Browser SpeechRecognition (webkit prefix on Chrome / Edge).
+      // Parses spoken Thai like "เซเว่น สองร้อยห้าสิบบาท" into vendor+amount.
+      // Best-effort: just pre-fills the form for the user to confirm.
+      startVoice() {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const status = document.getElementById('voiceStatus');
+        if (!SR) {
+          status.textContent = '⚠️ เบราว์เซอร์นี้ไม่รองรับการพูด — กรุณาใช้ Chrome หรือ Edge บนคอมพิวเตอร์/Android';
+          status.style.display = ''; return;
+        }
+        if (this.recognition && this.recognition._listening) { this.recognition.stop(); return; }
+        const r = new SR();
+        this.recognition = r;
+        r.lang = 'th-TH'; r.interimResults = false; r.maxAlternatives = 1;
+        r._listening = true;
+        status.textContent = '🔴 กำลังฟัง... พูดเช่น "เซเว่น สองร้อยห้าสิบบาท ค่ากาแฟ"'; status.style.display = '';
+        document.getElementById('voiceBtn').textContent = '⏹️ หยุดฟัง';
+        r.onresult = (e) => {
+          const txt = e.results[0][0].transcript;
+          status.textContent = '🎤 ได้ยิน: "' + txt + '"';
+          this._parseVoice(txt);
+        };
+        r.onerror = (e) => {
+          status.textContent = '❌ ฟังไม่สำเร็จ: ' + e.error;
+          r._listening = false;
+          document.getElementById('voiceBtn').textContent = '🎤 พูดบันทึก';
+        };
+        r.onend = () => {
+          r._listening = false;
+          document.getElementById('voiceBtn').textContent = '🎤 พูดบันทึก';
+        };
+        r.start();
+      },
+
+      _parseVoice(text) {
+        // Extract a numeric amount first — try Arabic digits, then Thai word number
+        let amt = null;
+        const numMatch = text.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)/);
+        if (numMatch) amt = parseFloat(numMatch[1].replace(/,/g, ''));
+        if (amt == null || isNaN(amt)) {
+          const w = thaiWordsToNumber(text);
+          if (w && w > 0) amt = w;
+        }
+        if (amt != null && !isNaN(amt) && amt > 0) {
+          document.getElementById('amount').value = amt;
+          this.recalc();
+        }
+        // Vendor = first token not consumed by the number, capped at ~30 chars
+        const cleaned = text
+          .replace(/\d[\d.,]*/g, '')
+          .replace(/(บาท|สตางค์|ค่า)/g, '')
+          .trim();
+        if (cleaned) {
+          // Take first 2-3 words
+          const parts = cleaned.split(/\s+/);
+          const vendor = parts.slice(0, 2).join(' ').slice(0, 40);
+          if (vendor && !document.getElementById('vendor').value) {
+            document.getElementById('vendor').value = vendor;
+          }
+          // Remaining = notes
+          const noteRest = parts.slice(2).join(' ').slice(0, 60);
+          if (noteRest && !document.getElementById('notes').value) {
+            document.getElementById('notes').value = noteRest;
+          }
+        }
+      },
+
+      recalc() {
+        const amt = parseFloat(document.getElementById('amount').value) || 0;
+        const hasVat = document.getElementById('hasVat').checked;
+        const box = document.getElementById('vatBreakdown');
+        if (hasVat && amt > 0) {
+          const net = amt / 1.07;
+          const vat = amt - net;
+          document.getElementById('vatNet').textContent = net.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          document.getElementById('vatTax').textContent = vat.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          box.style.display = '';
+        } else {
+          box.style.display = 'none';
+        }
+      },
+
+      async submit() {
+        const btn = document.getElementById('submitBtn');
+        const err = document.getElementById('errBanner');
+        const ok = document.getElementById('successBanner');
+        err.style.display = ok.style.display = 'none';
+
+        const vendor = document.getElementById('vendor').value.trim();
+        const amount = parseFloat(document.getElementById('amount').value);
+        const docDate = document.getElementById('docDate').value;
+        const notes = document.getElementById('notes').value.trim();
+        const hasVat = document.getElementById('hasVat').checked;
+
+        if (!vendor) { err.textContent = 'กรุณาระบุชื่อร้าน / ผู้ขาย'; err.style.display = ''; return; }
+        if (!amount || amount <= 0) { err.textContent = 'กรุณาระบุจำนวนเงิน'; err.style.display = ''; return; }
+        if (!docDate) { err.textContent = 'กรุณาระบุวันที่'; err.style.display = ''; return; }
+
+        const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        if (!co.id) { err.textContent = 'ยังไม่ได้เลือกบริษัท'; err.style.display = ''; return; }
+
+        btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก...';
+        try {
+          // Find or create the vendor contact
+          let contactId;
+          const searchRes = await API.c(co.id).getContacts('?page=1&pageSize=5&search=' + encodeURIComponent(vendor));
+          const existing = (searchRes?.data?.items || []).find(c =>
+            c.name.toLowerCase() === vendor.toLowerCase() && c.isSupplier);
+          if (existing) {
+            contactId = existing.id;
+          } else {
+            const c = await API.c(co.id).createContact({
+              name: vendor, isCustomer: false, isSupplier: true
+            });
+            contactId = c?.data?.id;
+            if (!contactId) throw new Error('สร้างผู้ขายใหม่ไม่สำเร็จ');
+          }
+
+          // Build the doc — Expense type books Dr Expense / Cr Cash directly.
+          // unitPrice is net (excl VAT) per the API contract; we back out VAT
+          // from the user-entered gross if they checked the hasVat box.
+          const net = hasVat ? amount / 1.07 : amount;
+          const desc = (this.category?.label ? this.category.label + ' — ' : '') + (notes || vendor);
+
+          const doc = await API.c(co.id).createDocument({
+            documentType: 'Expense',
+            documentDate: docDate,
+            dueDate: docDate,
+            contactId,
+            reference: null,
+            notes: notes || null,
+            lines: [{
+              description: desc,
+              quantity: 1,
+              unit: 'รายการ',
+              unitPrice: net,
+              discountAmount: 0,
+              vatRate: hasVat ? 7 : 0
+            }]
+          });
+          const docId = doc?.data?.id || doc?.id;
+          if (!docId) throw new Error('สร้างเอกสารไม่สำเร็จ');
+
+          try { await API.c(co.id).approveDocument(docId); } catch (_) { /* show success even if approve hiccups */ }
+
+          ok.innerHTML = `✅ บันทึกสำเร็จ — <a href="/pages/documents.html?id=${docId}" style="color:#166534;font-weight:700;text-decoration:underline;">เปิดดู</a> หรือ <a href="/pages/quick-expense.html" style="color:#166534;font-weight:700;text-decoration:underline;">บันทึกต่อ</a>`;
+          ok.style.display = '';
+          document.getElementById('vendor').value = '';
+          document.getElementById('amount').value = '';
+          document.getElementById('notes').value = '';
+          document.getElementById('hasVat').checked = false;
+          this.recalc();
+        } catch (e) {
+          err.textContent = '❌ ' + (e.message || 'บันทึกไม่สำเร็จ');
+          err.style.display = '';
+        } finally {
+          btn.disabled = false; btn.textContent = '💾 บันทึกค่าใช้จ่าย';
+        }
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => { API.init(); QE.init(); });
+  </script>
+</body>
+</html>

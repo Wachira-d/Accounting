@@ -223,6 +223,10 @@ public partial class AccountingService
             // balances from current ending balances of Asset/Liability/Equity.
             await RollOpeningBalancesAsync(companyId, fiscalYear + 1, userId);
 
+            // Auto-create the remaining 12 monthly periods of the new year so
+            // the user never has to add periods by hand each year.
+            await EnsureFiscalYearPeriodsAsync(companyId, fiscalYear + 1);
+
             await tx.CommitAsync();
             return closing;
         }

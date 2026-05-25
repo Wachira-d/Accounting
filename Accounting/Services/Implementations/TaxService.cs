@@ -130,6 +130,30 @@ public partial class TaxService : ITaxService
                 && d.VatAmount != 0)
             .ToListAsync();
 
+        // Cross-report dedup: a document already claimed (a non-excluded line)
+        // in ANOTHER VAT report must not be claimed again here. This both
+        // prevents accidental double-claiming and lets the "pull document"
+        // feature move an invoice into a different period safely.
+        var claimedElsewhere = (await _db.TaxReportLines
+            .Where(l => l.DocumentId != null && !l.IsExcluded
+                && l.TaxReportId != report.Id
+                && l.TaxReport.CompanyId == companyId
+                && l.TaxReport.TaxType == TaxType.VAT)
+            .Select(l => l.DocumentId!.Value)
+            .ToListAsync())
+            .ToHashSet();
+        if (claimedElsewhere.Count > 0)
+            docs = docs.Where(d => !claimedElsewhere.Contains(d.Id)).ToList();
+
+        // Accounts whose input VAT is prohibited (ภาษีซื้อต้องห้าม, §82/5) —
+        // e.g. ค่ารับรอง. VAT on purchase lines posting here is excluded from
+        // the claimable ภ.พ.30 input total.
+        var nonClaimableAccountIds = (await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && !a.InputVatClaimable)
+            .Select(a => a.Id)
+            .ToListAsync())
+            .ToHashSet();
+
         decimal outputVat = 0, inputVat = 0;
         decimal vatExemptAmount = 0;
         var lineOrder = 1;
@@ -230,7 +254,48 @@ public partial class TaxService : ITaxService
                   || doc.DocumentType == DocumentType.Expense
                   || doc.DocumentType == DocumentType.CertificateInLieu)
             {
+                // ----- Rule B: detect prohibited input VAT (ภาษีซื้อต้องห้าม) -----
+                // Sum VAT on lines posting to a non-claimable account
+                // (falling back to the document's expense category). This is
+                // surfaced as a WARNING only — the amount stays in the claimed
+                // total; whether to exclude it is the accountant's call (the
+                // ภ.พ.30 line is editable).
+                decimal lineVatTotal = doc.Lines.Sum(l => l.VatAmount);
+                decimal prohibitedVat = 0m;
+                if (Math.Abs(lineVatTotal) < 0.01m && doc.VatAmount != 0)
+                {
+                    if (doc.ExpenseCategoryId.HasValue && nonClaimableAccountIds.Contains(doc.ExpenseCategoryId.Value))
+                        prohibitedVat = doc.VatAmount;
+                }
+                else
+                {
+                    foreach (var l in doc.Lines)
+                    {
+                        var acct = l.AccountId ?? doc.ExpenseCategoryId;
+                        if (acct.HasValue && nonClaimableAccountIds.Contains(acct.Value))
+                            prohibitedVat += l.VatAmount;
+                    }
+                }
+
+                // ----- Rule A: tax-invoice 6-month age check -----
+                var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1)
+                    .AddMonths(7).AddDays(-1);
+                var pastWindow = DateTime.UtcNow.Date > windowEnd;
+
+                // Both rules are advisory — the full VAT stays in the total;
+                // the accountant decides whether to keep or remove it.
                 inputVat += doc.VatAmount;
+
+                var warnings = new List<string>();
+                if (prohibitedVat > 0)
+                    warnings.Add($"มีภาษีซื้อต้องห้าม (ค่ารับรอง) {prohibitedVat:N2} โดยปกติเคลมไม่ได้");
+                if (pastWindow)
+                    warnings.Add("ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้");
+
+                var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}";
+                if (warnings.Count > 0)
+                    desc = $"⚠️ {desc} — {string.Join("; ", warnings)} (โปรดตรวจสอบ)";
+
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -238,7 +303,7 @@ public partial class TaxService : ITaxService
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.DocumentDate,
-                    Description = $"[ภาษีซื้อ] {doc.DocumentNumber}",
+                    Description = desc,
                     IncomeAmount = doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
@@ -507,8 +572,14 @@ public partial class TaxService : ITaxService
 
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
     {
-        var startDate = new DateTime(year, 1, 1);
-        var endDate = new DateTime(year, 12, 31);
+        // Honour Company.FiscalYearStartMonth — a Jul–Jun FY (start=7) for
+        // fiscal year 2025 covers Jul 1 2025 → Jun 30 2026, not Jan–Dec.
+        // Hard-coding Jan/Dec would make every non-calendar-FY filer report
+        // the wrong period to RD (illegal under Thai Revenue Code §65).
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var startMonth = company?.FiscalYearStartMonth is >= 1 and <= 12 ? company.FiscalYearStartMonth : 1;
+        var startDate = new DateTime(year, startMonth, 1);
+        var endDate = startDate.AddYears(1).AddDays(-1);
 
         // Calculate total revenue
         var revenueLines = await _db.JournalEntryLines
@@ -874,24 +945,160 @@ public partial class TaxService : ITaxService
                 if (lineUpdate.TaxRate.HasValue) line.TaxRate = lineUpdate.TaxRate.Value;
                 if (lineUpdate.TaxAmount.HasValue) line.TaxAmount = lineUpdate.TaxAmount.Value;
                 if (lineUpdate.Description != null) line.Description = lineUpdate.Description;
+                if (lineUpdate.Excluded.HasValue) line.IsExcluded = lineUpdate.Excluded.Value;
                 line.UpdatedAt = DateTime.UtcNow;
             }
 
+            // Totals recalc — lines the accountant excluded (IsExcluded) are
+            // kept for audit but do NOT count toward the filed figures.
             if (report.TaxType == TaxType.VAT)
             {
-                var nonSummaryLines = report.Lines.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
-                report.OutputVat = nonSummaryLines.Where(l => l.IncomeTypeCode != "INPUT").Sum(l => l.TaxAmount);
-                report.InputVat = nonSummaryLines.Where(l => l.IncomeTypeCode == "INPUT").Sum(l => l.TaxAmount);
-                var creditCf = report.Lines.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
-                report.NetVat = report.OutputVat - report.InputVat - creditCf;
+                RecalcVatTotals(report);
             }
             else
             {
-                report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
-                report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
+                var active = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY");
+                report.TotalIncome = active.Sum(l => l.IncomeAmount);
+                report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
             }
         }
 
+        report.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return MapToResponse(report);
+    }
+
+    /// <summary>Recompute OutputVat/InputVat/NetVat from the report's lines —
+    /// excluded lines are kept for audit but dropped from the figures.</summary>
+    private static void RecalcVatTotals(TaxReport report)
+    {
+        if (report.TaxType != TaxType.VAT) return;
+        var active = report.Lines.Where(l => !l.IsExcluded).ToList();
+        var nonSummary = active.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
+        report.OutputVat = nonSummary.Where(l => l.IncomeTypeCode != "INPUT").Sum(l => l.TaxAmount);
+        report.InputVat = nonSummary.Where(l => l.IncomeTypeCode == "INPUT").Sum(l => l.TaxAmount);
+        var creditCf = active.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
+        report.NetVat = report.OutputVat - report.InputVat - creditCf;
+    }
+
+    // Document types eligible to be pulled into a VAT return, and whether
+    // each posts to the input (ภาษีซื้อ) side.
+    private static readonly Dictionary<DocumentType, bool> PullableVatTypes = new()
+    {
+        [DocumentType.TaxInvoice] = false,        // output
+        [DocumentType.PurchaseInvoice] = true,    // input
+        [DocumentType.Expense] = true,            // input
+        [DocumentType.CertificateInLieu] = true,  // input
+    };
+
+    public async Task<List<PullableDocumentDto>> GetPullableDocumentsAsync(
+        Guid companyId, Guid reportId, string? search, DateTime? fromDate, DateTime? toDate)
+    {
+        var report = await _db.TaxReports.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+        if (report.TaxType != TaxType.VAT)
+            throw new InvalidOperationException("ดึงเอกสารได้เฉพาะรายงาน ภพ.30");
+
+        var from = fromDate ?? DateTime.UtcNow.AddMonths(-12);
+        var to = (toDate ?? DateTime.UtcNow).Date.AddDays(1);
+        var types = PullableVatTypes.Keys.ToList();
+
+        // Documents already accounted for (a non-excluded line) in ANY VAT report.
+        var claimed = (await _db.TaxReportLines
+            .Where(l => l.DocumentId != null && !l.IsExcluded
+                && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT)
+            .Select(l => l.DocumentId!.Value)
+            .ToListAsync())
+            .ToHashSet();
+
+        var q = _db.Documents.AsNoTracking().Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId
+                && types.Contains(d.DocumentType)
+                && d.VatAmount != 0
+                && d.DocumentDate >= from && d.DocumentDate < to
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim();
+            q = q.Where(d => d.DocumentNumber.Contains(s) || (d.Contact != null && d.Contact.Name.Contains(s)));
+        }
+
+        var docs = await q.OrderByDescending(d => d.DocumentDate).Take(200).ToListAsync();
+        return docs
+            .Where(d => !claimed.Contains(d.Id))
+            .Select(d => new PullableDocumentDto(
+                d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,
+                d.Contact?.Name ?? "-", d.SubTotal, d.VatAmount,
+                PullableVatTypes.TryGetValue(d.DocumentType, out var isIn) && isIn))
+            .ToList();
+    }
+
+    public async Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId)
+    {
+        var report = await _db.TaxReports
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
+        if (report.TaxType != TaxType.VAT)
+            throw new InvalidOperationException("ดึงเอกสารได้เฉพาะรายงาน ภพ.30");
+        if (report.Status == TaxReportStatus.Filed)
+            throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่นแล้ว");
+
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (!PullableVatTypes.TryGetValue(doc.DocumentType, out var isInput))
+            throw new InvalidOperationException($"เอกสารประเภท {doc.DocumentType} ไม่สามารถดึงเข้ารายงาน ภพ.30 ได้");
+        if (doc.VatAmount == 0)
+            throw new InvalidOperationException("เอกสารนี้ไม่มี VAT");
+        if (report.Lines.Any(l => l.DocumentId == documentId))
+            throw new InvalidOperationException("เอกสารนี้อยู่ในรายงานนี้แล้ว");
+
+        // Block double-claiming — the document must not be an active line in
+        // another VAT report.
+        var other = await _db.TaxReportLines
+            .Where(l => l.DocumentId == documentId && !l.IsExcluded
+                && l.TaxReportId != reportId
+                && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT)
+            .Select(l => new { l.TaxReport.Year, l.TaxReport.Month })
+            .FirstOrDefaultAsync();
+        if (other != null)
+            throw new InvalidOperationException(
+                $"เอกสารนี้ถูกใช้ในรายงานภาษีงวด {other.Month:D2}/{other.Year} แล้ว — กรุณานำออกจากงวดนั้นก่อน");
+
+        var taxRate = doc.Lines.Any(l => l.VatRate > 0)
+            ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0m;
+        var nextOrder = report.Lines.Count == 0 ? 1 : report.Lines.Max(l => l.LineOrder) + 1;
+
+        // 6-month claim-window check (advisory).
+        var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1).AddMonths(7).AddDays(-1);
+        var pastWindow = DateTime.UtcNow.Date > windowEnd;
+
+        var sideLabel = isInput ? "ภาษีซื้อ" : "ภาษีขาย";
+        var desc = $"[ดึงเข้างวด-{sideLabel}] {doc.DocumentNumber} (เอกสารงวด {doc.DocumentDate.Month:D2}/{doc.DocumentDate.Year})";
+        if (pastWindow)
+            desc = "⚠️ " + desc + " — ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้";
+
+        report.Lines.Add(new TaxReportLine
+        {
+            TaxReportId = report.Id,
+            LineOrder = nextOrder,
+            TaxPayerId = doc.Contact?.TaxId,
+            TaxPayerName = doc.Contact?.Name ?? "",
+            TransactionDate = doc.DocumentDate,
+            Description = desc,
+            IncomeAmount = doc.SubTotal,
+            TaxRate = taxRate,
+            TaxAmount = doc.VatAmount,
+            IncomeTypeCode = isInput ? "INPUT" : "OUTPUT",
+            DocumentId = doc.Id
+        });
+
+        RecalcVatTotals(report);
         report.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return MapToResponse(report);
@@ -1053,6 +1260,6 @@ public partial class TaxService : ITaxService
         r.Lines.OrderBy(l => l.LineOrder).Select(l => new TaxReportLineResponse(
             l.Id, l.LineOrder, l.TaxPayerId, l.TaxPayerName,
             l.TransactionDate, l.Description, l.IncomeAmount,
-            l.TaxRate, l.TaxAmount, l.IncomeTypeCode)).ToList(),
+            l.TaxRate, l.TaxAmount, l.IncomeTypeCode, l.IsExcluded)).ToList(),
         r.Notes);
 }

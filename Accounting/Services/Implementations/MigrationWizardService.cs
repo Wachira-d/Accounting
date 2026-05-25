@@ -120,7 +120,7 @@ public class MigrationWizardService : IMigrationWizardService
 
         var totalDebit = rows.Sum(r => r.LegacyDebit);
         var totalCredit = rows.Sum(r => r.LegacyCredit);
-        if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
+        if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             issues.Add($"ยอด Debit/Credit ไม่สมดุล — Dr {totalDebit:N2} vs Cr {totalCredit:N2} (ห่าง {Math.Abs(totalDebit - totalCredit):N2})");
 
         // If this is a trial-balance import, also verify each mapped account

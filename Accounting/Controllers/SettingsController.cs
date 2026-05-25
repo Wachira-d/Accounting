@@ -13,10 +13,12 @@ namespace Accounting.Controllers;
 public class SettingsController : ControllerBase
 {
     private readonly ISettingsService _settingsService;
+    private readonly ICompanyService _companyService;
 
-    public SettingsController(ISettingsService settingsService)
+    public SettingsController(ISettingsService settingsService, ICompanyService companyService)
     {
         _settingsService = settingsService;
+        _companyService = companyService;
     }
 
     // ===== Public: Landing Page Services =====
@@ -102,6 +104,8 @@ public class SettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ApiKeyCreatedResponse>>> CreateApiKey(Guid companyId, [FromBody] CreateApiKeyRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
+        // API key creation grants full programmatic access — restrict to Owner.
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
         var result = await _settingsService.CreateApiKeyAsync(companyId, userId, request);
         return StatusCode(201, new ApiResponse<ApiKeyCreatedResponse>(true, result, "สร้าง API key สำเร็จ (เก็บ key นี้ไว้ จะแสดงครั้งเดียว)"));
     }
@@ -109,6 +113,8 @@ public class SettingsController : ControllerBase
     [HttpDelete("api-keys/{apiKeyId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> RevokeApiKey(Guid companyId, Guid apiKeyId)
     {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
         await _settingsService.RevokeApiKeyAsync(companyId, apiKeyId);
         return NoContent();
     }

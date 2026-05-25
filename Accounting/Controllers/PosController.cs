@@ -88,6 +88,30 @@ public class PosController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกออเดอร์สำเร็จ"));
     }
 
+    [HttpPost("orders/{orderId:guid}/refund")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> RefundOrder(Guid companyId, Guid orderId, [FromBody] RefundOrderRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _pos.RefundOrderAsync(companyId, orderId, request, userId);
+        return Ok(new ApiResponse<OrderResponse>(true, result, "คืนเงินสำเร็จ"));
+    }
+
+    [HttpPost("orders/{orderId:guid}/issue-tax-invoice")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> IssueTaxInvoice(Guid companyId, Guid orderId, [FromBody] IssueTaxInvoiceRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _pos.IssueTaxInvoiceAsync(companyId, orderId, request, userId);
+        return Ok(new ApiResponse<OrderResponse>(true, result, "ออกใบกำกับภาษีเต็มรูปสำเร็จ"));
+    }
+
+    [HttpPost("orders/sync-offline")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SyncOfflineOrder(Guid companyId, [FromBody] OfflineOrderRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _pos.SyncOfflineOrderAsync(companyId, request, userId);
+        return Ok(new ApiResponse<OrderResponse>(true, result, "Sync ออเดอร์ออฟไลน์สำเร็จ"));
+    }
+
     // ===== Order Items =====
     [HttpPost("orders/{orderId:guid}/items")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddOrderItem(Guid companyId, Guid orderId, [FromBody] CreateOrderItemRequest request)
@@ -209,4 +233,10 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<CommissionSummaryResponse>>>> GetCommissionSummary(
         Guid companyId, [FromQuery] DateTime periodStart, [FromQuery] DateTime periodEnd)
         => Ok(new ApiResponse<List<CommissionSummaryResponse>>(true, await _pos.GetCommissionSummariesAsync(companyId, periodStart, periodEnd)));
+
+    [HttpGet("commission-detail")]
+    public async Task<ActionResult<ApiResponse<List<CommissionDetailResponse>>>> GetCommissionDetail(
+        Guid companyId, [FromQuery] Guid staffId, [FromQuery] DateTime periodStart, [FromQuery] DateTime periodEnd)
+        => Ok(new ApiResponse<List<CommissionDetailResponse>>(true,
+            await _pos.GetCommissionDetailsAsync(companyId, staffId, periodStart, periodEnd)));
 }

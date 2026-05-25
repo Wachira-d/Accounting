@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ขายเร็ว - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { font-family:'Noto Sans Thai', sans-serif; background:#f8fafc; min-height:100vh; }
+    .qs-shell { max-width:680px; margin:0 auto; padding:20px 16px 60px; }
+    .qs-back { display:inline-block; padding:6px 12px; color:#64748b; text-decoration:none; font-size:14px; margin-bottom:10px; }
+    .qs-back:hover { color:#0f172a; }
+    .qs-card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:20px; margin-bottom:14px; }
+    .qs-card h2 { margin:0 0 14px; font-size:20px; font-weight:700; }
+    .qs-card .step { color:#64748b; font-size:13px; }
+
+    .qs-doctype { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:6px; }
+    .qs-doctype button { padding:14px 8px; background:#f1f5f9; border:2px solid transparent; border-radius:10px;
+      cursor:pointer; font-size:13px; font-weight:600; color:#334155; text-align:center; transition:all .15s; }
+    .qs-doctype button.active { background:#0f172a; color:#fff; border-color:#0f172a; }
+    .qs-doctype button .hint { display:block; font-size:11px; font-weight:400; margin-top:3px; opacity:.7; }
+
+    .qs-row { display:grid; grid-template-columns:120px 1fr; gap:12px; margin-bottom:12px; align-items:center; }
+    .qs-row label { font-size:14px; color:#475569; font-weight:500; }
+    .qs-row input, .qs-row textarea { width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px;
+      font-size:15px; font-family:inherit; }
+    .qs-row input:focus, .qs-row textarea:focus { outline:none; border-color:#0f172a; box-shadow:0 0 0 3px rgba(15,23,42,.08); }
+    .qs-row .hint { font-size:12px; color:#94a3b8; margin-top:4px; }
+    @media (max-width:560px) { .qs-row { grid-template-columns:1fr; gap:4px; } }
+
+    .qs-customer-list { background:#fff; border:1px solid #cbd5e1; border-radius:8px; max-height:240px; overflow:auto;
+      margin-top:4px; box-shadow:0 4px 12px rgba(0,0,0,.05); }
+    .qs-customer-list .item { padding:10px 12px; cursor:pointer; border-bottom:1px solid #f1f5f9; font-size:14px; }
+    .qs-customer-list .item:hover { background:#f8fafc; }
+    .qs-customer-list .item:last-child { border-bottom:none; }
+    .qs-customer-list .item .sub { font-size:12px; color:#64748b; margin-top:2px; }
+
+    .qs-lines { background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:8px; margin-bottom:12px; }
+    .qs-line { display:grid; grid-template-columns:1fr 80px 110px 36px; gap:6px; align-items:center; margin-bottom:6px; }
+    .qs-line input { padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px; font-size:14px; }
+    .qs-line .del { background:#fee2e2; color:#dc2626; border:none; border-radius:6px; cursor:pointer; font-size:16px; }
+    .qs-line .del:hover { background:#fecaca; }
+    .qs-add-line { background:#0f172a; color:#fff; border:none; border-radius:6px; padding:8px 14px;
+      font-size:13px; cursor:pointer; }
+
+    .qs-total { background:#0f172a; color:#fff; border-radius:12px; padding:16px 20px; display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    .qs-total .label { font-size:14px; opacity:.8; }
+    .qs-total .amt { font-size:28px; font-weight:800; font-variant-numeric:tabular-nums; }
+    .qs-total .breakdown { font-size:12px; opacity:.7; }
+
+    .qs-vat-toggle { display:flex; gap:8px; align-items:center; margin-bottom:12px; padding:10px; background:#fef3c7; border-radius:8px; font-size:13px; color:#92400e; }
+    .qs-vat-toggle input { margin:0; }
+
+    .qs-submit { width:100%; background:#16a34a; color:#fff; border:none; border-radius:12px; padding:16px;
+      font-size:17px; font-weight:700; cursor:pointer; transition:all .15s; }
+    .qs-submit:hover:not(:disabled) { background:#15803d; transform:translateY(-1px); }
+    .qs-submit:disabled { background:#94a3b8; cursor:not-allowed; }
+
+    .qs-error { background:#fee2e2; color:#991b1b; padding:10px 14px; border-radius:8px; margin-bottom:12px; font-size:14px; display:none; }
+    .qs-success { background:#dcfce7; color:#166534; padding:14px; border-radius:10px; margin-bottom:14px; font-size:15px; display:none; }
+  </style>
+</head>
+<body>
+  <div class="qs-shell">
+    <a class="qs-back" href="/simple.html">← กลับหน้าหลัก</a>
+
+    <div class="qs-card">
+      <h2>💰 ขายเร็ว — ออกเอกสารใน 1 จอ</h2>
+      <p class="step">เลือกประเภทเอกสาร · เลือกลูกค้า · ใส่รายการ · กดบันทึก</p>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="QS.startVoice()" id="voiceBtn" type="button" style="display:inline-flex;gap:8px;align-items:center;padding:10px 16px;background:#0ea5e9;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;">
+          🎤 พูดบันทึก
+        </button>
+        <span id="voiceStatus" style="font-size:12px;color:#64748b;align-self:center;"></span>
+      </div>
+    </div>
+
+    <div id="errBanner" class="qs-error"></div>
+    <div id="successBanner" class="qs-success"></div>
+
+    <div class="qs-card">
+      <h2 style="font-size:16px;" data-help="ใบเสนอราคา: ยังไม่ขายจริง ใช้เสนอลูกค้า · ใบกำกับภาษี: ขายแล้ว ต้องส่งกรมสรรพากร · ใบเสร็จ: รับเงินสด ไม่จด VAT" data-tour-step="1" data-tour-text="ขั้นแรก เลือกประเภทเอกสาร — ส่วนใหญ่ใช้ 'ใบกำกับภาษี' (ขายแล้ว)">1. เลือกประเภทเอกสาร</h2>
+      <div class="qs-doctype" id="docTypeBox">
+        <button data-type="Quotation">📋 ใบเสนอราคา<span class="hint">เสนอราคา ยังไม่ขายจริง</span></button>
+        <button data-type="TaxInvoice" class="active">🧾 ใบกำกับภาษี<span class="hint">ขายแล้ว — ใช้บ่อยสุด</span></button>
+        <button data-type="Receipt">🧾 ใบเสร็จ<span class="hint">รับเงินสด ไม่จด VAT</span></button>
+      </div>
+    </div>
+
+    <div class="qs-card">
+      <h2 style="font-size:16px;" data-help="พิมพ์ชื่อลูกค้า — ถ้ามีอยู่แล้วระบบจะแสดงให้เลือก ถ้ายังไม่มีจะสร้างให้อัตโนมัติเมื่อกดบันทึก" data-tour-step="2" data-tour-text="พิมพ์ชื่อลูกค้า — ถ้ายังไม่มีในระบบ ไม่ต้องไปเพิ่มก่อน ระบบสร้างให้เลย">2. ลูกค้า</h2>
+      <div class="qs-row">
+        <label>ชื่อลูกค้า</label>
+        <div style="position:relative;">
+          <input type="text" id="customerInput" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี..." oninput="QS.searchCustomer()" autocomplete="off">
+          <div id="customerList" class="qs-customer-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:5;"></div>
+          <div class="hint">ถ้าไม่มีในระบบ ระบบจะสร้างให้อัตโนมัติเมื่อบันทึก</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="qs-card">
+      <h2 style="font-size:16px;" data-help="แต่ละบรรทัด = สินค้า/บริการ 1 อย่าง · ใส่รายละเอียด จำนวน ราคา/หน่วย · กด + เพื่อเพิ่มบรรทัด" data-tour-step="3" data-tour-text="ใส่รายการที่ขาย — ระบบคิด VAT ให้อัตโนมัติ ถ้าราคารวม VAT แล้วให้ติ๊กกล่องด้านล่าง">3. รายการที่ขาย</h2>
+      <div class="qs-lines" id="linesBox"></div>
+      <button class="qs-add-line" onclick="QS.addLine()">+ เพิ่มรายการ</button>
+
+      <div class="qs-vat-toggle" style="margin-top:14px;">
+        <input type="checkbox" id="includeVat" onchange="QS.recalc()">
+        <label for="includeVat">📊 ราคาที่กรอกรวม VAT 7% แล้ว (ถ้าไม่ติ๊ก ระบบจะบวก VAT ทับให้)</label>
+      </div>
+    </div>
+
+    <div class="qs-total">
+      <div>
+        <div class="label">รวมทั้งสิ้น</div>
+        <div class="breakdown" id="breakdown">—</div>
+      </div>
+      <div class="amt" id="totalAmt">0.00 ฿</div>
+    </div>
+
+    <button class="qs-submit" id="submitBtn" onclick="QS.submit()">💾 บันทึกและอนุมัติเลย</button>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <!-- Lightweight tour + help runner only (no sidebar; the page intentionally
+       stands alone for the express flow). We poly-fill the helpers inline so
+       layout.js doesn't have to render its full chrome on this page. -->
+  <script>
+    // Minimal stand-in for Layout's tour + help so we don't pull in layout.js
+    // (which would re-render sidebar/topbar over this clean express page).
+    window.MiniTour = {
+      _esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));},
+      mountHelp() {
+        document.querySelectorAll('[data-help]:not([data-help-mounted])').forEach(el => {
+          el.setAttribute('data-help-mounted', '1');
+          const ic = document.createElement('button');
+          ic.type='button'; ic.className='help-icon'; ic.textContent='ⓘ';
+          ic.onclick = e => { e.preventDefault(); e.stopPropagation();
+            const old = document.getElementById('helpBubble'); if (old) old.remove();
+            const b = document.createElement('div'); b.id='helpBubble';
+            b.innerHTML = `<div class="hb-text">${this._esc(el.getAttribute('data-help'))}</div><button class="hb-close" onclick="this.parentElement.remove()">×</button>`;
+            document.body.appendChild(b);
+            const r = ic.getBoundingClientRect();
+            b.style.top = (r.bottom + 8) + 'px';
+            b.style.left = Math.max(8, Math.min(window.innerWidth - b.offsetWidth - 8, r.left)) + 'px';
+            setTimeout(() => { const off = ev => { if (!b.contains(ev.target)) { b.remove(); document.removeEventListener('click', off); } }; document.addEventListener('click', off); }, 0);
+          };
+          el.appendChild(ic);
+        });
+      },
+      start(pageKey) {
+        const steps = Array.from(document.querySelectorAll('[data-tour-step]'))
+          .map(el => ({el, n:parseInt(el.getAttribute('data-tour-step')||'0',10), text:el.getAttribute('data-tour-text')||''}))
+          .filter(s => s.n > 0).sort((a,b)=>a.n-b.n);
+        if (!steps.length) return;
+        let i = 0;
+        const overlay = document.createElement('div'); overlay.id = 'tourOverlay';
+        document.body.appendChild(overlay);
+        const render = () => {
+          const s = steps[i]; const r = s.el.getBoundingClientRect();
+          overlay.innerHTML = `
+            <div class="tour-mask" style="top:${r.top-6}px;left:${r.left-6}px;width:${r.width+12}px;height:${r.height+12}px;"></div>
+            <div class="tour-pop" style="top:${r.bottom+12}px;left:${Math.max(8, r.left)}px;">
+              <div class="tour-text">${this._esc(s.text)}</div>
+              <div class="tour-actions">
+                <span class="tour-progress">${i+1} / ${steps.length}</span><div style="flex:1;"></div>
+                <button class="tour-skip">ข้าม</button>
+                ${i < steps.length-1 ? '<button class="tour-next">ถัดไป →</button>' : '<button class="tour-done">เสร็จสิ้น ✓</button>'}
+              </div>
+            </div>`;
+          overlay.querySelector('.tour-skip').onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:'+pageKey,'1'); };
+          const nx = overlay.querySelector('.tour-next'); if (nx) nx.onclick = () => { i++; s.el.scrollIntoView({block:'center',behavior:'smooth'}); setTimeout(render, 250); };
+          const dn = overlay.querySelector('.tour-done'); if (dn) dn.onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:'+pageKey,'1'); };
+        };
+        steps[0].el.scrollIntoView({block:'center',behavior:'smooth'});
+        setTimeout(render, 300);
+      }
+    };
+  </script>
+  <script>
+    // Same Thai-number-word parser as quick-expense — kept inline to avoid
+    // dragging the whole layout.js bundle into this express page.
+    function thaiWordsToNumber(s) {
+      if (!s) return null;
+      const digits = { 'ศูนย์':0,'หนึ่ง':1,'สอง':2,'สาม':3,'สี่':4,'ห้า':5,'หก':6,'เจ็ด':7,'แปด':8,'เก้า':9,'เอ็ด':1,'ยี่':2 };
+      const units  = { 'สิบ':10,'ร้อย':100,'พัน':1000,'หมื่น':10000,'แสน':100000,'ล้าน':1000000 };
+      let total = 0, current = 0; const tokens = []; let i = 0;
+      while (i < s.length) {
+        let matched = false;
+        for (const w of [...Object.keys(units), ...Object.keys(digits)]) {
+          if (s.startsWith(w, i)) { tokens.push(w); i += w.length; matched = true; break; }
+        }
+        if (!matched) i++;
+      }
+      for (const t of tokens) {
+        if (t in digits) current = digits[t];
+        else if (t in units) { if (current === 0) current = 1; total += current * units[t]; current = 0; }
+      }
+      return total + current;
+    }
+
+    const QS = {
+      docType: 'TaxInvoice',
+      customer: null,
+      customerName: '',
+      lines: [{ desc: '', qty: 1, price: 0 }],
+      recognition: null,
+
+      init() {
+        // Doc-type buttons
+        document.getElementById('docTypeBox').addEventListener('click', e => {
+          const b = e.target.closest('button[data-type]'); if (!b) return;
+          this.docType = b.dataset.type;
+          document.querySelectorAll('#docTypeBox button').forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          // Receipt is non-VAT shorthand → uncheck the VAT bit visually
+          if (this.docType === 'Receipt') {
+            document.getElementById('includeVat').checked = false;
+            document.getElementById('includeVat').disabled = true;
+          } else {
+            document.getElementById('includeVat').disabled = false;
+          }
+          this.recalc();
+        });
+        this.renderLines();
+      },
+
+      renderLines() {
+        document.getElementById('linesBox').innerHTML = this.lines.map((l, i) => `
+          <div class="qs-line">
+            <input type="text" placeholder="รายการ / บริการ" value="${this._esc(l.desc)}" oninput="QS.lines[${i}].desc=this.value">
+            <input type="number" placeholder="จำนวน" value="${l.qty || ''}" step="0.01" oninput="QS.lines[${i}].qty=parseFloat(this.value)||0; QS.recalc()">
+            <input type="number" placeholder="ราคา/หน่วย" value="${l.price || ''}" step="0.01" oninput="QS.lines[${i}].price=parseFloat(this.value)||0; QS.recalc()">
+            <button class="del" onclick="QS.removeLine(${i})" title="ลบ">×</button>
+          </div>`).join('');
+        this.recalc();
+      },
+
+      addLine() { this.lines.push({ desc: '', qty: 1, price: 0 }); this.renderLines(); },
+      removeLine(i) {
+        if (this.lines.length === 1) { this.lines = [{ desc: '', qty: 1, price: 0 }]; }
+        else this.lines.splice(i, 1);
+        this.renderLines();
+      },
+
+      recalc() {
+        const gross = this.lines.reduce((s, l) => s + (l.qty || 0) * (l.price || 0), 0);
+        const vatable = this.docType !== 'Receipt';
+        const inclVat = document.getElementById('includeVat').checked;
+        let net, vat, total;
+        if (!vatable) { net = gross; vat = 0; total = gross; }
+        else if (inclVat) { net = gross / 1.07; vat = gross - net; total = gross; }
+        else { net = gross; vat = gross * 0.07; total = gross + vat; }
+        document.getElementById('totalAmt').textContent = total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ฿';
+        document.getElementById('breakdown').textContent =
+          vatable ? `รวม ${net.toLocaleString('th-TH', { minimumFractionDigits: 2 })} + VAT ${vat.toLocaleString('th-TH', { minimumFractionDigits: 2 })}` : 'ไม่คิด VAT';
+      },
+
+      async searchCustomer() {
+        const q = document.getElementById('customerInput').value.trim();
+        this.customerName = q;
+        this.customer = null;
+        if (q.length < 2) { document.getElementById('customerList').style.display = 'none'; return; }
+        try {
+          const cid = JSON.parse(localStorage.currentCompany || '{}').id;
+          if (!cid) return;
+          const res = await API.c(cid).getContacts('?page=1&pageSize=8&search=' + encodeURIComponent(q));
+          const items = res?.data?.items || [];
+          const list = document.getElementById('customerList');
+          if (!items.length) { list.style.display = 'none'; return; }
+          list.innerHTML = items.map(c => `
+            <div class="item" onclick="QS.pickCustomer('${c.id}', ${JSON.stringify(c.name).replace(/'/g, '&#39;')})">
+              ${this._esc(c.name)}${c.taxId ? `<div class="sub">เลขผู้เสียภาษี ${this._esc(c.taxId)}</div>` : ''}
+            </div>`).join('');
+          list.style.display = '';
+        } catch { /* search is best-effort */ }
+      },
+
+      pickCustomer(id, name) {
+        this.customer = { id, name };
+        document.getElementById('customerInput').value = name;
+        document.getElementById('customerList').style.display = 'none';
+      },
+
+      // Voice input — parses "ขาย คุณสมหญิง สามพันบาท" → customer "คุณสมหญิง"
+      // + amount 3000. Adds a single line "สินค้า/บริการ" so the user can
+      // refine before saving. Best-effort; only pre-fills.
+      startVoice() {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const status = document.getElementById('voiceStatus');
+        if (!SR) { status.textContent = '⚠️ ใช้ Chrome / Edge / Android'; return; }
+        if (this.recognition && this.recognition._listening) { this.recognition.stop(); return; }
+        const r = new SR(); this.recognition = r;
+        r.lang = 'th-TH'; r.interimResults = false; r.maxAlternatives = 1; r._listening = true;
+        status.textContent = '🔴 กำลังฟัง... เช่น "ขาย คุณสมหญิง สามพันบาท"';
+        document.getElementById('voiceBtn').textContent = '⏹️ หยุดฟัง';
+        r.onresult = (e) => {
+          const txt = e.results[0][0].transcript;
+          status.textContent = '🎤 ได้ยิน: "' + txt + '"';
+          this._parseVoice(txt);
+        };
+        r.onerror = (e) => { status.textContent = '❌ ' + e.error; r._listening = false; document.getElementById('voiceBtn').textContent = '🎤 พูดบันทึก'; };
+        r.onend = () => { r._listening = false; document.getElementById('voiceBtn').textContent = '🎤 พูดบันทึก'; };
+        r.start();
+      },
+
+      _parseVoice(text) {
+        // Strip the leading verb so it doesn't end up in the customer name.
+        const cleaned = text.replace(/^\s*(ขาย|ลูกค้า|รับเงิน)\s*/i, '');
+        // Extract amount (digits or Thai words)
+        let amt = null;
+        const m = cleaned.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)/);
+        if (m) amt = parseFloat(m[1].replace(/,/g, ''));
+        if (amt == null || isNaN(amt)) {
+          const w = thaiWordsToNumber(cleaned);
+          if (w && w > 0) amt = w;
+        }
+        // Customer = first 2 tokens of the leftover text after removing amount + unit words
+        const noNum = cleaned.replace(/\d[\d.,]*/g, '').replace(/(บาท|สตางค์)/g, '').trim();
+        const parts = noNum.split(/\s+/);
+        const customer = parts.slice(0, 2).join(' ').slice(0, 40);
+        if (customer && !document.getElementById('customerInput').value) {
+          document.getElementById('customerInput').value = customer;
+          this.customerName = customer;
+        }
+        if (amt != null && !isNaN(amt) && amt > 0) {
+          // Replace the first empty line with the captured amount
+          this.lines[0] = { desc: this.lines[0].desc || 'สินค้า/บริการ', qty: 1, price: amt };
+          this.renderLines();
+        }
+      },
+
+      async submit() {
+        const btn = document.getElementById('submitBtn');
+        const err = document.getElementById('errBanner');
+        const ok = document.getElementById('successBanner');
+        err.style.display = ok.style.display = 'none';
+
+        const name = this.customerName.trim();
+        if (!name) { err.textContent = 'กรุณาระบุชื่อลูกค้า'; err.style.display = ''; return; }
+        const validLines = this.lines.filter(l => (l.desc || '').trim() && l.qty > 0 && l.price > 0);
+        if (!validLines.length) { err.textContent = 'กรุณาใส่รายการอย่างน้อย 1 รายการ (ทั้งคำอธิบาย จำนวน และราคา)'; err.style.display = ''; return; }
+
+        const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        if (!co.id) { err.textContent = 'ยังไม่ได้เลือกบริษัท'; err.style.display = ''; return; }
+
+        btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก...';
+        try {
+          // Auto-create contact if user didn't pick from the dropdown
+          let contactId = this.customer?.id;
+          if (!contactId) {
+            const cRes = await API.c(co.id).createContact({
+              name, isCustomer: true, isSupplier: false
+            });
+            contactId = cRes?.data?.id;
+            if (!contactId) throw new Error('สร้างลูกค้าใหม่ไม่สำเร็จ');
+          }
+
+          const inclVat = document.getElementById('includeVat').checked;
+          const vatable = this.docType !== 'Receipt';
+          const lines = validLines.map(l => ({
+            description: l.desc,
+            quantity: l.qty,
+            unit: 'ชิ้น',
+            unitPrice: vatable && inclVat ? l.price / 1.07 : l.price,
+            discountAmount: 0,
+            vatRate: vatable ? 7 : 0
+          }));
+
+          const today = new Date().toISOString().slice(0, 10);
+          const doc = await API.c(co.id).createDocument({
+            documentType: this.docType,
+            documentDate: today,
+            dueDate: today,
+            contactId,
+            reference: null,
+            notes: null,
+            lines
+          });
+          const docId = doc?.data?.id || doc?.id;
+          if (!docId) throw new Error('สร้างเอกสารไม่สำเร็จ');
+
+          // Auto-approve so the GL gets posted right away — that's the
+          // "ขายเร็ว" expectation. Power users who want Draft can use
+          // /pages/documents.html instead.
+          try { await API.c(co.id).approveDocument(docId); } catch (_) { /* warn but show success */ }
+
+          ok.innerHTML = `✅ บันทึกสำเร็จ — <a href="/pages/documents.html?id=${docId}" style="color:#166534;font-weight:700;text-decoration:underline;">เปิดดูเอกสาร</a> หรือ <a href="/pages/quick-sale.html" style="color:#166534;font-weight:700;text-decoration:underline;">ขายต่อ</a>`;
+          ok.style.display = '';
+          // Reset form for next sale
+          this.lines = [{ desc: '', qty: 1, price: 0 }];
+          this.customer = null; this.customerName = '';
+          document.getElementById('customerInput').value = '';
+          this.renderLines();
+        } catch (e) {
+          err.textContent = '❌ ' + (e.message || 'บันทึกไม่สำเร็จ');
+          err.style.display = '';
+        } finally {
+          btn.disabled = false; btn.textContent = '💾 บันทึกและอนุมัติเลย';
+        }
+      },
+
+      _esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+      API.init();
+      QS.init();
+      MiniTour.mountHelp();
+      if (!localStorage.getItem('tour:quick-sale')) {
+        setTimeout(() => MiniTour.start('quick-sale'), 600);
+      }
+    });
+  </script>
+</body>
+</html>

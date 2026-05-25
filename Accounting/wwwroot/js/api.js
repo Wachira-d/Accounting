@@ -167,6 +167,7 @@ const API = {
       cashFlow: (q = '') => API.get(`${base}/accounting/reports/cash-flow${q}`),
       getFiscalPeriods: () => API.get(`${base}/accounting/fiscal-periods`),
       createFiscalPeriod: (d) => API.post(`${base}/accounting/fiscal-periods`, d),
+      ensureFiscalYear: (year) => API.post(`${base}/accounting/fiscal-periods/ensure-year?year=${year}`),
       closeFiscalPeriod: (id) => API.post(`${base}/accounting/fiscal-periods/${id}/close`),
       // Documents
       getDocuments: (q = '') => API.get(`${base}/document${q}`),
@@ -305,6 +306,8 @@ const API = {
       regenerateTaxReport: (id) => API.post(`${base}/tax/${id}/regenerate`),
       deleteTaxReport: (id) => API.del(`${base}/tax/${id}`),
       vatDebug: (year, month) => API.get(`${base}/tax/vat-debug?year=${year}&month=${month}`),
+      getPullableDocuments: (reportId, q = '') => API.get(`${base}/tax/${reportId}/pullable-documents${q}`),
+      pullDocumentIntoReport: (reportId, documentId) => API.post(`${base}/tax/${reportId}/pull-document`, { documentId }),
       // Tax Filing Export
       exportPnd1: (year, month) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}`,
       exportPnd3: (year, month) => `${base}/tax-filing-export/pnd3?year=${year}&month=${month}`,
@@ -797,6 +800,9 @@ const API = {
       updatePosOrder: (id, d) => API.put(`${base}/pos/orders/${id}`, d),
       updatePosOrderStatus: (id, d) => API.post(`${base}/pos/orders/${id}/status`, d),
       voidPosOrder: (id) => API.post(`${base}/pos/orders/${id}/void`),
+      refundPosOrder: (id, d) => API.post(`${base}/pos/orders/${id}/refund`, d),
+      issuePosTaxInvoice: (id, d) => API.post(`${base}/pos/orders/${id}/issue-tax-invoice`, d),
+      syncPosOfflineOrder: (d) => API.post(`${base}/pos/orders/sync-offline`, d),
       completePosOrder: (id) => API.post(`${base}/pos/orders/${id}/complete`),
       // POS - Order Items
       addPosOrderItem: (orderId, d) => API.post(`${base}/pos/orders/${orderId}/items`, d),
@@ -828,6 +834,7 @@ const API = {
       // POS - Reports
       getPosDailySummary: (q = '') => API.get(`${base}/pos/daily-summary${q}`),
       getPosCommissionSummary: (q) => API.get(`${base}/pos/commission-summary${q}`),
+      getPosCommissionDetail: (q) => API.get(`${base}/pos/commission-detail${q}`),
       // Integration
       getIntegrations: () => API.get(`${base}/integrations`),
       createIntegration: (d) => API.post(`${base}/integrations`, d),

@@ -54,6 +54,8 @@ public interface IAccountingService
     // Fiscal Period
     Task<FiscalPeriodResponse> CreateFiscalPeriodAsync(Guid companyId, CreateFiscalPeriodRequest request);
     Task<List<FiscalPeriodResponse>> GetFiscalPeriodsAsync(Guid companyId);
+    /// <summary>สร้างงวดบัญชีรายเดือนที่ขาดทั้งปีในคราวเดียว — คืนจำนวนที่สร้าง</summary>
+    Task<int> EnsureFiscalYearPeriodsAsync(Guid companyId, int year);
     Task CloseFiscalPeriodAsync(Guid companyId, Guid periodId);
     Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(Guid companyId, Guid periodId, CreateFiscalPeriodRequest request);
     Task DeleteFiscalPeriodAsync(Guid companyId, Guid periodId);

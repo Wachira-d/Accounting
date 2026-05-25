@@ -137,9 +137,13 @@ public class LineNotifyService : ILineNotifyService
         await SendMessageAsync(msg);
     }
 
+    // Servers run UTC; recipients are Thai-based. Render times in ICT (UTC+7)
+    // so the LINE message matches what the user sees on the wall clock.
+    private static string NowIct() => DateTime.UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm");
+
     public async Task NotifyPaymentReceivedAsync(Guid companyId, string documentNumber, decimal amount)
     {
-        var msg = $"💵 รับชำระเงินแล้ว\n📄 {documentNumber}\n💰 {amount:N2} บาท\n🕐 {DateTime.Now:dd/MM/yyyy HH:mm}";
+        var msg = $"💵 รับชำระเงินแล้ว\n📄 {documentNumber}\n💰 {amount:N2} บาท\n🕐 {NowIct()}";
         await SendMessageAsync(msg);
     }
 
@@ -151,13 +155,13 @@ public class LineNotifyService : ILineNotifyService
 
     public async Task NotifyBankSyncCompleteAsync(Guid companyId, string bankName, int newTransactions)
     {
-        var msg = $"🏦 Sync ธนาคารสำเร็จ\n🔄 {bankName}\n📊 รายการใหม่ {newTransactions} รายการ\n🕐 {DateTime.Now:dd/MM/yyyy HH:mm}";
+        var msg = $"🏦 Sync ธนาคารสำเร็จ\n🔄 {bankName}\n📊 รายการใหม่ {newTransactions} รายการ\n🕐 {NowIct()}";
         await SendMessageAsync(msg);
     }
 
     public async Task NotifyECommerceSyncAsync(Guid companyId, string platform, int newOrders, decimal totalAmount)
     {
-        var msg = $"🛒 Sync {platform} สำเร็จ\n📦 ออเดอร์ใหม่ {newOrders} รายการ\n💰 ยอดรวม {totalAmount:N2} บาท\n🕐 {DateTime.Now:dd/MM/yyyy HH:mm}";
+        var msg = $"🛒 Sync {platform} สำเร็จ\n📦 ออเดอร์ใหม่ {newOrders} รายการ\n💰 ยอดรวม {totalAmount:N2} บาท\n🕐 {NowIct()}";
         await SendMessageAsync(msg);
     }
 

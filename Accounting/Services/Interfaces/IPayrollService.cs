@@ -12,6 +12,10 @@ public interface IPayrollService
     Task<EmployeeResponse> UpdateEmployeeAsync(Guid companyId, Guid employeeId, UpdateEmployeeRequest request);
     Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate);
 
+    /// <summary>คำนวณค่าชดเชยตาม Labor Code §118 (preview เท่านั้น — ไม่บันทึก GL).
+    /// ใช้แสดงตัวเลขก่อนกดเลิกจ้าง; การจ่ายจริงทำผ่านเงินเดือนสุดท้ายหรือ Expense voucher.</summary>
+    Task<SeverancePreviewResponse> PreviewSeverancePayAsync(Guid companyId, Guid employeeId, SeverancePreviewRequest request);
+
     // Payroll Items (earnings/deductions types)
     Task<PayrollItemResponse> CreatePayrollItemAsync(Guid companyId, CreatePayrollItemRequest request);
     Task<List<PayrollItemResponse>> GetPayrollItemsAsync(Guid companyId);

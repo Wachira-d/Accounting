@@ -83,6 +83,12 @@ public class PosOrder : TenantEntity
     public JournalEntry? JournalEntry { get; set; }
     public Guid? DocumentId { get; set; }                        // Link to receipt/tax invoice
 
+    /// <summary>Idempotency key set by the POS client for sales rung up
+    /// while offline. SyncOfflineOrderAsync uses (CompanyId, ClientOrderId)
+    /// to detect a retry of an already-synced sale and return it instead
+    /// of creating a duplicate. Null for normal online orders.</summary>
+    public Guid? ClientOrderId { get; set; }
+
     public DateTime? CompletedAt { get; set; }
 
     public ICollection<PosOrderItem> Items { get; set; } = new List<PosOrderItem>();
@@ -105,6 +111,9 @@ public class PosOrderItem : BaseEntity
     public string ItemName { get; set; } = null!;
     public string? ItemCode { get; set; }
     public decimal Quantity { get; set; } = 1;
+    /// <summary>How much of this line has been refunded (partial refunds).
+    /// Refundable remaining = Quantity − RefundedQuantity.</summary>
+    public decimal RefundedQuantity { get; set; } = 0;
     public string? Unit { get; set; }                            // หน่วย: ชิ้น, แก้ว, ครั้ง
     public decimal UnitPrice { get; set; }
     public decimal DiscountAmount { get; set; }

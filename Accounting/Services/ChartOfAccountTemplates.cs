@@ -230,6 +230,14 @@ public static class ChartOfAccountTemplates
             new("54440", "ค่าเดินทางและพาหนะ", "Travel and Transportation", AccountType.Expense, 4),
             new("54450", "ค่าเบี้ยเลี้ยง", "Per Diem / Subsistence Allowance", AccountType.Expense, 4),
             new("54460", "ค่ารับรอง / เลี้ยงรับรอง", "Entertainment / Hospitality", AccountType.Expense, 4),
+            // §82/5 prohibited-input-VAT bucket: passenger cars (รถยนต์นั่ง ≤10 ที่นั่ง)
+            // and their fuel/maintenance/insurance — input VAT on these is permanently
+            // non-claimable regardless of business use.
+            new("54470", "ค่าใช้จ่ายรถยนต์นั่ง (ภาษีซื้อต้องห้าม)", "Passenger Vehicle Expenses (non-claimable VAT)", AccountType.Expense, 4),
+            new("54471", "ค่าน้ำมัน — รถยนต์นั่ง", "Fuel — Passenger Vehicle", AccountType.Expense, 4),
+            new("54472", "ค่าซ่อม/บำรุงรักษา — รถยนต์นั่ง", "Repairs — Passenger Vehicle", AccountType.Expense, 4),
+            // Gifts beyond the ฿30/piece RD threshold also fall under §82/5
+            new("54480", "ของขวัญ/ของชำร่วย (เกินมูลค่า)", "Gifts above RD threshold", AccountType.Expense, 4),
             new("545", "ค่าเบี้ยประกันภัย", "Insurance Expenses", AccountType.Expense, 3),
             new("54510", "ค่าเบี้ยประกันภัย", "Insurance Premium", AccountType.Expense, 4),
             new("546", "ค่าธรรมเนียมวิชาชีพ", "Professional Fees", AccountType.Expense, 3),
@@ -499,6 +507,22 @@ public static class ChartOfAccountTemplates
         new(IndustryType.Freelance, "ฟรีแลนซ์", "Freelance", "ฟรีแลนซ์/อาชีพอิสระ", "💼"),
         new(IndustryType.Other, "อื่นๆ", "Other", "ประเภทอุตสาหกรรมอื่นๆ", "📋"),
     };
+
+    /// <summary>
+    /// True when input VAT posted to this account code is PROHIBITED
+    /// (ภาษีซื้อต้องห้าม) per Revenue Code §82/5:
+    ///   54460 — entertainment / client-hospitality (ค่ารับรอง)
+    ///   54470 / 54471 / 54472 — passenger-vehicle expenses, fuel, repairs
+    ///   54480 — gifts beyond the ฿30/piece RD threshold
+    /// Used at company seeding to set ChartOfAccount.InputVatClaimable=false.
+    /// Existing companies can re-flag via the COA settings UI; this list
+    /// drives the warning shown on ภพ.30 if an Input VAT line touches one
+    /// of these accounts.
+    /// </summary>
+    public static bool IsProhibitedInputVatAccount(string accountCode)
+        => accountCode.StartsWith("54460")
+        || accountCode.StartsWith("54470") || accountCode.StartsWith("54471") || accountCode.StartsWith("54472")
+        || accountCode.StartsWith("54480");
 
     /// <summary>สร้างผังบัญชีตามประเภทธุรกิจและอุตสาหกรรม</summary>
     public static List<AccountTemplate> GetTemplateByBusinessType(

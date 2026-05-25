@@ -110,7 +110,38 @@ public record OrderResponse(
     DateTime? CompletedAt,
     DateTime CreatedAt,
     List<OrderItemResponse> Items,
-    List<PaymentResponse> Payments);
+    List<PaymentResponse> Payments,
+    Guid? DocumentId = null,
+    string? DocumentNumber = null);
+
+// ===== Offline sale sync — atomic create+pay+complete, idempotent =====
+public record OfflineOrderRequest(
+    Guid ClientOrderId,
+    Guid SessionId,
+    PosOrderType OrderType,
+    Guid? CustomerId,
+    string? CustomerName,
+    string? TableNumber,
+    string? QueueNumber,
+    decimal DiscountPercent,
+    string? Notes,
+    DateTime CompletedAt,
+    List<CreateOrderItemRequest> Items,
+    List<OfflinePaymentRequest> Payments);
+
+public record OfflinePaymentRequest(
+    PaymentMethod PaymentMethod,
+    decimal Amount,
+    decimal ReceivedAmount,
+    string? ReferenceNo);
+
+// ===== Issue full tax invoice for a completed POS order =====
+public record IssueTaxInvoiceRequest(
+    string BuyerName,
+    string? BuyerTaxId,
+    string? BuyerBranchCode,
+    string? BuyerAddress,
+    string? Notes);
 
 // ===== POS Order Item =====
 public record CreateOrderItemRequest(
@@ -143,7 +174,8 @@ public record OrderItemResponse(
     PosItemStatus Status,
     string? Notes,
     List<ItemModifierResponse> Modifiers,
-    List<ServiceActivityResponse> ServiceActivities);
+    List<ServiceActivityResponse> ServiceActivities,
+    decimal RefundedQuantity = 0);
 
 // ===== POS Order Item Modifier =====
 public record CreateItemModifierRequest(
@@ -167,6 +199,14 @@ public record CreatePaymentRequest(
     decimal ReceivedAmount,
     string? ReferenceNo,
     string? CardLastFour);
+
+// ===== POS Refund (partial / full) =====
+public record RefundOrderRequest(
+    List<RefundLineRequest> Lines,
+    PaymentMethod RefundMethod,
+    string? Reason);
+
+public record RefundLineRequest(Guid ItemId, decimal Quantity);
 
 public record PaymentResponse(
     Guid Id,
@@ -341,6 +381,20 @@ public record CommissionSummaryResponse(
     decimal PaidAmount,
     decimal RemainingAmount,
     bool IsPaid);
+
+/// <summary>คอมมิชชั่นรายกิจกรรม — ใช้ตรวจสอบ / audit ว่ามาจากออเดอร์ใด ทำเมื่อไหร่ คิดยังไง</summary>
+public record CommissionDetailResponse(
+    Guid ActivityId,
+    Guid OrderId,
+    string OrderNumber,
+    DateTime OrderDate,
+    Guid OrderItemId,
+    string ItemName,           // ชื่อบริการ/แพ็กเกจ
+    string ComponentName,      // ขั้นตอนย่อยที่ทำ
+    string Status,             // Pending / InProgress / Completed
+    DateTime? CompletedAt,
+    decimal CommissionAmount,
+    string? Notes);
 
 // ===== POS Daily Summary =====
 public record PosDailySummaryResponse(

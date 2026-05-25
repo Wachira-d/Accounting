@@ -2371,6 +2371,100 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_DocumentLines_SourceLineId"
                 ON "DocumentLines" ("SourceLineId") WHERE "SourceLineId" IS NOT NULL;
             """,
+
+            // ===== ChartOfAccounts.InputVatClaimable: prohibited input VAT (ภาษีซื้อต้องห้าม) =====
+            """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "InputVatClaimable" boolean NOT NULL DEFAULT true;""",
+            // Back-fill: mark existing entertainment (ค่ารับรอง) accounts non-claimable
+            // so their input VAT stops being credited on the ภ.พ.30. Scoped to
+            // IsSystemAccount — those are seeded/managed by the system and cannot
+            // be edited by admins, so this stays safe to re-run on every startup
+            // without overriding a deliberate admin change on a custom account.
+            """
+            UPDATE "ChartOfAccounts" SET "InputVatClaimable" = false
+            WHERE ("AccountCode" LIKE '54460%' OR "AccountName" LIKE '%รับรอง%')
+              AND "IsSystemAccount" = true
+              AND "InputVatClaimable" = true;
+            """,
+
+            // ===== TaxReportLines.IsExcluded: accountant include/exclude toggle =====
+            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "IsExcluded" boolean NOT NULL DEFAULT false;""",
+
+            // ===== Documents.IsOpeningBalance: migrated opening AR/AP subledger docs =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsOpeningBalance" boolean NOT NULL DEFAULT false;""",
+
+            // ===== PosOrderItems.RefundedQuantity: POS partial refunds =====
+            """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "RefundedQuantity" numeric NOT NULL DEFAULT 0;""",
+
+            // ===== PosOrders.ClientOrderId: offline-sale idempotency key =====
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "ClientOrderId" uuid NULL;""",
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosOrders_CompanyId_ClientOrderId"
+                ON "PosOrders" ("CompanyId", "ClientOrderId") WHERE "ClientOrderId" IS NOT NULL;
+            """,
+
+            // ===== Composite indexes for hot read paths flagged by the perf audit =====
+            // Every TenantEntity query filters by CompanyId first; the secondary
+            // filter is usually a foreign key + date. Single-column FKs alone
+            // make Postgres seq-scan within the FK group.
+            """
+            CREATE INDEX IF NOT EXISTS "IX_BankTransactions_CompanyId_BankAccount_Date"
+                ON "BankTransactions" ("CompanyId", "BankAccountId", "TransactionDate" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_StockMovements_CompanyId_Product_Date"
+                ON "StockMovements" ("CompanyId", "ProductId", "CreatedAt" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_EmployeeLeaves_Employee_Status_StartDate"
+                ON "EmployeeLeaves" ("EmployeeId", "Status", "StartDate");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_JournalEntries_CompanyId_EntryDate"
+                ON "JournalEntries" ("CompanyId", "EntryDate" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_Type_Date"
+                ON "Documents" ("CompanyId", "DocumentType", "DocumentDate" DESC);
+            """,
+            // Document.ExchangeRate — multi-currency FX rate persisted per doc
+            // so JE auto-post can convert non-THB amounts to THB consistently.
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NOT NULL DEFAULT 1;""",
+
+            // ===== LineBindCodes — LINE bot user-to-account linking =====
+            """
+            CREATE TABLE IF NOT EXISTS "LineBindCodes" (
+                "Id" uuid PRIMARY KEY,
+                "UserId" uuid NOT NULL REFERENCES "Users"("Id") ON DELETE CASCADE,
+                "Code" varchar(10) NOT NULL,
+                "ExpiresAt" timestamptz NOT NULL,
+                "UsedAt" timestamptz NULL,
+                "UsedByLineUserId" varchar(64) NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" varchar(64) NULL,
+                "UpdatedBy" varchar(64) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_LineBindCodes_Code" ON "LineBindCodes" ("Code") WHERE "UsedAt" IS NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Users_LineUserId" ON "Users" ("LineUserId") WHERE "LineUserId" IS NOT NULL;""",
+
+            // ===== LineUserStates — multi-company active selection per LINE user =====
+            """
+            CREATE TABLE IF NOT EXISTS "LineUserStates" (
+                "Id" uuid PRIMARY KEY,
+                "LineUserId" varchar(64) NOT NULL,
+                "UserId" uuid NOT NULL REFERENCES "Users"("Id") ON DELETE CASCADE,
+                "ActiveCompanyId" uuid NULL REFERENCES "Companies"("Id") ON DELETE SET NULL,
+                "LastInteractionAt" timestamptz NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" varchar(64) NULL,
+                "UpdatedBy" varchar(64) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LineUserStates_LineUserId" ON "LineUserStates" ("LineUserId");""",
         };
 
         foreach (var sql in statements)

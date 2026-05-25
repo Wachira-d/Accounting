@@ -62,4 +62,9 @@ public class TaxReportLine : BaseEntity
     public decimal TaxAmount { get; set; }
     public string? IncomeTypeCode { get; set; }  // รหัสประเภทเงินได้
     public Guid? DocumentId { get; set; }
+
+    /// <summary>True = the accountant chose NOT to include this line in the
+    /// filed return (e.g. prohibited input VAT, an over-age invoice). The
+    /// line is kept for audit but excluded from OutputVat/InputVat/NetVat.</summary>
+    public bool IsExcluded { get; set; } = false;
 }

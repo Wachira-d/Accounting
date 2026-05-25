@@ -39,6 +39,13 @@ const Layout = {
 
     this.currentPage = pageName;
     this._initialized = true;
+    this._installGlobalErrorHandler();
+    // Reflect ui-mode on <body> so pages can hide advanced-only sections via CSS.
+    const uiMode = localStorage.getItem('uiMode') || 'simple';
+    document.body.classList.toggle('ui-mode-simple', uiMode === 'simple');
+    // Mount help icons once layout is rendered + after DOM mutations from pages.
+    setTimeout(() => this._mountHelpIcons(), 200);
+    document.addEventListener('DOMContentLoaded', () => setTimeout(() => this._mountHelpIcons(), 200));
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
     // Restore cached subscription so menu renders correctly on first paint
@@ -180,11 +187,45 @@ const Layout = {
     if (!nav) return;
     const hidden = this.getHiddenMenuItems();
     const isAdminUser = this.myPermissions?.isOwnerOrAdmin === true;
-    const items = this.navItems.filter(item =>
-      (!item.id || !hidden.includes(item.id))
-      && (!item.id || this.hasMenuAccess(item.id))
-      && (!item.adminOnly || isAdminUser)
-    );
+
+    // Simple mode collapses the 14-section, 64-item sidebar to a hand-picked
+    // shortlist so non-technical users aren't drowned in options. The full
+    // navItems are still available via the "ดูเมนูทั้งหมด" link injected at
+    // the bottom (which flips uiMode → advanced and reloads).
+    const uiMode = localStorage.getItem('uiMode') || 'simple';
+    const SIMPLE_ALLOWED = new Set([
+      'dashboard',          // หน้าหลัก (Simple Mode home overrides via custom link)
+      'documents',          // ขาย
+      'expense',            // จ่าย
+      'pos',                // หน้าขาย POS
+      'bank',               // ธนาคาร
+      'contacts',           // ลูกค้า/ผู้จำหน่าย
+      'products',           // สินค้า
+      'tax',                // ภพ.30
+      'tax-calendar',       // ปฏิทินภาษี
+      'reports',            // งบการเงิน
+      'aging',              // ค้างรับ-ค้างจ่าย (linked from Simple Mode home)
+      'document-scan',      // OCR ถ่ายรูปบิล
+      'settings',           // ตั้งค่าบริษัท
+    ]);
+    const SIMPLE_SECTIONS = new Set([
+      'ขาย / รายรับ', 'ซื้อ / รายจ่าย', 'POS หน้าร้าน',
+      'การเงิน / ธนาคาร', 'ผู้ติดต่อ & สินค้า',
+      'ภาษี & e-Filing', 'รายงาน / วิเคราะห์', 'ตั้งค่า & ผู้ใช้',
+      'ออนไลน์ & เครื่องมือ',  // hosts document-scan (OCR) which the home strip links to
+    ]);
+    const items = this.navItems.filter(item => {
+      // section headers + non-item entries pass through; the render loop's
+      // flush() then drops sections that end up empty after item filtering.
+      if (item.section) return uiMode !== 'simple' || SIMPLE_SECTIONS.has(item.section);
+      const visible =
+        (!item.id || !hidden.includes(item.id))
+        && (!item.id || this.hasMenuAccess(item.id))
+        && (!item.adminOnly || isAdminUser);
+      if (!visible) return false;
+      if (uiMode === 'simple' && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
+      return true;
+    });
 
     // Walk the list: top-level items (no section ancestor) render directly;
     // section markers open a collapsible <details> that wraps every
@@ -192,6 +233,16 @@ const Layout = {
     const collapsedState = this._loadCollapsedSections();
     const html = [];
     html.push(this._renderNavSearch());
+
+    // Simple-mode shortcuts at the top: หน้าหลัก + the two express flows.
+    // Renders as plain nav-items so the existing CSS / active-state styling
+    // applies without bespoke selectors.
+    if (uiMode === 'simple') {
+      html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
+      html.push(`<a class="nav-item" href="/pages/quick-sale.html"><span class="icon">⚡</span><span class="label">ขายเร็ว</span></a>`);
+      html.push(`<a class="nav-item" href="/pages/quick-expense.html"><span class="icon">🧾</span><span class="label">จ่ายเร็ว</span></a>`);
+      html.push(`<div style="height:1px;background:#e2e8f0;margin:10px 12px;"></div>`);
+    }
 
     let inGroup = false;
     let groupItems = [];
@@ -235,6 +286,25 @@ const Layout = {
       }
     }
     flush();
+
+    // Mode-switch footer — gives users a visible way out of either mode.
+    if (uiMode === 'simple') {
+      html.push(`
+        <div style="margin:18px 12px 8px;padding-top:14px;border-top:1px solid #e2e8f0;">
+          <a class="nav-item" href="#" onclick="localStorage.setItem('uiMode','advanced'); window.location.reload(); return false;"
+             title="แสดงเมนูครบ 64 รายการของระบบบัญชี">
+            <span class="icon">⚙️</span><span class="label">ดูเมนูทั้งหมด (มืออาชีพ)</span>
+          </a>
+        </div>`);
+    } else {
+      html.push(`
+        <div style="margin:18px 12px 8px;padding-top:14px;border-top:1px solid #e2e8f0;">
+          <a class="nav-item" href="#" onclick="localStorage.setItem('uiMode','simple'); window.location.href='/simple.html'; return false;"
+             title="ซ่อนเมนูซับซ้อน ใช้งานแบบง่าย ๆ">
+            <span class="icon">😊</span><span class="label">โหมดง่าย</span>
+          </a>
+        </div>`);
+    }
 
     nav.innerHTML = html.join('');
     this._wireNavSearch();
@@ -766,6 +836,45 @@ const Layout = {
     tc.className = 'toast-container';
     tc.id = 'toastContainer';
     document.body.appendChild(tc);
+
+    // Floating Action Button (FAB) — universal shortcut to the two most
+    // common tasks (sell, expense) from any page. Sits in the bottom-right
+    // corner; expands into a small radial menu on tap. Hidden on the POS
+    // page (which has its own primary action) and on the auth pages.
+    const noFabPages = ['pos', 'pos-kds', 'login', 'register'];
+    if (!noFabPages.includes(this.currentPage)) {
+      const fab = document.createElement('div');
+      fab.id = 'globalFab';
+      fab.innerHTML = `
+        <div class="fab-menu" id="fabMenu" style="display:none">
+          <a class="fab-item" href="/pages/quick-sale.html" title="ขายเร็ว">
+            <span class="fab-ic">💰</span><span class="fab-lbl">ขายเร็ว</span>
+          </a>
+          <a class="fab-item" href="/pages/quick-expense.html" title="จ่ายเร็ว">
+            <span class="fab-ic">🧾</span><span class="fab-lbl">จ่ายเร็ว</span>
+          </a>
+          <a class="fab-item" href="/pages/document-scan.html" title="ถ่ายรูปบิล">
+            <span class="fab-ic">📸</span><span class="fab-lbl">ถ่ายรูปบิล</span>
+          </a>
+        </div>
+        <button class="fab-main" onclick="Layout._toggleFab()" title="ทำรายการเร็ว">＋</button>`;
+      document.body.appendChild(fab);
+
+      // Mobile bottom-nav for Simple Mode — provides thumb-reachable nav on
+      // phones where the sidebar is hidden behind the hamburger. Only renders
+      // when uiMode=simple so power users keep their full sidebar UX.
+      if ((localStorage.getItem('uiMode') || 'simple') === 'simple') {
+        const bn = document.createElement('nav');
+        bn.id = 'mobileBottomNav';
+        bn.innerHTML = `
+          <a href="/simple.html"><span>🏠</span><span>หน้าหลัก</span></a>
+          <a href="/pages/quick-sale.html"><span>💰</span><span>ขาย</span></a>
+          <a href="/pages/quick-expense.html"><span>🧾</span><span>จ่าย</span></a>
+          <a href="/pages/bank.html"><span>🏦</span><span>เงิน</span></a>
+          <a href="/pages/tax-calendar.html"><span>🏛️</span><span>ภาษี</span></a>`;
+        document.body.appendChild(bn);
+      }
+    }
 
     // Notification panel
     const np = document.createElement('div');
@@ -1322,6 +1431,122 @@ const Layout = {
 
   // Toast notifications (with deduplication - max 3 visible, no duplicate messages)
   _activeToasts: new Map(),
+  // Help tooltip: any element with `data-help="…"` gets a small ⓘ icon
+  // injected next to it; clicking the icon shows a bubble with the help
+  // text. Mounted once at init; auto-rescanned when pages dynamically
+  // re-render content (call Layout._mountHelpIcons() to rescan).
+  _mountHelpIcons() {
+    document.querySelectorAll('[data-help]:not([data-help-mounted])').forEach(el => {
+      el.setAttribute('data-help-mounted', '1');
+      const help = el.getAttribute('data-help');
+      if (!help) return;
+      const ic = document.createElement('button');
+      ic.type = 'button';
+      ic.className = 'help-icon';
+      ic.setAttribute('aria-label', 'ดูคำอธิบาย');
+      ic.textContent = 'ⓘ';
+      ic.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this._showHelpBubble(ic, help); };
+      el.appendChild(ic);
+    });
+  },
+  _showHelpBubble(anchor, text) {
+    const old = document.getElementById('helpBubble');
+    if (old) old.remove();
+    const b = document.createElement('div');
+    b.id = 'helpBubble';
+    b.innerHTML = `<div class="hb-text">${this.esc(text)}</div><button class="hb-close" onclick="this.parentElement.remove()">×</button>`;
+    document.body.appendChild(b);
+    const r = anchor.getBoundingClientRect();
+    // Position below the icon; flip up if it would clip the viewport bottom.
+    const w = b.offsetWidth, h = b.offsetHeight;
+    let top = r.bottom + 8, left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left));
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    b.style.top = top + 'px'; b.style.left = left + 'px';
+    // Auto-close on outside click
+    setTimeout(() => {
+      const off = (ev) => { if (!b.contains(ev.target)) { b.remove(); document.removeEventListener('click', off); } };
+      document.addEventListener('click', off);
+    }, 0);
+  },
+
+  // Guided tour runner. Any page can opt-in by marking elements with
+  //   <element data-tour-step="1" data-tour-text="..."></element>
+  // and (optionally) data-tour-position="top|bottom|left|right".
+  // Call Layout.startTour() from page code or auto-trigger on first visit:
+  //   if (!localStorage.getItem('tour:'+pageName)) Layout.startTour(pageName);
+  startTour(pageKey) {
+    const steps = Array.from(document.querySelectorAll('[data-tour-step]'))
+      .map(el => ({ el, n: parseInt(el.getAttribute('data-tour-step') || '0', 10),
+                    text: el.getAttribute('data-tour-text') || '',
+                    pos: el.getAttribute('data-tour-position') || 'bottom' }))
+      .filter(s => s.n > 0 && s.text)
+      .sort((a, b) => a.n - b.n);
+    if (steps.length === 0) return;
+    let i = 0;
+    const overlay = document.createElement('div');
+    overlay.id = 'tourOverlay';
+    document.body.appendChild(overlay);
+    const renderStep = () => {
+      const s = steps[i];
+      const r = s.el.getBoundingClientRect();
+      // Highlight ring
+      overlay.innerHTML = `
+        <div class="tour-mask" style="top:${r.top - 6}px;left:${r.left - 6}px;width:${r.width + 12}px;height:${r.height + 12}px;"></div>
+        <div class="tour-pop tour-pos-${s.pos}" style="top:${r.bottom + 12}px;left:${Math.max(8, r.left)}px;">
+          <div class="tour-text">${this.esc(s.text)}</div>
+          <div class="tour-actions">
+            <span class="tour-progress">${i + 1} / ${steps.length}</span>
+            <div style="flex:1;"></div>
+            <button class="tour-skip" type="button">ข้าม</button>
+            ${i < steps.length - 1
+              ? '<button class="tour-next" type="button">ถัดไป →</button>'
+              : '<button class="tour-done" type="button">เสร็จสิ้น ✓</button>'}
+          </div>
+        </div>`;
+      overlay.querySelector('.tour-skip').onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:' + pageKey, '1'); };
+      const next = overlay.querySelector('.tour-next');
+      if (next) next.onclick = () => { i++; s.el.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(renderStep, 250); };
+      const done = overlay.querySelector('.tour-done');
+      if (done) done.onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:' + pageKey, '1'); };
+    };
+    steps[0].el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(renderStep, 300);
+  },
+
+  _toggleFab() {
+    const menu = document.getElementById('fabMenu');
+    if (!menu) return;
+    menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+  },
+
+  // Catch any Promise rejection that bubbles up without being handled —
+  // typically an API call where the caller forgot to .catch. Showing a
+  // toast beats the previous "silent failure or raw alert()" experience.
+  _installGlobalErrorHandler() {
+    if (this._errHandlerInstalled) return;
+    window.addEventListener('unhandledrejection', (e) => {
+      const r = e.reason;
+      if (!r) return;
+      // Ignore aborted fetches / cancelled requests
+      if (r.name === 'AbortError') return;
+      const raw = (r.message || String(r));
+      // Strip the "Server returned non-JSON…" technical noise — replace
+      // with a short message and keep the detail in the console for debugging.
+      const friendly = /non-JSON|HTTP 5\d\d|<!doctype/i.test(raw)
+        ? 'เซิร์ฟเวอร์มีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง หรือรีเฟรชหน้านี้'
+        : raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
+      if (this.toast) this.toast(friendly, 'error');
+      console.error('[unhandled]', r);
+    });
+    window.addEventListener('error', (e) => {
+      // Only catch script errors that escape — DOM/resource errors stay silent.
+      if (!e.error) return;
+      if (this.toast) this.toast('เกิดข้อผิดพลาดในหน้า: ' + (e.error.message || e.message || ''), 'error');
+      console.error('[window.error]', e.error);
+    });
+    this._errHandlerInstalled = true;
+  },
+
   toast(msg, type = 'success') {
     const container = document.getElementById('toastContainer');
     if (!container) return;

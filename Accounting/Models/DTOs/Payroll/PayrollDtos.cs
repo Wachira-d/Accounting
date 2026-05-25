@@ -105,3 +105,34 @@ public record LeaveBalanceResponse(
     string EmployeeName,
     int Year,
     List<LeaveBalanceItem> Balances);
+
+// ===== Severance Pay (ค่าชดเชย — Labor Code §118) =====
+
+/// <summary>
+/// คำขอคำนวณค่าชดเชยตามอายุงาน เพื่อ preview ก่อนเลิกจ้าง
+/// </summary>
+public record SeverancePreviewRequest(
+    DateTime EndDate,
+    string? TerminationReason);
+
+/// <summary>
+/// ผลคำนวณค่าชดเชยพร้อม breakdown ตามเกณฑ์ Labor Code §118
+///   • <120 days   →   0 days
+///   • 120d–1y     →  30 days
+///   • 1–3y        →  90 days
+///   • 3–6y        → 180 days
+///   • 6–10y       → 240 days
+///   • 10–20y      → 300 days
+///   • >20y        → 400 days
+/// </summary>
+public record SeverancePreviewResponse(
+    Guid EmployeeId,
+    string EmployeeName,
+    DateTime StartDate,
+    DateTime EndDate,
+    decimal YearsOfService,           // exact years (fractional)
+    int SeveranceDaysGranted,         // 0/30/90/180/240/300/400
+    decimal DailyRate,                // BaseSalary / 30 (monthly → daily)
+    decimal SeveranceAmount,          // dailyRate × days
+    bool IsEligible,                  // false when terminationReason indicates misconduct/voluntary
+    string Explanation);              // human-readable reasoning

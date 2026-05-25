@@ -471,7 +471,12 @@ public class OcrService : IOcrService
             decimal? whtAmt = null;
             // Calculate expected WHT from subTotal × rate when not extracted (for sanity validation)
             if (whtRatePct.HasValue && extractedData.SubTotal.HasValue)
-                whtAmt = Math.Round(extractedData.SubTotal.Value * whtRatePct.Value / 100m, 2);
+                // AwayFromZero matches the convention used throughout the rest
+                // of the system (PayrollService, TaxService, JE balance check).
+                // .NET's default Math.Round uses banker's rounding which would
+                // shift the WHT amount by 1 satang on half-baht boundaries and
+                // break ภงด.3 cross-tick reconciliation.
+                whtAmt = Math.Round(extractedData.SubTotal.Value * whtRatePct.Value / 100m, 2, MidpointRounding.AwayFromZero);
 
             var gatewayResult = OcrConfidenceGateway.Validate(
                 extractedData.Confidence,
@@ -2645,7 +2650,7 @@ public class OcrService : IOcrService
             data.TotalAmount = data.SubTotal + data.VatAmount;
         else if (data.TotalAmount > 0 && data.SubTotal == null && data.VatAmount == null && hasTaxInvoice)
         {
-            data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2);
+            data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
             data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
         }
 

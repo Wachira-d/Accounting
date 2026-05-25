@@ -99,6 +99,24 @@
         <div class="modal-footer" id="detailFooter"></div>
       </div>
     </div>
+
+    <!-- Pull Document Modal -->
+    <div class="modal-overlay" id="pullDocModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header"><h3 class="modal-title">ดึงเอกสารเข้ารายงาน</h3><button class="modal-close" onclick="Layout.closeModal('pullDocModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="text-xs text-gray-400" style="margin-bottom:8px">เอกสารที่มี VAT จากงวดอื่นซึ่งยังไม่ถูกใช้ในรายงานภาษีใด — เลือกดึงเข้ารายงานงวดนี้</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <input class="form-input form-input-sm" id="pullSearch" placeholder="🔍 ค้นหาเลขที่/ชื่อผู้ติดต่อ" style="flex:1;min-width:160px" onkeydown="if(event.key==='Enter')Page.loadPullable()">
+            <input type="date" class="form-input form-input-sm" id="pullFrom" title="ตั้งแต่วันที่">
+            <input type="date" class="form-input form-input-sm" id="pullTo" title="ถึงวันที่">
+            <button class="btn btn-sm btn-secondary" onclick="Page.loadPullable()">ค้นหา</button>
+          </div>
+          <div id="pullDocList"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('pullDocModal')">ปิด</button></div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -248,6 +266,7 @@
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
             <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="Page.exportEFiling('${r.id}','${r.taxType}',${r.year},${r.month})" title="ดาวน์โหลดไฟล์ pipe-delimited สำหรับยื่น RD">📥 e-Filing</button>
+            <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="Page.exportXlsx('${r.id}')" title="ส่งออกรายงานเป็น Excel — VAT แยกชีตภาษีขาย/ภาษีซื้อ">📊 Excel</button>
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
@@ -279,16 +298,56 @@
             </div>
             <div id="vatDebugBox"></div>`;
           if (d.lines && d.lines.length) {
-            html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px" data-i18n="common.detail">รายละเอียด</h4><div class="table-container"><table class="table"><thead><tr><th>#</th><th data-i18n="common.items">รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
-            html += d.lines.map((ln, i) => `<tr>
-              <td>${ln.lineOrder}</td>
-              <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${(ln.description||'').replace(/"/g,'&quot;')}" style="min-width:120px">` : (ln.description || '-')}</td>
-              <td class="text-xs">${ln.taxPayerName || '-'}</td>
-              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
-              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:70px">` : ln.taxRate}</td>
-              <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
-            </tr>`).join('');
-            html += '</tbody></table></div>';
+            const isVat = d.taxType === 'VAT';
+            // Classify each line by VAT side using its IncomeTypeCode
+            // (matches the server-side recalc grouping in UpdateTaxReportAsync).
+            const sideOf = (ln) => {
+              const c = ln.incomeTypeCode;
+              if (c === 'INPUT' || c === 'JE_INPUT') return 'input';
+              if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary';
+              return 'output';
+            };
+            const esc = (s) => (s || '').replace(/"/g, '&quot;');
+            const renderRow = (ln) => {
+              const ex = !!ln.isExcluded;
+              const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
+              const chk = editable
+                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
+                : (ex ? '✗' : '✓');
+              return `<tr style="${rowStyle}">
+                <td class="text-center">${chk}</td>
+                <td>${ln.lineOrder}</td>
+                <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${esc(ln.description)}" style="min-width:160px">` : (ln.description || '-')}</td>
+                <td class="text-xs">${ln.taxPayerName || '-'}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:64px">` : ln.taxRate}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
+              </tr>`;
+            };
+            const renderTable = (title, color, rows) => {
+              const sub = rows.filter(r => !r.isExcluded).reduce((s, r) => s + Number(r.taxAmount || 0), 0);
+              return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span></div>
+                <div class="table-container"><table class="table">
+                <thead><tr><th style="width:36px" title="เลือกใช้/ไม่ใช้">ใช้</th><th>#</th><th>รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead>
+                <tbody>${rows.map(renderRow).join('')}</tbody>
+                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="6" class="text-right">รวมภาษี (เฉพาะรายการที่เลือกใช้)</td><td class="text-right">${Layout.money(sub)}</td></tr></tfoot>
+                </table></div>`;
+            };
+            html += '<h4 class="text-sm font-semibold" style="margin:14px 0 0">รายละเอียด</h4>';
+            html += '<div class="text-xs text-gray-400" style="margin:2px 0 4px">ติ๊ก "ใช้" ออกเพื่อไม่นำรายการนั้นเข้ายอดรายงาน (รายการยังถูกเก็บไว้)</div>';
+            if (isVat) {
+              const groups = [
+                ['output', '📤 ภาษีขาย (Output VAT)', '#0369a1'],
+                ['input', '📥 ภาษีซื้อ (Input VAT)', '#7c3aed'],
+                ['summary', '➖ รายการยกเว้น / เครดิตยกมา', '#64748b'],
+              ];
+              for (const [key, title, color] of groups) {
+                const rows = d.lines.filter(l => sideOf(l) === key);
+                if (rows.length) html += renderTable(title, color, rows);
+              }
+            } else {
+              html += renderTable('รายการ', '#334155', d.lines);
+            }
           }
           html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${d.notes || ''}</textarea>` : `<div>${d.notes || '-'}</div>`}</div>`;
           if (d.filingReference) {
@@ -297,7 +356,8 @@
           document.getElementById('detailContent').innerHTML = html;
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (editable) {
-            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button><button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
+            const pullBtn = d.taxType === 'VAT' ? `<button class="btn btn-secondary" onclick="Page.openPullDoc('${d.id}')" style="margin-right:8px">➕ ดึงเอกสาร</button>` : '';
+            footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button>${pullBtn}<button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
@@ -355,7 +415,9 @@
           const lid = inp.dataset.line;
           if (!lineMap[lid]) lineMap[lid] = { id: lid };
           const field = inp.dataset.field;
-          lineMap[lid][field] = field === 'description' ? inp.value : parseFloat(inp.value) || 0;
+          if (field === 'include') lineMap[lid].excluded = !inp.checked;
+          else if (field === 'description') lineMap[lid][field] = inp.value;
+          else lineMap[lid][field] = parseFloat(inp.value) || 0;
         });
         const lines = Object.values(lineMap);
         try {
@@ -363,6 +425,56 @@
           Layout.toast('บันทึกสำเร็จ');
           await this.load();
           await this.viewDetail(id);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _pullReportId: null,
+      openPullDoc(reportId) {
+        this._pullReportId = reportId;
+        document.getElementById('pullSearch').value = '';
+        const now = new Date();
+        const from = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+        document.getElementById('pullFrom').value = from.toISOString().slice(0, 10);
+        document.getElementById('pullTo').value = now.toISOString().slice(0, 10);
+        Layout.openModal('pullDocModal');
+        this.loadPullable();
+      },
+      async loadPullable() {
+        const api = Layout.api(); if (!api || !this._pullReportId) return;
+        const list = document.getElementById('pullDocList');
+        list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div>';
+        const p = new URLSearchParams();
+        const s = document.getElementById('pullSearch').value.trim();
+        const f = document.getElementById('pullFrom').value;
+        const t = document.getElementById('pullTo').value;
+        if (s) p.set('search', s);
+        if (f) p.set('fromDate', f);
+        if (t) p.set('toDate', t);
+        try {
+          const res = await api.getPullableDocuments(this._pullReportId, '?' + p.toString());
+          const docs = res.data || [];
+          if (!docs.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ไม่พบเอกสารที่ดึงได้</div>'; return; }
+          list.innerHTML = `<div class="table-container"><table class="table"><thead><tr>
+            <th>ประเภท</th><th>เลขที่</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">มูลค่า</th><th class="text-right">VAT</th><th></th>
+            </tr></thead><tbody>${docs.map(d => `<tr>
+            <td><span class="badge badge-${d.isInput ? 'primary' : 'success'}">${d.isInput ? 'ซื้อ' : 'ขาย'}</span></td>
+            <td>${d.documentNumber}</td>
+            <td class="text-xs">${Layout.date(d.documentDate)}</td>
+            <td class="text-xs">${d.contactName}</td>
+            <td class="text-right">${Layout.money(d.subTotal)}</td>
+            <td class="text-right">${Layout.money(d.vatAmount)}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="Page.pullDoc('${d.id}')">ดึง</button></td>
+            </tr>`).join('')}</tbody></table></div>`;
+        } catch (e) { list.innerHTML = `<div class="text-center text-danger" style="padding:20px">${e.message}</div>`; }
+      },
+      async pullDoc(documentId) {
+        const api = Layout.api(); if (!api || !this._pullReportId) return;
+        try {
+          await api.pullDocumentIntoReport(this._pullReportId, documentId);
+          Layout.toast('ดึงเอกสารเข้ารายงานสำเร็จ');
+          const rid = this._pullReportId;
+          Layout.closeModal('pullDocModal');
+          await this.load();
+          await this.viewDetail(rid);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async fileReport(id) {
@@ -436,6 +548,7 @@
           'WithholdingTax1':'PND.1', '4':'PND.1',
           'WithholdingTax54':'PND.54', '8':'PND.54',
           'VatPp36':'PP.36', '9':'PP.36',
+          'CorporateIncomeTax':'PND.50', '6':'PND.50',
         };
         const form = formMap[taxType] || taxType;
         const cid = Layout.getCompanyId();
@@ -454,6 +567,25 @@
           a.click();
           URL.revokeObjectURL(a.href);
           Layout.toast(`ดาวน์โหลด ${form} สำเร็จ — ไฟล์พร้อมส่ง RD`);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async exportXlsx(reportId) {
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        try {
+          const res = await fetch(`/api/companies/${cid}/tax/${reportId}/export-xlsx`,
+            { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) throw new Error(`ส่งออก Excel ล้มเหลว (${res.status})`);
+          const blob = await res.blob();
+          const cd = res.headers.get('content-disposition') || '';
+          const m = cd.match(/filename="?([^"]+)"?/);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = m ? m[1] : `TaxReport_${reportId}.xlsx`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          Layout.toast('ส่งออก Excel สำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
