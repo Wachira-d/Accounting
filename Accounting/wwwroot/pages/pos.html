@@ -322,6 +322,23 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    // Parse a server-returned timestamp as UTC, even when the serializer
+    // dropped the 'Z'. ASP.NET Core's default JSON serializer sometimes
+    // emits naive ISO strings ("2026-05-25T04:22:20") for DateTime values
+    // with Kind=Unspecified (typical for EF Core 8 timestamptz columns
+    // after a round-trip); JS would parse those as local-naive instead of
+    // UTC. Returns a Date in the correct moment so toLocale* converts to
+    // the browser's timezone.
+    function asUtc(s) {
+      if (!s) return new Date(NaN);
+      if (s instanceof Date) return s;
+      const str = String(s);
+      // Already has a TZ marker (Z, +HH:MM, -HH:MM)?
+      if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(str)) return new Date(str);
+      // Naive ISO → assume UTC.
+      return new Date(str + 'Z');
+    }
+
     const Page = {
       terminals: [], session: null, products: [], packages: [],
       allItems: [], filteredItems: [], currentCategory: '',
@@ -554,7 +571,12 @@
         const btn = document.getElementById('btnSession');
         if (isOpen && this.session) {
           dot.className = 'session-dot open';
-          text.textContent = `กะเปิด: ${new Date(this.session.openedAt).toLocaleTimeString('th-TH')}`;
+          // Server returns OpenedAt as UTC. Some serialization paths drop the
+          // 'Z' suffix on the ISO string → JS would parse it as local-naive
+          // and display 04:22 UTC literally as 04:22 instead of converting to
+          // 11:22 ICT. Force UTC interpretation, then toLocaleTimeString
+          // renders in the browser's local timezone.
+          text.textContent = `กะเปิด: ${asUtc(this.session.openedAt).toLocaleTimeString('th-TH')}`;
           btn.textContent = 'ปิดกะ';
           btn.className = 'btn btn-sm btn-danger';
         } else {
@@ -938,7 +960,7 @@
               <tbody>
                 ${list.map(p => `
                   <tr>
-                    <td style="white-space:nowrap;">${new Date(p.completedAt).toLocaleString('th-TH', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})}</td>
+                    <td style="white-space:nowrap;">${asUtc(p.completedAt).toLocaleString('th-TH', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})}</td>
                     <td>${Layout.esc(p.tableNumber || p.queueNumber || '-')}</td>
                     <td>${(p.items || []).length} รายการ</td>
                     <td class="text-right">${Layout.money((p.items || []).reduce((s,i)=>s+(i.unitPrice||0)*(i.quantity||0),0))}</td>

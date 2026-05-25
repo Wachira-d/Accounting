@@ -201,7 +201,11 @@
         let list = this.orders.slice();
         if (cat) list = list.filter(o => o.orderType === cat);
         // Sort oldest first — kitchen FIFO
-        list.sort((a, b) => new Date(a.orderDate) - new Date(b.orderDate));
+        // Server timestamps may be naive UTC — parse via asUtc so the
+        // resulting Date is the correct moment in time (sort order +
+        // elapsed-time calc would both be wrong by the local UTC offset
+        // if we used `new Date(string)` directly).
+        list.sort((a, b) => this._asUtc(a.orderDate) - this._asUtc(b.orderDate));
         document.getElementById('kdsCount').textContent = list.length;
 
         const grid = document.getElementById('kdsGrid');
@@ -213,7 +217,7 @@
       },
 
       renderTicket(o) {
-        const elapsedMin = (Date.now() - new Date(o.orderDate).getTime()) / 60000;
+        const elapsedMin = (Date.now() - this._asUtc(o.orderDate).getTime()) / 60000;
         const elapsedClass = elapsedMin >= 15 ? 'elapsed-late'
                            : elapsedMin >= 5 ? 'elapsed-warn' : '';
         const newClass = this._newIds && this._newIds.has(o.id) ? 'new-ticket' : '';
@@ -305,7 +309,16 @@
       },
 
       fmtTime(d) {
-        return new Date(d).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+        return this._asUtc(d).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+      },
+
+      // Robust timestamp parser — server may emit naive ISO strings; treat
+      // those as UTC so the kitchen wall clock matches reality.
+      _asUtc(s) {
+        if (!s) return new Date(NaN);
+        if (s instanceof Date) return s;
+        const str = String(s);
+        return /[zZ]$|[+-]\d{2}:?\d{2}$/.test(str) ? new Date(str) : new Date(str + 'Z');
       },
 
       fmtQty(q) {
