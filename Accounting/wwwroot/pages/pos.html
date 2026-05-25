@@ -342,7 +342,12 @@
 
       exitPos() {
         document.body.classList.remove('pos-mode');
-        window.location.href = '/pages/dashboard.html';
+        // Honour the user's saved UI mode — Simple Mode users go back to the
+        // simple home, power users go to the full /app.html dashboard. The
+        // old hardcoded /pages/dashboard.html doesn't exist (the dashboard
+        // lives at /app.html), so this used to 404 on every exit.
+        const mode = localStorage.getItem('uiMode') || 'simple';
+        window.location.href = mode === 'advanced' ? '/app.html' : '/simple.html';
       },
 
       _updateOnlineIndicator() {
