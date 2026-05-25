@@ -20,6 +20,12 @@ public class CreateSiteRequest
     public bool UseGlobalInventory { get; set; } = true;
     public string DefaultLanguage { get; set; } = "th";
     public string DefaultCurrency { get; set; } = "THB";
+
+    /// <summary>เมื่อ true — service จะ seed หน้าเว็บตัวอย่าง 4-5 หน้าพร้อม blocks
+    /// ตามประเภทธุรกิจที่เลือก (industryType) เพื่อให้ลูกค้ามีจุดเริ่มต้นไม่ใช่หน้าว่าง.
+    /// ลูกค้าค่อยแก้คำ ใส่รูป ปรับแต่งทีหลังได้จาก CMS editor.</summary>
+    public bool SeedTemplate { get; set; } = false;
+    public IndustryType IndustryType { get; set; } = IndustryType.General;
 }
 
 public class UpdateSiteRequest

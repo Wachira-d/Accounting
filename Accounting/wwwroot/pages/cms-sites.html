@@ -101,6 +101,43 @@
                 </select>
               </div>
             </div>
+            <!-- Starter template — seeds 4-5 pages so the customer doesn't
+                 land on a blank canvas. They edit the copy/images later. -->
+            <div class="form-group" style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-top:8px">
+              <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+                <input type="checkbox" id="fSeedTemplate" checked style="margin-top:3px">
+                <span>
+                  <strong style="font-size:14px">🎁 สร้างพร้อมเนื้อหาตัวอย่าง (แนะนำ)</strong>
+                  <span style="display:block;font-size:12px;color:#166534;margin-top:3px;line-height:1.5">
+                    ระบบจะใส่หน้าเว็บ 4-5 หน้าให้พร้อมใช้ทันที (หน้าหลัก · เกี่ยวกับเรา · บริการ/เมนู/สินค้า · ติดต่อ) ลูกค้าค่อยแก้คำ ใส่รูป ปรับแต่งเองได้ทีหลัง
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div class="form-group" id="industryWrap">
+              <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(เลือกเพื่อให้ระบบใส่เนื้อหาตัวอย่างที่เหมาะกับธุรกิจ)</span></label>
+              <select class="form-input" id="fIndustry">
+                <option value="0">ทั่วไป / บริการ</option>
+                <option value="2">บริการมืออาชีพ</option>
+                <option value="17">ฟรีแลนซ์ / ที่ปรึกษา</option>
+                <option value="4">ร้านอาหาร</option>
+                <option value="5">คาเฟ่ / เครื่องดื่ม</option>
+                <option value="6">ค้าปลีก / Retail</option>
+                <option value="16">ขายออนไลน์ / E-commerce</option>
+                <option value="1">ซื้อมาขายไป / Trading</option>
+                <option value="14">เกษตร</option>
+                <option value="12">สปา / ทำเล็บ / ความงาม</option>
+                <option value="10">คลินิก / สุขภาพ</option>
+                <option value="11">การศึกษา / สอนพิเศษ</option>
+                <option value="7">รับเหมาก่อสร้าง</option>
+                <option value="8">อสังหาริมทรัพย์</option>
+                <option value="9">เทคโนโลยี / SaaS</option>
+                <option value="13">ขนส่ง / โลจิสติกส์</option>
+                <option value="15">โรงแรม / ที่พัก</option>
+                <option value="3">โรงงาน / OEM</option>
+                <option value="99">อื่น ๆ</option>
+              </select>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -119,6 +156,10 @@
     // Starter templates — define a site preset + array of pages with blocks.
     // When the user picks one, we create the site, then create each page (with
     // its blocks inline in the page-create call so it's atomic per page).
+    // Template metadata only. The actual page+block content lives in
+    // CmsSiteTemplateSeeder on the server — keyed by IndustryType — so we
+    // don't have to keep two copies in sync. Each card here picks an
+    // IndustryType + a SiteType; the backend fills the pages.
     const TEMPLATES = {
       blank: {
         name: 'เริ่มจากศูนย์',
@@ -127,18 +168,17 @@
         thumbClass: 'blank',
         description: 'เริ่มต้นจากหน้าเปล่า — ออกแบบเองทุกอย่าง',
         siteType: 1, // Corporate
-        pages: [
-          { title: 'หน้าแรก', slug: 'home', pageType: 1, blocks: [] }
-        ]
+        industryType: 0,
+        seedTemplate: false  // truly blank — server creates one empty Home page on demand later
       },
       corporate: {
-        name: 'เว็บบริษัท',
+        name: 'เว็บบริษัท / บริการ',
         nameEn: 'Corporate',
         icon: '🏢',
         thumbClass: '',
-        description: 'เว็บแสดงข้อมูลบริษัท บริการ และช่องทางติดต่อ',
-        siteType: 1, // Corporate
-        pages: [
+        description: 'เว็บแสดงข้อมูลบริษัท บริการ ราคา รีวิวลูกค้า และช่องทางติดต่อ — 4 หน้า พร้อมใช้',
+        siteType: 1, industryType: 0, seedTemplate: true,
+        _legacy_pages_unused: [
           {
             title: 'หน้าแรก', slug: 'home', pageType: 1,
             blocks: [
@@ -184,9 +224,9 @@
         nameEn: 'Ecommerce',
         icon: '🛒',
         thumbClass: 'eco',
-        description: 'ขายสินค้าออนไลน์ ตะกร้า ชำระเงิน และจัดการคำสั่งซื้อ',
-        siteType: 2, // Ecommerce
-        pages: [
+        description: 'ขายสินค้าออนไลน์ — Hero / สินค้าแนะนำ / รีวิวลูกค้า / FAQ',
+        siteType: 2, industryType: 16, seedTemplate: true,
+        _legacy_pages_unused: [
           {
             title: 'หน้าแรก', slug: 'home', pageType: 1,
             blocks: [
@@ -217,14 +257,38 @@
           }
         ]
       },
+      restaurant: {
+        name: 'ร้านอาหาร / คาเฟ่',
+        nameEn: 'Restaurant',
+        icon: '🍜',
+        thumbClass: 'food',
+        description: 'หน้าหลัก · เมนู · จองโต๊ะ · ติดต่อ — รวมเมนูตัวอย่างพร้อมราคา',
+        siteType: 1, industryType: 4, seedTemplate: true
+      },
+      beauty: {
+        name: 'สปา / ความงาม',
+        nameEn: 'Beauty & Spa',
+        icon: '💆',
+        thumbClass: 'beauty',
+        description: 'หน้าหลัก · บริการ · จองคิว · ติดต่อ — พร้อมแพ็กเกจตัวอย่าง',
+        siteType: 3, industryType: 12, seedTemplate: true
+      },
+      healthcare: {
+        name: 'คลินิก / สุขภาพ',
+        nameEn: 'Healthcare',
+        icon: '🏥',
+        thumbClass: 'health',
+        description: 'หน้าหลัก · บริการ · นัดหมายแพทย์ · ติดต่อ',
+        siteType: 1, industryType: 10, seedTemplate: true
+      },
       booking: {
-        name: 'จองนัดหมาย',
+        name: 'จองนัดหมาย (ทั่วไป)',
         nameEn: 'Booking',
         icon: '📅',
         thumbClass: 'book',
-        description: 'รับจองคิว/นัดหมายออนไลน์ — สำหรับคลินิก ร้านเสริมสวย หรือบริการอื่นๆ',
-        siteType: 3, // Booking
-        pages: [
+        description: 'รับจองคิว/นัดหมายออนไลน์ — สำหรับบริการอื่น ๆ',
+        siteType: 3, industryType: 2, seedTemplate: true,
+        _legacy_pages_unused: [
           {
             title: 'หน้าแรก', slug: 'home', pageType: 1,
             blocks: [
@@ -256,6 +320,62 @@
             ]
           }
         ]
+      },
+      construction: {
+        name: 'รับเหมาก่อสร้าง',
+        nameEn: 'Construction',
+        icon: '🏗️',
+        thumbClass: 'construction',
+        description: 'หน้าหลัก · ผลงาน · ขอใบเสนอราคา · ติดต่อ — สำหรับผู้รับเหมา',
+        siteType: 1, industryType: 7, seedTemplate: true
+      },
+      realestate: {
+        name: 'อสังหาริมทรัพย์',
+        nameEn: 'Real Estate',
+        icon: '🏘️',
+        thumbClass: 'realestate',
+        description: 'นายหน้า — รายการขาย/เช่า บ้าน คอนโด ที่ดิน + นัดดูทรัพย์',
+        siteType: 1, industryType: 8, seedTemplate: true
+      },
+      technology: {
+        name: 'เทคโนโลยี / ซอฟต์แวร์',
+        nameEn: 'Tech / SaaS',
+        icon: '💻',
+        thumbClass: 'tech',
+        description: 'หน้าหลัก · ฟีเจอร์ · ราคา · ติดต่อเดโม — แพ็กเกจ + รีวิว',
+        siteType: 1, industryType: 9, seedTemplate: true
+      },
+      education: {
+        name: 'สถาบันสอน / คอร์ส',
+        nameEn: 'Education',
+        icon: '🎓',
+        thumbClass: 'education',
+        description: 'หน้าหลัก · หลักสูตร · สมัครเรียน · ติดต่อ — รวมราคาคอร์ส',
+        siteType: 1, industryType: 11, seedTemplate: true
+      },
+      transportation: {
+        name: 'ขนส่ง / โลจิสติกส์',
+        nameEn: 'Transportation',
+        icon: '🚚',
+        thumbClass: 'transport',
+        description: 'หน้าหลัก · บริการ · ขอราคา/จองรถ · ติดต่อ',
+        siteType: 1, industryType: 13, seedTemplate: true
+      },
+      hotel: {
+        name: 'โรงแรม / ที่พัก',
+        nameEn: 'Hotel',
+        icon: '🏨',
+        thumbClass: 'hotel',
+        description: 'หน้าหลัก · ห้องพัก · จองห้อง · ติดต่อ — รวมรีวิวแขก',
+        siteType: 3, industryType: 15, seedTemplate: true
+      },
+      manufacturing: {
+        name: 'โรงงาน / OEM',
+        nameEn: 'Manufacturing',
+        icon: '🏭',
+        thumbClass: 'manufacturing',
+        description: 'หน้าหลัก · ความสามารถ · RFQ · ติดต่อ',
+        siteType: 1, industryType: 3, seedTemplate: true
       }
     };
 
@@ -369,7 +489,7 @@
       selectTemplate(key) {
         this.selectedTpl = key;
         const tpl = TEMPLATES[key];
-        document.getElementById('selectedTplName').textContent = `Template: ${tpl.name} (${tpl.pages.length} หน้า)`;
+        document.getElementById('selectedTplName').textContent = `เทมเพลต: ${tpl.name}${tpl.seedTemplate === false ? ' (หน้าเปล่า)' : ' — ระบบจะใส่ 4 หน้าตัวอย่างให้'}`;
         document.getElementById('selectedTplDesc').textContent = tpl.description;
         document.getElementById('step1').style.display = 'none';
         document.getElementById('step2').style.display = '';
@@ -405,41 +525,26 @@
         btn.disabled = true;
         btn.textContent = 'กำลังสร้าง...';
 
+        // Industry picker can override the template's default — useful when
+        // the user picks "Corporate" template but they're really a freelance
+        // designer; pick "ทั่วไป" to get the generic copy.
+        const industryOverride = parseInt(document.getElementById('fIndustry')?.value || '');
+        const useSeed = document.getElementById('fSeedTemplate')?.checked !== false && tpl.seedTemplate !== false;
+
         try {
-          // 1. Create the site
+          // One API call — backend creates the site + seeds pages atomically.
           const siteRes = await api.cmsCreateSite({
             name, nameEn: nameEn || null,
             subdomain, siteType: tpl.siteType,
             renderMode: 1, // ServerRendered
             useGlobalInventory: true,
             defaultLanguage: lang,
-            defaultCurrency: currency
+            defaultCurrency: currency,
+            seedTemplate: useSeed,
+            industryType: !isNaN(industryOverride) ? industryOverride : (tpl.industryType ?? 0)
           });
           const site = siteRes.data;
           if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
-
-          // 2. Create pages from the template (sequentially to preserve order)
-          for (let i = 0; i < tpl.pages.length; i++) {
-            const p = tpl.pages[i];
-            const blocks = (p.blocks || []).map((b, idx) => ({
-              blockType: b.type,
-              sortOrder: idx,
-              configJson: JSON.stringify(b.config || {}),
-              isVisible: true,
-              hideOnMobile: false,
-              hideOnDesktop: false
-            }));
-            await api.cmsCreatePage(site.id, {
-              title: p.title,
-              slug: p.slug,
-              pageType: p.pageType || 1,
-              sortOrder: i,
-              templateLayout: 'default',
-              showHeader: true,
-              showFooter: true,
-              blocks
-            });
-          }
 
           Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปหน้าแก้ไข', 'success');
           Layout.closeModal('createModal');

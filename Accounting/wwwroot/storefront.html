@@ -127,6 +127,9 @@
       <a class="sf-logo" id="sfLogo" href="#">เว็บไซต์</a>
       <button class="sf-mobile-toggle" onclick="document.getElementById('sfNav').classList.toggle('open')">☰</button>
       <nav class="sf-nav" id="sfNav"></nav>
+      <a id="sfCartBtn" href="#" onclick="Store.openCart();return false" style="display:none;position:relative;padding:8px 14px;background:var(--primary,#4F46E5);color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">
+        🛒 <span id="sfCartCount" style="background:#fff;color:var(--primary,#4F46E5);padding:1px 7px;border-radius:999px;font-size:12px;margin-left:4px">0</span>
+      </a>
     </div>
   </header>
 
@@ -217,8 +220,19 @@
           this.injectAnalytics(this.data.seo);
           this.loadCaptchaScript(this.data.site);
 
-          // 3. Load + render page
-          await this.loadPage(companyId, siteId, this.slug);
+          // 3. Special storefront routes — product detail, cart, checkout,
+          // order success, booking picker — handled in JS before the generic
+          // CMS-page loader runs. The user gets a real shopping/booking flow
+          // instead of "หน้านี้ยังไม่มีเนื้อหา".
+          Store.bind(companyId, siteId, this.basePath, this.pathBased, this);
+          await Store.refreshCartBadge();
+          const handled = await Store.tryRouteSpecialSlug(this.slug);
+          if (handled) {
+            // 4. Set browser title + favicon (still applies)
+          } else {
+            // 3. Load + render page
+            await this.loadPage(companyId, siteId, this.slug);
+          }
 
           // 4. Set browser title + favicon
           if (this.data.site?.faviconUrl) {
@@ -562,7 +576,7 @@
                     <h3 style="margin-bottom:8px">${this.esc(s.name||'')}</h3>
                     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">${this.esc(s.description||'')}</div>
                     <div style="margin-bottom:14px"><strong>฿${Number(s.price||0).toLocaleString('th-TH')}</strong> · ${s.durationMinutes||0} นาที</div>
-                    <button class="btn btn-primary" onclick="alert('การจองสำหรับ ${this.esc(s.name||'')} - ตัวอย่างเท่านั้น')">เลือกเวลา</button>
+                    <button class="btn btn-primary" onclick="Store.openBookingPicker('${this.esc(s.id||'')}', '${this.esc(s.name||'')}')">เลือกเวลา</button>
                   </div>`).join('')}
               </div>
             </div>`;
@@ -642,6 +656,399 @@
 
       esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     };
+
+    // ======================================================================
+    // Commerce + Booking flow — extends Store with the real shopping +
+    // booking journey so customers can actually buy / reserve, not just
+    // browse static pages. Backed by /api/companies/{}/cms/sites/{}/commerce
+    // and /api/.../storefront/booking-services already in the API.
+    // ======================================================================
+    Object.assign(Store, {
+      _ctx: { companyId: '', siteId: '', basePath: '', pathBased: false },
+      bind(companyId, siteId, basePath, pathBased, store) {
+        this._ctx = { companyId, siteId, basePath, pathBased, store };
+      },
+      // localStorage-backed guest session token — same cart survives reloads.
+      _sessionToken() {
+        const KEY = 'sf_session_' + this._ctx.siteId;
+        let t = localStorage.getItem(KEY);
+        if (!t) { t = crypto.randomUUID(); localStorage.setItem(KEY, t); }
+        return t;
+      },
+      _url(path) {
+        const { companyId, siteId } = this._ctx;
+        return `/api/companies/${companyId}/cms/sites/${siteId}${path}`;
+      },
+      _pageUrl(slug) {
+        return this._ctx.pathBased ? `${this._ctx.basePath}/${slug}` : `?slug=${encodeURIComponent(slug)}`;
+      },
+
+      async tryRouteSpecialSlug(slug) {
+        if (!slug) return false;
+        if (slug === 'cart')             { await this.renderCart();          return true; }
+        if (slug === 'checkout')         { await this.renderCheckout();      return true; }
+        if (slug.startsWith('order-success/')) {
+          await this.renderOrderSuccess(slug.split('/')[1]); return true;
+        }
+        if (slug.startsWith('product/')) {
+          await this.renderProductDetail(slug.substring('product/'.length)); return true;
+        }
+        return false;
+      },
+
+      async refreshCartBadge() {
+        try {
+          const r = await fetch(this._url(`/commerce/cart?sessionToken=${this._sessionToken()}`));
+          if (!r.ok) return;
+          const j = await r.json(); const cart = j.data || {};
+          const btn = document.getElementById('sfCartBtn');
+          const count = (cart.items || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+          if (btn) {
+            document.getElementById('sfCartCount').textContent = count;
+            // Always visible on Ecommerce / Hybrid sites — shows empty state
+            // so the user can find the cart even with 0 items. On purely
+            // booking/corporate sites we hide it to avoid clutter.
+            const siteType = this._ctx.store?.data?.site?.siteType;
+            const showsCommerce = siteType === 2 || siteType === 'Ecommerce' || siteType === 5 || siteType === 'Hybrid';
+            btn.style.display = (showsCommerce || count > 0) ? '' : 'none';
+          }
+        } catch(_) {}
+      },
+
+      openCart() { window.location.href = this._pageUrl('cart'); },
+
+      async renderProductDetail(productSlug) {
+        const main = document.getElementById('sfMain');
+        main.innerHTML = '<div class="sf-loader">กำลังโหลดสินค้า...</div>';
+        try {
+          const r = await fetch(this._url(`/storefront/products/${encodeURIComponent(productSlug)}`));
+          if (!r.ok) { this._ctx.store.renderNotFound(); return; }
+          const p = (await r.json()).data;
+          const price = p.overrideSellingPrice ?? p.erpSellingPrice ?? 0;
+          const compare = p.compareAtPrice;
+          document.title = (p.displayName || 'สินค้า') + ' — ' + (this._ctx.store.data?.site?.name || '');
+          main.innerHTML = `
+            <div class="sf-container" style="padding:32px 20px;display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:start;max-width:1100px">
+              <div>
+                ${p.featuredImageUrl
+                  ? `<img src="${this.esc(p.featuredImageUrl)}" alt="${this.esc(p.displayName||'')}" style="width:100%;border-radius:var(--radius,8px)">`
+                  : `<div style="aspect-ratio:1/1;background:#F3F4F6;border-radius:var(--radius,8px)"></div>`}
+              </div>
+              <div>
+                <h1 style="margin:0 0 12px">${this.esc(p.displayName||'')}</h1>
+                <div style="margin-bottom:18px;display:flex;gap:12px;align-items:baseline">
+                  <span style="font-size:28px;font-weight:700;color:var(--primary,#4F46E5)">฿${Number(price).toLocaleString('th-TH')}</span>
+                  ${compare ? `<span style="text-decoration:line-through;color:var(--text-secondary,#6B7280)">฿${Number(compare).toLocaleString('th-TH')}</span>` : ''}
+                </div>
+                ${p.shortDescription ? `<p style="color:var(--text-secondary,#6B7280);margin-bottom:18px">${this.esc(p.shortDescription)}</p>` : ''}
+                <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px">
+                  <label style="font-size:14px">จำนวน:</label>
+                  <input type="number" id="pdQty" value="1" min="1" style="width:80px;padding:8px 10px;border:1px solid #D1D5DB;border-radius:6px">
+                </div>
+                <button class="btn btn-primary" style="padding:14px 28px;font-size:16px" onclick="Store.addToCart('${this.esc(p.id)}', parseFloat(document.getElementById('pdQty').value)||1)">
+                  🛒 เพิ่มในตะกร้า
+                </button>
+                ${p.description ? `<div style="margin-top:32px;line-height:1.7">${p.description}</div>` : ''}
+              </div>
+            </div>`;
+        } catch (e) {
+          main.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`;
+        }
+      },
+
+      async addToCart(productId, quantity) {
+        try {
+          // Ensure cart exists
+          const cartRes = await fetch(this._url(`/commerce/cart?sessionToken=${this._sessionToken()}`));
+          const cart = (await cartRes.json()).data;
+          if (!cart?.id) throw new Error('ไม่สามารถสร้างตะกร้าได้');
+          const r = await fetch(this._url(`/commerce/cart/${cart.id}/items`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ siteProductId: productId, quantity })
+          });
+          if (!r.ok) throw new Error('เพิ่มในตะกร้าไม่สำเร็จ');
+          await this.refreshCartBadge();
+          // Friendly inline toast (no Layout dependency on storefront)
+          this._toast('✅ เพิ่มในตะกร้าแล้ว — ไปดู?', () => this.openCart());
+        } catch (e) {
+          this._toast('❌ ' + e.message);
+        }
+      },
+
+      async renderCart() {
+        const main = document.getElementById('sfMain');
+        main.innerHTML = '<div class="sf-loader">กำลังโหลดตะกร้า...</div>';
+        document.title = 'ตะกร้าสินค้า';
+        try {
+          const r = await fetch(this._url(`/commerce/cart?sessionToken=${this._sessionToken()}`));
+          const cart = (await r.json()).data || { items: [], totalAmount: 0 };
+          if (!cart.items || cart.items.length === 0) {
+            main.innerHTML = `<div class="sf-container" style="padding:48px 20px;text-align:center">
+              <div style="font-size:48px">🛒</div>
+              <h2>ตะกร้าว่าง</h2>
+              <p style="color:var(--text-secondary)">ยังไม่ได้เลือกสินค้า</p>
+              <a href="${this._pageUrl('home')}" class="btn btn-primary">เลือกซื้อสินค้า</a>
+            </div>`;
+            return;
+          }
+          main.innerHTML = `
+            <div class="sf-container" style="padding:32px 20px;max-width:900px">
+              <h1 style="margin-bottom:24px">🛒 ตะกร้าสินค้า</h1>
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:var(--radius,8px);overflow:hidden">
+                ${cart.items.map(it => `
+                  <div style="display:flex;gap:14px;align-items:center;padding:14px;border-bottom:1px solid #F3F4F6">
+                    ${it.imageUrl ? `<img src="${this.esc(it.imageUrl)}" style="width:64px;height:64px;object-fit:cover;border-radius:6px">` : `<div style="width:64px;height:64px;background:#F3F4F6;border-radius:6px"></div>`}
+                    <div style="flex:1;min-width:0">
+                      <div style="font-weight:600">${this.esc(it.productName||'')}</div>
+                      <div style="font-size:13px;color:var(--text-secondary)">฿${Number(it.unitPrice).toLocaleString('th-TH')} × ${Number(it.quantity)}</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                      <input type="number" min="1" value="${it.quantity}" style="width:64px;padding:6px;border:1px solid #D1D5DB;border-radius:4px"
+                             onchange="Store.updateCartItem('${cart.id}','${it.id}', parseFloat(this.value)||1)">
+                      <button onclick="Store.removeCartItem('${cart.id}','${it.id}')" style="background:#FEE2E2;color:#DC2626;border:none;border-radius:4px;padding:8px 10px;cursor:pointer">✕</button>
+                    </div>
+                    <div style="text-align:right;min-width:90px;font-weight:600">฿${Number(it.totalPrice).toLocaleString('th-TH')}</div>
+                  </div>`).join('')}
+                <div style="padding:18px;display:flex;justify-content:space-between;align-items:center;background:#F9FAFB">
+                  <div>
+                    <div style="font-size:13px;color:var(--text-secondary)">ราคารวม</div>
+                    <div style="font-size:24px;font-weight:800;color:var(--primary,#4F46E5)">฿${Number(cart.totalAmount||0).toLocaleString('th-TH', {minimumFractionDigits:2})}</div>
+                  </div>
+                  <a href="${this._pageUrl('checkout')}" class="btn btn-primary" style="padding:14px 28px;font-size:16px">ดำเนินการต่อ → ชำระเงิน</a>
+                </div>
+              </div>
+            </div>`;
+        } catch (e) {
+          main.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`;
+        }
+      },
+
+      async updateCartItem(cartId, itemId, qty) {
+        await fetch(this._url(`/commerce/cart/${cartId}/items/${itemId}`), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quantity: qty })
+        });
+        await this.renderCart();
+      },
+      async removeCartItem(cartId, itemId) {
+        if (!confirm('ลบสินค้านี้ออกจากตะกร้า?')) return;
+        await fetch(this._url(`/commerce/cart/${cartId}/items/${itemId}`), { method: 'DELETE' });
+        await this.refreshCartBadge();
+        await this.renderCart();
+      },
+
+      async renderCheckout() {
+        const main = document.getElementById('sfMain');
+        document.title = 'ชำระเงิน';
+        // Need cart first to confirm there are items.
+        const r = await fetch(this._url(`/commerce/cart?sessionToken=${this._sessionToken()}`));
+        const cart = (await r.json()).data;
+        if (!cart?.items?.length) {
+          main.innerHTML = `<div class="sf-container" style="padding:48px 20px;text-align:center">
+            <h2>ตะกร้าว่าง</h2><p>กรุณาเลือกสินค้าก่อน</p>
+            <a href="${this._pageUrl('home')}" class="btn btn-primary">เลือกซื้อสินค้า</a></div>`;
+          return;
+        }
+        main.innerHTML = `
+          <div class="sf-container" style="padding:32px 20px;max-width:760px">
+            <h1>📦 ข้อมูลจัดส่ง</h1>
+            <p style="color:var(--text-secondary);margin-bottom:24px">ยอดสุทธิ: <strong>฿${Number(cart.totalAmount||0).toLocaleString('th-TH', {minimumFractionDigits:2})}</strong></p>
+            <form onsubmit="Store.submitOrder(event, '${cart.id}')" style="display:grid;gap:14px;background:#fff;padding:24px;border:1px solid #E5E7EB;border-radius:var(--radius,8px)">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+                <div><label>ชื่อ-นามสกุล *</label><input name="shippingName" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div><label>เบอร์โทร *</label><input name="shippingPhone" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+              </div>
+              <div><label>อีเมล *</label><input type="email" name="shippingEmail" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+              <div><label>ที่อยู่จัดส่ง *</label><textarea name="shippingAddress" required rows="3" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
+              <div><label>หมายเหตุ</label><textarea name="customerNotes" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px" placeholder="คำขอพิเศษ ฯลฯ"></textarea></div>
+              <label style="display:flex;gap:8px;align-items:flex-start;padding:12px;background:#F9FAFB;border-radius:6px;cursor:pointer">
+                <input type="checkbox" name="requestTaxInvoice" id="reqTaxInv" onchange="document.getElementById('billingBlock').style.display=this.checked?'grid':'none'">
+                <span>📑 ขอใบกำกับภาษีเต็มรูป</span>
+              </label>
+              <div id="billingBlock" style="display:none;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#FFFBEB;border-radius:6px">
+                <div style="grid-column:1/-1"><label>ชื่อผู้รับใบกำกับ</label><input name="billingName" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div><label>เลขผู้เสียภาษี (13 หลัก)</label><input name="billingTaxId" maxlength="13" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div><label>รหัสสาขา</label><input name="billingBranchCode" placeholder="00000" maxlength="5" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div style="grid-column:1/-1"><label>ที่อยู่ใบกำกับ</label><textarea name="billingAddress" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
+              </div>
+              <button type="submit" class="btn btn-primary" style="padding:16px;font-size:17px;margin-top:8px">ยืนยันสั่งซื้อ</button>
+            </form>
+          </div>`;
+      },
+
+      async submitOrder(ev, cartId) {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const body = {
+          cartId,
+          shippingName: fd.get('shippingName'),
+          shippingPhone: fd.get('shippingPhone'),
+          shippingEmail: fd.get('shippingEmail'),
+          shippingAddress: fd.get('shippingAddress'),
+          customerNotes: fd.get('customerNotes') || null,
+          requestTaxInvoice: !!fd.get('requestTaxInvoice'),
+          billingName: fd.get('billingName') || null,
+          billingTaxId: fd.get('billingTaxId') || null,
+          billingBranchCode: fd.get('billingBranchCode') || null,
+          billingAddress: fd.get('billingAddress') || null,
+        };
+        const btn = ev.target.querySelector('button[type="submit"]');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+        try {
+          const r = await fetch(this._url('/commerce/orders'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (!r.ok) throw new Error('สั่งซื้อไม่สำเร็จ — กรุณาลองอีกครั้ง');
+          const order = (await r.json()).data;
+          // Clear local cart reference — backend marks cart closed too.
+          localStorage.removeItem('sf_session_' + this._ctx.siteId);
+          window.location.href = this._pageUrl('order-success/' + order.id);
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          btn.disabled = false; btn.textContent = 'ยืนยันสั่งซื้อ';
+        }
+      },
+
+      async renderOrderSuccess(orderId) {
+        const main = document.getElementById('sfMain');
+        document.title = 'สั่งซื้อสำเร็จ';
+        let order = null;
+        try {
+          const r = await fetch(this._url(`/commerce/orders/${orderId}`));
+          if (r.ok) order = (await r.json()).data;
+        } catch(_) {}
+        main.innerHTML = `
+          <div class="sf-container" style="padding:64px 20px;text-align:center;max-width:600px">
+            <div style="font-size:72px">🎉</div>
+            <h1 style="margin:18px 0">ขอบคุณสำหรับการสั่งซื้อ!</h1>
+            ${order ? `<p style="font-size:18px;color:var(--text-secondary)">เลขที่คำสั่งซื้อ: <strong>${this.esc(order.orderNumber || orderId)}</strong></p>` : ''}
+            <p style="margin:18px 0;color:var(--text-secondary)">เราจะติดต่อกลับเพื่อยืนยันการชำระเงินและการจัดส่งโดยเร็วที่สุด</p>
+            <a href="${this._pageUrl('home')}" class="btn btn-primary" style="margin-top:16px;padding:14px 32px">กลับหน้าหลัก</a>
+          </div>`;
+        await this.refreshCartBadge();
+      },
+
+      // ===== Booking =====
+      async openBookingPicker(serviceId, serviceName) {
+        // Build modal once.
+        let modal = document.getElementById('sfBookingModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'sfBookingModal';
+          modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+          modal.innerHTML = '<div id="sfBookingBox" style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:24px"></div>';
+          modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+          document.body.appendChild(modal);
+        }
+        const box = modal.querySelector('#sfBookingBox');
+        box.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <h2 style="margin:0">เลือกเวลาจอง</h2>
+            <button onclick="document.getElementById('sfBookingModal').remove()" style="background:none;border:none;font-size:24px;cursor:pointer">×</button>
+          </div>
+          <p style="color:var(--text-secondary);margin-bottom:14px">บริการ: <strong>${this.esc(serviceName)}</strong></p>
+          <label>เลือกวันที่</label>
+          <input type="date" id="sfBookDate" min="${new Date().toISOString().slice(0,10)}" value="${new Date().toISOString().slice(0,10)}"
+                 style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px;margin-bottom:14px"
+                 onchange="Store._loadSlots('${this.esc(serviceId)}')">
+          <div id="sfSlots" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:18px">
+            <div style="color:var(--text-secondary)">กำลังโหลดเวลา...</div>
+          </div>
+          <form id="sfBookForm" style="display:none;display:grid;gap:10px">
+            <input type="hidden" name="serviceId" value="${this.esc(serviceId)}">
+            <input type="hidden" name="slotStart" id="sfSlotStart">
+            <div><label>ชื่อ-นามสกุล</label><input name="customerName" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+            <div><label>เบอร์โทร</label><input name="customerPhone" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+            <div><label>อีเมล</label><input type="email" name="customerEmail" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+            <div><label>หมายเหตุ</label><textarea name="notes" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
+            <button type="button" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
+          </form>`;
+        await this._loadSlots(serviceId);
+      },
+
+      async _loadSlots(serviceId) {
+        const date = document.getElementById('sfBookDate').value;
+        const box = document.getElementById('sfSlots');
+        box.innerHTML = '<div style="color:var(--text-secondary);grid-column:1/-1">กำลังค้นหาเวลาว่าง...</div>';
+        try {
+          // DTO field names: BookingServiceId + Date (DateTime). System.Text.Json
+          // accepts camelCase via JsonNamingPolicy. Date is sent as ISO so the
+          // server parses it as local midnight regardless of tz.
+          const r = await fetch(this._url('/storefront/booking-services/available-slots'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookingServiceId: serviceId, date: date + 'T00:00:00' })
+          });
+          const slots = (await r.json()).data || [];
+          if (!slots.length) {
+            box.innerHTML = '<div style="color:var(--text-secondary);grid-column:1/-1">ไม่มีเวลาว่างในวันนี้ — ลองเลือกวันอื่น</div>';
+            return;
+          }
+          // Server returns StartTime as a string "HH:mm" — render directly.
+          box.innerHTML = slots.map(s => {
+            const t = String(s.startTime || '').slice(0, 5);
+            return `<button onclick="Store._pickSlot('${this.esc(s.startTime)}', this)" style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;cursor:pointer;font-weight:600">${this.esc(t)}</button>`;
+          }).join('');
+        } catch(_) {
+          box.innerHTML = '<div style="color:#DC2626;grid-column:1/-1">โหลดเวลาไม่สำเร็จ</div>';
+        }
+      },
+
+      _pickSlot(startTime, btn) {
+        document.getElementById('sfSlotStart').value = startTime;
+        document.getElementById('sfBookForm').style.display = 'grid';
+        document.querySelectorAll('#sfSlots button').forEach(b => {
+          b.style.background = '#F3F4F6'; b.style.color = '';
+        });
+        if (btn) { btn.style.background = 'var(--primary,#4F46E5)'; btn.style.color = '#fff'; }
+      },
+
+      async _submitBooking() {
+        const form = document.getElementById('sfBookForm');
+        const fd = new FormData(form);
+        if (!fd.get('slotStart')) { alert('กรุณาเลือกเวลา'); return; }
+        const bookingDate = document.getElementById('sfBookDate').value; // yyyy-mm-dd
+        // DTO contract (CreateBookingRequest): BookingServiceId, BookingDate
+        // (DateTime), StartTime (string "HH:mm"), guest fields.
+        const body = {
+          bookingServiceId: fd.get('serviceId'),
+          bookingDate: bookingDate + 'T00:00:00',
+          startTime: fd.get('slotStart'),
+          guestName: fd.get('customerName'),
+          guestPhone: fd.get('customerPhone'),
+          guestEmail: fd.get('customerEmail') || null,
+          customerNotes: fd.get('notes') || null,
+          guestCount: 1
+        };
+        try {
+          const r = await fetch(this._url('/booking/bookings'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (!r.ok) throw new Error('จองไม่สำเร็จ — ลองอีกครั้ง');
+          const booking = (await r.json()).data;
+          document.getElementById('sfBookingModal').innerHTML = `
+            <div style="background:#fff;border-radius:12px;max-width:480px;padding:32px;text-align:center">
+              <div style="font-size:64px">✅</div>
+              <h2>จองสำเร็จ</h2>
+              <p style="color:var(--text-secondary);margin:14px 0">เลขที่การจอง: <strong>${this.esc(booking.bookingNumber || booking.id)}</strong></p>
+              <p style="color:var(--text-secondary)">เราจะส่งข้อความยืนยันให้ภายในไม่นาน</p>
+              <button onclick="document.getElementById('sfBookingModal').remove()" class="btn btn-primary" style="margin-top:14px;padding:12px 28px">ปิด</button>
+            </div>`;
+        } catch (e) { alert(e.message); }
+      },
+
+      _toast(msg, action) {
+        const t = document.createElement('div');
+        t.style.cssText = 'position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#0f172a;color:#fff;padding:14px 22px;border-radius:8px;z-index:10000;box-shadow:0 8px 24px rgba(0,0,0,.3);font-size:14px;cursor:pointer;max-width:90vw';
+        t.textContent = msg;
+        if (action) t.onclick = () => { action(); t.remove(); };
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 4000);
+      }
+    });
 
     Store.init();
   </script>
