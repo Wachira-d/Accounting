@@ -974,48 +974,53 @@
         const box = document.getElementById('sfSlots');
         box.innerHTML = '<div style="color:var(--text-secondary);grid-column:1/-1">กำลังค้นหาเวลาว่าง...</div>';
         try {
+          // DTO field names: BookingServiceId + Date (DateTime). System.Text.Json
+          // accepts camelCase via JsonNamingPolicy. Date is sent as ISO so the
+          // server parses it as local midnight regardless of tz.
           const r = await fetch(this._url('/storefront/booking-services/available-slots'), {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ serviceId, date: date + 'T00:00:00Z' })
+            body: JSON.stringify({ bookingServiceId: serviceId, date: date + 'T00:00:00' })
           });
           const slots = (await r.json()).data || [];
           if (!slots.length) {
             box.innerHTML = '<div style="color:var(--text-secondary);grid-column:1/-1">ไม่มีเวลาว่างในวันนี้ — ลองเลือกวันอื่น</div>';
             return;
           }
+          // Server returns StartTime as a string "HH:mm" — render directly.
           box.innerHTML = slots.map(s => {
-            const t = new Date(s.startTime).toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' });
-            return `<button onclick="Store._pickSlot('${this.esc(s.startTime)}')" style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;cursor:pointer;font-weight:600">${t}</button>`;
+            const t = String(s.startTime || '').slice(0, 5);
+            return `<button onclick="Store._pickSlot('${this.esc(s.startTime)}', this)" style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;cursor:pointer;font-weight:600">${this.esc(t)}</button>`;
           }).join('');
         } catch(_) {
           box.innerHTML = '<div style="color:#DC2626;grid-column:1/-1">โหลดเวลาไม่สำเร็จ</div>';
         }
       },
 
-      _pickSlot(startTime) {
+      _pickSlot(startTime, btn) {
         document.getElementById('sfSlotStart').value = startTime;
         document.getElementById('sfBookForm').style.display = 'grid';
-        // Highlight selected
         document.querySelectorAll('#sfSlots button').forEach(b => {
           b.style.background = '#F3F4F6'; b.style.color = '';
         });
-        if (event && event.target) {
-          event.target.style.background = 'var(--primary,#4F46E5)';
-          event.target.style.color = '#fff';
-        }
+        if (btn) { btn.style.background = 'var(--primary,#4F46E5)'; btn.style.color = '#fff'; }
       },
 
       async _submitBooking() {
         const form = document.getElementById('sfBookForm');
         const fd = new FormData(form);
         if (!fd.get('slotStart')) { alert('กรุณาเลือกเวลา'); return; }
+        const bookingDate = document.getElementById('sfBookDate').value; // yyyy-mm-dd
+        // DTO contract (CreateBookingRequest): BookingServiceId, BookingDate
+        // (DateTime), StartTime (string "HH:mm"), guest fields.
         const body = {
-          serviceId: fd.get('serviceId'),
+          bookingServiceId: fd.get('serviceId'),
+          bookingDate: bookingDate + 'T00:00:00',
           startTime: fd.get('slotStart'),
-          customerName: fd.get('customerName'),
-          customerPhone: fd.get('customerPhone'),
-          customerEmail: fd.get('customerEmail') || null,
-          notes: fd.get('notes') || null
+          guestName: fd.get('customerName'),
+          guestPhone: fd.get('customerPhone'),
+          guestEmail: fd.get('customerEmail') || null,
+          customerNotes: fd.get('notes') || null,
+          guestCount: 1
         };
         try {
           const r = await fetch(this._url('/booking/bookings'), {
