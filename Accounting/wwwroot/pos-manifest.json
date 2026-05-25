@@ -4,7 +4,7 @@
   "short_name": "Next Acc POS",
   "description": "หน้าขาย POS แบบ kiosk — ใช้งานออฟไลน์ได้ ขายผ่านได้แม้เน็ตล่ม",
   "start_url": "/pages/pos.html",
-  "scope": "/pages/pos.html",
+  "scope": "/pages/pos",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#0f172a",
