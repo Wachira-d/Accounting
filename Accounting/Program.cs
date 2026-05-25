@@ -1231,7 +1231,7 @@ try
 
     // CRITICAL: Always run ApplyMissingColumns even if the above migration fails.
     // This ensures new columns (like IndustryType) are added to existing tables.
-    DatabaseMigrationHelper.ApplyMissingColumns(db);
+    DatabaseMigrationHelper.ApplyMissingColumns(db, app.Services.GetRequiredService<ILogger<Program>>());
 
     // PostgreSQL full-text search: pg_trgm GIN indexes for fast LIKE/ILIKE searches
     DatabaseMigrationHelper.ApplyFullTextSearchIndexes(db);
@@ -1268,7 +1268,7 @@ catch (Exception ex)
     {
         using var retryScope = app.Services.CreateScope();
         var retryDb = retryScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-        DatabaseMigrationHelper.ApplyMissingColumns(retryDb);
+        DatabaseMigrationHelper.ApplyMissingColumns(retryDb, logger);
     }
     catch (Exception retryEx) { logger.LogWarning(retryEx, "Last-resort ApplyMissingColumns also failed — DB may be unavailable"); }
 
