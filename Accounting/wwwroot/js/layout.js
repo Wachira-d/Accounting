@@ -1775,11 +1775,38 @@ const Layout = {
     return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
+  // Parse a server timestamp safely. ASP.NET Core's JSON serializer drops
+  // the 'Z' suffix on DateTime values with Kind=Unspecified (typical for
+  // timestamptz columns round-tripped through EF Core 8), so the bare
+  // "2026-05-25T04:22:20" string would be parsed by JS as local-naive
+  // and the moment would shift by the local UTC offset. This helper
+  // assumes naive ISO strings are UTC.
+  asUtc(s) {
+    if (!s) return new Date(NaN);
+    if (s instanceof Date) return s;
+    const str = String(s);
+    return /[zZ]$|[+-]\d{2}:?\d{2}$/.test(str) ? new Date(str) : new Date(str + 'Z');
+  },
+
   date(d) {
-    if (!d) return '-';
-    const dt = new Date(d);
+    const dt = this.asUtc(d);
     if (isNaN(dt.getTime())) return '-';
     return dt.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+  },
+
+  /// <summary>Format a server timestamp in the browser's local timezone.
+  /// Use this for any UI that shows "เมื่อไหร่" — payment time, sync time,
+  /// session open, audit log, etc. — so the user sees their wall-clock time.</summary>
+  dateTime(d) {
+    const dt = this.asUtc(d);
+    if (isNaN(dt.getTime())) return '-';
+    return dt.toLocaleString('th-TH');
+  },
+
+  time(d) {
+    const dt = this.asUtc(d);
+    if (isNaN(dt.getTime())) return '-';
+    return dt.toLocaleTimeString('th-TH');
   },
 
   dateInput(d) {

@@ -229,7 +229,7 @@
           items.forEach(o => this._orderCache[o.id] = o);
           tbody.innerHTML = items.map(o => `<tr>
             <td class="font-medium">${o.orderNumber}</td>
-            <td>${new Date(o.orderDate || o.createdAt).toLocaleDateString('th-TH')}</td>
+            <td>${Layout.date(o.orderDate || o.createdAt)}</td>
             <td>${Page.orderTypeLabel(o.orderType)}</td>
             <td>${o.customerName || '-'}</td>
             <td>${o.itemCount || (o.items||[]).length} รายการ</td>
@@ -253,7 +253,7 @@
           document.getElementById('detailTitle').textContent = `ออเดอร์ ${o.orderNumber}`;
           document.getElementById('detailContent').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-              <div><span class="text-gray-500">วันที่:</span> ${new Date(o.orderDate || o.createdAt).toLocaleString('th-TH')}</div>
+              <div><span class="text-gray-500">วันที่:</span> ${Layout.dateTime(o.orderDate || o.createdAt)}</div>
               <div><span class="text-gray-500">ประเภท:</span> ${Page.orderTypeLabel(o.orderType)}</div>
               <div><span class="text-gray-500">ลูกค้า:</span> ${o.customerName || '-'}</div>
               <div><span class="text-gray-500">โต๊ะ:</span> ${o.tableNumber || '-'}</div>
@@ -467,7 +467,7 @@
                   <tbody>
                     ${rows.map(r => `
                       <tr>
-                        <td style="white-space:nowrap;">${new Date(r.orderDate).toLocaleDateString('th-TH')}</td>
+                        <td style="white-space:nowrap;">${Layout.date(r.orderDate)}</td>
                         <td><a href="#" onclick="Layout.closeModal('commissionDetailModal');Page.showOrderDetail('${r.orderId}');return false;">${Layout.esc(r.orderNumber)}</a></td>
                         <td>${Layout.esc(r.itemName)}</td>
                         <td>${Layout.esc(r.componentName)}</td>
