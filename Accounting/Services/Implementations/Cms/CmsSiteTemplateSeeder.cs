@@ -89,7 +89,7 @@ public static class CmsSiteTemplateSeeder
     // ----- General / Service / Freelance / Tech / Default -----
     private static List<(PageMeta, List<BlockMeta>)> GeneralPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "เว็บไซต์อย่างเป็นทางการ — บริการครบวงจร"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "เว็บไซต์อย่างเป็นทางการ — บริการครบวงจร"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ยินดีต้อนรับ",
                 subheadline = "เราพร้อมให้บริการที่ดีที่สุดแก่คุณ — มืออาชีพ ราคาเป็นมิตร",
@@ -165,7 +165,7 @@ public static class CmsSiteTemplateSeeder
             }))
         }),
 
-        (new("ติดต่อเรา", "contact", PageType.Contact, "ที่อยู่ เบอร์โทร และแบบฟอร์มติดต่อ"), new() {
+        (new("ติดต่อเรา", "contact", PageType.Standard, "ที่อยู่ เบอร์โทร และแบบฟอร์มติดต่อ"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ติดต่อเรา",
                 subheadline = "ยินดีให้คำปรึกษาฟรี — เปิดทำการ จันทร์-ศุกร์ 09:00-18:00"
@@ -185,7 +185,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Restaurant / Cafe -----
     private static List<(PageMeta, List<BlockMeta>)> RestaurantPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "ร้านอาหารบรรยากาศดี เมนูเด็ด ๆ"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "ร้านอาหารบรรยากาศดี เมนูเด็ด ๆ"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "อร่อยทุกคำ ทุกจาน",
                 subheadline = "บรรยากาศดี วัตถุดิบสด ราคาเป็นกันเอง — เปิดทุกวัน 10:00-22:00",
@@ -252,7 +252,7 @@ public static class CmsSiteTemplateSeeder
             }))
         }),
 
-        (new("ติดต่อเรา", "contact", PageType.Contact, "ที่ตั้ง โทรศัพท์ เวลาเปิด-ปิด"), new() {
+        (new("ติดต่อเรา", "contact", PageType.Standard, "ที่ตั้ง โทรศัพท์ เวลาเปิด-ปิด"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "หาเราเจอง่าย",
                 subheadline = "เปิดทุกวัน 10:00-22:00 · ที่จอดรถสะดวก"
@@ -274,7 +274,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Retail / Ecommerce -----
     private static List<(PageMeta, List<BlockMeta>)> RetailPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "ร้านค้าออนไลน์ สินค้าคุณภาพดี ส่งไว"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "ร้านค้าออนไลน์ สินค้าคุณภาพดี ส่งไว"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ช้อปออนไลน์ ส่งทั่วไทย",
                 subheadline = "สินค้าคุณภาพดี ราคาดี รับประกันความพอใจ",
@@ -321,7 +321,7 @@ public static class CmsSiteTemplateSeeder
             }))
         }),
 
-        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อร้านค้า"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อร้านค้า"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📞 ติดต่อสอบถาม</h2>
 <p>LINE: @yourshop · โทร: 02-XXX-XXXX · อีเมล: info@example.com</p>"
@@ -333,7 +333,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Beauty / Spa / Salon -----
     private static List<(PageMeta, List<BlockMeta>)> BeautyPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "บริการความงาม สปา ทำเล็บ"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "บริการความงาม สปา ทำเล็บ"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ผ่อนคลายเหมือนหลุดจากความวุ่นวาย",
                 subheadline = "บริการสปา นวดแผนไทย ทำเล็บ — ทีมงานมืออาชีพ บรรยากาศหรูหรา",
@@ -388,7 +388,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.ContactForm, J(new { headline = "แจ้งจองคิว", submitText = "ส่งคำขอ" }))
         }),
 
-        (new("ติดต่อเรา", "contact", PageType.Contact, "ที่ตั้งร้าน เปิด-ปิด"), new() {
+        (new("ติดต่อเรา", "contact", PageType.Standard, "ที่ตั้งร้าน เปิด-ปิด"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📍 ที่ตั้ง · 🕐 เปิดทุกวัน 10:00-22:00</h2>
 <p>โทร: 02-XXX-XXXX · LINE: @yourspa</p>"
@@ -401,7 +401,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Healthcare / Clinic -----
     private static List<(PageMeta, List<BlockMeta>)> HealthcarePlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "คลินิกของเรา ดูแลทุกอาการ"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "คลินิกของเรา ดูแลทุกอาการ"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ดูแลสุขภาพคุณอย่างมืออาชีพ",
                 subheadline = "แพทย์ผู้เชี่ยวชาญ เครื่องมือทันสมัย บริการครบวงจร",
@@ -447,7 +447,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.ContactForm, J(new { headline = "แจ้งนัดหมาย", submitText = "ส่งคำขอนัด" }))
         }),
 
-        (new("ติดต่อ", "contact", PageType.Contact, "ที่อยู่คลินิก เปิด-ปิด"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ที่อยู่คลินิก เปิด-ปิด"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📍 คลินิก · 🕐 เปิด จันทร์-เสาร์ 09:00-19:00</h2>
 <p>โทร: 02-XXX-XXXX · ฉุกเฉิน: 086-XXX-XXXX</p>"
@@ -462,7 +462,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Construction / Contractor -----
     private static List<(PageMeta, List<BlockMeta>)> ConstructionPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "บริการรับเหมาก่อสร้าง ครบวงจร"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "บริการรับเหมาก่อสร้าง ครบวงจร"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "รับเหมาก่อสร้าง คุณภาพ ตรงเวลา",
                 subheadline = "ทีมงานวิศวกร + ช่างมืออาชีพ · ทำงานตามแบบ ภายในงบ ครบกำหนด",
@@ -508,7 +508,7 @@ public static class CmsSiteTemplateSeeder
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดโครงการ", submitText = "ส่งคำขอใบเสนอราคา" }))
         }),
-        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อเรา"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อเรา"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = "<h2>📞 ติดต่อทีมงาน</h2><p>โทร: 02-XXX-XXXX · LINE: @construct</p>"
             })),
@@ -519,7 +519,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Real Estate -----
     private static List<(PageMeta, List<BlockMeta>)> RealEstatePlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "อสังหาฯ ที่ดิน บ้าน คอนโด"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "อสังหาฯ ที่ดิน บ้าน คอนโด"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "บ้าน / ที่ดิน / คอนโด ทำเลดี",
                 subheadline = "นายหน้ามืออาชีพ ให้คำแนะนำตรงไปตรงมา ปิดดีลเร็ว",
@@ -558,7 +558,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.Hero, J(new { headline = "นัดดูทรัพย์", subheadline = "เลือกวันเวลาที่สะดวก เราจะพาชมทรัพย์ตามที่ระบุ" })),
             new(CmsBlockType.ContactForm, J(new { headline = "นัดหมาย", submitText = "ส่งคำขอนัด" }))
         }),
-        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อนายหน้า"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อนายหน้า"), new() {
             new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · LINE: @realestate</p>" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
         })
@@ -567,7 +567,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Technology / SaaS / Software house -----
     private static List<(PageMeta, List<BlockMeta>)> TechnologyPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "ซอฟต์แวร์ที่ทำให้ธุรกิจคุณเติบโต"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "ซอฟต์แวร์ที่ทำให้ธุรกิจคุณเติบโต"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ซอฟต์แวร์ที่ลูกค้ารัก",
                 subheadline = "ออกแบบมาเพื่อ SME ไทย · ใช้งานง่าย · ราคาเป็นมิตร · ทีมซัพพอร์ตคนไทย",
@@ -625,7 +625,7 @@ public static class CmsSiteTemplateSeeder
                 }
             }))
         }),
-        (new("ติดต่อขาย / เดโม", "contact", PageType.Contact, "นัดเดโม / ขอใบเสนอราคา"), new() {
+        (new("ติดต่อขาย / เดโม", "contact", PageType.Standard, "นัดเดโม / ขอใบเสนอราคา"), new() {
             new(CmsBlockType.Hero, J(new { headline = "อยากดูเดโม?", subheadline = "ทีมขายจะติดต่อภายใน 1 วันทำการ" })),
             new(CmsBlockType.ContactForm, J(new { headline = "นัดเดโม / สอบถามราคา", submitText = "ส่ง" }))
         })
@@ -634,7 +634,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Education / Training / School -----
     private static List<(PageMeta, List<BlockMeta>)> EducationPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "หลักสูตร / สถาบันสอน"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "หลักสูตร / สถาบันสอน"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "เรียนรู้กับผู้เชี่ยวชาญ",
                 subheadline = "หลักสูตรครอบคลุม · ผู้สอนมืออาชีพ · ใบประกาศนียบัตรหลังเรียนจบ",
@@ -677,7 +677,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.Hero, J(new { headline = "สมัครเรียน", subheadline = "เลือกหลักสูตร + รอบเรียน → กรอกข้อมูล → ชำระเงิน" })),
             new(CmsBlockType.ContactForm, J(new { headline = "ลงทะเบียน", submitText = "ส่งใบสมัคร" }))
         }),
-        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อสถาบัน"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อสถาบัน"), new() {
             new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · LINE: @school · 🕐 จ-ส 9:00-18:00</p>" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
         })
@@ -686,7 +686,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Transportation / Logistics -----
     private static List<(PageMeta, List<BlockMeta>)> TransportationPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "บริการขนส่ง โลจิสติกส์"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "บริการขนส่ง โลจิสติกส์"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "ขนส่งทั่วไทย ตรงเวลา ปลอดภัย",
                 subheadline = "รับ-ส่งทั่วประเทศ · ติดตามสถานะออนไลน์ · ประกันความเสียหาย",
@@ -725,7 +725,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.Hero, J(new { headline = "ขอราคา / จองรถ", subheadline = "ตอบกลับภายใน 30 นาที" })),
             new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดงานขนส่ง", submitText = "ส่งคำขอ" }))
         }),
-        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อ"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อ"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = "<p>📞 02-XXX-XXXX · 📱 081-XXX-XXXX (24 ชม.) · LINE: @logistics</p>"
             })),
@@ -736,7 +736,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Hotel / Resort / Homestay -----
     private static List<(PageMeta, List<BlockMeta>)> HotelPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "โรงแรม / ที่พัก"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "โรงแรม / ที่พัก"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "พักผ่อนเหมือนกลับบ้าน",
                 subheadline = "ห้องสะอาด บรรยากาศดี ทำเลใจกลางเมือง · จองตรงรับส่วนลด 10%",
@@ -778,7 +778,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.Hero, J(new { headline = "จองห้องพัก", subheadline = "จองตรงรับส่วนลด 10% — ไม่มีค่าธรรมเนียม" })),
             new(CmsBlockType.ContactForm, J(new { headline = "จองห้อง", submitText = "ส่งคำขอจอง" }))
         }),
-        (new("ติดต่อ / ที่ตั้ง", "contact", PageType.Contact, "ที่ตั้ง"), new() {
+        (new("ติดต่อ / ที่ตั้ง", "contact", PageType.Standard, "ที่ตั้ง"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = "<p>📞 02-XXX-XXXX · 24 ชม. · LINE: @hotel</p>"
             })),
@@ -789,7 +789,7 @@ public static class CmsSiteTemplateSeeder
     // ----- Manufacturing / Factory / OEM -----
     private static List<(PageMeta, List<BlockMeta>)> ManufacturingPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Home, "โรงงานผลิต OEM"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "โรงงานผลิต OEM"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "โรงงานผลิตคุณภาพ มาตรฐานสากล",
                 subheadline = "รับ OEM / ODM · ผลิตตามแบบ · ส่งออกทั่วโลก · ISO 9001",
@@ -832,7 +832,7 @@ public static class CmsSiteTemplateSeeder
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดผลิตภัณฑ์", submitText = "ส่ง RFQ" }))
         }),
-        (new("ติดต่อ", "contact", PageType.Contact, "ติดต่อโรงงาน"), new() {
+        (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อโรงงาน"), new() {
             new(CmsBlockType.RichText, J(new {
                 content = "<p>📞 02-XXX-XXXX · 📧 sales@factory.com · LINE: @factory</p>"
             })),
