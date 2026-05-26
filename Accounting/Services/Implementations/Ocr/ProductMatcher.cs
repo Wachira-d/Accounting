@@ -90,7 +90,13 @@ public class ProductMatcher
     public static string Normalize(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-        var s = raw.ToLowerInvariant();
+        // Bilingual canonicalization — cross-script equivalents (Thai
+        // tissue ↔ English tissue, "Toyota" ↔ "โตโยต้า") collapse to a
+        // shared $-prefixed token BEFORE the rest of the pipeline runs.
+        // This is the practical alternative to loading a multilingual
+        // sentence-embedding model: cheap, auditable, covers ~200 of
+        // the most common Thai-SME product-domain term families.
+        var s = BilingualTerms.Canonicalize(raw);
         // Replace common Thai/English unit phrasings with a canonical form
         // BEFORE stripping punctuation so the unit regex still anchors.
         foreach (var (pat, rep) in UnitReplacements)

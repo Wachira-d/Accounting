@@ -738,6 +738,40 @@ public class OcrService : IOcrService
                     extractedData.ReasoningTrace.Add(
                         $"[VendorIntel] แนะนำสร้าง {vendorPred.DocumentType.Value} (confidence {vendorPred.DocumentTypeConfidence:P0}) — รอผู้ใช้ยืนยัน");
                 }
+                // Federated fallback — when per-tenant VendorIntel has no
+                // confident prediction (new vendor for this tenant, but a
+                // vendor the SaaS as a whole has seen before), consult the
+                // cross-tenant pool. Only fires when:
+                //   1. We have NO TargetDocumentType yet, AND
+                //   2. VendorIntel's confidence stayed below MediumConfidence,
+                //   3. And the scanned-paper type was identifiable.
+                // The federated pattern needs k=3 distinct contributing
+                // tenants to be "active" — under the floor, this is silent.
+                if (_docWorkflowLearner != null
+                    && string.IsNullOrEmpty(extractedData.TargetDocumentType)
+                    && (vendorPred.DocumentTypeConfidence < VendorIntelligenceService.MediumConfidence)
+                    && !string.IsNullOrEmpty(extractedData.DocumentType))
+                {
+                    try
+                    {
+                        var fedVKey = !string.IsNullOrEmpty(extractedData.VendorTaxId)
+                            ? $"tax:{new string(extractedData.VendorTaxId.Where(char.IsDigit).ToArray())}"
+                            : !string.IsNullOrEmpty(extractedData.VendorName)
+                                ? $"name:{extractedData.VendorName.Trim().ToLowerInvariant()}"
+                                : null;
+                        if (!string.IsNullOrEmpty(fedVKey))
+                        {
+                            var (fedTarget, fedTenants) = await _docWorkflowLearner.PredictAsync(fedVKey, extractedData.DocumentType);
+                            if (!string.IsNullOrEmpty(fedTarget))
+                            {
+                                extractedData.TargetDocumentType = fedTarget;
+                                extractedData.ReasoningTrace.Add(
+                                    $"[Federated] 🌐 ระบบกลางแนะนำสร้าง {fedTarget} (จาก {fedTenants} ลูกค้าที่ใช้ vendor เดียวกัน)");
+                            }
+                        }
+                    }
+                    catch { /* federation outage — silent */ }
+                }
 
                 // Auto-fill debit account when per-line learner had no result
                 if (string.IsNullOrEmpty(extractedData.DebitAccountCode)
