@@ -232,6 +232,39 @@ public class UpdateOrderStatusRequest
     public string? CancellationReason { get; set; }
 }
 
+public class UploadSlipResponse
+{
+    public Guid OrderId { get; set; }
+    public Guid PaymentId { get; set; }
+    public string SlipUrl { get; set; } = "";
+    public DateTime UploadedAt { get; set; }
+}
+
+public class ConvertToQuotationResponse
+{
+    public Guid OrderId { get; set; }
+    public Guid LeadId { get; set; }
+    public string LeadNumber { get; set; } = "";
+    public Guid? QuotationDocumentId { get; set; }
+}
+
+public class StorefrontPaymentOptions
+{
+    /// <summary>PromptPay ID (phone or tax-id) displayed as QR code.</summary>
+    public string? PromptPayId { get; set; }
+    /// <summary>Pre-rendered QR image URL if the site uploaded one.
+    /// Otherwise the storefront generates the QR client-side from
+    /// <see cref="PromptPayId"/>.</summary>
+    public string? PromptPayQrUrl { get; set; }
+    public string? BankName { get; set; }
+    public string? BankAccountNumber { get; set; }
+    public string? BankAccountName { get; set; }
+    /// <summary>True when at least one payment method is configured.
+    /// When false the storefront falls back to "pay later only" mode
+    /// and instructs the customer that the shop will contact them.</summary>
+    public bool HasPaymentMethod { get; set; }
+}
+
 public class OrderResponse
 {
     public Guid Id { get; set; }

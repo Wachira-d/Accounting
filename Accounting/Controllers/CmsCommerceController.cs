@@ -230,6 +230,64 @@ public class CmsCommerceController : ControllerBase
         return Ok(new ApiResponse<Guid?>(true, documentId, msg));
     }
 
+    // ====================================================================
+    // PUBLIC payment endpoints — called by the storefront's customer-facing
+    // order-success page after a guest places an order. AllowAnonymous
+    // because checkout flow doesn't authenticate the buyer; the orderId
+    // is the (unguessable) GUID returned at order creation, scoped to
+    // the (companyId, siteId) pair in the route.
+    // ====================================================================
+
+    /// <summary>Receive a payment-slip image from the customer.
+    /// Stores the file as a FileAttachment, then records a
+    /// SiteOrderPayment row (method = BankTransfer, status = Pending)
+    /// pointing at the file. Owner reviews + marks as Paid in the
+    /// admin order-management page.</summary>
+    [AllowAnonymous]
+    [HttpPost("orders/{orderId:guid}/upload-slip")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<UploadSlipResponse>>> UploadSlip(
+        Guid companyId, Guid siteId, Guid orderId, IFormFile? file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<UploadSlipResponse>(false, null, "กรุณาเลือกไฟล์สลิป"));
+        if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
+            return BadRequest(new ApiResponse<UploadSlipResponse>(false, null, "รองรับเฉพาะรูปภาพหรือ PDF"));
+
+        var result = await _commerceService.RecordPaymentSlipAsync(companyId, siteId, orderId, file);
+        if (result == null) return NotFound(new ApiResponse<UploadSlipResponse>(false, null, "ไม่พบคำสั่งซื้อ"));
+        return Ok(new ApiResponse<UploadSlipResponse>(true, result, "บันทึกสลิปเรียบร้อย — ร้านจะตรวจสอบและยืนยันการชำระเงิน"));
+    }
+
+    /// <summary>Customer changes their mind at the order-success page:
+    /// they want a Quotation document instead of paying now. We
+    /// cancel the SiteOrder, then either link to an existing CmsLead
+    /// or create a new one of LeadType=Quote with the cart contents in
+    /// DataJson, and immediately produce a Quotation document in the
+    /// ERP via the existing lead → convert flow. Reverses any stock
+    /// reservation the order made.</summary>
+    [AllowAnonymous]
+    [HttpPost("orders/{orderId:guid}/convert-to-quotation")]
+    public async Task<ActionResult<ApiResponse<ConvertToQuotationResponse>>> ConvertOrderToQuotation(
+        Guid companyId, Guid siteId, Guid orderId)
+    {
+        var result = await _commerceService.ConvertOrderToQuotationAsync(companyId, siteId, orderId);
+        if (result == null) return NotFound(new ApiResponse<ConvertToQuotationResponse>(false, null, "ไม่พบคำสั่งซื้อ"));
+        return Ok(new ApiResponse<ConvertToQuotationResponse>(true, result, "เปลี่ยนเป็นใบเสนอราคาแล้ว — ร้านจะติดต่อกลับเร็วๆ นี้"));
+    }
+
+    /// <summary>Returns the site's configured payment options so the
+    /// storefront order-success page can render PromptPay QR + bank
+    /// account info + supported gateways. Anonymous — same trust
+    /// model as the order-detail GET below.</summary>
+    [AllowAnonymous]
+    [HttpGet("payment-options")]
+    public async Task<ActionResult<ApiResponse<StorefrontPaymentOptions>>> GetPaymentOptions(Guid companyId, Guid siteId)
+    {
+        var result = await _commerceService.GetStorefrontPaymentOptionsAsync(companyId, siteId);
+        return Ok(new ApiResponse<StorefrontPaymentOptions>(true, result));
+    }
+
     // ===== Payment Gateways =====
 
     [HttpPost("payment-gateways")]
