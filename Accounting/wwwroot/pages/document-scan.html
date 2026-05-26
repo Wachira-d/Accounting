@@ -2128,7 +2128,13 @@
         // server's preview pre-selects FixedAsset for lines the
         // FixedAssetDetector flagged (price ≥ ฿5k + capital-asset
         // keyword); the user can override per-row.
-        const defaultDest = line.defaultDestination || 0;
+        //
+        // The server sends `defaultDestination` as the enum NAME (string,
+        // due to JsonStringEnumConverter), not the integer. Normalize
+        // both forms to integer here so the dataset attribute is always
+        // numeric and the JS comparisons hold.
+        const destMap = { 'Stock': 0, 'Supplies': 1, 'FixedAsset': 2, 0: 0, 1: 1, 2: 2 };
+        const defaultDest = destMap[line.defaultDestination] ?? 0;
         const dests = [
           { v: 0, icon: '📦', label: 'สต็อก',         clr: '#0369a1' },
           { v: 1, icon: '🧻', label: 'วัสดุสิ้นเปลือง', clr: '#7c3aed' },

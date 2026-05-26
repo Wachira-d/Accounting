@@ -430,7 +430,7 @@ public class OcrController : ControllerBase
         var ocrLines = new List<OcrLineItemDto>();
         if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
         {
-            try { ocrLines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson) ?? new(); }
+            try { ocrLines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
             catch { /* alias learning skipped when JSON is malformed */ }
         }
 
