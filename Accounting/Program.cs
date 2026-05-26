@@ -226,6 +226,7 @@ builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
 builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
 builder.Services.AddScoped<ICmsQuotaService, CmsQuotaService>();

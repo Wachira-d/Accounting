@@ -702,6 +702,8 @@ const Layout = {
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
     { id: 'cms-bookings', label: 'การจองจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings',
       description: 'จัดการการจอง — ร้านอาหาร · สปา · คลินิก · โรงแรม · ยืนยัน-ยกเลิก-No show' },
+    { id: 'cms-leads', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads',
+      description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
       description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools',

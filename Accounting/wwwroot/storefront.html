@@ -505,7 +505,15 @@
               <div class="placeholder">📅 ปฏิทินจอง — กำลังโหลด...</div>
             </div>`;
           }
-          case 9: { // Contact form
+          case 9: { // Contact form / RFQ / Viewing / Demo / Enrollment / Quote
+            // ContactForm block config can specify:
+            //   leadType: "Contact" | "Rfq" | "Viewing" | "Demo" |
+            //             "Enrollment" | "Quote" | "Subscription" |
+            //             "ShipmentQuote" | "Other"
+            //   extraFields: [{name, label, type, required, options}]
+            //     for industry-specific inputs (budget range, course,
+            //     property id, origin/destination, etc.). Extras land
+            //     in the lead's DataJson dict.
             const captchaProvider = this.data?.site?.captchaProvider;
             const captchaSiteKey = this.data?.site?.captchaSiteKey;
             let captchaHtml = '';
@@ -514,12 +522,35 @@
             } else if (captchaProvider === 'recaptcha' && captchaSiteKey) {
               captchaHtml = `<div class="g-recaptcha" data-sitekey="${esc(captchaSiteKey)}" style="margin-bottom:14px"></div>`;
             }
-            return `<form class="blk-form" onsubmit="Store.submitContact(event,this)" data-emailto="${esc(cfg.emailTo||'')}">
+            const leadType = cfg.leadType || 'Contact';
+            const extras = Array.isArray(cfg.extraFields) ? cfg.extraFields : [];
+            const extrasHtml = extras.map(f => {
+              const req = f.required ? 'required' : '';
+              const name = esc(f.name || '');
+              if (f.type === 'select' && Array.isArray(f.options)) {
+                return `<label>${esc(f.label||f.name)}</label>
+                  <select name="${name}" class="form-input" ${req}>
+                    <option value="">— เลือก —</option>
+                    ${f.options.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}
+                  </select>`;
+              }
+              if (f.type === 'textarea') {
+                return `<label>${esc(f.label||f.name)}</label><textarea name="${name}" ${req}></textarea>`;
+              }
+              const inputType = (f.type === 'number' || f.type === 'date' || f.type === 'email') ? f.type : 'text';
+              return `<label>${esc(f.label||f.name)}</label><input type="${inputType}" name="${name}" ${req}>`;
+            }).join('');
+            const showCompany = !!cfg.askCompany;
+            const showTaxId = !!cfg.askTaxId;
+            return `<form class="blk-form" onsubmit="Store.submitContact(event,this)" data-lead-type="${esc(leadType)}" data-emailto="${esc(cfg.emailTo||'')}">
               ${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}
               <label>ชื่อ</label><input type="text" name="name" required>
               <label>อีเมล</label><input type="email" name="email" required>
-              <label>เบอร์โทร</label><input type="tel" name="phone">
-              <label>ข้อความ</label><textarea name="message" required></textarea>
+              <label>เบอร์โทร</label><input type="tel" name="phone" ${cfg.phoneRequired?'required':''}>
+              ${showCompany ? '<label>บริษัท / องค์กร</label><input type="text" name="company">' : ''}
+              ${showTaxId ? '<label>เลขผู้เสียภาษี</label><input type="text" name="taxId">' : ''}
+              ${extrasHtml}
+              <label>ข้อความ / รายละเอียด</label><textarea name="message" required></textarea>
               ${captchaHtml}
               <button type="submit" class="btn btn-primary">${esc(cfg.submitText||'ส่งข้อความ')}</button>
               <div class="form-status" style="margin-top:10px"></div>
@@ -652,6 +683,22 @@
         return '';
       },
 
+      /**
+       * Public form submission → POST /storefront/leads
+       *
+       * Every storefront form (ContactForm, RFQ, Viewing, Demo,
+       * Enrollment) flows through this single handler. The form's
+       * `data-lead-type` attribute decides which LeadType the server
+       * records (defaults to "Contact"). All known form inputs go to
+       * the standard customer fields (name/email/phone/company/
+       * taxId/message); anything else lands in the `fields` JSON dict
+       * so industry-specific extras (budget, sqm, course-id, etc.)
+       * survive to the owner's lead inbox.
+       *
+       * Captcha is verified before submit. Mailto fallback still
+       * fires only when both the POST fails AND the form was tagged
+       * with data-emailto — gives a graceful degradation path.
+       */
       async submitContact(e, form) {
         e.preventDefault();
         const status = form.querySelector('.form-status');
@@ -667,13 +714,62 @@
         }
 
         const data = Object.fromEntries(new FormData(form));
+        // Standard fields land on the lead's first-class columns; the
+        // rest go into the `fields` JSON for the owner to read in the
+        // detail modal.
+        const standardKeys = new Set(['name','email','phone','company','taxId','message']);
+        const extras = {};
+        for (const [k, v] of Object.entries(data)) {
+          if (!standardKeys.has(k) && !k.startsWith('h-captcha') && !k.startsWith('g-recaptcha')
+              && v != null && v !== '') {
+            extras[k] = v;
+          }
+        }
+
+        const leadType = form.dataset.leadType || 'Contact';
+        const sourceSlug = this.slug || form.dataset.sourceSlug || null;
+        const companyId = Store._ctx?.companyId;
+        const siteId = Store._ctx?.siteId;
+
+        const payload = {
+          leadType,
+          sourceSlug,
+          customerName: data.name || null,
+          customerEmail: data.email || null,
+          customerPhone: data.phone || null,
+          customerCompany: data.company || null,
+          customerTaxId: data.taxId || null,
+          message: data.message || null,
+          fields: Object.keys(extras).length ? extras : null,
+          captchaToken
+        };
+
+        let posted = false;
+        if (companyId && siteId) {
+          try {
+            const r = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/leads`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (r.ok) {
+              posted = true;
+              const j = await r.json().catch(() => null);
+              status.textContent = j?.message || '✓ ส่งคำขอเรียบร้อย ทีมงานจะติดต่อกลับเร็วๆ นี้';
+              status.style.color = 'var(--success-color,#10B981)';
+              form.reset();
+              return;
+            }
+          } catch (_) { /* network — fall through to mailto */ }
+        }
+
         const emailTo = form.dataset.emailto;
-        if (emailTo) {
+        if (!posted && emailTo) {
           window.location.href = `mailto:${emailTo}?subject=ข้อความจากเว็บไซต์&body=${encodeURIComponent(`ชื่อ: ${data.name}\nอีเมล: ${data.email}\nโทร: ${data.phone||'-'}\n\n${data.message}`)}`;
           status.textContent = 'กำลังเปิดโปรแกรมอีเมล...';
           status.style.color = 'var(--success-color,#10B981)';
-        } else {
-          status.textContent = '⚠️ ฟอร์มยังไม่ได้กำหนดอีเมลปลายทาง';
+        } else if (!posted) {
+          status.textContent = 'ส่งคำขอไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
           status.style.color = '#DC2626';
         }
       },
