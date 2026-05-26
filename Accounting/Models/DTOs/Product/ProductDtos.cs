@@ -276,6 +276,9 @@ public record SuppliesUsageRequest(
     string? Department,
     string? Purpose,
     string? Reference,
+    string? Notes = null,
+    string? IssuedToUserId = null,
+    string? IssuedToName = null,
     bool AutoCreateJournal = true);
 
 public record SuppliesUsageResponse(
@@ -283,7 +286,10 @@ public record SuppliesUsageResponse(
     string Unit, DateTime UsageDate,
     decimal Quantity, decimal UnitCost, decimal TotalCost,
     string? Department, string? Purpose, string? Reference,
-    Guid? JournalEntryId);
+    Guid? JournalEntryId,
+    string? Notes = null,
+    string? IssuedToUserId = null,
+    string? IssuedToName = null);
 
 public record SuppliesUsageSummaryRequest(
     DateTime FromDate, DateTime ToDate,

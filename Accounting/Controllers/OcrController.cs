@@ -304,9 +304,12 @@ public class OcrController : ControllerBase
 
             // Global federated suggestion (only consulted when there's
             // no strong local match — saves work on rows the matcher
-            // already nailed).
+            // already nailed). Threshold is adaptive — vendors with a
+            // hand-curated alias dictionary (≥10 confirmed mappings) get
+            // a lower bar for auto-accept.
             GlobalProductSuggestion? globalSugg = null;
-            var willCreate = best == null || best.Confidence < Services.Implementations.Ocr.ProductMatcher.AutoAcceptThresholdValue;
+            var threshold = await matcher.GetVendorAdaptiveThresholdAsync(companyId, scan.MatchedContactId);
+            var willCreate = best == null || best.Confidence < threshold;
             if (willCreate)
             {
                 try
@@ -429,7 +432,7 @@ public class OcrController : ControllerBase
                         Name: newName,
                         NameEn: null,
                         Description: ocrDesc,
-                        ProductType: Models.Enums.ProductType.Product,
+                        ProductType: item.AsSupplies ? Models.Enums.ProductType.Supplies : Models.Enums.ProductType.Product,
                         SKU: null,
                         Barcode: null,
                         Category: item.NewProductCategory,
@@ -500,6 +503,27 @@ public class OcrController : ControllerBase
             StockMovementsCreated: movements,
             AliasesLearned: aliases,
             LineResults: lineResults), "นำเข้าสต็อกเรียบร้อย"));
+    }
+
+    /// <summary>Record a "this OCR'd wording is NOT that product" rejection.
+    /// Adds a ProductNegativeAlias scoped to the scan's vendor so future
+    /// matches with the same wording from the same supplier will not
+    /// re-surface the rejected product. UI calls this when the user
+    /// dismisses a suggested candidate in the import modal.</summary>
+    [HttpPost("{scanId:guid}/reject-match")]
+    public async Task<ActionResult<ApiResponse<object>>> RejectMatch(
+        Guid companyId, Guid scanId,
+        [FromBody] OcrRejectMatchRequest req,
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
+    {
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (scan == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผลการสแกน"));
+        await matcher.RecordRejectionAsync(
+            companyId, req.RejectedProductId, req.OcrDescription, scan.MatchedContactId,
+            User.Identity?.Name ?? "ocr-reject", req.Reason);
+        return Ok(new ApiResponse<object>(true, null, "บันทึกการปฏิเสธแล้ว ระบบจะไม่เสนอสินค้านี้สำหรับชื่อนี้อีก"));
     }
 
     private async Task<string> GenerateProductCodeAsync(Guid companyId)

@@ -435,9 +435,12 @@
         <div class="modal-body" id="stockImportBody">
           <!-- populated by Page.openStockImport() -->
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:auto;color:var(--gray-700)">
             <input type="checkbox" id="stockImportLearn" checked> เรียนรู้ชื่อสินค้าตามผู้ขายนี้
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--gray-700)" title="สำหรับใบเสร็จที่เป็นวัสดุสิ้นเปลือง (สบู่/กระดาษ/ผ้าปู ฯลฯ) — สินค้าใหม่ที่สร้างขึ้นจะถูกตั้งเป็นวัสดุสิ้นเปลือง และเบิกได้ที่หน้า /supplies">
+            <input type="checkbox" id="stockImportAsSupplies"> นำเข้าเป็นวัสดุสิ้นเปลือง
           </label>
           <button class="btn btn-secondary" onclick="Layout.closeModal('stockImportModal')">ยกเลิก</button>
           <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้าสต็อก</button>
@@ -2155,9 +2158,41 @@
             ${willCreate
               ? `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">สร้างใหม่</span>`
               : `<span style="color:${confColor};font-weight:600;font-size:13px">${conf}%</span>
-                 <div style="font-size:10px;color:var(--gray-500)">${Layout.esc(best.reason||'')}</div>`}
+                 <div style="font-size:10px;color:var(--gray-500)">${Layout.esc(best.reason||'')}</div>
+                 <button class="btn-link" style="font-size:10px;color:#dc2626;padding:0;background:none;border:none;cursor:pointer;text-decoration:underline;margin-top:2px"
+                         onclick="Page.rejectMatch(${idx}, '${best.productId}', this)">ไม่ใช่อันนี้</button>`}
           </td>
         </tr>`;
+      },
+
+      /**
+       * Mark a suggested product as NOT this OCR'd wording. Persisted
+       * server-side so future scans of the same wording from the same
+       * vendor will not re-surface the rejected candidate. The row
+       * collapses to "+ สร้างใหม่" mode after rejection so the user can
+       * proceed with the import.
+       */
+      async rejectMatch(idx, productId, btnEl) {
+        const scan = this._reviewScan;
+        if (!scan) return;
+        const sourceLine = (this._stockPreview?.lines || []).find(l => l.lineIndex === idx);
+        if (!sourceLine || !productId) return;
+        if (!confirm(`บันทึกว่า "${sourceLine.description || ''}" ≠ "${sourceLine.bestMatch?.name || ''}" ?\nระบบจะไม่เสนอสินค้านี้สำหรับชื่อนี้อีก`)) return;
+        try {
+          await Layout.api().ocrRejectMatch(scan.id, {
+            ocrDescription: sourceLine.description || '',
+            rejectedProductId: productId,
+            reason: null
+          });
+          Layout.toast('บันทึกการปฏิเสธแล้ว');
+          // Collapse this row into "create new" mode
+          const row = btnEl.closest('tr');
+          const select = row.querySelector('.si-product');
+          select.value = '__create__';
+          this.onStockImportProductChange(select, idx);
+        } catch (e) {
+          Layout.toast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
       },
 
       onStockImportProductChange(selectEl, idx) {
@@ -2190,6 +2225,7 @@
         const api = Layout.api(); if (!api) return;
 
         const sourceLines = this._stockPreview?.lines || [];
+        const asSupplies = document.getElementById('stockImportAsSupplies')?.checked || false;
         const rows = document.querySelectorAll('#stockImportRows tr[data-line-idx]');
         const lines = [];
         for (const row of rows) {
@@ -2208,7 +2244,7 @@
             // products land in the same category other tenants put them in.
             const sourceLine = sourceLines.find(l => l.lineIndex === idx);
             const categoryHint = sourceLine?.globalSuggestion?.categoryHint || null;
-            lines.push({ lineIndex: idx, productId: null, newProductName: name, newProductCode: null, newProductCategory: categoryHint, quantity: qty, unit, unitCost: cost, vatRate: null });
+            lines.push({ lineIndex: idx, productId: null, newProductName: name, newProductCode: null, newProductCategory: categoryHint, quantity: qty, unit, unitCost: cost, vatRate: null, asSupplies });
           } else {
             lines.push({ lineIndex: idx, productId: select.value, newProductName: null, quantity: qty, unit, unitCost: cost, vatRate: null });
           }

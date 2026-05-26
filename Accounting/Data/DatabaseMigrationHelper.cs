@@ -2557,6 +2557,75 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GPPSeens_PatternId_CompanyId" ON "GlobalProductPatternTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== SuppliesUsageLogs — multi-line notes + issued-to fields =====
+            """ALTER TABLE "SuppliesUsageLogs" ADD COLUMN IF NOT EXISTS "Notes" text NULL;""",
+            """ALTER TABLE "SuppliesUsageLogs" ADD COLUMN IF NOT EXISTS "IssuedToUserId" text NULL;""",
+            """ALTER TABLE "SuppliesUsageLogs" ADD COLUMN IF NOT EXISTS "IssuedToName" varchar(200) NULL;""",
+
+            // ===== ProductNegativeAliases — "this OCR wording is NOT this product" =====
+            // Stops the matcher from re-suggesting a candidate the user has
+            // explicitly rejected. Scoped to (CompanyId, NormalizedKey,
+            // RejectedProductId) — rejection is per-wording, not blanket.
+            """
+            CREATE TABLE IF NOT EXISTS "ProductNegativeAliases" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "NormalizedName" varchar(500) NOT NULL,
+                "RejectedProductId" uuid NOT NULL,
+                "ContactId" uuid NULL,
+                "Reason" varchar(200) NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ProductNegativeAliases" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ProductNegativeAliases_Products" FOREIGN KEY ("RejectedProductId") REFERENCES "Products"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_ProductNegativeAliases_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_NegAlias_Company_Norm" ON "ProductNegativeAliases" ("CompanyId", "NormalizedName") WHERE "IsDeleted" = false;""",
+
+            // ===== GlobalExpenseCategoryPatterns — federated category prediction =====
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalExpenseCategoryPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorKey" varchar(200) NOT NULL,
+                "DescriptionKeyword" varchar(200) NULL,
+                "AccountCode" varchar(50) NOT NULL,
+                "AccountName" varchar(200) NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalExpenseCategoryPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_GECP_VendorKeyword" ON "GlobalExpenseCategoryPatterns" ("VendorKey", "DescriptionKeyword") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GECP_Status" ON "GlobalExpenseCategoryPatterns" ("Status") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalExpenseCategoryTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GECPSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GECPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalExpenseCategoryPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GECPSeens_Pattern_Company" ON "GlobalExpenseCategoryTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

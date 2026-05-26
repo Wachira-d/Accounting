@@ -243,6 +243,18 @@ public class ProductMatcher
         var descBrands = ExtractBrandTokens(description);
         var vendorHistoryIds = await GetVendorHistoryProductIdsAsync(companyId, vendorContactId);
 
+        // Negative aliases — products the user has previously rejected for
+        // this exact wording. Filter them out of the candidate set so a
+        // rejection has lasting effect across future scans.
+        var rejectedIds = await _db.ProductNegativeAliases
+            .AsNoTracking()
+            .Where(n => n.CompanyId == companyId && !n.IsDeleted
+                     && n.NormalizedName == norm
+                     && (n.ContactId == null || n.ContactId == vendorContactId))
+            .Select(n => n.RejectedProductId)
+            .ToListAsync();
+        var rejectedSet = rejectedIds.ToHashSet();
+
         // === Stage 1+2: alias exact hits ===
         var aliasHits = await _db.ProductAliases
             .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.NormalizedName == norm)
@@ -355,6 +367,10 @@ public class ProductMatcher
         var rescored = new List<ProductMatchCandidate>();
         foreach (var c in byProductId.Values)
         {
+            // Skip explicitly-rejected products — user has previously
+            // confirmed this wording is NOT this product.
+            if (rejectedSet.Contains(c.ProductId)) continue;
+
             var score = c.Confidence;
             var reason = c.Reason;
 
@@ -536,6 +552,61 @@ public class ProductMatcher
     /// <summary>Confidence at-or-above which the UI pre-selects the
     /// candidate (vs. leaving the row in "create new" mode).</summary>
     public static double AutoAcceptThresholdValue => AutoAcceptThreshold;
+
+    /// <summary>Adaptive auto-accept threshold per vendor — drops as the
+    /// vendor accumulates confirmed aliases. Reasoning: a supplier whose
+    /// alias dictionary the user has hand-curated 100+ times is highly
+    /// reliable, so a 70% trigram hit is plenty; conversely a brand-new
+    /// vendor with zero history needs the full 85%. Tier table:
+    ///   • 0–9 aliases   → 0.85 (default)
+    ///   • 10–49         → 0.78
+    ///   • 50–99         → 0.72
+    ///   • 100+          → 0.65
+    /// </summary>
+    public async Task<double> GetVendorAdaptiveThresholdAsync(Guid companyId, Guid? vendorContactId)
+    {
+        if (!vendorContactId.HasValue) return AutoAcceptThreshold;
+        var count = await _db.ProductAliases
+            .AsNoTracking()
+            .CountAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.ContactId == vendorContactId);
+        if (count >= 100) return 0.65;
+        if (count >= 50)  return 0.72;
+        if (count >= 10)  return 0.78;
+        return AutoAcceptThreshold;
+    }
+
+    /// <summary>Record an explicit "this is NOT that product" rejection.
+    /// Persisted as a ProductNegativeAlias scoped to the OCR'd wording
+    /// + (optionally) the vendor. Filters out the rejected product on
+    /// every future MatchAsync call with the same wording.</summary>
+    public async Task RecordRejectionAsync(
+        Guid companyId,
+        Guid rejectedProductId,
+        string ocrDescription,
+        Guid? vendorContactId,
+        string userId,
+        string? reason = null)
+    {
+        var norm = Normalize(ocrDescription);
+        if (norm.Length == 0) return;
+        var existing = await _db.ProductNegativeAliases.FirstOrDefaultAsync(n =>
+            n.CompanyId == companyId
+            && n.NormalizedName == norm
+            && n.RejectedProductId == rejectedProductId
+            && n.ContactId == vendorContactId
+            && !n.IsDeleted);
+        if (existing != null) return;
+        _db.ProductNegativeAliases.Add(new ProductNegativeAlias
+        {
+            CompanyId = companyId,
+            NormalizedName = norm.Length > 500 ? norm[..500] : norm,
+            RejectedProductId = rejectedProductId,
+            ContactId = vendorContactId,
+            Reason = reason,
+            CreatedBy = userId
+        });
+        await _db.SaveChangesAsync();
+    }
 
     // EF projection helper for raw SQL — must be public for Npgsql
     public class TrigramRow

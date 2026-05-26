@@ -874,6 +874,9 @@ public class ProductService : IProductService
             Department = request.Department,
             Purpose = request.Purpose,
             Reference = request.Reference,
+            Notes = request.Notes,
+            IssuedToUserId = request.IssuedToUserId,
+            IssuedToName = request.IssuedToName,
             CreatedBy = userId
         };
 
@@ -940,7 +943,8 @@ public class ProductService : IProductService
         return new SuppliesUsageResponse(
             usage.Id, usage.ProductId, product.Code, product.Name, product.Unit,
             usage.UsageDate, usage.Quantity, usage.UnitCost, usage.TotalCost,
-            usage.Department, usage.Purpose, usage.Reference, usage.JournalEntryId);
+            usage.Department, usage.Purpose, usage.Reference, usage.JournalEntryId,
+            usage.Notes, usage.IssuedToUserId, usage.IssuedToName);
     }
 
     public async Task<List<SuppliesUsageResponse>> GetSuppliesUsageHistoryAsync(Guid companyId, Guid productId)
@@ -952,7 +956,8 @@ public class ProductService : IProductService
             .Select(u => new SuppliesUsageResponse(
                 u.Id, u.ProductId, u.Product.Code, u.Product.Name, u.Product.Unit,
                 u.UsageDate, u.Quantity, u.UnitCost, u.TotalCost,
-                u.Department, u.Purpose, u.Reference, u.JournalEntryId))
+                u.Department, u.Purpose, u.Reference, u.JournalEntryId,
+                u.Notes, u.IssuedToUserId, u.IssuedToName))
             .ToListAsync();
     }
 

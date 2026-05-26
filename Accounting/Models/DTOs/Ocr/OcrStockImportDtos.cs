@@ -80,7 +80,19 @@ public record OcrStockImportLineRequest(
     decimal Quantity,
     string Unit,
     decimal UnitCost,
-    decimal? VatRate);
+    decimal? VatRate,
+    // When true (and ProductId is null), the auto-created product is
+    // a ProductType.Supplies (วัสดุสิ้นเปลือง) instead of Product —
+    // the import then routes the IN movement to the supplies inventory
+    // account so it can be drawn from via the "เบิกใช้" flow on the
+    // /supplies page. Has no effect when ProductId already points at
+    // an existing product (we don't reclassify existing rows).
+    bool AsSupplies = false);
+
+public record OcrRejectMatchRequest(
+    string OcrDescription,
+    Guid RejectedProductId,
+    string? Reason = null);
 
 public record OcrStockImportRequest(
     List<OcrStockImportLineRequest> Lines,
