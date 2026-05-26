@@ -37,8 +37,10 @@ namespace Accounting.Services.Implementations.Ocr;
 public class ProductMatcher
 {
     private readonly AccountingDbContext _db;
+    private readonly GlobalProductLearner? _global;
 
-    public ProductMatcher(AccountingDbContext db) { _db = db; }
+    public ProductMatcher(AccountingDbContext db, GlobalProductLearner? global = null)
+    { _db = db; _global = global; }
 
     private const double VendorAliasScore   = 1.00;
     private const double GlobalAliasScore   = 0.95;
@@ -329,6 +331,23 @@ public class ProductMatcher
                 byProductId[p.Id] = new ProductMatchCandidate(p.Id, p.Code, p.Name, p.Unit, p.CostPrice, p.CurrentStock, sim, "fuzzy");
         }
 
+        // ── Global pattern lookup (Stage 0.5) ──────────────────────────
+        // Read-only consultation of the cross-tenant knowledge pool.
+        // Boost candidates whose normalized name matches an ACTIVE global
+        // pattern (≥ 3 distinct tenants confirmed this wording exists).
+        // Bumps confidence by GlobalPatternBoost (capped at MaxBoosted).
+        // Never trains on the read — write happens in RecordAliasAsync.
+        var globalHit = false;
+        if (_global != null && byProductId.Count > 0)
+        {
+            try
+            {
+                var pattern = await _global.GetActivePatternAsync(norm);
+                if (pattern != null) globalHit = true;
+            }
+            catch { /* table may not exist yet in test envs */ }
+        }
+
         // ── Brand-protection + vendor-history rescore ──────────────────
         // Apply AFTER all sourcing stages so it works against the union
         // of candidates. Stage-1 exact-alias hits (confidence ≥ 1.0) are
@@ -345,6 +364,14 @@ public class ProductMatcher
             {
                 score = Math.Min(MaxBoostedScore, score + VendorHistoryBoost);
                 reason = reason + "+vendor-hist";
+            }
+
+            // Global federated knowledge boost — only when the OCR'd
+            // wording is one the SaaS as a whole already knows.
+            if (globalHit && score < VendorAliasScore)
+            {
+                score = Math.Min(MaxBoostedScore, score + GlobalProductLearner.GlobalPatternBoost);
+                reason = reason + "+global";
             }
 
             // Brand-token protection — when the OCR'd description names
@@ -477,6 +504,33 @@ public class ProductMatcher
             Source = source,
             CreatedBy = userId
         });
+
+        // Feed the cross-tenant knowledge pool. Anonymized — only the
+        // wording + extracted brand/unit/category travel out of this
+        // tenant. Failure to write is non-fatal: a global-learning
+        // outage must not break the per-tenant alias write that
+        // succeeded above.
+        if (_global != null)
+        {
+            try
+            {
+                var product = await _db.Products
+                    .AsNoTracking()
+                    .Where(p => p.Id == productId && p.CompanyId == companyId)
+                    .Select(p => new { p.Unit, p.Category })
+                    .FirstOrDefaultAsync();
+                var brands = ExtractBrandTokens(ocrDescription);
+                var brand = brands.Count == 1 ? brands.First() : null;  // only when unambiguous
+                await _global.RecordConfirmAsync(
+                    companyId: companyId,
+                    normalizedKey: norm,
+                    verbatimLabel: ocrDescription,
+                    brand: brand,
+                    unit: product?.Unit,
+                    categoryHint: product?.Category);
+            }
+            catch { /* swallow: global learning is best-effort */ }
+        }
     }
 
     /// <summary>Confidence at-or-above which the UI pre-selects the

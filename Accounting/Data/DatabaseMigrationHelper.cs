@@ -2509,6 +2509,54 @@ public static class DatabaseMigrationHelper
             // Trigram index on Product.Name too — first-pass match when no
             // alias exists yet for a freshly OCR'd description.
             """CREATE INDEX IF NOT EXISTS "IX_Products_Name_Trgm" ON "Products" USING gin ("Name" gin_trgm_ops);""",
+
+            // ===== GlobalProductPatterns — cross-tenant federated learning of product wordings =====
+            // Anonymized, system-wide. No tenant identifiers in the row itself —
+            // distinct-tenant counting is offloaded to the tiny join table below.
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalProductPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "NormalizedKey" varchar(500) NOT NULL,
+                "CanonicalLabel" varchar(500) NULL,
+                "Brand" varchar(100) NULL,
+                "Unit" varchar(50) NULL,
+                "CategoryHint" varchar(100) NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalProductPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GlobalProductPatterns_NormalizedKey" ON "GlobalProductPatterns" ("NormalizedKey") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GlobalProductPatterns_Status" ON "GlobalProductPatterns" ("Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GlobalProductPatterns_NormalizedKey_Trgm" ON "GlobalProductPatterns" USING gin ("NormalizedKey" gin_trgm_ops);""",
+
+            // Tracks DISTINCT tenants who confirmed each pattern — uniqueness
+            // counter ONLY. One row per (PatternId, CompanyId). Never joined
+            // back to tenant data in matching queries; the per-tenant data
+            // is queried inside that tenant's own ProductAlias table.
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalProductPatternTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalProductPatternTenantSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GPPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalProductPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GPPSeens_PatternId_CompanyId" ON "GlobalProductPatternTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

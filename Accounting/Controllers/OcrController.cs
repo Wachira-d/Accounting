@@ -222,7 +222,8 @@ public class OcrController : ControllerBase
     [HttpGet("{scanId:guid}/stock-preview")]
     public async Task<ActionResult<ApiResponse<OcrStockPreviewResponse>>> StockPreview(
         Guid companyId, Guid scanId,
-        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher,
+        [FromServices] Services.Implementations.Ocr.GlobalProductLearner globalLearner)
     {
         var scan = await _db.OcrScanResults
             .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
@@ -301,6 +302,31 @@ public class OcrController : ControllerBase
                 }
             }
 
+            // Global federated suggestion (only consulted when there's
+            // no strong local match — saves work on rows the matcher
+            // already nailed).
+            GlobalProductSuggestion? globalSugg = null;
+            var willCreate = best == null || best.Confidence < Services.Implementations.Ocr.ProductMatcher.AutoAcceptThresholdValue;
+            if (willCreate)
+            {
+                try
+                {
+                    var norm = Services.Implementations.Ocr.ProductMatcher.Normalize(desc);
+                    var pattern = await globalLearner.GetActivePatternAsync(norm);
+                    if (pattern != null)
+                    {
+                        globalSugg = new GlobalProductSuggestion(
+                            CanonicalLabel: pattern.CanonicalLabel,
+                            Brand: pattern.Brand,
+                            Unit: pattern.Unit,
+                            CategoryHint: pattern.CategoryHint,
+                            TenantCount: pattern.TenantCount,
+                            TotalConfirms: pattern.TotalConfirms);
+                    }
+                }
+                catch { /* federation outage is silent */ }
+            }
+
             resultLines.Add(new OcrStockPreviewLine(
                 LineIndex: i,
                 Description: desc,
@@ -311,14 +337,15 @@ public class OcrController : ControllerBase
                 DetectedQuantity: detectedQty,
                 BestMatch: best,
                 Alternatives: alternatives,
-                WillCreateNew: best == null || best.Confidence < Services.Implementations.Ocr.ProductMatcher.AutoAcceptThresholdValue,
+                WillCreateNew: willCreate,
                 PriceAnomaly: priceAnomaly,
                 ExpectedUnitCost: expectedCost,
                 PriceAnomalyHint: priceHint,
                 ConvertedQuantity: convQty,
                 ConvertedUnit: convUnit,
                 ConversionRate: convRate,
-                ConversionHint: convHint));
+                ConversionHint: convHint,
+                GlobalSuggestion: globalSugg));
         }
 
         return Ok(new ApiResponse<OcrStockPreviewResponse>(true, new OcrStockPreviewResponse(

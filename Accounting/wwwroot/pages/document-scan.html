@@ -2073,7 +2073,11 @@
         // to the detected qty/unit from OCR.
         const qty = (line.convertedQuantity != null) ? line.convertedQuantity
                    : (line.detectedQuantity ?? line.quantity ?? 1);
-        const unit = line.convertedUnit || line.detectedUnit || best?.unit || 'ชิ้น';
+        // Unit precedence: explicit conversion → detected from text →
+        // matched product's unit → global federated suggestion → "ชิ้น"
+        const unit = line.convertedUnit || line.detectedUnit
+                   || best?.unit
+                   || ((willCreate && line.globalSuggestion?.unit) || 'ชิ้น');
         const cost = line.unitPrice ?? best?.costPrice ?? 0;
 
         // Product cell — pre-selected dropdown of [Best, ...Alternatives, +Create new]
@@ -2084,9 +2088,14 @@
             ${Layout.esc(c.name)} ${c.code ? `(${Layout.esc(c.code)})` : ''} · ${Math.round(c.confidence*100)}%
           </option>`).join('');
 
-        const newProdName = Layout.esc(line.description || '').substring(0, 200);
+        // When the cross-tenant federated pool has an active pattern
+        // for this wording, prefer its canonical label as the
+        // "create new" pre-fill — gives the user a cleaner generic
+        // product name instead of the raw OCR description.
+        const gs = line.globalSuggestion;
+        const newProdName = Layout.esc((willCreate && gs?.canonicalLabel) ? gs.canonicalLabel : (line.description || '')).substring(0, 200);
 
-        // Per-row hint stripe — price anomaly OR conversion explainer
+        // Per-row hint stripe — price anomaly OR conversion explainer OR global pattern
         const hints = [];
         if (line.priceAnomaly && line.priceAnomalyHint) {
           hints.push(`<div style="background:#fff7ed;border-left:3px solid #f97316;color:#9a3412;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
@@ -2096,6 +2105,17 @@
         if (line.conversionHint) {
           hints.push(`<div style="background:#ecfdf5;border-left:3px solid #10b981;color:#065f46;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
             🔄 ${Layout.esc(line.conversionHint)}
+          </div>`);
+        }
+        if (gs && (gs.canonicalLabel || gs.brand || gs.unit)) {
+          const bits = [];
+          if (gs.canonicalLabel) bits.push(`ชื่อมาตรฐาน "${Layout.esc(gs.canonicalLabel)}"`);
+          if (gs.brand) bits.push(`แบรนด์ ${Layout.esc(gs.brand)}`);
+          if (gs.unit) bits.push(`หน่วย ${Layout.esc(gs.unit)}`);
+          if (gs.categoryHint) bits.push(`หมวด ${Layout.esc(gs.categoryHint)}`);
+          hints.push(`<div style="background:#eff6ff;border-left:3px solid #2563eb;color:#1e3a8a;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            🌐 ระบบกลางรู้จักสินค้านี้ — ${bits.join(' · ')}
+            <span style="color:#64748b">(${gs.tenantCount} ผู้ใช้ยืนยัน · ${gs.totalConfirms} ครั้ง)</span>
           </div>`);
         }
 
@@ -2169,6 +2189,7 @@
         if (!scan) return;
         const api = Layout.api(); if (!api) return;
 
+        const sourceLines = this._stockPreview?.lines || [];
         const rows = document.querySelectorAll('#stockImportRows tr[data-line-idx]');
         const lines = [];
         for (const row of rows) {
@@ -2183,7 +2204,11 @@
           if (willCreate) {
             const name = (row.querySelector('.si-new-name').value || '').trim();
             if (!name) continue;
-            lines.push({ lineIndex: idx, productId: null, newProductName: name, newProductCode: null, newProductCategory: null, quantity: qty, unit, unitCost: cost, vatRate: null });
+            // Carry the federated category hint over so newly-created
+            // products land in the same category other tenants put them in.
+            const sourceLine = sourceLines.find(l => l.lineIndex === idx);
+            const categoryHint = sourceLine?.globalSuggestion?.categoryHint || null;
+            lines.push({ lineIndex: idx, productId: null, newProductName: name, newProductCode: null, newProductCategory: categoryHint, quantity: qty, unit, unitCost: cost, vatRate: null });
           } else {
             lines.push({ lineIndex: idx, productId: select.value, newProductName: null, quantity: qty, unit, unitCost: cost, vatRate: null });
           }

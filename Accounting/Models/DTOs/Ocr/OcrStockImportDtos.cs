@@ -45,7 +45,21 @@ public record OcrStockPreviewLine(
     decimal? ConvertedQuantity = null,
     string? ConvertedUnit = null,
     decimal? ConversionRate = null,
-    string? ConversionHint = null);
+    string? ConversionHint = null,
+    // ── Global federated knowledge suggestion ───────────────────────
+    // Populated when the cross-tenant pool has an ACTIVE pattern for
+    // this wording. UI uses these to pre-fill the "create new product"
+    // form with canonical label / unit / category and shows a 🌐 badge
+    // explaining the source. Null when no global consensus yet exists.
+    GlobalProductSuggestion? GlobalSuggestion = null);
+
+public record GlobalProductSuggestion(
+    string? CanonicalLabel,
+    string? Brand,
+    string? Unit,
+    string? CategoryHint,
+    int TenantCount,
+    int TotalConfirms);
 
 public record OcrStockPreviewResponse(
     Guid ScanId,

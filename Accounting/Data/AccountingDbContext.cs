@@ -51,6 +51,8 @@ public class AccountingDbContext : DbContext
     public DbSet<UnitConversion> UnitConversions => Set<UnitConversion>();
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
     public DbSet<ProductAlias> ProductAliases => Set<ProductAlias>();
+    public DbSet<GlobalProductPattern> GlobalProductPatterns => Set<GlobalProductPattern>();
+    public DbSet<GlobalProductPatternTenantSeen> GlobalProductPatternTenantSeens => Set<GlobalProductPatternTenantSeen>();
     public DbSet<StockCount> StockCounts => Set<StockCount>();
     public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
     public DbSet<InventorySnapshot> InventorySnapshots => Set<InventorySnapshot>();

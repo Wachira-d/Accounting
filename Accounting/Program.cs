@@ -170,6 +170,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RecurringExpe
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.DocumentWorkflowPredictor>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.VendorClusteringService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ProductMatcher>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.GlobalProductLearner>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RdComplianceValidator>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDiPatternLearner>();
