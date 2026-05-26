@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customer Portal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #4F46E5; --primary-dark: #4338CA;
+      --success: #059669; --warning: #D97706; --danger: #DC2626;
+      --gray-50:#F9FAFB; --gray-100:#F3F4F6; --gray-200:#E5E7EB; --gray-300:#D1D5DB;
+      --gray-500:#6B7280; --gray-600:#4B5563; --gray-700:#374151; --gray-900:#111827;
+      --bg: #F3F4F6;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Noto Sans Thai','Sarabun','Tahoma','Sukhumvit Set','Helvetica Neue',Arial,sans-serif; background: var(--bg); color: var(--gray-900); }
+
+    /* === Login screen === */
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; background: linear-gradient(135deg,#4F46E5,#7C3AED); }
+    .login-card { background: white; border-radius: 16px; padding: 40px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,0.15); }
+    .login-card h1 { margin: 0 0 8px; font-size: 24px; color: var(--gray-900); }
+    .login-card p.sub { color: var(--gray-500); font-size: 14px; margin: 0 0 24px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; color: var(--gray-700); margin-bottom: 4px; }
+    .field input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-300); border-radius: 8px; font-size: 14px; font-family: inherit; }
+    .field input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,0.15); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 18px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; border: none; transition: all .15s; font-family: inherit; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-ghost { background: transparent; color: var(--gray-700); border: 1px solid var(--gray-300); }
+    .btn-ghost:hover { background: var(--gray-50); }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+    .err { color: var(--danger); font-size: 13px; margin-top: 6px; min-height: 18px; }
+
+    /* === Dashboard === */
+    .topbar { background: white; border-bottom: 1px solid var(--gray-200); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .topbar .biz { font-weight: 600; color: var(--gray-900); font-size: 16px; }
+    .topbar .who { font-size: 13px; color: var(--gray-600); }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+    .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--gray-200); margin-bottom: 20px; flex-wrap: wrap; }
+    .tab { padding: 12px 18px; border: none; background: transparent; cursor: pointer; font-weight: 500; color: var(--gray-600); border-bottom: 2px solid transparent; margin-bottom: -2px; font-family: inherit; font-size: 14px; }
+    .tab:hover { color: var(--gray-900); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 14px; margin-bottom: 20px; }
+    .kpi { background: white; border-radius: 12px; padding: 16px 20px; border: 1px solid var(--gray-200); }
+    .kpi-label { font-size: 12px; color: var(--gray-500); }
+    .kpi-value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; }
+    thead { background: var(--gray-50); }
+    th, td { padding: 12px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--gray-100); }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray-500); font-weight: 600; }
+    tr:hover td { background: var(--gray-50); }
+    .right { text-align: right; }
+    .pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .pill-paid { background: #D1FAE5; color: var(--success); }
+    .pill-due { background: #FEF3C7; color: var(--warning); }
+    .pill-overdue { background: #FEE2E2; color: var(--danger); }
+    .empty { text-align: center; padding: 60px 20px; color: var(--gray-500); }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+    select, input.search { padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: 6px; font-size: 13px; font-family: inherit; }
+
+    /* Modal */
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 99; display: none; align-items: center; justify-content: center; padding: 20px; }
+    .modal-bg.open { display: flex; }
+    .modal { background: white; border-radius: 12px; max-width: 600px; width: 100%; max-height: 90vh; overflow: auto; }
+    .modal-header { padding: 16px 22px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; }
+    .modal-body { padding: 20px 22px; }
+    .modal-footer { padding: 14px 22px; border-top: 1px solid var(--gray-200); display: flex; justify-content: flex-end; gap: 8px; }
+    .x { border: none; background: transparent; font-size: 24px; cursor: pointer; color: var(--gray-500); }
+    .toast { position: fixed; top: 20px; right: 20px; padding: 12px 18px; border-radius: 8px; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15); z-index: 999; max-width: 360px; }
+    .toast-ok { background: #ECFDF5; color: var(--success); border: 1px solid #A7F3D0; }
+    .toast-err { background: #FEF2F2; color: var(--danger); border: 1px solid #FECACA; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+  /**
+   * Customer Portal SPA — single-page customer self-service against the
+   * existing PortalController endpoints (PortalAdminController + the
+   * AllowAnonymous PortalPublicController). The site OWNER manages
+   * portal access from /pages/customer-portal.html; this page is what
+   * the CUSTOMER themselves opens.
+   *
+   * URL: /portal.html?company={companyId}
+   *
+   * The companyId scopes everything — login + every subsequent API
+   * call. We never let the customer see another company's data.
+   *
+   * State flow:
+   *   no token → showLogin()
+   *   POST /api/portal/login (email + password + companyId)
+   *   → save { accessToken, refreshToken, contactId, contactName,
+   *           companyId, companyName } to localStorage
+   *   → showDashboard()
+   * dashboard tabs:
+   *   📄 documents  GET /api/portal/{cid}/documents?type=...
+   *   💳 payments   GET /api/portal/{cid}/payments
+   *   📊 statement  GET /api/portal/{cid}/statement?fromDate&toDate
+   * download:
+   *   GET /api/portal/{cid}/documents/{id}/pdf (returns application/pdf)
+   *
+   * Token storage is keyed by companyId so a customer holding accounts
+   * with multiple ERP tenants (rare but possible) doesn't have one
+   * login clobber another.
+   */
+  const Portal = {
+    companyId: new URLSearchParams(location.search).get('company') || '',
+    auth: null,
+    activeTab: 'documents',
+
+    init() {
+      if (!this.companyId) {
+        document.getElementById('root').innerHTML = `
+          <div class="login-wrap"><div class="login-card">
+            <h1>ลิงค์ไม่สมบูรณ์</h1>
+            <p class="sub">URL ต้องมี <code>?company={id}</code> — ติดต่อร้านค้าเพื่อขอลิงค์ที่ถูกต้อง</p>
+          </div></div>`;
+        return;
+      }
+      const stored = localStorage.getItem(this._key());
+      if (stored) {
+        try { this.auth = JSON.parse(stored); } catch (_) { localStorage.removeItem(this._key()); }
+      }
+      if (this.auth?.accessToken) this.showDashboard();
+      else this.showLogin();
+    },
+
+    _key() { return `portal_auth_${this.companyId}`; },
+
+    logout() {
+      localStorage.removeItem(this._key());
+      this.auth = null;
+      this.showLogin();
+    },
+
+    // ============================================================
+    // LOGIN
+    // ============================================================
+    showLogin() {
+      document.getElementById('root').innerHTML = `
+        <div class="login-wrap">
+          <div class="login-card">
+            <h1>🔐 Portal ลูกค้า</h1>
+            <p class="sub">เข้าระบบเพื่อดูใบแจ้งหนี้ · ใบกำกับภาษี · ดาวน์โหลดเอกสาร · ดู statement</p>
+            <form onsubmit="Portal.doLogin(event)">
+              <div class="field">
+                <label>อีเมล</label>
+                <input id="lgEmail" type="email" required autocomplete="email">
+              </div>
+              <div class="field">
+                <label>รหัสผ่าน</label>
+                <input id="lgPass" type="password" required autocomplete="current-password">
+              </div>
+              <div class="err" id="lgErr"></div>
+              <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;padding:12px" id="lgBtn">เข้าระบบ</button>
+            </form>
+            <p style="font-size:12px;color:var(--gray-500);text-align:center;margin-top:18px">
+              ลืมรหัสผ่าน? ติดต่อร้านค้า — เจ้าของจัดการสิทธิ์เข้าถึงผ่าน Portal Admin
+            </p>
+          </div>
+        </div>`;
+    },
+
+    async doLogin(ev) {
+      ev.preventDefault();
+      const btn = document.getElementById('lgBtn');
+      const err = document.getElementById('lgErr');
+      err.textContent = '';
+      btn.disabled = true; btn.textContent = 'กำลังตรวจสอบ...';
+      try {
+        const r = await fetch('/api/portal/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('lgEmail').value.trim(),
+            password: document.getElementById('lgPass').value,
+            companyId: this.companyId
+          })
+        });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j?.success) throw new Error(j?.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+        this.auth = j.data;
+        localStorage.setItem(this._key(), JSON.stringify(this.auth));
+        this.showDashboard();
+      } catch (e) {
+        err.textContent = e.message || 'เข้าระบบไม่สำเร็จ';
+        btn.disabled = false; btn.textContent = 'เข้าระบบ';
+      }
+    },
+
+    // ============================================================
+    // DASHBOARD
+    // ============================================================
+    showDashboard() {
+      document.getElementById('root').innerHTML = `
+        <div class="topbar">
+          <div>
+            <div class="biz">${esc(this.auth.companyName || '')}</div>
+            <div class="who">👤 ${esc(this.auth.contactName || '')}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="Portal.logout()">ออกจากระบบ</button>
+        </div>
+        <div class="container">
+          <div class="tabs">
+            <button class="tab ${this.activeTab==='documents'?'active':''}" onclick="Portal.setTab('documents')">📄 เอกสาร</button>
+            <button class="tab ${this.activeTab==='payments'?'active':''}" onclick="Portal.setTab('payments')">💳 การชำระเงิน</button>
+            <button class="tab ${this.activeTab==='statement'?'active':''}" onclick="Portal.setTab('statement')">📊 Statement</button>
+          </div>
+          <div id="tabContent"><div class="empty">กำลังโหลด...</div></div>
+        </div>
+        <div class="modal-bg" id="modalBg">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 id="modalTitle" style="margin:0;font-size:16px"></h3>
+              <button class="x" onclick="Portal.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-footer" id="modalFooter">
+              <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
+            </div>
+          </div>
+        </div>`;
+      this.loadTab();
+    },
+
+    setTab(t) { this.activeTab = t; this.showDashboard(); },
+
+    async api(path, opts = {}) {
+      const r = await fetch(path, {
+        ...opts,
+        headers: {
+          'Authorization': `Bearer ${this.auth.accessToken}`,
+          'Content-Type': 'application/json',
+          ...(opts.headers || {})
+        }
+      });
+      if (r.status === 401) {
+        // Try refresh once
+        if (this.auth.refreshToken && !opts._retried) {
+          try {
+            const rf = await fetch('/api/portal/refresh', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refreshToken: this.auth.refreshToken })
+            });
+            const rj = await rf.json();
+            if (rf.ok && rj?.success) {
+              this.auth = rj.data;
+              localStorage.setItem(this._key(), JSON.stringify(this.auth));
+              return this.api(path, { ...opts, _retried: true });
+            }
+          } catch (_) {}
+        }
+        this.logout();
+        throw new Error('Session หมดอายุ — กรุณา login ใหม่');
+      }
+      return r;
+    },
+
+    async loadTab() {
+      try {
+        if (this.activeTab === 'documents') await this.loadDocuments();
+        else if (this.activeTab === 'payments') await this.loadPayments();
+        else if (this.activeTab === 'statement') await this.loadStatement();
+      } catch (e) { toast(e.message || 'โหลดไม่สำเร็จ', 'err'); }
+    },
+
+    // ───────── Documents tab ─────────
+    async loadDocuments() {
+      const type = document.getElementById('docFilter')?.value || '';
+      const r = await this.api(`/api/portal/${this.companyId}/documents${type?`?type=${type}`:''}`);
+      const j = await r.json();
+      const docs = j?.data || [];
+
+      const outstanding = docs.reduce((s, d) => s + Math.max(0, d.balanceDue || 0), 0);
+      const overdue = docs.filter(d => d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date()).length;
+
+      document.getElementById('tabContent').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi"><div class="kpi-label">เอกสารทั้งหมด</div><div class="kpi-value">${docs.length}</div></div>
+          <div class="kpi"><div class="kpi-label">ยอดค้างชำระ</div><div class="kpi-value" style="color:var(--warning)">฿${money(outstanding)}</div></div>
+          <div class="kpi"><div class="kpi-label">เกินกำหนด</div><div class="kpi-value" style="color:var(--danger)">${overdue}</div></div>
+        </div>
+        <div class="toolbar">
+          <select id="docFilter" onchange="Portal.loadDocuments()">
+            <option value="">ทุกประเภท</option>
+            <option value="Invoice">ใบแจ้งหนี้</option>
+            <option value="TaxInvoice">ใบกำกับภาษี</option>
+            <option value="Receipt">ใบเสร็จ</option>
+            <option value="Quotation">ใบเสนอราคา</option>
+            <option value="CreditNote">ใบลดหนี้</option>
+            <option value="DebitNote">ใบเพิ่มหนี้</option>
+          </select>
+        </div>
+        ${docs.length === 0
+          ? '<div class="empty">ยังไม่มีเอกสาร</div>'
+          : `<table>
+              <thead><tr>
+                <th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ครบกำหนด</th>
+                <th class="right">ยอดรวม</th><th class="right">ค้างชำระ</th><th>สถานะ</th><th></th>
+              </tr></thead>
+              <tbody>${docs.map(d => {
+                const overdue = d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date();
+                const cls = d.balanceDue <= 0 ? 'pill-paid' : (overdue ? 'pill-overdue' : 'pill-due');
+                const lbl = d.balanceDue <= 0 ? 'ชำระแล้ว' : (overdue ? 'เกินกำหนด' : 'รอชำระ');
+                return `<tr>
+                  <td><strong>${esc(d.documentNumber)}</strong></td>
+                  <td>${docTypeLabel(d.documentType)}</td>
+                  <td>${dateThai(d.documentDate)}</td>
+                  <td>${d.dueDate ? dateThai(d.dueDate) : '-'}</td>
+                  <td class="right">฿${money(d.totalAmount)}</td>
+                  <td class="right" style="font-weight:600">${d.balanceDue > 0 ? `฿${money(d.balanceDue)}` : '-'}</td>
+                  <td><span class="pill ${cls}">${lbl}</span></td>
+                  <td>
+                    <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${d.id}')">ดู</button>
+                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${esc(d.documentNumber)}')">PDF</button>
+                  </td>
+                </tr>`;
+              }).join('')}</tbody>
+             </table>`}`;
+    },
+
+    async viewDocument(id) {
+      try {
+        const r = await this.api(`/api/portal/${this.companyId}/documents/${id}`);
+        const j = await r.json();
+        const d = j?.data;
+        if (!d) return;
+        document.getElementById('modalTitle').textContent = `${docTypeLabel(d.documentType)} ${d.documentNumber}`;
+        const overdue = d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date();
+        document.getElementById('modalBody').innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:14px">
+            <div><div style="font-size:11px;color:var(--gray-500)">ประเภท</div><div>${docTypeLabel(d.documentType)}</div></div>
+            <div><div style="font-size:11px;color:var(--gray-500)">สถานะ</div><div>${esc(d.status)}</div></div>
+            <div><div style="font-size:11px;color:var(--gray-500)">วันที่เอกสาร</div><div>${dateThai(d.documentDate)}</div></div>
+            <div><div style="font-size:11px;color:var(--gray-500)">วันครบกำหนด</div><div>${d.dueDate ? dateThai(d.dueDate) : '-'}</div></div>
+          </div>
+          <div style="background:var(--gray-50);padding:14px 16px;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>ยอดรวม</span><span>฿${money(d.totalAmount)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>ชำระแล้ว</span><span style="color:var(--success)">฿${money(d.paidAmount)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;border-top:1px solid var(--gray-300);margin-top:6px;padding-top:6px">
+              <span>ค้างชำระ</span>
+              <span style="color:${overdue?'var(--danger)':d.balanceDue>0?'var(--warning)':'var(--success)'}">฿${money(d.balanceDue)}</span>
+            </div>
+          </div>`;
+        document.getElementById('modalFooter').innerHTML = `
+          <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
+          <button class="btn btn-primary" onclick="Portal.downloadPdf('${d.id}','${esc(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
+        `;
+        document.getElementById('modalBg').classList.add('open');
+      } catch (e) { toast(e.message, 'err'); }
+    },
+
+    async downloadPdf(id, docNumber) {
+      try {
+        const r = await this.api(`/api/portal/${this.companyId}/documents/${id}/pdf`);
+        if (!r.ok) throw new Error('ดาวน์โหลดไม่สำเร็จ');
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${docNumber || id}.pdf`;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
+        toast('ดาวน์โหลดสำเร็จ', 'ok');
+      } catch (e) { toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'err'); }
+    },
+
+    // ───────── Payments tab ─────────
+    async loadPayments() {
+      const r = await this.api(`/api/portal/${this.companyId}/payments`);
+      const j = await r.json();
+      const pays = j?.data || [];
+      const total = pays.reduce((s,p) => s + (p.amount||0), 0);
+      document.getElementById('tabContent').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi"><div class="kpi-label">รายการทั้งหมด</div><div class="kpi-value">${pays.length}</div></div>
+          <div class="kpi"><div class="kpi-label">ยอดชำระรวม</div><div class="kpi-value" style="color:var(--success)">฿${money(total)}</div></div>
+        </div>
+        ${pays.length === 0
+          ? '<div class="empty">ยังไม่มีการชำระเงิน</div>'
+          : `<table>
+              <thead><tr>
+                <th>วันที่</th><th>เลขเอกสาร</th><th>ช่องทาง</th><th>อ้างอิง</th><th class="right">จำนวน</th>
+              </tr></thead>
+              <tbody>${pays.map(p => `<tr>
+                <td>${dateThai(p.paymentDate)}</td>
+                <td><strong>${esc(p.documentNumber || '-')}</strong></td>
+                <td>${esc(p.paymentMethod || '-')}</td>
+                <td>${esc(p.reference || '-')}</td>
+                <td class="right" style="color:var(--success);font-weight:600">฿${money(p.amount)}</td>
+              </tr>`).join('')}</tbody>
+             </table>`}`;
+    },
+
+    // ───────── Statement tab ─────────
+    async loadStatement() {
+      const fromVal = document.getElementById('stFrom')?.value;
+      const toVal = document.getElementById('stTo')?.value;
+      const today = new Date();
+      const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
+      const todayStr = today.toISOString().slice(0,10);
+      const from = fromVal || firstOfMonth;
+      const to = toVal || todayStr;
+
+      document.getElementById('tabContent').innerHTML = `
+        <div class="toolbar">
+          <label style="font-size:13px;color:var(--gray-600)">ตั้งแต่</label>
+          <input type="date" id="stFrom" value="${from}" class="search">
+          <label style="font-size:13px;color:var(--gray-600)">ถึง</label>
+          <input type="date" id="stTo" value="${to}" class="search">
+          <button class="btn btn-primary btn-sm" onclick="Portal.loadStatement()">โหลด</button>
+        </div>
+        <div id="stmtBody"><div class="empty">กำลังโหลด...</div></div>`;
+
+      try {
+        const r = await this.api(`/api/portal/${this.companyId}/statement?fromDate=${from}&toDate=${to}`);
+        const j = await r.json();
+        const s = j?.data;
+        if (!s) { document.getElementById('stmtBody').innerHTML = '<div class="empty">ไม่มีข้อมูล</div>'; return; }
+        document.getElementById('stmtBody').innerHTML = `
+          <div class="kpi-grid">
+            <div class="kpi"><div class="kpi-label">ยอดยกมา</div><div class="kpi-value">฿${money(s.openingBalance)}</div></div>
+            <div class="kpi"><div class="kpi-label">เพิ่ม (เดบิต)</div><div class="kpi-value" style="color:var(--warning)">฿${money(s.totalCharged)}</div></div>
+            <div class="kpi"><div class="kpi-label">ชำระ (เครดิต)</div><div class="kpi-value" style="color:var(--success)">฿${money(s.totalPaid)}</div></div>
+            <div class="kpi"><div class="kpi-label">ยอดคงเหลือ</div><div class="kpi-value" style="color:${s.closingBalance>0?'var(--danger)':'var(--success)'}">฿${money(s.closingBalance)}</div></div>
+          </div>
+          ${(s.lines||[]).length === 0
+            ? '<div class="empty">ไม่มีรายการในช่วงนี้</div>'
+            : `<table>
+                <thead><tr><th>วันที่</th><th>เอกสาร</th><th>รายการ</th><th class="right">จำนวน</th><th class="right">คงเหลือ</th></tr></thead>
+                <tbody>${(s.lines||[]).map(l => `<tr>
+                  <td>${dateThai(l.date)}</td>
+                  <td><strong>${esc(l.documentNumber || '-')}</strong></td>
+                  <td>${esc(l.description || '')}</td>
+                  <td class="right" style="color:${l.amount>=0?'var(--warning)':'var(--success)'}">${l.amount>=0?'+':''}฿${money(Math.abs(l.amount))}</td>
+                  <td class="right" style="font-weight:600">฿${money(l.balance)}</td>
+                </tr>`).join('')}</tbody>
+               </table>`}`;
+      } catch (e) {
+        document.getElementById('stmtBody').innerHTML = `<div class="empty" style="color:var(--danger)">${esc(e.message||'โหลดไม่สำเร็จ')}</div>`;
+      }
+    },
+
+    closeModal() { document.getElementById('modalBg')?.classList.remove('open'); }
+  };
+
+  // ============================================================
+  // Helpers
+  // ============================================================
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function dateThai(d) {
+    if (!d) return '-';
+    const dt = new Date(d);
+    if (isNaN(dt)) return '-';
+    return dt.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  const DOC_TYPE = {
+    'Quotation':'ใบเสนอราคา','Invoice':'ใบแจ้งหนี้','Receipt':'ใบเสร็จ','TaxInvoice':'ใบกำกับภาษี',
+    'CreditNote':'ใบลดหนี้','DebitNote':'ใบเพิ่มหนี้','DeliveryNote':'ใบส่งของ','BillingNote':'ใบวางบิล',
+    'PurchaseOrder':'ใบสั่งซื้อ','PurchaseInvoice':'ใบแจ้งหนี้ซื้อ','Expense':'ค่าใช้จ่าย','PaymentVoucher':'ใบสำคัญจ่าย',
+    'ReceiptVoucher':'ใบสำคัญรับ','CertificateInLieu':'ใบรับรองแทนใบเสร็จ'
+  };
+  function docTypeLabel(t) { return DOC_TYPE[t] || t; }
+  function toast(msg, kind = 'ok') {
+    const div = document.createElement('div');
+    div.className = `toast toast-${kind}`;
+    div.textContent = msg;
+    document.body.appendChild(div);
+    setTimeout(() => div.remove(), 3500);
+  }
+
+  Portal.init();
+  </script>
+</body>
+</html>
