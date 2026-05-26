@@ -223,7 +223,8 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<OcrStockPreviewResponse>>> StockPreview(
         Guid companyId, Guid scanId,
         [FromServices] Services.Implementations.Ocr.ProductMatcher matcher,
-        [FromServices] Services.Implementations.Ocr.GlobalProductLearner globalLearner)
+        [FromServices] Services.Implementations.Ocr.GlobalProductLearner globalLearner,
+        [FromServices] Services.Implementations.Ocr.GlobalAssetCategoryLearner globalAssetLearner)
     {
         var scan = await _db.OcrScanResults
             .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
@@ -248,6 +249,14 @@ public class OcrController : ControllerBase
             try { lines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
             catch { /* malformed JSON — treat as empty so the UI still opens */ }
         }
+
+        // Run the fixed-asset detector across all lines once. Returns
+        // one LineDecision per OCR line — IsPotentialAsset flag + a
+        // suggested category + useful-life + confidence. Pre-filtered
+        // by the ฿5k threshold + capital-asset keyword list. Cheap
+        // (pure in-memory).
+        var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
+            lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList());
 
         var resultLines = new List<OcrStockPreviewLine>();
         for (var i = 0; i < lines.Count; i++)
@@ -330,6 +339,25 @@ public class OcrController : ControllerBase
                 catch { /* federation outage is silent */ }
             }
 
+            // ── Asset detection + federated category hint ──
+            var dec = assetDecisions.FirstOrDefault(d => d.LineIndex == i);
+            bool isLikelyAsset = dec?.IsPotentialAsset ?? false;
+            GlobalAssetSuggestion? globalAssetSugg = null;
+            if (isLikelyAsset)
+            {
+                try
+                {
+                    var assetNorm = Services.Implementations.Ocr.ProductMatcher.Normalize(desc);
+                    var ap = await globalAssetLearner.GetActivePatternAsync(assetNorm);
+                    if (ap != null)
+                        globalAssetSugg = new GlobalAssetSuggestion(ap.Category, ap.UsefulLifeMonths, ap.DepreciationMethod, ap.TenantCount, ap.TotalConfirms);
+                }
+                catch { /* federation outage */ }
+            }
+            var defaultDest = isLikelyAsset
+                ? OcrImportDestination.FixedAsset
+                : OcrImportDestination.Stock;
+
             resultLines.Add(new OcrStockPreviewLine(
                 LineIndex: i,
                 Description: desc,
@@ -348,7 +376,14 @@ public class OcrController : ControllerBase
                 ConvertedUnit: convUnit,
                 ConversionRate: convRate,
                 ConversionHint: convHint,
-                GlobalSuggestion: globalSugg));
+                GlobalSuggestion: globalSugg,
+                IsLikelyAsset: isLikelyAsset,
+                SuggestedAssetCategory: globalAssetSugg?.Category ?? dec?.SuggestedCategory,
+                SuggestedUsefulLifeMonths: globalAssetSugg?.UsefulLifeMonths ?? dec?.SuggestedUsefulLifeMonths,
+                AssetConfidence: dec != null ? (double)dec.ConfidenceScore : null,
+                AssetReasons: dec?.Reasons,
+                DefaultDestination: defaultDest,
+                GlobalAssetSuggestion: globalAssetSugg));
         }
 
         return Ok(new ApiResponse<OcrStockPreviewResponse>(true, new OcrStockPreviewResponse(
@@ -374,7 +409,9 @@ public class OcrController : ControllerBase
         Guid companyId, Guid scanId,
         [FromBody] OcrStockImportRequest req,
         [FromServices] Services.Interfaces.IProductService productService,
-        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher,
+        [FromServices] Services.Interfaces.IFixedAssetService assetService,
+        [FromServices] Services.Implementations.Ocr.GlobalAssetCategoryLearner globalAssetLearner)
     {
         if (req?.Lines == null || req.Lines.Count == 0)
             return BadRequest(new ApiResponse<OcrStockImportResult>(false, null, "ไม่มีรายการที่จะนำเข้า"));
@@ -387,7 +424,7 @@ public class OcrController : ControllerBase
         var userId = User.Identity?.Name ?? "ocr-stock-import";
         var vendorId = scan.MatchedContactId;
         var lineResults = new List<OcrStockImportLineResult>();
-        var created = 0; var matched = 0; var movements = 0; var aliases = 0;
+        var created = 0; var matched = 0; var movements = 0; var aliases = 0; var assetsCreated = 0;
 
         // Reuse OCR'd line text for alias learning even when the user edits Qty/Cost.
         var ocrLines = new List<OcrLineItemDto>();
@@ -403,6 +440,97 @@ public class OcrController : ControllerBase
             foreach (var item in req.Lines)
             {
                 var ocrDesc = (item.LineIndex >= 0 && item.LineIndex < ocrLines.Count) ? ocrLines[item.LineIndex].Description : null;
+
+                // Resolve effective destination: Destination wins; if it's
+                // the default Stock and the legacy AsSupplies bool is set,
+                // honor that for back-compat.
+                var dest = item.Destination;
+                if (dest == OcrImportDestination.Stock && item.AsSupplies)
+                    dest = OcrImportDestination.Supplies;
+
+                // ──────────────────────────────────────────────────────
+                // BRANCH: Fixed Asset destination
+                // Capitalize the line as a depreciable asset. Calls the
+                // existing FixedAssetService.CreateAsync with auto JE
+                // (Dr Asset / Cr AP). No stock movement. Federated
+                // pattern updated so the next tenant sees this category.
+                // ──────────────────────────────────────────────────────
+                if (dest == OcrImportDestination.FixedAsset)
+                {
+                    var assetName = !string.IsNullOrWhiteSpace(item.NewProductName) ? item.NewProductName!
+                                  : !string.IsNullOrWhiteSpace(ocrDesc) ? ocrDesc!
+                                  : $"Asset {DateTime.UtcNow:HHmmss}";
+                    var assetCode = !string.IsNullOrWhiteSpace(item.AssetCode) ? item.AssetCode!
+                                  : await GenerateAssetCodeAsync(companyId);
+                    var category = item.AssetCategory ?? item.NewProductCategory ?? "ทั่วไป";
+                    var ulm = item.UsefulLifeMonths ?? 60;
+                    var depMethod = item.DepreciationMethod switch
+                    {
+                        "DecliningBalance" => Models.Enums.DepreciationMethod.DecliningBalance,
+                        "DoubleDecliningBalance" => Models.Enums.DepreciationMethod.DoubleDecliningBalance,
+                        _ => Models.Enums.DepreciationMethod.StraightLine
+                    };
+                    var purchaseCost = item.UnitCost * (item.Quantity > 0 ? item.Quantity : 1m);
+
+                    try
+                    {
+                        var assetReq = new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
+                            AssetCode: assetCode,
+                            Name: assetName,
+                            Description: ocrDesc,
+                            Category: category,
+                            Location: null,
+                            SerialNumber: item.SerialNumber,
+                            PurchaseDate: scan.ExtractedDate ?? DateTime.UtcNow.Date,
+                            PurchaseCost: purchaseCost,
+                            SalvageValue: item.SalvageValue ?? 0m,
+                            UsefulLifeMonths: ulm,
+                            DepreciationMethod: depMethod,
+                            AssetAccountId: item.AssetAccountId,
+                            DepreciationExpenseAccountId: item.DepreciationExpenseAccountId,
+                            AccumulatedDepreciationAccountId: item.AccumulatedDepreciationAccountId,
+                            PostAcquisitionJournalEntry: false,
+                            CreditAccountId: null);
+                        var asset = await assetService.CreateAsync(companyId, assetReq, userId);
+                        assetsCreated++;
+
+                        // Federated category pool — anonymized.
+                        if (!string.IsNullOrWhiteSpace(ocrDesc))
+                        {
+                            try
+                            {
+                                var norm = Services.Implementations.Ocr.ProductMatcher.Normalize(ocrDesc);
+                                await globalAssetLearner.RecordConfirmAsync(companyId, norm, category, ulm, depMethod.ToString());
+                            }
+                            catch { /* federation outage */ }
+                        }
+
+                        lineResults.Add(new OcrStockImportLineResult(
+                            LineIndex: item.LineIndex,
+                            ProductId: null,
+                            ProductCode: assetCode,
+                            ProductName: assetName,
+                            QuantityIn: 0,
+                            NewStockBalance: 0,
+                            WasCreated: true,
+                            AliasLearned: false,
+                            ErrorMessage: null,
+                            Destination: OcrImportDestination.FixedAsset,
+                            FixedAssetId: asset.Id));
+                    }
+                    catch (Exception ex)
+                    {
+                        lineResults.Add(new OcrStockImportLineResult(
+                            item.LineIndex, null, assetCode, assetName, 0, 0, false, false,
+                            $"สร้างสินทรัพย์ไม่สำเร็จ: {ex.Message}",
+                            OcrImportDestination.FixedAsset, null));
+                    }
+                    continue;
+                }
+
+                // ──────────────────────────────────────────────────────
+                // BRANCH: Stock / Supplies destinations (existing flow)
+                // ──────────────────────────────────────────────────────
                 Guid productId;
                 string code;
                 string name;
@@ -432,7 +560,7 @@ public class OcrController : ControllerBase
                         Name: newName,
                         NameEn: null,
                         Description: ocrDesc,
-                        ProductType: item.AsSupplies ? Models.Enums.ProductType.Supplies : Models.Enums.ProductType.Product,
+                        ProductType: dest == OcrImportDestination.Supplies ? Models.Enums.ProductType.Supplies : Models.Enums.ProductType.Product,
                         SKU: null,
                         Barcode: null,
                         Category: item.NewProductCategory,
@@ -484,7 +612,9 @@ public class OcrController : ControllerBase
                     NewStockBalance: newBalance,
                     WasCreated: wasCreated,
                     AliasLearned: aliasLearned,
-                    ErrorMessage: null));
+                    ErrorMessage: null,
+                    Destination: dest,
+                    FixedAssetId: null));
             }
 
             await _db.SaveChangesAsync();
@@ -502,7 +632,21 @@ public class OcrController : ControllerBase
             ProductsMatched: matched,
             StockMovementsCreated: movements,
             AliasesLearned: aliases,
-            LineResults: lineResults), "นำเข้าสต็อกเรียบร้อย"));
+            FixedAssetsCreated: assetsCreated,
+            LineResults: lineResults), "นำเข้าเรียบร้อย"));
+    }
+
+    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
+    {
+        // FA-NNNNN pattern. Falls back to timestamp if pattern is taken.
+        var existing = await _db.Set<Models.Entities.FixedAsset>()
+            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith("FA-"))
+            .Select(a => a.AssetCode)
+            .ToListAsync();
+        var max = 0;
+        foreach (var c in existing)
+            if (int.TryParse(c.AsSpan(3), out var n) && n > max) max = n;
+        return $"FA-{(max + 1):D5}";
     }
 
     /// <summary>Record a "this OCR'd wording is NOT that product" rejection.

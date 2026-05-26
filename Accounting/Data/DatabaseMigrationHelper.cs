@@ -2684,6 +2684,46 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GDWPSeens_Pattern_Company" ON "GlobalDocWorkflowTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== GlobalAssetCategoryPatterns — federated FixedAsset category + useful-life =====
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalAssetCategoryPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "NormalizedKey" varchar(500) NOT NULL,
+                "Category" varchar(200) NOT NULL,
+                "UsefulLifeMonths" integer NOT NULL,
+                "DepreciationMethod" varchar(50) NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalAssetCategoryPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_GACP_NormalizedKey" ON "GlobalAssetCategoryPatterns" ("NormalizedKey") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GACP_Status" ON "GlobalAssetCategoryPatterns" ("Status") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalAssetCategoryTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GACPSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GACPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalAssetCategoryPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GACPSeens_Pattern_Company" ON "GlobalAssetCategoryTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

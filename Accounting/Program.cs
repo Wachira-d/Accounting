@@ -174,6 +174,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.GlobalProduct
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.GlobalExpenseCategoryLearner>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.GlobalVendorIntelLearner>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.GlobalDocWorkflowLearner>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.GlobalAssetCategoryLearner>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.SystemOcrKnowledgeSeeder>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.RdComplianceValidator>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDiPatternLearner>();

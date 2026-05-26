@@ -419,17 +419,17 @@
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
-          <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อกในคลิกเดียว ระบบสร้างสินค้าที่ยังไม่มีให้อัตโนมัติ และเรียนรู้ชื่อสินค้าตามผู้ขาย">📦 นำเข้าสต็อก</button>
+          <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
           <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสารทันทีตามข้อมูลที่แกะได้ (สถานะ Draft)">สร้างเอกสารทันที</button>
         </div>
       </div>
     </div>
 
-    <!-- Stock Import Modal (one-click OCR → stock) -->
+    <!-- Stock Import Modal (one-click OCR → stock / supplies / fixed asset) -->
     <div class="modal-overlay" id="stockImportModal">
-      <div class="modal" style="max-width:1100px">
+      <div class="modal" style="max-width:1200px">
         <div class="modal-header">
-          <h3 class="modal-title">📦 นำเข้าสต็อกจาก OCR</h3>
+          <h3 class="modal-title">📦 นำเข้าจาก OCR — สต็อก · วัสดุสิ้นเปลือง · สินทรัพย์</h3>
           <button class="modal-close" onclick="Layout.closeModal('stockImportModal')">&times;</button>
         </div>
         <div class="modal-body" id="stockImportBody">
@@ -439,11 +439,9 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:auto;color:var(--gray-700)">
             <input type="checkbox" id="stockImportLearn" checked> เรียนรู้ชื่อสินค้าตามผู้ขายนี้
           </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--gray-700)" title="สำหรับใบเสร็จที่เป็นวัสดุสิ้นเปลือง (สบู่/กระดาษ/ผ้าปู ฯลฯ) — สินค้าใหม่ที่สร้างขึ้นจะถูกตั้งเป็นวัสดุสิ้นเปลือง และเบิกได้ที่หน้า /supplies">
-            <input type="checkbox" id="stockImportAsSupplies"> นำเข้าเป็นวัสดุสิ้นเปลือง
-          </label>
+          <span style="font-size:11px;color:var(--gray-500);font-style:italic">เลือกปลายทาง (📦 / 🧻 / 🏢) ในแต่ละแถว — ระบบเดาให้แล้ว</span>
           <button class="btn btn-secondary" onclick="Layout.closeModal('stockImportModal')">ยกเลิก</button>
-          <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้าสต็อก</button>
+          <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้า</button>
         </div>
       </div>
     </div>
@@ -2056,9 +2054,13 @@
             </table>
             <div style="margin-top:12px;padding:10px 14px;background:#f9fafb;border-radius:8px;font-size:11px;color:var(--gray-600);line-height:1.6">
               <strong>คะแนนความมั่นใจ:</strong>
-              <span style="color:#059669">● 85-100%</span> = จับคู่แม่นยำ (เลือกอัตโนมัติ)
-              · <span style="color:#d97706">● 65-84%</span> = คล้ายแต่ต้องตรวจสอบ
-              · <span style="color:#dc2626">● ต่ำกว่า 65%</span> = ระบบจะสร้างสินค้าใหม่
+              <span style="color:#059669">● 85-100%</span> จับคู่แม่นยำ
+              · <span style="color:#d97706">● 65-84%</span> คล้ายแต่ตรวจ
+              · <span style="color:#dc2626">● ต่ำกว่า 65%</span> สร้างใหม่
+              &nbsp;|&nbsp;
+              <strong>ปลายทาง:</strong>
+              📦 สต็อก (ขายต่อ) · 🧻 วัสดุสิ้นเปลือง (เบิกใช้) · 🏢 สินทรัพย์ถาวร (≥฿5,000 + เข้าเกณฑ์ — มีค่าเสื่อม)
+              — ระบบเดาให้ คลิกชิปเพื่อเปลี่ยนปลายทาง
             </div>`;
         } catch (e) {
           body.innerHTML = `<div style="padding:20px;color:var(--danger)">โหลด preview ไม่สำเร็จ: ${Layout.esc(e.message || e)}</div>`;
@@ -2122,13 +2124,51 @@
           </div>`);
         }
 
+        // Destination picker — 3-way (Stock / Supplies / Asset). The
+        // server's preview pre-selects FixedAsset for lines the
+        // FixedAssetDetector flagged (price ≥ ฿5k + capital-asset
+        // keyword); the user can override per-row.
+        const defaultDest = line.defaultDestination || 0;
+        const dests = [
+          { v: 0, icon: '📦', label: 'สต็อก',         clr: '#0369a1' },
+          { v: 1, icon: '🧻', label: 'วัสดุสิ้นเปลือง', clr: '#7c3aed' },
+          { v: 2, icon: '🏢', label: 'สินทรัพย์ถาวร',   clr: '#b91c1c' }
+        ];
+        const destPicker = `
+          <div class="si-dest-picker" style="display:inline-flex;gap:4px;margin-top:6px;padding:2px;background:#f3f4f6;border-radius:6px">
+            ${dests.map(d => `
+              <button type="button" data-dest="${d.v}"
+                      onclick="Page.onStockImportDestChange(this, ${idx})"
+                      style="font-size:11px;padding:3px 8px;border:none;border-radius:4px;cursor:pointer;
+                             background:${d.v === defaultDest ? 'white' : 'transparent'};
+                             color:${d.v === defaultDest ? d.clr : '#6b7280'};
+                             font-weight:${d.v === defaultDest ? '600' : '400'};
+                             box-shadow:${d.v === defaultDest ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'}">
+                ${d.icon} ${d.label}
+              </button>`).join('')}
+          </div>`;
+
+        // Asset hint banner — appears when the detector flagged this line
+        if (line.isLikelyAsset) {
+          const reasons = (line.assetReasons || []).slice(0, 3).join(' · ');
+          const fed = line.globalAssetSuggestion
+            ? ` 🌐 ระบบกลาง ${line.globalAssetSuggestion.tenantCount} ผู้ใช้ยืนยัน`
+            : '';
+          hints.push(`<div style="background:#fef2f2;border-left:3px solid #b91c1c;color:#7f1d1d;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            🏢 น่าจะเป็นสินทรัพย์ถาวร · ${Layout.esc(line.suggestedAssetCategory || 'ทั่วไป')}
+            · อายุ ~${Math.round((line.suggestedUsefulLifeMonths || 60) / 12)} ปี
+            ${reasons ? `· เหตุผล: ${Layout.esc(reasons)}` : ''}${fed}
+          </div>`);
+        }
+
         return `
-        <tr data-line-idx="${idx}" data-will-create="${willCreate ? '1' : '0'}" style="border-bottom:1px solid var(--gray-200)">
+        <tr data-line-idx="${idx}" data-will-create="${willCreate ? '1' : '0'}" data-dest="${defaultDest}" style="border-bottom:1px solid var(--gray-200)">
           <td style="padding:8px 6px;vertical-align:top">
             <div style="font-weight:500;color:var(--gray-900)">${Layout.esc(line.description || '-')}</div>
             <div style="font-size:11px;color:var(--gray-500);margin-top:2px">
               ${line.amount != null ? `ยอด: ฿${Layout.money(line.amount)}` : ''}
             </div>
+            ${destPicker}
             ${hints.join('')}
           </td>
           <td style="padding:8px 6px;vertical-align:top">
@@ -2162,7 +2202,72 @@
                  <button class="btn-link" style="font-size:10px;color:#dc2626;padding:0;background:none;border:none;cursor:pointer;text-decoration:underline;margin-top:2px"
                          onclick="Page.rejectMatch(${idx}, '${best.productId}', this)">ไม่ใช่อันนี้</button>`}
           </td>
+        </tr>
+        <tr class="si-asset-row" data-asset-for="${idx}" style="display:${defaultDest === 2 ? 'table-row' : 'none'};background:#fef2f2;border-bottom:1px solid var(--gray-200)">
+          <td colspan="6" style="padding:10px 14px">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;font-size:12px">
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">หมวดสินทรัพย์</label>
+                <input type="text" class="form-input si-asset-category" value="${Layout.esc(line.suggestedAssetCategory || '')}" placeholder="เช่น คอมพิวเตอร์/ยานพาหนะ" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">อายุการใช้งาน (เดือน)</label>
+                <input type="number" class="form-input si-asset-life" min="1" value="${line.suggestedUsefulLifeMonths || 60}" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">วิธีคิดค่าเสื่อม</label>
+                <select class="form-input si-asset-method" style="width:100%;font-size:12px">
+                  <option value="StraightLine" ${(line.globalAssetSuggestion?.depreciationMethod ?? 'StraightLine') === 'StraightLine' ? 'selected' : ''}>เส้นตรง (Straight Line)</option>
+                  <option value="DecliningBalance" ${line.globalAssetSuggestion?.depreciationMethod === 'DecliningBalance' ? 'selected' : ''}>ยอดลดลง (Declining)</option>
+                  <option value="DoubleDecliningBalance" ${line.globalAssetSuggestion?.depreciationMethod === 'DoubleDecliningBalance' ? 'selected' : ''}>ยอดลดลงสองเท่า</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">มูลค่าซาก</label>
+                <input type="number" class="form-input si-asset-salvage" min="0" step="0.01" value="0" placeholder="0" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">หมายเลขซีเรียล (ถ้ามี)</label>
+                <input type="text" class="form-input si-asset-serial" placeholder="SN/รหัสเครื่อง" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">รหัสสินทรัพย์ (อัตโนมัติ)</label>
+                <input type="text" class="form-input si-asset-code" placeholder="FA-XXXXX (เว้นว่าง = ออกให้)" style="width:100%;font-size:12px">
+              </div>
+            </div>
+            <div style="font-size:11px;color:#9a3412;margin-top:8px;line-height:1.4">
+              💡 ระบบจะสร้างสินทรัพย์ + ตั้งตารางค่าเสื่อมราคาตามมาตรฐานบัญชี และผูก JE เริ่มต้น (Dr สินทรัพย์ / Cr เจ้าหนี้)
+            </div>
+          </td>
         </tr>`;
+      },
+
+      /**
+       * Switch this row's destination (Stock / Supplies / Asset).
+       * Updates the chip styles, toggles the asset-fields panel, and
+       * stores the choice on the row dataset for confirmStockImport
+       * to read.
+       */
+      onStockImportDestChange(btnEl, idx) {
+        const newDest = parseInt(btnEl.dataset.dest);
+        const row = btnEl.closest('tr');
+        row.dataset.dest = String(newDest);
+
+        // Restyle chips in this picker
+        const picker = btnEl.closest('.si-dest-picker');
+        const colors = { '0': '#0369a1', '1': '#7c3aed', '2': '#b91c1c' };
+        picker.querySelectorAll('button').forEach(b => {
+          const v = b.dataset.dest;
+          const active = parseInt(v) === newDest;
+          b.style.background = active ? 'white' : 'transparent';
+          b.style.color = active ? colors[v] : '#6b7280';
+          b.style.fontWeight = active ? '600' : '400';
+          b.style.boxShadow = active ? '0 1px 2px rgba(0,0,0,0.1)' : 'none';
+        });
+
+        // Show/hide asset fields panel beneath the row
+        const assetRow = document.querySelector(`tr.si-asset-row[data-asset-for="${idx}"]`);
+        if (assetRow) assetRow.style.display = newDest === 2 ? 'table-row' : 'none';
       },
 
       /**
@@ -2225,28 +2330,54 @@
         const api = Layout.api(); if (!api) return;
 
         const sourceLines = this._stockPreview?.lines || [];
-        const asSupplies = document.getElementById('stockImportAsSupplies')?.checked || false;
         const rows = document.querySelectorAll('#stockImportRows tr[data-line-idx]');
         const lines = [];
         for (const row of rows) {
           const idx = parseInt(row.dataset.lineIdx);
+          const dest = parseInt(row.dataset.dest || '0');
           const willCreate = row.dataset.willCreate === '1';
           const select = row.querySelector('.si-product');
           const qty = parseFloat(row.querySelector('.si-qty').value) || 0;
           const unit = row.querySelector('.si-unit').value.trim() || 'ชิ้น';
           const cost = parseFloat(row.querySelector('.si-cost').value) || 0;
-          if (qty <= 0) continue;  // skip blank rows silently
 
-          if (willCreate) {
-            const name = (row.querySelector('.si-new-name').value || '').trim();
-            if (!name) continue;
-            // Carry the federated category hint over so newly-created
-            // products land in the same category other tenants put them in.
+          // Allow asset lines with qty 0 (capitalize 1 piece by default).
+          if (qty <= 0 && dest !== 2) continue;
+
+          // Common asset fields — pulled from the asset-row beneath this main row
+          const assetRow = document.querySelector(`tr.si-asset-row[data-asset-for="${idx}"]`);
+          const assetFields = (dest === 2 && assetRow) ? {
+            assetCode: (assetRow.querySelector('.si-asset-code')?.value || '').trim() || null,
+            assetCategory: (assetRow.querySelector('.si-asset-category')?.value || '').trim() || null,
+            usefulLifeMonths: parseInt(assetRow.querySelector('.si-asset-life')?.value) || 60,
+            salvageValue: parseFloat(assetRow.querySelector('.si-asset-salvage')?.value) || 0,
+            serialNumber: (assetRow.querySelector('.si-asset-serial')?.value || '').trim() || null,
+            depreciationMethod: assetRow.querySelector('.si-asset-method')?.value || 'StraightLine'
+          } : {};
+
+          if (dest === 2 || willCreate) {
             const sourceLine = sourceLines.find(l => l.lineIndex === idx);
             const categoryHint = sourceLine?.globalSuggestion?.categoryHint || null;
-            lines.push({ lineIndex: idx, productId: null, newProductName: name, newProductCode: null, newProductCategory: categoryHint, quantity: qty, unit, unitCost: cost, vatRate: null, asSupplies });
+            const name = (row.querySelector('.si-new-name')?.value || '').trim()
+                       || sourceLine?.description || '';
+            if (!name && dest !== 2) continue;
+            lines.push({
+              lineIndex: idx,
+              productId: null,
+              newProductName: name,
+              newProductCode: null,
+              newProductCategory: categoryHint,
+              quantity: dest === 2 ? Math.max(1, qty) : qty,
+              unit, unitCost: cost, vatRate: null,
+              destination: dest,
+              ...assetFields
+            });
           } else {
-            lines.push({ lineIndex: idx, productId: select.value, newProductName: null, quantity: qty, unit, unitCost: cost, vatRate: null });
+            lines.push({
+              lineIndex: idx, productId: select.value, newProductName: null,
+              quantity: qty, unit, unitCost: cost, vatRate: null,
+              destination: dest
+            });
           }
         }
         if (lines.length === 0) { Layout.toast('ไม่มีรายการที่จะนำเข้า', 'error'); return; }
@@ -2258,7 +2389,12 @@
         try {
           const res = await api.ocrImportStock(scan.id, { lines, learnAliases: learn, moveStock: true });
           const r = res?.data ?? res;
-          Layout.toast(`นำเข้าสต็อก ${r.linesProcessed} รายการ · สร้างใหม่ ${r.productsCreated} · เพิ่มสต็อก ${r.stockMovementsCreated} ครั้ง${r.aliasesLearned ? ` · เรียนรู้ alias ${r.aliasesLearned} รายการ` : ''}`);
+          const bits = [`นำเข้าทั้งหมด ${r.linesProcessed} รายการ`];
+          if (r.stockMovementsCreated) bits.push(`📦 สต็อก ${r.stockMovementsCreated}`);
+          if (r.fixedAssetsCreated) bits.push(`🏢 สินทรัพย์ ${r.fixedAssetsCreated}`);
+          if (r.productsCreated) bits.push(`สร้างสินค้าใหม่ ${r.productsCreated}`);
+          if (r.aliasesLearned) bits.push(`alias ${r.aliasesLearned}`);
+          Layout.toast(bits.join(' · '));
           Layout.closeModal('stockImportModal');
         } catch (err) {
           Layout.toast('นำเข้าไม่สำเร็จ: ' + (err.message || err), 'error');

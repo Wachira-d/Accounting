@@ -1,5 +1,21 @@
 namespace Accounting.Models.DTOs.Ocr;
 
+/// <summary>Where an OCR'd line item should be routed when the user
+/// confirms the import. Determines which entity gets created and which
+/// downstream flow processes it afterwards.</summary>
+public enum OcrImportDestination
+{
+    /// <summary>ProductType.Product with TrackStock = true. Posts an
+    /// "IN" StockMovement. Drawn down through normal sales/POS.</summary>
+    Stock = 0,
+    /// <summary>ProductType.Supplies. Posts "IN" to supplies inventory;
+    /// drawn down via the /supplies "เบิกใช้" page.</summary>
+    Supplies = 1,
+    /// <summary>Capitalized into a FixedAsset row with depreciation
+    /// schedule + initial Dr Asset / Cr AP journal entry.</summary>
+    FixedAsset = 2
+}
+
 /// <summary>One match candidate for a single OCR line. The UI shows the
 /// top-1 as the pre-selected choice and the rest as alternatives in the
 /// dropdown ("did you mean…?"). Confidence 0..1, higher = better.</summary>
@@ -51,13 +67,33 @@ public record OcrStockPreviewLine(
     // this wording. UI uses these to pre-fill the "create new product"
     // form with canonical label / unit / category and shows a 🌐 badge
     // explaining the source. Null when no global consensus yet exists.
-    GlobalProductSuggestion? GlobalSuggestion = null);
+    GlobalProductSuggestion? GlobalSuggestion = null,
+    // ── Fixed-asset detection hints ───────────────────────────────────
+    // Populated by FixedAssetDetector + GlobalAssetCategoryLearner.
+    // UI uses these to:
+    //   • Pre-select the Asset destination on the row when IsLikelyAsset
+    //   • Pre-fill Category + UsefulLifeMonths when user expands the
+    //     asset panel
+    bool IsLikelyAsset = false,
+    string? SuggestedAssetCategory = null,
+    int? SuggestedUsefulLifeMonths = null,
+    double? AssetConfidence = null,
+    List<string>? AssetReasons = null,
+    OcrImportDestination DefaultDestination = OcrImportDestination.Stock,
+    GlobalAssetSuggestion? GlobalAssetSuggestion = null);
 
 public record GlobalProductSuggestion(
     string? CanonicalLabel,
     string? Brand,
     string? Unit,
     string? CategoryHint,
+    int TenantCount,
+    int TotalConfirms);
+
+public record GlobalAssetSuggestion(
+    string Category,
+    int UsefulLifeMonths,
+    string? DepreciationMethod,
     int TenantCount,
     int TotalConfirms);
 
@@ -81,13 +117,28 @@ public record OcrStockImportLineRequest(
     string Unit,
     decimal UnitCost,
     decimal? VatRate,
-    // When true (and ProductId is null), the auto-created product is
-    // a ProductType.Supplies (วัสดุสิ้นเปลือง) instead of Product —
-    // the import then routes the IN movement to the supplies inventory
-    // account so it can be drawn from via the "เบิกใช้" flow on the
-    // /supplies page. Has no effect when ProductId already points at
-    // an existing product (we don't reclassify existing rows).
-    bool AsSupplies = false);
+    // Legacy fast-path: same effect as Destination = Supplies when this
+    // is true and Destination is the default Stock. Kept for back-
+    // compat with the toggle that shipped before per-row destinations.
+    bool AsSupplies = false,
+    // ─── Per-row routing (NEW) ──────────────────────────────────────
+    // Each OCR'd line can now go to one of three destinations. The
+    // preview pre-selects FixedAsset when the FixedAssetDetector
+    // flagged the line; otherwise Stock unless AsSupplies = true.
+    OcrImportDestination Destination = OcrImportDestination.Stock,
+    // ─── FixedAsset-only fields (ignored when Destination != FixedAsset) ──
+    // PurchaseDate comes from the scan's ExtractedDate (no extra field
+    // needed). Asset accounts default to the company's standard asset
+    // / depreciation / accumulated-dep accounts unless overridden.
+    string? AssetCode = null,            // auto-generated when null
+    string? AssetCategory = null,
+    int? UsefulLifeMonths = null,
+    decimal? SalvageValue = null,
+    string? SerialNumber = null,
+    string? DepreciationMethod = null,   // "StraightLine" | "DecliningBalance" | "DoubleDecliningBalance"
+    Guid? AssetAccountId = null,
+    Guid? DepreciationExpenseAccountId = null,
+    Guid? AccumulatedDepreciationAccountId = null);
 
 public record OcrRejectMatchRequest(
     string OcrDescription,
@@ -112,15 +163,18 @@ public record OcrStockImportResult(
     int ProductsMatched,
     int StockMovementsCreated,
     int AliasesLearned,
+    int FixedAssetsCreated,
     List<OcrStockImportLineResult> LineResults);
 
 public record OcrStockImportLineResult(
     int LineIndex,
-    Guid ProductId,
+    Guid? ProductId,       // null when this line was routed to FixedAsset
     string ProductCode,
     string ProductName,
     decimal QuantityIn,
     decimal NewStockBalance,
     bool WasCreated,
     bool AliasLearned,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    OcrImportDestination Destination = OcrImportDestination.Stock,
+    Guid? FixedAssetId = null);
