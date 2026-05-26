@@ -294,16 +294,37 @@
       // ===== PRODUCT DETAIL =====
       async viewDetail(id) {
         const api=Layout.api(); if(!api)return;
+        // Settle each call independently so a 500 on stock movements
+        // or unit conversions doesn't blank the whole detail panel —
+        // the user still sees product info + the specific endpoint that
+        // failed, instead of a generic "internal system error" toast.
+        const [pRes, mvRes, ucRes] = await Promise.allSettled([
+          api.getProduct(id),
+          api.getStockMovements(id),
+          api.getUnitConversions(id)
+        ]);
+
+        if (pRes.status === 'rejected') {
+          Layout.toast('โหลดข้อมูลสินค้าไม่สำเร็จ: ' + (pRes.reason?.message || pRes.reason), 'error');
+          return;
+        }
+        const p = pRes.value.data; this._current = p;
+        const mvs = mvRes.status === 'fulfilled' ? (mvRes.value.data?.items || mvRes.value.data || []) : [];
+        const ucs = ucRes.status === 'fulfilled' ? (ucRes.value.data?.items || ucRes.value.data || []) : [];
+
+        const partialWarnings = [];
+        if (mvRes.status === 'rejected') partialWarnings.push(`ประวัติสต็อก: ${mvRes.reason?.message || mvRes.reason}`);
+        if (ucRes.status === 'rejected') partialWarnings.push(`การแปลงหน่วย: ${ucRes.reason?.message || ucRes.reason}`);
+
         try {
-          const [pRes,mvRes,ucRes] = await Promise.all([api.getProduct(id),api.getStockMovements(id),api.getUnitConversions(id)]);
-          const p=pRes.data; this._current=p;
-          const mvs=mvRes.data?.items||mvRes.data||[];
-          const ucs=ucRes.data?.items||ucRes.data||[];
           document.getElementById('dtTitle').textContent=`${p.code} - ${p.name}`;
           document.getElementById('dtBody').innerHTML = `
+            ${partialWarnings.length ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#991b1b">
+              ⚠️ โหลดข้อมูลบางส่วนไม่สำเร็จ:<br>${partialWarnings.map(w => '• ' + Layout.esc(w)).join('<br>')}
+            </div>` : ''}
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
-              <div><span class="text-xs text-gray-500" data-i18n="common.type">ประเภท</span><div>${typeMap[p.productType]}</div></div>
-              <div><span class="text-xs text-gray-500">หน่วยหลัก</span><div class="font-medium">${p.unit}</div></div>
+              <div><span class="text-xs text-gray-500" data-i18n="common.type">ประเภท</span><div>${typeMap[p.productType]||p.productType||'-'}</div></div>
+              <div><span class="text-xs text-gray-500">หน่วยหลัก</span><div class="font-medium">${p.unit||'-'}</div></div>
               <div><span class="text-xs text-gray-500">หมวดหมู่</span><div>${p.category||'-'}</div></div>
             </div>
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
@@ -319,7 +340,7 @@
             ${mvs.length ? `<div style="max-height:250px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th data-i18n="common.reference">อ้างอิง</th></tr></thead>
             <tbody>${mvs.slice(0,30).map(m=>`<tr><td>${Layout.date(m.movementDate)}</td><td>${m.movementType}</td><td class="text-right ${m.movementType==='OUT'?'text-danger':'text-success'}">${m.quantity}</td><td class="text-right">${Layout.money(m.unitCost)}</td><td class="text-right font-semibold">${m.balanceAfter}</td><td>${m.reference||'-'}</td></tr>`).join('')}</tbody></table></div></div>` : '<div class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</div>'}`;
           Layout.openModal('detailModal');
-        } catch(e) { Layout.toast(e.message,'error'); }
+        } catch(e) { Layout.toast('แสดงข้อมูลไม่สำเร็จ: ' + e.message, 'error'); }
       },
 
       // ===== STOCK ADJUST =====
@@ -575,6 +596,12 @@
         }
       }
     };
+    // Expose to global so inline onclick="Page.foo()" / "Import.bar()" handlers
+    // can find these from the HTML — top-level const declarations in a
+    // classic <script> create script-scoped bindings that some browsers
+    // don't reliably expose to inline event handlers. Belt-and-braces.
+    window.Page = Page;
+    window.Import = Import;
     Page.init();
   </script>
 </body>
