@@ -18,8 +18,12 @@
         <div class="dropdown-wrap" style="position:relative">
           <button class="btn btn-secondary" onclick="Import.toggleMenu(this)">นำเข้า ▾</button>
           <div class="dropdown-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
-            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">นำเข้า CSV/Excel</a>
-            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">ดาวน์โหลด Template</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">📄 นำเข้า CSV/Excel</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">⬇ ดาวน์โหลด Template</a>
+            <div style="border-top:1px solid var(--gray-200);margin:4px 0"></div>
+            <a class="dropdown-item" href="/pages/document-scan.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">📸 สแกนใบเสร็จ / ใบกำกับ (OCR) → สต็อก/วัสดุ/สินทรัพย์</a>
+            <a class="dropdown-item" href="/pages/supplies.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🧻 ไปหน้าวัสดุสิ้นเปลือง</a>
+            <a class="dropdown-item" href="/pages/fixed-assets.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🏢 ไปหน้าสินทรัพย์ถาวร</a>
           </div>
         </div>
         <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินค้า</button>
