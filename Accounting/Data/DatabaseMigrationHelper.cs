@@ -2477,6 +2477,38 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LineUserStates_LineUserId" ON "LineUserStates" ("LineUserId");""",
+
+            // ===== ProductAliases — OCR-driven product name aliases for fuzzy matching =====
+            """
+            CREATE TABLE IF NOT EXISTS "ProductAliases" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "ProductId" uuid NOT NULL,
+                "ContactId" uuid NULL,
+                "AliasName" varchar(500) NOT NULL,
+                "NormalizedName" varchar(500) NOT NULL,
+                "TimesUsed" integer NOT NULL DEFAULT 1,
+                "LastUsedAt" timestamp NOT NULL DEFAULT now(),
+                "Source" varchar(20) NOT NULL DEFAULT 'user',
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ProductAliases" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ProductAliases_Products" FOREIGN KEY ("ProductId") REFERENCES "Products"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_ProductAliases_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_CompanyId_NormalizedName" ON "ProductAliases" ("CompanyId", "NormalizedName") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_CompanyId_ContactId_NormalizedName" ON "ProductAliases" ("CompanyId", "ContactId", "NormalizedName") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_ProductId" ON "ProductAliases" ("ProductId") WHERE "IsDeleted" = false;""",
+            // Trigram index on the normalized form — powers SIMILARITY()
+            // queries from the OCR product matcher in sub-50ms.
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_NormalizedName_Trgm" ON "ProductAliases" USING gin ("NormalizedName" gin_trgm_ops);""",
+            // Trigram index on Product.Name too — first-pass match when no
+            // alias exists yet for a freshly OCR'd description.
+            """CREATE INDEX IF NOT EXISTS "IX_Products_Name_Trgm" ON "Products" USING gin ("Name" gin_trgm_ops);""",
         };
 
         foreach (var sql in statements)

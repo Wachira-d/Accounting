@@ -671,6 +671,8 @@ const API = {
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
       ocrCreateDocument: (id) => API.post(`${base}/ocr/${id}/create-document`),
+      ocrStockPreview: (id) => API.get(`${base}/ocr/${id}/stock-preview`),
+      ocrImportStock: (id, data) => API.post(`${base}/ocr/${id}/import-stock`, data),
       ocrCorrect: (id, data) => API.post(`${base}/ocr/${id}/correct`, data),
       ocrMatchContact: (scanId, contactId) => API.post(`${base}/ocr/${scanId}/match-contact/${contactId}`),
       ocrDelete: (scanId, cascade = false) => API.del(`${base}/ocr/${scanId}${cascade ? '?cascade=true' : ''}`),

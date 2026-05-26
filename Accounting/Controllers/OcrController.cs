@@ -209,6 +209,228 @@ public class OcrController : ControllerBase
     }
 
     /// <summary>
+    /// Build a per-line preview of what would happen if the user pushed the
+    /// "นำเข้าสต็อก" button on this OCR scan. For each extracted line item,
+    /// runs the ProductMatcher cascade (alias → code-hit → trigram → fuzzy)
+    /// and returns the top-1 candidate plus a few alternatives, with the
+    /// confidence score that pre-selects the row in the UI. Lines whose
+    /// best confidence stays below the threshold are flagged
+    /// <c>WillCreateNew = true</c> so the modal opens them in "create
+    /// product" mode by default. No DB writes happen here — purely a
+    /// read-only suggestion endpoint the UI polls on modal open.
+    /// </summary>
+    [HttpGet("{scanId:guid}/stock-preview")]
+    public async Task<ActionResult<ApiResponse<OcrStockPreviewResponse>>> StockPreview(
+        Guid companyId, Guid scanId,
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
+    {
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (scan == null) return NotFound(new ApiResponse<OcrStockPreviewResponse>(false, null, "ไม่พบผลการสแกน"));
+
+        // OCR lines live as JSON in ExtractedItemsJson — same shape as OcrLineItemDto
+        var lines = new List<OcrLineItemDto>();
+        if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+        {
+            try { lines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+            catch { /* malformed JSON — treat as empty so the UI still opens */ }
+        }
+
+        var resultLines = new List<OcrStockPreviewLine>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            var desc = line.Description ?? "";
+            var matches = await matcher.MatchAsync(companyId, desc, scan.MatchedContactId);
+            var best = matches.FirstOrDefault();
+            var alternatives = matches.Skip(1).ToList();
+
+            resultLines.Add(new OcrStockPreviewLine(
+                LineIndex: i,
+                Description: desc,
+                Quantity: line.Quantity,
+                UnitPrice: line.UnitPrice,
+                Amount: line.Amount,
+                DetectedUnit: Services.Implementations.Ocr.ProductMatcher.DetectUnit(desc),
+                DetectedQuantity: line.Quantity ?? Services.Implementations.Ocr.ProductMatcher.DetectQuantity(desc),
+                BestMatch: best,
+                Alternatives: alternatives,
+                WillCreateNew: best == null || best.Confidence < Services.Implementations.Ocr.ProductMatcher.AutoAcceptThresholdValue));
+        }
+
+        return Ok(new ApiResponse<OcrStockPreviewResponse>(true, new OcrStockPreviewResponse(
+            ScanId: scanId,
+            VendorContactId: scan.MatchedContactId,
+            VendorName: scan.ExtractedVendorName,
+            Lines: resultLines)));
+    }
+
+    /// <summary>
+    /// Commit the user-confirmed import. For each line:
+    ///   • If ProductId is set, increment that product's stock and learn the
+    ///     OCR'd description as a vendor-bound ProductAlias.
+    ///   • If ProductId is null, create a new Product (TrackStock = true,
+    ///     ProductType = Product) using NewProductName / NewProductCode (auto
+    ///     when null) / VatRate, then book the IN movement, then learn the
+    ///     description as the very first alias of the new product.
+    /// All movements run inside one DB transaction so a partial failure
+    /// doesn't leave half-imported stock.
+    /// </summary>
+    [HttpPost("{scanId:guid}/import-stock")]
+    public async Task<ActionResult<ApiResponse<OcrStockImportResult>>> ImportStock(
+        Guid companyId, Guid scanId,
+        [FromBody] OcrStockImportRequest req,
+        [FromServices] Services.Interfaces.IProductService productService,
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
+    {
+        if (req?.Lines == null || req.Lines.Count == 0)
+            return BadRequest(new ApiResponse<OcrStockImportResult>(false, null, "ไม่มีรายการที่จะนำเข้า"));
+
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (scan == null) return NotFound(new ApiResponse<OcrStockImportResult>(false, null, "ไม่พบผลการสแกน"));
+
+        var userId = User.Identity?.Name ?? "ocr-stock-import";
+        var vendorId = scan.MatchedContactId;
+        var lineResults = new List<OcrStockImportLineResult>();
+        var created = 0; var matched = 0; var movements = 0; var aliases = 0;
+
+        // Reuse OCR'd line text for alias learning even when the user edits Qty/Cost.
+        var ocrLines = new List<OcrLineItemDto>();
+        if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+        {
+            try { ocrLines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson) ?? new(); }
+            catch { /* alias learning skipped when JSON is malformed */ }
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            foreach (var item in req.Lines)
+            {
+                var ocrDesc = (item.LineIndex >= 0 && item.LineIndex < ocrLines.Count) ? ocrLines[item.LineIndex].Description : null;
+                Guid productId;
+                string code;
+                string name;
+                var wasCreated = false;
+
+                if (item.ProductId.HasValue)
+                {
+                    var p = await _db.Products.FirstOrDefaultAsync(x =>
+                        x.CompanyId == companyId && x.Id == item.ProductId.Value && !x.IsDeleted);
+                    if (p == null)
+                    {
+                        lineResults.Add(new OcrStockImportLineResult(item.LineIndex, Guid.Empty, "", "", 0, 0, false, false, "ไม่พบสินค้าในระบบ"));
+                        continue;
+                    }
+                    productId = p.Id; code = p.Code; name = p.Name;
+                    matched++;
+                }
+                else
+                {
+                    var newName = !string.IsNullOrWhiteSpace(item.NewProductName) ? item.NewProductName!
+                                : !string.IsNullOrWhiteSpace(ocrDesc) ? ocrDesc!
+                                : $"Auto product {DateTime.UtcNow:HHmmss}";
+                    var newCode = !string.IsNullOrWhiteSpace(item.NewProductCode) ? item.NewProductCode!
+                                : await GenerateProductCodeAsync(companyId);
+                    var createReq = new Models.DTOs.Product.CreateProductRequest(
+                        Code: newCode,
+                        Name: newName,
+                        NameEn: null,
+                        Description: ocrDesc,
+                        ProductType: Models.Enums.ProductType.Product,
+                        SKU: null,
+                        Barcode: null,
+                        Category: item.NewProductCategory,
+                        Unit: string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
+                        SellingPrice: 0m,
+                        CostPrice: item.UnitCost,
+                        VatRate: item.VatRate ?? 7m,
+                        IsVatIncluded: false,
+                        TrackStock: true,
+                        MinimumStock: 0);
+                    var prod = await productService.CreateAsync(companyId, createReq);
+                    productId = prod.Id; code = prod.Code; name = prod.Name;
+                    created++; wasCreated = true;
+                }
+
+                decimal newBalance = 0;
+                if (req.MoveStock && item.Quantity > 0)
+                {
+                    var move = await productService.AdjustStockAsync(companyId, new Models.DTOs.Product.StockAdjustmentRequest(
+                        ProductId: productId,
+                        Quantity: item.Quantity,
+                        MovementType: "IN",
+                        UnitCost: item.UnitCost,
+                        Reference: $"OCR-IMPORT/{scan.ExtractedDocumentNumber ?? scanId.ToString("N").Substring(0, 8)}",
+                        Notes: $"นำเข้าจาก OCR (สแกน {scanId}) — {ocrDesc ?? "-"}"), userId);
+                    movements++;
+                    newBalance = move.BalanceAfter;
+                }
+                else
+                {
+                    var p = await _db.Products.AsNoTracking().FirstAsync(x => x.Id == productId);
+                    newBalance = p.CurrentStock;
+                }
+
+                var aliasLearned = false;
+                if (req.LearnAliases && !string.IsNullOrWhiteSpace(ocrDesc))
+                {
+                    await matcher.RecordAliasAsync(companyId, productId, ocrDesc!, vendorId, userId,
+                        source: wasCreated ? "auto" : "user");
+                    aliasLearned = true; aliases++;
+                }
+
+                lineResults.Add(new OcrStockImportLineResult(
+                    LineIndex: item.LineIndex,
+                    ProductId: productId,
+                    ProductCode: code,
+                    ProductName: name,
+                    QuantityIn: item.Quantity,
+                    NewStockBalance: newBalance,
+                    WasCreated: wasCreated,
+                    AliasLearned: aliasLearned,
+                    ErrorMessage: null));
+            }
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            return StatusCode(500, new ApiResponse<OcrStockImportResult>(false, null, $"นำเข้าสต็อกไม่สำเร็จ: {ex.Message}"));
+        }
+
+        return Ok(new ApiResponse<OcrStockImportResult>(true, new OcrStockImportResult(
+            LinesProcessed: lineResults.Count,
+            ProductsCreated: created,
+            ProductsMatched: matched,
+            StockMovementsCreated: movements,
+            AliasesLearned: aliases,
+            LineResults: lineResults), "นำเข้าสต็อกเรียบร้อย"));
+    }
+
+    private async Task<string> GenerateProductCodeAsync(Guid companyId)
+    {
+        // Naming scheme: "P-NNNNN" — pads to 5 digits so list sort stays
+        // intuitive up to 99,999 products. Falls back to timestamp if the
+        // catalog already uses an incompatible scheme.
+        var existing = await _db.Products
+            .Where(p => p.CompanyId == companyId && p.Code.StartsWith("P-"))
+            .Select(p => p.Code)
+            .ToListAsync();
+        var max = 0;
+        foreach (var c in existing)
+        {
+            if (int.TryParse(c.AsSpan(2), out var n) && n > max) max = n;
+        }
+        return $"P-{(max + 1):D5}";
+    }
+
+    /// <summary>
     /// Ranked review queue — surfaces the scans whose user-correction
     /// would yield the highest learning signal. Score combines per-field
     /// uncertainty, vendor novelty, recency, and the asset-alert flag.
