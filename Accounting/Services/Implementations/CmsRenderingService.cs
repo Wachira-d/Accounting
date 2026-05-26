@@ -132,6 +132,26 @@ public class CmsRenderingService : ICmsRenderingService
             ? GenerateThemeCssFromEntity(site.Theme)
             : GenerateDefaultThemeCss();
 
+        // Published pages — surfaced so the storefront can build a
+        // default top-nav when the site has no Navigation entity set.
+        // Excludes the slug "home" (it's the implicit logo link) and
+        // any utility pages whose slug starts with underscore.
+        var pages = await _db.SitePages
+            .AsNoTracking()
+            .Where(p => p.SiteId == siteId && p.CompanyId == companyId
+                     && !p.IsDeleted && p.Status == PageStatus.Published
+                     && p.Slug != "home"
+                     && !p.Slug.StartsWith("_"))
+            .OrderBy(p => p.SortOrder).ThenBy(p => p.Title)
+            .Select(p => new StorefrontPageInfo
+            {
+                Slug = p.Slug,
+                Title = p.Title,
+                PageType = p.PageType.ToString(),
+                SortOrder = p.SortOrder
+            })
+            .ToListAsync();
+
         return new StorefrontDataResponse
         {
             Site = new StorefrontSiteInfo
@@ -186,7 +206,8 @@ public class CmsRenderingService : ICmsRenderingService
                 GoogleTagManagerId = site.GoogleTagManagerId,
                 MetaPixelId = site.MetaPixelId,
                 CookieConsentEnabled = site.CookieConsentEnabled
-            }
+            },
+            Pages = pages
         };
     }
 

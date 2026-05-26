@@ -165,7 +165,29 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<PagedResponse<SiteProductResponse>> GetProductsAsync(Guid companyId, Guid siteId, Guid? categoryId, string? search, bool? featured, int page, int pageSize)
     {
-        var query = _db.SiteProducts.AsNoTracking().Where(p => p.SiteId == siteId && p.CompanyId == companyId);
+        // Lazy auto-publish — when a site has NEVER linked any product
+        // but the company has master-catalog products, automatically
+        // create SiteProduct rows so the storefront isn't empty out of
+        // the box. The user can then customize names/prices/visibility
+        // per site through the CMS commerce UI. Runs at most once per
+        // site (the existence check short-circuits after first call).
+        // Filters by ProductType so Services don't surface on the
+        // "products" page and inactive/deleted products stay hidden.
+        var anyLinked = await _db.SiteProducts
+            .AsNoTracking()
+            .AnyAsync(p => p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
+        if (!anyLinked)
+        {
+            await AutoPublishMasterCatalogAsync(companyId, siteId);
+        }
+
+        // Hide products whose underlying ERP row got deactivated/
+        // deleted after the SiteProduct link was created. IsVisible on
+        // the SiteProduct itself is honored too.
+        var query = _db.SiteProducts.AsNoTracking()
+            .Where(p => p.SiteId == siteId && p.CompanyId == companyId
+                     && !p.IsDeleted && p.IsVisible
+                     && p.Product != null && !p.Product.IsDeleted && p.Product.IsActive);
 
         if (categoryId.HasValue) query = query.Where(p => p.SiteCategoryId == categoryId);
         if (featured.HasValue) query = query.Where(p => p.IsFeatured == featured);
@@ -173,7 +195,7 @@ public class CmsCommerceService : ICmsCommerceService
             query = query.Where(p => (p.DisplayName != null && p.DisplayName.Contains(search)) || p.Product.Name.Contains(search) || (p.Tags != null && p.Tags.Contains(search)));
 
         var total = await query.CountAsync();
-        var items = await query
+        var raw = await query
             .OrderBy(p => p.SortOrder).ThenByDescending(p => p.CreatedAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(p => new SiteProductResponse
@@ -191,7 +213,88 @@ public class CmsCommerceService : ICmsCommerceService
             })
             .ToListAsync();
 
-        return new PagedResponse<SiteProductResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
+        // Featured image — first URL from the JSON array. The
+        // storefront card uses this as the main thumbnail.
+        foreach (var item in raw)
+            item.FeaturedImageUrl = ExtractFirstImageUrl(item.ImageUrlsJson);
+
+        return new PagedResponse<SiteProductResponse>(raw, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    /// <summary>Creates SiteProduct rows for every active master-
+    /// catalog Product (Product or Supplies type, not Service) so the
+    /// storefront has visible inventory on day one. Idempotent at the
+    /// existence check upstream; called once per site lazily.</summary>
+    private async Task AutoPublishMasterCatalogAsync(Guid companyId, Guid siteId)
+    {
+        var masterProducts = await _db.Products
+            .AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.IsActive
+                     && (p.ProductType == Models.Enums.ProductType.Product
+                         || p.ProductType == Models.Enums.ProductType.Supplies))
+            .ToListAsync();
+        if (masterProducts.Count == 0) return;
+
+        var existing = await _db.SiteProducts
+            .Where(sp => sp.SiteId == siteId && sp.CompanyId == companyId)
+            .Select(sp => sp.ProductId)
+            .ToListAsync();
+        var existingSet = existing.ToHashSet();
+
+        var ordering = 0;
+        foreach (var p in masterProducts)
+        {
+            if (existingSet.Contains(p.Id)) continue;
+            _db.SiteProducts.Add(new SiteProduct
+            {
+                CompanyId = companyId,
+                SiteId = siteId,
+                ProductId = p.Id,
+                IsVisible = true,
+                IsFeatured = false,
+                SortOrder = ordering++,
+                StockBehavior = StockBehavior.InStockOnly,
+                Slug = SlugifyProductName(p.Code, p.Name),
+                CreatedBy = "auto-publish"
+            });
+        }
+        await _db.SaveChangesAsync();
+    }
+
+    private static string SlugifyProductName(string code, string name)
+    {
+        // Latinize loosely so the URL stays readable for Thai products.
+        // Falls back to product code if the name has no slug-able chars.
+        var s = (name ?? "").Trim().ToLowerInvariant();
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in s)
+        {
+            if (char.IsLetterOrDigit(c)) sb.Append(c);
+            else if (char.IsWhiteSpace(c) || c == '-' || c == '_') sb.Append('-');
+        }
+        var slug = sb.ToString().Trim('-');
+        while (slug.Contains("--")) slug = slug.Replace("--", "-");
+        if (string.IsNullOrEmpty(slug)) slug = code?.ToLowerInvariant() ?? Guid.NewGuid().ToString("N")[..8];
+        return slug.Length > 80 ? slug[..80] : slug;
+    }
+
+    private static string? ExtractFirstImageUrl(string? imageUrlsJson)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrlsJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(imageUrlsJson);
+            if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array
+                && doc.RootElement.GetArrayLength() > 0)
+            {
+                var first = doc.RootElement[0];
+                if (first.ValueKind == System.Text.Json.JsonValueKind.String) return first.GetString();
+                if (first.ValueKind == System.Text.Json.JsonValueKind.Object && first.TryGetProperty("url", out var u))
+                    return u.GetString();
+            }
+        }
+        catch { /* malformed JSON — no image */ }
+        return null;
     }
 
     public async Task<bool> RemoveProductAsync(Guid companyId, Guid siteId, Guid siteProductId)

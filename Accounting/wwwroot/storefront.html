@@ -305,8 +305,12 @@
           logoEl.textContent = site.name || 'เว็บไซต์';
         }
 
-        // Nav items — fallback to common pages if no nav defined
-        const items = headerNav?.items?.length ? headerNav.items : this.defaultNavItems();
+        // Nav items — prefer explicit Navigation entity, then the
+        // server-supplied page list (built from actually-published
+        // SitePages), then a hardcoded last-resort fallback.
+        const items = headerNav?.items?.length
+          ? headerNav.items
+          : (this.data?.pages?.length ? this.pagesAsNavItems(this.data.pages) : this.defaultNavItems());
         navEl.innerHTML = items.map(it => {
           let url = it.url || '#';
           if (!it.url && it.pageSlug) {
@@ -318,13 +322,45 @@
         headerEl.style.display = '';
       },
 
+      /**
+       * Convert the server's published-pages list into the nav-items
+       * shape the renderer expects. Adds a synthetic "หน้าแรก" entry
+       * since the home page is excluded from the server response (the
+       * logo links to it). Pre-sorted by SortOrder + Title server-side.
+       */
+      pagesAsNavItems(pages) {
+        const labels = {
+          'about': 'เกี่ยวกับเรา',
+          'services': 'บริการ',
+          'products': 'สินค้า',
+          'menu': 'เมนู',
+          'rooms': 'ห้องพัก',
+          'booking': 'จอง',
+          'appointment': 'นัดหมาย',
+          'pricing': 'ราคา',
+          'contact': 'ติดต่อเรา',
+          'portfolio': 'ผลงาน',
+          'listings': 'รายการขาย',
+          'features': 'ฟีเจอร์',
+          'courses': 'หลักสูตร',
+          'register': 'สมัครเรียน',
+          'quote': 'ขอใบเสนอราคา',
+          'rfq': 'RFQ',
+          'capabilities': 'ความสามารถ',
+          'viewing': 'นัดดูทรัพย์'
+        };
+        return [{ label: 'หน้าแรก', pageSlug: 'home' }]
+          .concat(pages.map(p => ({ label: labels[p.slug] || p.title, pageSlug: p.slug })));
+      },
+
       defaultNavItems() {
-        // Best-effort fallback: common pages by slug
+        // Last-resort fallback when the server doesn't return any
+        // pages (very old API). All slugs MUST exist as seeded pages.
         return [
           { label: 'หน้าแรก', pageSlug: 'home' },
           { label: 'เกี่ยวกับเรา', pageSlug: 'about' },
           { label: 'บริการ', pageSlug: 'services' },
-          { label: 'สินค้า', pageSlug: 'shop' },
+          { label: 'สินค้า', pageSlug: 'products' },
           { label: 'ติดต่อเรา', pageSlug: 'contact' }
         ];
       },

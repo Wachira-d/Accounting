@@ -58,6 +58,22 @@ public class StorefrontDataResponse
     public List<NavigationResponse> Navigations { get; set; } = new();
     public List<StorefrontLocaleInfo> Locales { get; set; } = new();
     public StorefrontSeoInfo Seo { get; set; } = new();
+    /// <summary>All published pages of this site — used by the
+    /// storefront's default navigation when the site has no explicit
+    /// Navigation entity configured. Pre-sorted by SortOrder so the
+    /// header renders pages in the order the seeder created them
+    /// (Home → About → Services/Products → Contact). Lets us drop
+    /// the hardcoded fallback that pointed at /shop and similar slugs
+    /// the seeder never produced.</summary>
+    public List<StorefrontPageInfo> Pages { get; set; } = new();
+}
+
+public class StorefrontPageInfo
+{
+    public string Slug { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string PageType { get; set; } = "";
+    public int SortOrder { get; set; }
 }
 
 public class StorefrontSiteInfo
