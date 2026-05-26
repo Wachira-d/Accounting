@@ -252,7 +252,11 @@ public class CmsCommerceService : ICmsCommerceService
                 SiteId = siteId,
                 ProductId = p.Id,
                 IsVisible = true,
-                IsFeatured = false,
+                // Mark the first 8 auto-published items as Featured so the
+                // home-page Hero ProductGrid block (which queries
+                // ?featured=true) isn't empty out of the box. Owner can
+                // toggle this off per item from the CMS product editor.
+                IsFeatured = ordering < 8,
                 SortOrder = ordering++,
                 StockBehavior = StockBehavior.InStockOnly,
                 Slug = SlugifyProductName(p.Code, p.Name),

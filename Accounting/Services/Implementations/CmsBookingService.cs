@@ -95,8 +95,21 @@ public class CmsBookingService : ICmsBookingService
 
     public async Task<List<BookingServiceResponse>> GetServicesAsync(Guid companyId, Guid siteId)
     {
+        // Lazy auto-seed — when a site has zero booking services but
+        // pages were seeded with BookingCalendar blocks, the storefront
+        // shows "ยังไม่มีบริการให้จองในขณะนี้" and customers can't book.
+        // Create one default service so the flow works out of the box;
+        // owner edits or adds more from the admin UI.
+        var any = await _db.SiteBookingServices
+            .AsNoTracking()
+            .AnyAsync(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted);
+        if (!any)
+        {
+            await EnsureDefaultBookingServiceAsync(companyId, siteId);
+        }
+
         return await _db.SiteBookingServices.AsNoTracking()
-            .Where(s => s.SiteId == siteId && s.CompanyId == companyId)
+            .Where(s => s.SiteId == siteId && s.CompanyId == companyId && !s.IsDeleted && s.IsActive)
             .OrderBy(s => s.SortOrder)
             .Select(s => new BookingServiceResponse
             {
@@ -108,6 +121,37 @@ public class CmsBookingService : ICmsBookingService
                 CreatedAt = s.CreatedAt
             })
             .ToListAsync();
+    }
+
+    /// <summary>One-shot default-service creator: idempotent at the
+    /// usual call site (anyExists check upstream). Seeds a single
+    /// "นัดหมาย / จอง" Lead-type service so the storefront BookingCalendar
+    /// block hydrates with at least one bookable option instead of an
+    /// empty grid. Owner edits the name/price/duration in
+    /// /pages/cms-bookings (services tab) afterwards.</summary>
+    private async Task EnsureDefaultBookingServiceAsync(Guid companyId, Guid siteId)
+    {
+        _db.SiteBookingServices.Add(new SiteBookingService
+        {
+            CompanyId = companyId,
+            SiteId = siteId,
+            Name = "นัดหมาย / จอง",
+            Description = "บริการเริ่มต้น — เจ้าของเว็บปรับแต่งชื่อ / ราคา / เวลาได้ที่หน้าจัดการ",
+            Slug = "default",
+            DurationMinutes = 60,
+            BufferMinutes = 0,
+            MaxCapacity = 1,
+            MaxAdvanceBookingDays = 60,
+            MinAdvanceBookingHours = 1,
+            Price = 0m,
+            Currency = "THB",
+            BookingType = BookingType.Lead,
+            IsActive = true,
+            SortOrder = 0,
+            CreatedBy = "auto-seed"
+        });
+        try { await _db.SaveChangesAsync(); }
+        catch { /* concurrent creation — fine, the next read picks it up */ }
     }
 
     public async Task<bool> DeleteServiceAsync(Guid companyId, Guid siteId, Guid serviceId)

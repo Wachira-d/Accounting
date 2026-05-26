@@ -2168,7 +2168,21 @@ WhatsApp: +66 XX XXX XXXX</p>"
 
         (new("ติดต่อขาย / นัด demo", "contact", PageType.Standard, "นัด demo / ขอใบเสนอราคา"), new() {
             new(CmsBlockType.Hero, J(new { headline = "อยากดู demo?", subheadline = "ทีมขายติดต่อใน 1 วันทำการ · demo 30 นาที live" })),
-            new(CmsBlockType.ContactForm, J(new { headline = "นัด demo / สอบถามราคา", submitText = "ส่ง", emailTo = "" })),
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "นัด demo / สอบถามราคา",
+                submitText = "ส่งคำขอ",
+                emailTo = "",
+                leadType = "Demo",
+                askCompany = true,
+                askTaxId = true,
+                extraFields = new object[] {
+                    new { name = "company_size", label = "ขนาดบริษัท", type = "select", options = new[] { "1-10 คน", "11-50 คน", "51-200 คน", "201+ คน" } },
+                    new { name = "use_case", label = "ปัญหา/สิ่งที่อยากแก้", type = "textarea" },
+                    new { name = "current_tool", label = "ปัจจุบันใช้ระบบอะไรอยู่", type = "text" },
+                    new { name = "team_size", label = "ทีมที่จะใช้งาน (จำนวนคน)", type = "number" },
+                    new { name = "trial_interest", label = "สนใจ", type = "select", options = new[] { "ดู demo ก่อน", "ทดลองใช้ฟรี 14 วัน", "ขอใบเสนอราคา", "อื่นๆ" } }
+                }
+            })),
             new(CmsBlockType.RichText, J(new {
                 content = "<p>📧 sales@product.com · 📱 LINE: @product · 💬 Live chat ในหน้าเว็บ</p>"
             })),
