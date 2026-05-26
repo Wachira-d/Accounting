@@ -2067,8 +2067,13 @@
         const willCreate = line.willCreateNew || !best;
         const conf = best ? Math.round(best.confidence * 100) : 0;
         const confColor = conf >= 85 ? '#059669' : conf >= 65 ? '#d97706' : '#dc2626';
-        const qty = line.detectedQuantity ?? line.quantity ?? 1;
-        const unit = line.detectedUnit || best?.unit || 'ชิ้น';
+
+        // Default to converted qty/unit when the server proposed a
+        // UnitConversion (e.g. "1 ลัง" → "12 ชิ้น"). Otherwise fall back
+        // to the detected qty/unit from OCR.
+        const qty = (line.convertedQuantity != null) ? line.convertedQuantity
+                   : (line.detectedQuantity ?? line.quantity ?? 1);
+        const unit = line.convertedUnit || line.detectedUnit || best?.unit || 'ชิ้น';
         const cost = line.unitPrice ?? best?.costPrice ?? 0;
 
         // Product cell — pre-selected dropdown of [Best, ...Alternatives, +Create new]
@@ -2081,6 +2086,19 @@
 
         const newProdName = Layout.esc(line.description || '').substring(0, 200);
 
+        // Per-row hint stripe — price anomaly OR conversion explainer
+        const hints = [];
+        if (line.priceAnomaly && line.priceAnomalyHint) {
+          hints.push(`<div style="background:#fff7ed;border-left:3px solid #f97316;color:#9a3412;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            ⚠️ ${Layout.esc(line.priceAnomalyHint)}
+          </div>`);
+        }
+        if (line.conversionHint) {
+          hints.push(`<div style="background:#ecfdf5;border-left:3px solid #10b981;color:#065f46;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            🔄 ${Layout.esc(line.conversionHint)}
+          </div>`);
+        }
+
         return `
         <tr data-line-idx="${idx}" data-will-create="${willCreate ? '1' : '0'}" style="border-bottom:1px solid var(--gray-200)">
           <td style="padding:8px 6px;vertical-align:top">
@@ -2088,6 +2106,7 @@
             <div style="font-size:11px;color:var(--gray-500);margin-top:2px">
               ${line.amount != null ? `ยอด: ฿${Layout.money(line.amount)}` : ''}
             </div>
+            ${hints.join('')}
           </td>
           <td style="padding:8px 6px;vertical-align:top">
             <select class="form-input si-product" style="width:100%;font-size:12px" onchange="Page.onStockImportProductChange(this, ${idx})">
@@ -2107,7 +2126,10 @@
           </td>
           <td style="padding:8px 6px;vertical-align:top;text-align:right">
             <input type="number" class="form-input si-cost" step="0.01" min="0" value="${Number(cost).toFixed(2)}"
-                   style="width:100px;text-align:right;font-size:12px">
+                   style="width:100px;text-align:right;font-size:12px;${line.priceAnomaly ? 'background:#fff7ed;border-color:#fdba74' : ''}">
+            ${line.expectedUnitCost != null && line.priceAnomaly
+              ? `<div style="font-size:10px;color:#9a3412">ทุนเดิม: ฿${Number(line.expectedUnitCost).toLocaleString('th-TH',{minimumFractionDigits:2})}</div>`
+              : ''}
           </td>
           <td style="padding:8px 6px;vertical-align:middle;text-align:center">
             ${willCreate

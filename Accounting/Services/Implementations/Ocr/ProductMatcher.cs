@@ -51,27 +51,38 @@ public class ProductMatcher
     // Normalization — must match between caller and the stored alias
     // ===================================================================
 
+    // ── Boundary fix for Thai units ───────────────────────────────────
+    // Thai code-point chars are NOT word-chars for .NET regex, so `\b`
+    // fails between digit and Thai letter — e.g. "1ลิตร" wouldn't match
+    // `\d+\s*ลิตร\b`. Replacing with a negative lookahead that excludes
+    // both Thai letters AND ASCII letters covers every case we care about
+    // ("1ลิตร" with no space, "1ลิตรน้ำ" where Thai letter follows, "1l"
+    // at end, "1l foo" with space).
+    private const string ThaiBoundary = @"(?![฀-๿a-zA-Z])";
+
     private static readonly (string Pattern, string Replacement)[] UnitReplacements =
     {
         // Volume
-        (@"(\d+(?:\.\d+)?)\s*(?:ลิตร|ltr|liter|liters|l)\b",        "$1l"),
-        (@"(\d+(?:\.\d+)?)\s*(?:มิลลิลิตร|มล\.?|ml)\b",              "$1ml"),
-        (@"(\d+(?:\.\d+)?)\s*(?:cc|ซีซี)\b",                          "$1ml"),
+        (@"(\d+(?:\.\d+)?)\s*(?:ลิตร|ltr|liter|liters|l)" + ThaiBoundary,        "$1l"),
+        (@"(\d+(?:\.\d+)?)\s*(?:มิลลิลิตร|มล\.?|ml)" + ThaiBoundary,              "$1ml"),
+        (@"(\d+(?:\.\d+)?)\s*(?:cc|ซีซี)" + ThaiBoundary,                          "$1ml"),
         // Weight
-        (@"(\d+(?:\.\d+)?)\s*(?:กิโลกรัม|กก\.?|kg|kilo|kilogram)\b",  "$1kg"),
-        (@"(\d+(?:\.\d+)?)\s*(?:กรัม|กรัมs?|g|gram)\b",                "$1g"),
+        (@"(\d+(?:\.\d+)?)\s*(?:กิโลกรัม|กก\.?|kg|kilo|kilogram)" + ThaiBoundary,  "$1kg"),
+        (@"(\d+(?:\.\d+)?)\s*(?:กรัม|กรัมs?|g|gram)" + ThaiBoundary,                "$1g"),
         // Count
-        (@"(\d+(?:\.\d+)?)\s*(?:ชิ้น|อัน|pcs?|pieces?|piece)\b",      "$1pcs"),
-        (@"(\d+(?:\.\d+)?)\s*(?:โหล|dozen|dz)\b",                     "$1dz"),
-        (@"(\d+(?:\.\d+)?)\s*(?:แพ็ค|แพ็ก|pack|pk)\b",                "$1pk"),
-        (@"(\d+(?:\.\d+)?)\s*(?:กล่อง|box)\b",                        "$1box"),
-        (@"(\d+(?:\.\d+)?)\s*(?:ขวด|bottle|btl)\b",                   "$1btl"),
-        (@"(\d+(?:\.\d+)?)\s*(?:กระป๋อง|can)\b",                      "$1can"),
-        (@"(\d+(?:\.\d+)?)\s*(?:ถุง|bag)\b",                          "$1bag"),
+        (@"(\d+(?:\.\d+)?)\s*(?:ชิ้น|อัน|pcs?|pieces?|piece)" + ThaiBoundary,      "$1pcs"),
+        (@"(\d+(?:\.\d+)?)\s*(?:โหล|dozen|dz)" + ThaiBoundary,                     "$1dz"),
+        (@"(\d+(?:\.\d+)?)\s*(?:แพ็ค|แพ็ก|pack|pk)" + ThaiBoundary,                "$1pk"),
+        (@"(\d+(?:\.\d+)?)\s*(?:กล่อง|box)" + ThaiBoundary,                        "$1box"),
+        (@"(\d+(?:\.\d+)?)\s*(?:ขวด|bottle|btl)" + ThaiBoundary,                   "$1btl"),
+        (@"(\d+(?:\.\d+)?)\s*(?:กระป๋อง|can)" + ThaiBoundary,                      "$1can"),
+        (@"(\d+(?:\.\d+)?)\s*(?:ถุง|bag)" + ThaiBoundary,                          "$1bag"),
+        (@"(\d+(?:\.\d+)?)\s*(?:ลัง|crate|carton|ctn)" + ThaiBoundary,             "$1ctn"),
+        (@"(\d+(?:\.\d+)?)\s*(?:ห่อ|wrap)" + ThaiBoundary,                         "$1wrap"),
         // Length
-        (@"(\d+(?:\.\d+)?)\s*(?:เซนติเมตร|ซม\.?|cm)\b",              "$1cm"),
-        (@"(\d+(?:\.\d+)?)\s*(?:เมตร|m)\b",                           "$1m"),
-        (@"(\d+(?:\.\d+)?)\s*(?:นิ้ว|inch|in|\"")",                  "$1in"),
+        (@"(\d+(?:\.\d+)?)\s*(?:เซนติเมตร|ซม\.?|cm)" + ThaiBoundary,              "$1cm"),
+        (@"(\d+(?:\.\d+)?)\s*(?:เมตร|m)" + ThaiBoundary,                           "$1m"),
+        (@"(\d+(?:\.\d+)?)\s*(?:นิ้ว|inch|in|\"")",                                "$1in"),
     };
 
     public static string Normalize(string raw)
@@ -108,24 +119,91 @@ public class ProductMatcher
         // get swallowed by "ม" (which would imply metres).
         var patterns = new (string Pat, string Unit)[]
         {
-            (@"\d+(?:\.\d+)?\s*(ลิตร|ltr|liter|l)\b",  "ลิตร"),
-            (@"\d+(?:\.\d+)?\s*(มล\.?|ml|cc|ซีซี)\b",  "มล."),
-            (@"\d+(?:\.\d+)?\s*(กก\.?|kg)\b",          "กก."),
-            (@"\d+(?:\.\d+)?\s*(กรัม|g)\b",            "กรัม"),
-            (@"\d+(?:\.\d+)?\s*(โหล|dozen|dz)\b",      "โหล"),
-            (@"\d+(?:\.\d+)?\s*(แพ็ค|แพ็ก|pack|pk)\b", "แพ็ค"),
-            (@"\d+(?:\.\d+)?\s*(กล่อง|box)\b",         "กล่อง"),
-            (@"\d+(?:\.\d+)?\s*(ขวด|bottle|btl)\b",    "ขวด"),
-            (@"\d+(?:\.\d+)?\s*(กระป๋อง|can)\b",       "กระป๋อง"),
-            (@"\d+(?:\.\d+)?\s*(ถุง|bag)\b",           "ถุง"),
-            (@"\d+(?:\.\d+)?\s*(ม\.?|m)\b",            "เมตร"),
-            (@"\d+(?:\.\d+)?\s*(นิ้ว|inch|in)\b",      "นิ้ว"),
-            (@"\d+(?:\.\d+)?\s*(ชิ้น|piece|pcs?)\b",   "ชิ้น"),
+            (@"\d+(?:\.\d+)?\s*(ลิตร|ltr|liter|l)"  + ThaiBoundary, "ลิตร"),
+            (@"\d+(?:\.\d+)?\s*(มล\.?|ml|cc|ซีซี)"  + ThaiBoundary, "มล."),
+            (@"\d+(?:\.\d+)?\s*(กก\.?|kg)"          + ThaiBoundary, "กก."),
+            (@"\d+(?:\.\d+)?\s*(กรัม|g)"            + ThaiBoundary, "กรัม"),
+            (@"\d+(?:\.\d+)?\s*(โหล|dozen|dz)"      + ThaiBoundary, "โหล"),
+            (@"\d+(?:\.\d+)?\s*(แพ็ค|แพ็ก|pack|pk)" + ThaiBoundary, "แพ็ค"),
+            (@"\d+(?:\.\d+)?\s*(กล่อง|box)"         + ThaiBoundary, "กล่อง"),
+            (@"\d+(?:\.\d+)?\s*(ขวด|bottle|btl)"    + ThaiBoundary, "ขวด"),
+            (@"\d+(?:\.\d+)?\s*(กระป๋อง|can)"       + ThaiBoundary, "กระป๋อง"),
+            (@"\d+(?:\.\d+)?\s*(ถุง|bag)"           + ThaiBoundary, "ถุง"),
+            (@"\d+(?:\.\d+)?\s*(ลัง|crate|carton|ctn)" + ThaiBoundary, "ลัง"),
+            (@"\d+(?:\.\d+)?\s*(ห่อ|wrap)"          + ThaiBoundary, "ห่อ"),
+            (@"\d+(?:\.\d+)?\s*(ม\.?|m)"            + ThaiBoundary, "เมตร"),
+            (@"\d+(?:\.\d+)?\s*(นิ้ว|inch|in)"      + ThaiBoundary, "นิ้ว"),
+            (@"\d+(?:\.\d+)?\s*(ชิ้น|piece|pcs?)"   + ThaiBoundary, "ชิ้น"),
         };
         foreach (var (pat, unit) in patterns)
             if (Regex.IsMatch(s, pat)) return unit;
         return null;
     }
+
+    // ── Brand-token extraction ────────────────────────────────────────
+    // Distinguishes "Pepsi 325ml" from "Coke 325ml" so trigram similarity
+    // on the shared "325ml" doesn't accidentally fuse them. A brand token
+    // here is any standalone uppercase ASCII alpha run of length ≥ 2 OR
+    // a capitalized first-letter word inside the description. We bias
+    // matches downward when the description names a brand the candidate
+    // doesn't share, so "Pepsi" never matches "Coke" by accident.
+    private static readonly Regex BrandTokenRegex = new(@"\b([A-Z]{2,}|[A-Z][a-z]{2,})\b", RegexOptions.Compiled);
+
+    public static HashSet<string> ExtractBrandTokens(string? raw)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw)) return tokens;
+        foreach (Match m in BrandTokenRegex.Matches(raw))
+        {
+            var t = m.Value.ToUpperInvariant();
+            // Filter out common units / generic words that look like brands
+            if (t.Length <= 1) continue;
+            if (t is "ML" or "KG" or "CM" or "MM" or "PCS" or "PC" or "BOX" or "PK"
+                or "PACK" or "CAN" or "BAG" or "BOTTLE" or "BTL" or "LTR" or "OZ"
+                or "FT" or "VAT" or "PHP" or "USD" or "THB" or "VND" or "EUR" or "JPY") continue;
+            tokens.Add(t);
+        }
+        return tokens;
+    }
+
+    // ── Vendor purchase history bias ──────────────────────────────────
+    // Promote products this same supplier has previously sold us. Linked
+    // through DocumentLine.ProductCode → Product.Code on past purchase-
+    // side documents (PurchaseInvoice / Expense / PaymentVoucher /
+    // PurchaseOrder). Boost is capped so a deterministic stage-1 alias
+    // still wins.
+    private const double VendorHistoryBoost = 0.10;
+    private const double MaxBoostedScore = 0.94;
+
+    private async Task<HashSet<Guid>> GetVendorHistoryProductIdsAsync(Guid companyId, Guid? vendorContactId)
+    {
+        if (!vendorContactId.HasValue) return new();
+        try
+        {
+            var sql = @"
+                SELECT DISTINCT p.""Id""
+                FROM ""DocumentLines"" dl
+                JOIN ""Documents"" d ON d.""Id"" = dl.""DocumentId"" AND d.""IsDeleted"" = false
+                JOIN ""Products"" p ON p.""Code"" = dl.""ProductCode""
+                                   AND p.""CompanyId"" = d.""CompanyId""
+                                   AND p.""IsDeleted"" = false
+                WHERE d.""CompanyId"" = {0}
+                  AND d.""ContactId"" = {1}
+                  AND d.""DocumentType"" IN (7, 8, 9, 13)
+                  AND dl.""ProductCode"" IS NOT NULL
+                  AND dl.""IsDeleted"" = false";
+            var ids = await _db.Database
+                .SqlQueryRaw<VendorHistoryRow>(sql, companyId, vendorContactId.Value)
+                .ToListAsync();
+            return ids.Select(x => x.Id).ToHashSet();
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    public class VendorHistoryRow { public Guid Id { get; set; } }
 
     /// <summary>Pull a quantity out of the description as a backup when
     /// the OCR's structured Quantity field came back null (common for
@@ -160,6 +238,8 @@ public class ProductMatcher
         if (norm.Length == 0) return new();
 
         var byProductId = new Dictionary<Guid, ProductMatchCandidate>();
+        var descBrands = ExtractBrandTokens(description);
+        var vendorHistoryIds = await GetVendorHistoryProductIdsAsync(companyId, vendorContactId);
 
         // === Stage 1+2: alias exact hits ===
         var aliasHits = await _db.ProductAliases
@@ -249,10 +329,104 @@ public class ProductMatcher
                 byProductId[p.Id] = new ProductMatchCandidate(p.Id, p.Code, p.Name, p.Unit, p.CostPrice, p.CurrentStock, sim, "fuzzy");
         }
 
-        return byProductId.Values
+        // ── Brand-protection + vendor-history rescore ──────────────────
+        // Apply AFTER all sourcing stages so it works against the union
+        // of candidates. Stage-1 exact-alias hits (confidence ≥ 1.0) are
+        // never demoted — the user already taught us this mapping.
+        var rescored = new List<ProductMatchCandidate>();
+        foreach (var c in byProductId.Values)
+        {
+            var score = c.Confidence;
+            var reason = c.Reason;
+
+            // Vendor purchase-history bias — small boost for products
+            // this vendor has actually sold us before.
+            if (vendorHistoryIds.Contains(c.ProductId) && score < VendorAliasScore)
+            {
+                score = Math.Min(MaxBoostedScore, score + VendorHistoryBoost);
+                reason = reason + "+vendor-hist";
+            }
+
+            // Brand-token protection — when the OCR'd description names
+            // a brand (e.g. "Pepsi", "Toyota", "A"), the candidate's
+            // name MUST contain at least one of those tokens. Otherwise
+            // we likely have two unrelated products that just share a
+            // size like "325ml". Stage-1 alias hits AND deterministic
+            // code/SKU hits are exempt — those are explicit signals from
+            // the user / the receipt and shouldn't be demoted by fuzzy
+            // brand heuristics.
+            var isDeterministic = reason.StartsWith("exact-alias") || reason.StartsWith("code-hit");
+            if (descBrands.Count > 0 && !isDeterministic)
+            {
+                var candBrands = ExtractBrandTokens(c.Name);
+                // Only demote when BOTH sides expose English brand tokens.
+                // Pure-Thai candidates (e.g. "เป๊ปซี่ 325ml") would otherwise
+                // be wrongly demoted against a desc that says "Pepsi 325ml"
+                // — same brand, different script.
+                if (candBrands.Count > 0 && !candBrands.Overlaps(descBrands))
+                {
+                    score *= 0.6;
+                    reason = reason + "-brand-mismatch";
+                }
+            }
+
+            rescored.Add(c with { Confidence = score, Reason = reason });
+        }
+
+        return rescored
             .OrderByDescending(c => c.Confidence)
             .Take(maxAlternatives + 1)
             .ToList();
+    }
+
+    // ====================================================================
+    // History backfill — turn previously-entered DocumentLines into seed
+    // aliases so the matcher works from day-one without forcing the user
+    // to "teach" every wording one at a time.
+    //
+    // Idempotent: alias insert uses RecordAliasAsync (TimesUsed += 1 on
+    // dup). Cheap by default (caps at 5000 rows) — caller passes a higher
+    // limit for one-off migration runs. Designed to be triggered lazily
+    // on the first stock-preview call from the OCR review modal.
+    // ====================================================================
+    public async Task<int> BackfillAliasesFromHistoryAsync(
+        Guid companyId, string userId, int maxLines = 5000)
+    {
+        // Pull purchase-side DocumentLines with both a Description and a
+        // ProductCode → resolvable product, joined to the document so we
+        // know the vendor (ContactId).
+        var rows = await _db.Database.SqlQueryRaw<HistoryRow>(@"
+            SELECT p.""Id"" AS ProductId, d.""ContactId"" AS ContactId, dl.""Description"" AS Description
+            FROM ""DocumentLines"" dl
+            JOIN ""Documents"" d ON d.""Id"" = dl.""DocumentId"" AND d.""IsDeleted"" = false
+            JOIN ""Products"" p ON p.""Code"" = dl.""ProductCode""
+                               AND p.""CompanyId"" = d.""CompanyId""
+                               AND p.""IsDeleted"" = false
+            WHERE d.""CompanyId"" = {0}
+              AND d.""DocumentType"" IN (7, 8, 9, 13)
+              AND dl.""ProductCode"" IS NOT NULL
+              AND dl.""Description"" IS NOT NULL
+              AND dl.""IsDeleted"" = false
+            LIMIT {1}", companyId, maxLines).ToListAsync();
+
+        var seen = new HashSet<string>();
+        var count = 0;
+        foreach (var r in rows)
+        {
+            var key = $"{r.ProductId}|{r.ContactId}|{Normalize(r.Description)}";
+            if (!seen.Add(key)) continue;  // dedupe within this run
+            await RecordAliasAsync(companyId, r.ProductId, r.Description, r.ContactId, userId, source: "import");
+            count++;
+        }
+        if (count > 0) await _db.SaveChangesAsync();
+        return count;
+    }
+
+    public class HistoryRow
+    {
+        public Guid ProductId { get; set; }
+        public Guid? ContactId { get; set; }
+        public string Description { get; set; } = "";
     }
 
     private static void TryAdd(Dictionary<Guid, ProductMatchCandidate> dict, Product p, double score, string reason)

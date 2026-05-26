@@ -229,7 +229,18 @@ public class OcrController : ControllerBase
             .FirstOrDefaultAsync();
         if (scan == null) return NotFound(new ApiResponse<OcrStockPreviewResponse>(false, null, "ไม่พบผลการสแกน"));
 
-        // OCR lines live as JSON in ExtractedItemsJson — same shape as OcrLineItemDto
+        // Lazy backfill — first time the company opens the import modal,
+        // seed aliases from any existing purchase DocumentLines so the
+        // matcher works without a cold start. Cheap: skip when there's
+        // already at least one alias on file.
+        var hasAliases = await _db.ProductAliases
+            .AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted);
+        if (!hasAliases)
+        {
+            await matcher.BackfillAliasesFromHistoryAsync(companyId, User.Identity?.Name ?? "ocr-backfill");
+        }
+
         var lines = new List<OcrLineItemDto>();
         if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
         {
@@ -246,17 +257,68 @@ public class OcrController : ControllerBase
             var best = matches.FirstOrDefault();
             var alternatives = matches.Skip(1).ToList();
 
+            var detectedUnit = Services.Implementations.Ocr.ProductMatcher.DetectUnit(desc);
+            var detectedQty = line.Quantity ?? Services.Implementations.Ocr.ProductMatcher.DetectQuantity(desc);
+
+            // ── Price anomaly (matched product but OCR'd price is way off) ──
+            bool priceAnomaly = false;
+            decimal? expectedCost = null;
+            string? priceHint = null;
+            if (best != null && line.UnitPrice.HasValue && best.CostPrice > 0)
+            {
+                expectedCost = best.CostPrice;
+                var diff = Math.Abs(line.UnitPrice.Value - best.CostPrice);
+                var pct = diff / best.CostPrice;
+                if (pct >= 0.30m && diff >= 5m)  // 30%+ AND ≥ 5฿ absolute
+                {
+                    priceAnomaly = true;
+                    var dir = line.UnitPrice.Value > best.CostPrice ? "สูงกว่า" : "ต่ำกว่า";
+                    priceHint = $"ราคา OCR ฿{line.UnitPrice:N2} {dir}ทุนเดิม ฿{best.CostPrice:N2} ({Math.Round(pct * 100)}%) — ตรวจสอบว่าจับคู่ถูกชนิด/ขนาดไหม";
+                }
+            }
+
+            // ── Unit-conversion auto-fill ──
+            // When OCR'd unit is "ลัง" or "โหล" but the matched product
+            // is stocked in "ชิ้น" with a conversion on file, propose
+            // converting the qty up-front. The user can untick.
+            decimal? convQty = null;
+            string? convUnit = null;
+            decimal? convRate = null;
+            string? convHint = null;
+            if (best != null && !string.IsNullOrEmpty(detectedUnit) && !detectedUnit.Equals(best.Unit, StringComparison.OrdinalIgnoreCase))
+            {
+                var conversion = await _db.UnitConversions
+                    .AsNoTracking()
+                    .Where(u => u.CompanyId == companyId && u.ProductId == best.ProductId && !u.IsDeleted
+                            && u.FromUnit == detectedUnit && u.ToUnit == best.Unit)
+                    .FirstOrDefaultAsync();
+                if (conversion != null && conversion.ConversionRate > 0 && detectedQty.HasValue)
+                {
+                    convQty = detectedQty.Value * conversion.ConversionRate;
+                    convUnit = conversion.ToUnit;
+                    convRate = conversion.ConversionRate;
+                    convHint = $"1 {conversion.FromUnit} = {conversion.ConversionRate:0.##} {conversion.ToUnit} — แปลงเป็น {convQty:0.##} {conversion.ToUnit} อัตโนมัติ";
+                }
+            }
+
             resultLines.Add(new OcrStockPreviewLine(
                 LineIndex: i,
                 Description: desc,
                 Quantity: line.Quantity,
                 UnitPrice: line.UnitPrice,
                 Amount: line.Amount,
-                DetectedUnit: Services.Implementations.Ocr.ProductMatcher.DetectUnit(desc),
-                DetectedQuantity: line.Quantity ?? Services.Implementations.Ocr.ProductMatcher.DetectQuantity(desc),
+                DetectedUnit: detectedUnit,
+                DetectedQuantity: detectedQty,
                 BestMatch: best,
                 Alternatives: alternatives,
-                WillCreateNew: best == null || best.Confidence < Services.Implementations.Ocr.ProductMatcher.AutoAcceptThresholdValue));
+                WillCreateNew: best == null || best.Confidence < Services.Implementations.Ocr.ProductMatcher.AutoAcceptThresholdValue,
+                PriceAnomaly: priceAnomaly,
+                ExpectedUnitCost: expectedCost,
+                PriceAnomalyHint: priceHint,
+                ConvertedQuantity: convQty,
+                ConvertedUnit: convUnit,
+                ConversionRate: convRate,
+                ConversionHint: convHint));
         }
 
         return Ok(new ApiResponse<OcrStockPreviewResponse>(true, new OcrStockPreviewResponse(

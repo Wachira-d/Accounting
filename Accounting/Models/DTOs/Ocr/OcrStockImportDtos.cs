@@ -27,7 +27,25 @@ public record OcrStockPreviewLine(
     decimal? DetectedQuantity,              // if the OCR Quantity was null but description has "1 ลิตร"
     ProductMatchCandidate? BestMatch,
     List<ProductMatchCandidate> Alternatives,
-    bool WillCreateNew);                    // true when no candidate above threshold
+    bool WillCreateNew,                     // true when no candidate above threshold
+    // ── Price sanity check ───────────────────────────────────────────
+    // When the matched product's CostPrice on file differs from the OCR'd
+    // UnitPrice by more than ±30%, surface a warning so the user notices
+    // they may have matched the wrong SKU/size. Null when no match or no
+    // baseline to compare against.
+    bool PriceAnomaly = false,
+    decimal? ExpectedUnitCost = null,
+    string? PriceAnomalyHint = null,
+    // ── Unit-conversion auto-fill ────────────────────────────────────
+    // When OCR'd unit is "1 ลัง" but the matched product Unit is "ชิ้น"
+    // and a UnitConversion (ลัง → ชิ้น × 12) is on file, we pre-populate
+    // ConvertedQuantity = 12 + ConvertedUnit = "ชิ้น" so the import-stock
+    // call posts in the canonical base unit. The user sees both numbers
+    // side by side and can untick if they actually want to keep "ลัง".
+    decimal? ConvertedQuantity = null,
+    string? ConvertedUnit = null,
+    decimal? ConversionRate = null,
+    string? ConversionHint = null);
 
 public record OcrStockPreviewResponse(
     Guid ScanId,
