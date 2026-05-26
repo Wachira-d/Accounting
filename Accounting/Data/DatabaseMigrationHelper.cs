@@ -2759,7 +2759,8 @@ public static class DatabaseMigrationHelper
                 "IsDeleted" boolean NOT NULL DEFAULT false,
                 CONSTRAINT "PK_CmsLeads" PRIMARY KEY ("Id"),
                 CONSTRAINT "FK_CmsLeads_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id"),
-                CONSTRAINT "FK_CmsLeads_Sites" FOREIGN KEY ("SiteId") REFERENCES "Sites"("Id") ON DELETE CASCADE
+                CONSTRAINT "FK_CmsLeads_Sites" FOREIGN KEY ("SiteId") REFERENCES "Sites"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_CmsLeads_Contacts" FOREIGN KEY ("ContactId") REFERENCES "Contacts"("Id") ON DELETE SET NULL
             );
             """,
             """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Company_Site_Created" ON "CmsLeads" ("CompanyId", "SiteId", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",

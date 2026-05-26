@@ -39,6 +39,12 @@
       </div>
     </div>
 
+    <!-- Payment-gateway setup banner — appears when site has no PromptPay/bank config -->
+    <div id="payConfigBanner" style="display:none;background:#FEF3C7;border:1px solid #FCD34D;color:#78350F;padding:14px 18px;border-radius:10px;margin-bottom:14px;font-size:13px;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div>⚠️ <strong>ยังไม่ได้ตั้งค่าวิธีรับเงิน</strong> — ลูกค้าจะเห็น "ชำระภายหลัง" เท่านั้น ตั้งค่า PromptPay หรือบัญชีธนาคารเพื่อให้ลูกค้าโอนเงินได้</div>
+      <button class="btn btn-primary btn-sm" onclick="Page.openGatewayModal()">⚙️ ตั้งค่าวิธีรับเงิน</button>
+    </div>
+
     <div class="grid grid-4 gap-4" style="margin-bottom:18px">
       <div class="stat-card"><div class="stat-label">รอดำเนินการ</div><div class="stat-value" id="statPending" style="color:#92400e">-</div></div>
       <div class="stat-card"><div class="stat-label">กำลังเตรียม</div><div class="stat-value" id="statProcessing" style="color:#3730a3">-</div></div>
@@ -69,6 +75,57 @@
       </table>
     </div>
     <div id="pagination"></div>
+
+    <!-- Payment Gateway setup modal -->
+    <div class="modal-overlay" id="gatewayModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title">ตั้งค่าวิธีรับเงิน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('gatewayModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:12px;color:var(--gray-600);margin-bottom:14px;line-height:1.6">
+            กรอกอย่างน้อย 1 อย่าง — PromptPay หรือบัญชีธนาคาร ลูกค้าจะเห็น QR + เลขบัญชีที่หน้า "สั่งซื้อสำเร็จ" เพื่อโอนเงินและแนบสลิป
+          </p>
+          <div class="form-group">
+            <label class="form-label">PromptPay (เบอร์มือถือ 10 หลัก หรือเลขผู้เสียภาษี 13 หลัก)</label>
+            <input type="text" id="gwPromptPay" class="form-input" placeholder="0812345678 หรือ 1234567890123" maxlength="13">
+            <small style="color:var(--gray-500);font-size:11px">QR สร้างให้อัตโนมัติบนหน้าเว็บลูกค้า ไม่ต้องอัพรูป QR</small>
+          </div>
+          <div style="border-top:1px solid var(--gray-200);margin:14px 0;padding-top:14px">
+            <div class="form-group"><label class="form-label">ธนาคาร</label>
+              <select id="gwBankName" class="form-input">
+                <option value="">— เลือก —</option>
+                <option>ธนาคารกรุงเทพ (BBL)</option>
+                <option>ธนาคารกสิกรไทย (KBANK)</option>
+                <option>ธนาคารกรุงไทย (KTB)</option>
+                <option>ธนาคารไทยพาณิชย์ (SCB)</option>
+                <option>ธนาคารกรุงศรีอยุธยา (BAY)</option>
+                <option>ธนาคารทหารไทยธนชาต (TTB)</option>
+                <option>ธนาคารออมสิน (GSB)</option>
+                <option>ธนาคารเพื่อการเกษตร (BAAC)</option>
+                <option>ธนาคารยูโอบี (UOB)</option>
+                <option>ธนาคาร CIMB Thai</option>
+                <option>ธนาคารแลนด์ แอนด์ เฮ้าส์ (LH)</option>
+                <option>ธนาคารไทยเครดิต (TCR)</option>
+                <option>ธนาคารเกียรตินาคินภัทร (KKP)</option>
+                <option>ธนาคารทิสโก้ (TISCO)</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">เลขที่บัญชี</label>
+              <input type="text" id="gwBankAccount" class="form-input" placeholder="เช่น 123-4-56789-0">
+            </div>
+            <div class="form-group"><label class="form-label">ชื่อบัญชี</label>
+              <input type="text" id="gwBankName2" class="form-input" placeholder="ชื่อ-นามสกุล / ชื่อนิติบุคคล">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('gatewayModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveGateway()">บันทึก</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Order Detail Modal -->
     <div class="modal-overlay" id="orderModal">
@@ -131,6 +188,7 @@
           sel.value = this.siteId;
           await this.load();
           await this.loadStats();
+          await this.loadGatewayStatus();
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async onSiteChange() {
@@ -138,6 +196,56 @@
         this.page = 1;
         await this.load();
         await this.loadStats();
+        await this.loadGatewayStatus();
+      },
+      async loadGatewayStatus() {
+        const api = Layout.api(); if (!api || !this.siteId) return;
+        try {
+          const res = await api.cmsListGateways(this.siteId);
+          const list = res?.data || [];
+          const any = list.some(g => (g.promptPayId || g.bankAccountNumber) && g.isActive);
+          document.getElementById('payConfigBanner').style.display = any ? 'none' : 'flex';
+          this._existingGateway = list.find(g => g.isActive) || list[0] || null;
+        } catch (e) { /* silently — owner can still open the modal */ }
+      },
+      openGatewayModal() {
+        const g = this._existingGateway;
+        document.getElementById('gwPromptPay').value = g?.promptPayId || '';
+        document.getElementById('gwBankName').value = g?.bankName || '';
+        document.getElementById('gwBankAccount').value = g?.bankAccountNumber || '';
+        document.getElementById('gwBankName2').value = g?.bankAccountName || '';
+        Layout.openModal('gatewayModal');
+      },
+      async saveGateway() {
+        const api = Layout.api(); if (!api || !this.siteId) return;
+        const ppId = document.getElementById('gwPromptPay').value.trim();
+        const bankName = document.getElementById('gwBankName').value.trim();
+        const bankAcc = document.getElementById('gwBankAccount').value.trim();
+        const bankAccName = document.getElementById('gwBankName2').value.trim();
+        if (!ppId && !bankAcc) {
+          Layout.toast('กรุณากรอก PromptPay หรือเลขบัญชีอย่างน้อย 1 อย่าง', 'error');
+          return;
+        }
+        const payload = {
+          // PaymentGatewayType enum — 0=PromptPay, 1=BankTransfer, 2=CreditCard, ... — using 0 as the generic Thai SME default
+          gatewayType: ppId ? 'PromptPay' : 'BankTransfer',
+          name: ppId ? 'PromptPay' : (bankName || 'Bank Transfer'),
+          promptPayId: ppId || null,
+          bankName: bankName || null,
+          bankAccountNumber: bankAcc || null,
+          bankAccountName: bankAccName || null,
+          isTestMode: false
+        };
+        try {
+          if (this._existingGateway?.id) {
+            await api.cmsUpdateGateway(this.siteId, this._existingGateway.id, payload);
+          } else {
+            await api.cmsCreateGateway(this.siteId, payload);
+          }
+          Layout.toast('บันทึกวิธีรับเงินเรียบร้อย');
+          Layout.closeModal('gatewayModal');
+          await this.loadGatewayStatus();
+        } catch (e) { Layout.toast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'error'); }
       },
       debounceLoad() {
         clearTimeout(this._searchTimer);

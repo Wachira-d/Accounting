@@ -1,5 +1,6 @@
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.DTOs;
+using Microsoft.AspNetCore.Http;
 
 namespace Accounting.Services.Interfaces;
 
@@ -45,4 +46,9 @@ public interface ICmsCommerceService
 
     // ERP Sync
     Task<Guid?> SyncOrderToErpAsync(Guid companyId, Guid siteId, Guid orderId);
+
+    // Public payment flow
+    Task<UploadSlipResponse?> RecordPaymentSlipAsync(Guid companyId, Guid siteId, Guid orderId, IFormFile file);
+    Task<ConvertToQuotationResponse?> ConvertOrderToQuotationAsync(Guid companyId, Guid siteId, Guid orderId);
+    Task<StorefrontPaymentOptions> GetStorefrontPaymentOptionsAsync(Guid companyId, Guid siteId);
 }

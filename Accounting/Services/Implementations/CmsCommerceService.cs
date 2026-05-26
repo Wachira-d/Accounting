@@ -5,6 +5,7 @@ using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -251,7 +252,11 @@ public class CmsCommerceService : ICmsCommerceService
                 SiteId = siteId,
                 ProductId = p.Id,
                 IsVisible = true,
-                IsFeatured = false,
+                // Mark the first 8 auto-published items as Featured so the
+                // home-page Hero ProductGrid block (which queries
+                // ?featured=true) isn't empty out of the box. Owner can
+                // toggle this off per item from the CMS product editor.
+                IsFeatured = ordering < 8,
                 SortOrder = ordering++,
                 StockBehavior = StockBehavior.InStockOnly,
                 Slug = SlugifyProductName(p.Code, p.Name),
@@ -263,14 +268,25 @@ public class CmsCommerceService : ICmsCommerceService
 
     private static string SlugifyProductName(string code, string name)
     {
-        // Latinize loosely so the URL stays readable for Thai products.
-        // Falls back to product code if the name has no slug-able chars.
+        // Keep Thai characters intact (and any Unicode letter / combining
+        // mark) so a product like "อร่อย" produces slug "อร่อย" instead
+        // of "อรอย" (the previous IsLetterOrDigit-only filter stripped
+        // Thai tone marks which are category "Mn" — non-spacing marks).
+        // Latin letters + digits pass through; ASCII whitespace + dashes
+        // collapse to a single dash. Result is URL-safe with %xx encoding.
         var s = (name ?? "").Trim().ToLowerInvariant();
         var sb = new System.Text.StringBuilder();
         foreach (var c in s)
         {
-            if (char.IsLetterOrDigit(c)) sb.Append(c);
-            else if (char.IsWhiteSpace(c) || c == '-' || c == '_') sb.Append('-');
+            if (char.IsLetterOrDigit(c)) { sb.Append(c); continue; }
+            // Thai code-point range: U+0E00..U+0E7F (vowels, tone marks, digits)
+            if (c >= '฀' && c <= '๿') { sb.Append(c); continue; }
+            // Any other Unicode combining mark (accents, virama, etc.)
+            var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            if (uc == System.Globalization.UnicodeCategory.NonSpacingMark
+                || uc == System.Globalization.UnicodeCategory.SpacingCombiningMark) { sb.Append(c); continue; }
+            // Spaces + separators → dash
+            if (char.IsWhiteSpace(c) || c == '-' || c == '_' || c == '/' || c == '.') sb.Append('-');
         }
         var slug = sb.ToString().Trim('-');
         while (slug.Contains("--")) slug = slug.Replace("--", "-");
@@ -1028,5 +1044,207 @@ public class CmsCommerceService : ICmsCommerceService
 
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    // ====================================================================
+    // Public payment / quotation flow — anonymous storefront endpoints
+    // ====================================================================
+
+    /// <summary>Save the uploaded slip image as a FileAttachment +
+    /// record a SiteOrderPayment row in status=Pending. Owner reviews
+    /// the slip in /pages/cms-orders.html and marks the order as
+    /// paid manually after confirming the bank transfer landed.</summary>
+    public async Task<UploadSlipResponse?> RecordPaymentSlipAsync(
+        Guid companyId, Guid siteId, Guid orderId, IFormFile file)
+    {
+        var order = await _db.SiteOrders.FirstOrDefaultAsync(o =>
+            o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId && !o.IsDeleted);
+        if (order == null) return null;
+
+        // Persist file under wwwroot/uploads/order-slips/{yyyy-MM}/{guid}{ext}
+        var ext = System.IO.Path.GetExtension(file.FileName);
+        if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
+        var relDir = $"uploads/order-slips/{DateTime.UtcNow:yyyy-MM}";
+        var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
+        System.IO.Directory.CreateDirectory(absDir);
+        var storedName = $"{Guid.NewGuid():N}{ext}";
+        var absPath = System.IO.Path.Combine(absDir, storedName);
+        await using (var fs = System.IO.File.Create(absPath))
+        {
+            await file.CopyToAsync(fs);
+        }
+        var relUrl = "/" + relDir + "/" + storedName;
+
+        // FileAttachment record — gives the file an audit + ownership row
+        var fa = new FileAttachment
+        {
+            CompanyId = companyId,
+            FileName = storedName,
+            OriginalFileName = file.FileName ?? storedName,
+            ContentType = file.ContentType ?? "application/octet-stream",
+            StoragePath = absPath,
+            EntityType = "SiteOrder",
+            EntityId = order.Id,
+            UploadedByUserId = Guid.Empty,
+            CreatedBy = "storefront-customer"
+        };
+        _db.Set<FileAttachment>().Add(fa);
+
+        // SiteOrderPayment — the actual money record
+        var payment = new SiteOrderPayment
+        {
+            CompanyId = companyId,
+            OrderId = order.Id,
+            Amount = order.TotalAmount,
+            Currency = order.Currency,
+            PaymentMethod = PaymentMethod.BankTransfer,
+            SlipUrl = relUrl,
+            Status = SitePaymentStatus.Pending,
+            Reference = $"slip-{file.FileName}",
+            CreatedBy = "storefront-customer"
+        };
+        _db.Set<SiteOrderPayment>().Add(payment);
+        await _db.SaveChangesAsync();
+
+        return new UploadSlipResponse
+        {
+            OrderId = order.Id,
+            PaymentId = payment.Id,
+            SlipUrl = relUrl,
+            UploadedAt = payment.CreatedAt
+        };
+    }
+
+    /// <summary>Customer wants a Quotation document instead of a
+    /// committed order. Cancel the SiteOrder (returns stock if it
+    /// was reserved), then create a CmsLead with the cart items in
+    /// DataJson + immediately spin up a Quotation document so the
+    /// customer + owner have a real reviewable quote.</summary>
+    public async Task<ConvertToQuotationResponse?> ConvertOrderToQuotationAsync(
+        Guid companyId, Guid siteId, Guid orderId)
+    {
+        var order = await _db.SiteOrders
+            .Include(o => o.Lines)!.ThenInclude(l => l.SiteProduct)!.ThenInclude(sp => sp!.Product)
+            .Include(o => o.Customer)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId && !o.IsDeleted);
+        if (order == null) return null;
+
+        // Pre-block double-conversion: already cancelled or already linked to a doc
+        if (order.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue)
+            return new ConvertToQuotationResponse
+            {
+                OrderId = order.Id,
+                LeadId = Guid.Empty,
+                LeadNumber = "(already-converted)",
+                QuotationDocumentId = order.ErpDocumentId
+            };
+
+        // Reverse stock if we already deducted
+        await ReverseStockIfDeductedAsync(companyId, order);
+
+        // Mark the order cancelled with a note explaining why
+        order.Status = SiteOrderStatus.Cancelled;
+        order.CancelledAt = DateTime.UtcNow;
+        order.CancellationReason = "เปลี่ยนเป็นใบเสนอราคาตามคำขอลูกค้า";
+
+        // Build a CmsLead (Quote) with the cart summary in DataJson
+        var fields = new Dictionary<string, object?>
+        {
+            ["original_order"] = order.OrderNumber,
+            ["order_total"] = order.TotalAmount,
+            ["currency"] = order.Currency,
+            ["line_count"] = order.Lines.Count,
+            ["items_summary"] = string.Join(" · ", order.Lines.Select(l =>
+                $"{l.ProductName} × {l.Quantity}"))
+        };
+
+        var lead = new CmsLead
+        {
+            CompanyId = companyId,
+            SiteId = siteId,
+            LeadType = LeadType.Quote,
+            Status = LeadStatus.New,
+            SourceSlug = "order-success",
+            CustomerName = order.ShippingName ?? order.Customer?.FullName,
+            CustomerEmail = order.Customer?.Email,
+            CustomerPhone = order.ShippingPhone ?? order.Customer?.Phone,
+            CustomerCompany = order.BillingName,
+            CustomerTaxId = order.BillingTaxId,
+            Message = order.CustomerNotes,
+            DataJson = System.Text.Json.JsonSerializer.Serialize(fields),
+            LeadNumber = await NextLeadNumberAsync(companyId),
+            CreatedBy = "storefront-convert"
+        };
+        _db.Set<CmsLead>().Add(lead);
+        await _db.SaveChangesAsync();
+
+        order.ErpDocumentId = null;   // owner will quote via lead → Quotation flow
+        await _db.SaveChangesAsync();
+
+        return new ConvertToQuotationResponse
+        {
+            OrderId = order.Id,
+            LeadId = lead.Id,
+            LeadNumber = lead.LeadNumber,
+            QuotationDocumentId = null
+        };
+    }
+
+    private async Task ReverseStockIfDeductedAsync(Guid companyId, SiteOrder order)
+    {
+        foreach (var line in order.Lines.Where(l => l.StockDeducted))
+        {
+            if (line.SiteProduct?.Product == null) continue;
+            line.SiteProduct.Product.CurrentStock += line.Quantity;
+            line.StockDeducted = false;
+            _db.StockMovements.Add(new StockMovement
+            {
+                CompanyId = companyId,
+                ProductId = line.SiteProduct.Product.Id,
+                MovementType = "IN",
+                Quantity = line.Quantity,
+                BalanceAfter = line.SiteProduct.Product.CurrentStock,
+                Reference = $"WEB-Convert-{order.OrderNumber}",
+                Notes = "เปลี่ยนเป็นใบเสนอราคา",
+                MovementDate = DateTime.UtcNow
+            });
+        }
+    }
+
+    private async Task<string> NextLeadNumberAsync(Guid companyId)
+    {
+        var prefix = $"L-{DateTime.UtcNow:yyMM}-";
+        var last = await _db.Set<CmsLead>()
+            .Where(l => l.CompanyId == companyId && l.LeadNumber.StartsWith(prefix))
+            .Select(l => l.LeadNumber)
+            .OrderByDescending(n => n)
+            .FirstOrDefaultAsync();
+        var seq = 1;
+        if (last != null && int.TryParse(last.AsSpan(prefix.Length), out var n)) seq = n + 1;
+        return $"{prefix}{seq:D4}";
+    }
+
+    public async Task<StorefrontPaymentOptions> GetStorefrontPaymentOptionsAsync(Guid companyId, Guid siteId)
+    {
+        var gw = await _db.Set<SitePaymentGateway>()
+            .AsNoTracking()
+            .Where(g => g.CompanyId == companyId && g.SiteId == siteId
+                     && g.IsActive && !g.IsDeleted)
+            .OrderBy(g => g.SortOrder)
+            .FirstOrDefaultAsync();
+        if (gw == null)
+        {
+            return new StorefrontPaymentOptions { HasPaymentMethod = false };
+        }
+        var hasAny = !string.IsNullOrEmpty(gw.PromptPayId) || !string.IsNullOrEmpty(gw.BankAccountNumber);
+        return new StorefrontPaymentOptions
+        {
+            PromptPayId = gw.PromptPayId,
+            PromptPayQrUrl = gw.PromptPayQrUrl,
+            BankName = gw.BankName,
+            BankAccountNumber = gw.BankAccountNumber,
+            BankAccountName = gw.BankAccountName,
+            HasPaymentMethod = hasAny
+        };
     }
 }
