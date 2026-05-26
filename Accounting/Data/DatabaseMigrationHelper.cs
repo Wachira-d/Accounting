@@ -2477,6 +2477,253 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LineUserStates_LineUserId" ON "LineUserStates" ("LineUserId");""",
+
+            // ===== ProductAliases — OCR-driven product name aliases for fuzzy matching =====
+            """
+            CREATE TABLE IF NOT EXISTS "ProductAliases" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "ProductId" uuid NOT NULL,
+                "ContactId" uuid NULL,
+                "AliasName" varchar(500) NOT NULL,
+                "NormalizedName" varchar(500) NOT NULL,
+                "TimesUsed" integer NOT NULL DEFAULT 1,
+                "LastUsedAt" timestamp NOT NULL DEFAULT now(),
+                "Source" varchar(20) NOT NULL DEFAULT 'user',
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ProductAliases" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ProductAliases_Products" FOREIGN KEY ("ProductId") REFERENCES "Products"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_ProductAliases_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_CompanyId_NormalizedName" ON "ProductAliases" ("CompanyId", "NormalizedName") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_CompanyId_ContactId_NormalizedName" ON "ProductAliases" ("CompanyId", "ContactId", "NormalizedName") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_ProductId" ON "ProductAliases" ("ProductId") WHERE "IsDeleted" = false;""",
+            // Trigram index on the normalized form — powers SIMILARITY()
+            // queries from the OCR product matcher in sub-50ms.
+            """CREATE INDEX IF NOT EXISTS "IX_ProductAliases_NormalizedName_Trgm" ON "ProductAliases" USING gin ("NormalizedName" gin_trgm_ops);""",
+            // Trigram index on Product.Name too — first-pass match when no
+            // alias exists yet for a freshly OCR'd description.
+            """CREATE INDEX IF NOT EXISTS "IX_Products_Name_Trgm" ON "Products" USING gin ("Name" gin_trgm_ops);""",
+
+            // ===== GlobalProductPatterns — cross-tenant federated learning of product wordings =====
+            // Anonymized, system-wide. No tenant identifiers in the row itself —
+            // distinct-tenant counting is offloaded to the tiny join table below.
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalProductPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "NormalizedKey" varchar(500) NOT NULL,
+                "CanonicalLabel" varchar(500) NULL,
+                "Brand" varchar(100) NULL,
+                "Unit" varchar(50) NULL,
+                "CategoryHint" varchar(100) NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalProductPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GlobalProductPatterns_NormalizedKey" ON "GlobalProductPatterns" ("NormalizedKey") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GlobalProductPatterns_Status" ON "GlobalProductPatterns" ("Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GlobalProductPatterns_NormalizedKey_Trgm" ON "GlobalProductPatterns" USING gin ("NormalizedKey" gin_trgm_ops);""",
+
+            // Tracks DISTINCT tenants who confirmed each pattern — uniqueness
+            // counter ONLY. One row per (PatternId, CompanyId). Never joined
+            // back to tenant data in matching queries; the per-tenant data
+            // is queried inside that tenant's own ProductAlias table.
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalProductPatternTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalProductPatternTenantSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GPPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalProductPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GPPSeens_PatternId_CompanyId" ON "GlobalProductPatternTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== SuppliesUsageLogs — multi-line notes + issued-to fields =====
+            """ALTER TABLE "SuppliesUsageLogs" ADD COLUMN IF NOT EXISTS "Notes" text NULL;""",
+            """ALTER TABLE "SuppliesUsageLogs" ADD COLUMN IF NOT EXISTS "IssuedToUserId" text NULL;""",
+            """ALTER TABLE "SuppliesUsageLogs" ADD COLUMN IF NOT EXISTS "IssuedToName" varchar(200) NULL;""",
+
+            // ===== ProductNegativeAliases — "this OCR wording is NOT this product" =====
+            // Stops the matcher from re-suggesting a candidate the user has
+            // explicitly rejected. Scoped to (CompanyId, NormalizedKey,
+            // RejectedProductId) — rejection is per-wording, not blanket.
+            """
+            CREATE TABLE IF NOT EXISTS "ProductNegativeAliases" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "NormalizedName" varchar(500) NOT NULL,
+                "RejectedProductId" uuid NOT NULL,
+                "ContactId" uuid NULL,
+                "Reason" varchar(200) NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ProductNegativeAliases" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ProductNegativeAliases_Products" FOREIGN KEY ("RejectedProductId") REFERENCES "Products"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_ProductNegativeAliases_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_NegAlias_Company_Norm" ON "ProductNegativeAliases" ("CompanyId", "NormalizedName") WHERE "IsDeleted" = false;""",
+
+            // ===== GlobalExpenseCategoryPatterns — federated category prediction =====
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalExpenseCategoryPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorKey" varchar(200) NOT NULL,
+                "DescriptionKeyword" varchar(200) NULL,
+                "AccountCode" varchar(50) NOT NULL,
+                "AccountName" varchar(200) NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalExpenseCategoryPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_GECP_VendorKeyword" ON "GlobalExpenseCategoryPatterns" ("VendorKey", "DescriptionKeyword") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GECP_Status" ON "GlobalExpenseCategoryPatterns" ("Status") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalExpenseCategoryTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GECPSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GECPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalExpenseCategoryPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GECPSeens_Pattern_Company" ON "GlobalExpenseCategoryTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== SystemOcrVendorIntelligence — track distinct contributing tenants =====
+            """ALTER TABLE "SystemOcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "TenantContributionCount" integer NOT NULL DEFAULT 0;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "SystemOcrVendorIntelTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "SystemIntelId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SVITenantSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_SVITenantSeens_Intel" FOREIGN KEY ("SystemIntelId") REFERENCES "SystemOcrVendorIntelligence"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SVITenantSeens_Intel_Company" ON "SystemOcrVendorIntelTenantSeens" ("SystemIntelId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== GlobalDocWorkflowPatterns — federated doc-type prediction =====
+            // (VendorKey, ScannedDocType) → TargetDocType consensus across tenants.
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalDocWorkflowPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorKey" varchar(200) NOT NULL,
+                "ScannedDocType" varchar(50) NOT NULL,
+                "TargetDocType" varchar(50) NOT NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalDocWorkflowPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_GDWP_Vendor_Scanned" ON "GlobalDocWorkflowPatterns" ("VendorKey", "ScannedDocType") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalDocWorkflowTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GDWPSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GDWPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalDocWorkflowPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GDWPSeens_Pattern_Company" ON "GlobalDocWorkflowTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== GlobalAssetCategoryPatterns — federated FixedAsset category + useful-life =====
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalAssetCategoryPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "NormalizedKey" varchar(500) NOT NULL,
+                "Category" varchar(200) NOT NULL,
+                "UsefulLifeMonths" integer NOT NULL,
+                "DepreciationMethod" varchar(50) NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalAssetCategoryPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_GACP_NormalizedKey" ON "GlobalAssetCategoryPatterns" ("NormalizedKey") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_GACP_Status" ON "GlobalAssetCategoryPatterns" ("Status") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalAssetCategoryTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GACPSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GACPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalAssetCategoryPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GACPSeens_Pattern_Company" ON "GlobalAssetCategoryTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

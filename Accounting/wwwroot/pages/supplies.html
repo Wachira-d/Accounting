@@ -117,6 +117,17 @@
           <input type="text" id="useReference" class="form-input" placeholder="เช่น REQ-001">
         </div>
         <div class="form-group">
+          <label class="form-label">ผู้รับวัสดุ (ผู้เบิก)</label>
+          <input type="text" id="useIssuedToName" class="form-input" placeholder="เช่น คุณสมศรี (แม่บ้าน), ผู้รับเหมา ABC">
+          <small style="color:var(--gray-500);font-size:11px">บันทึกประวัติว่าใครเบิกไป — รองรับทั้งพนักงานในระบบและคนนอก</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label">หมายเหตุเพิ่มเติม</label>
+          <textarea id="useNotes" class="form-input" rows="3"
+                    placeholder="เช่น เหตุการณ์พิเศษ · สภาพวัสดุก่อนเบิก · ผู้อนุมัติ · งานที่เอาไปใช้ทำอะไร"
+                    style="resize:vertical;min-height:60px;font-family:inherit"></textarea>
+        </div>
+        <div class="form-group">
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
             <input type="checkbox" id="useAutoJournal" checked> บันทึกบัญชีอัตโนมัติ (Dr ค่าวัสดุ / Cr วัสดุสิ้นเปลือง)
           </label>
@@ -278,6 +289,8 @@
       document.getElementById('useDepartment').value = '';
       document.getElementById('usePurpose').value = '';
       document.getElementById('useReference').value = '';
+      document.getElementById('useNotes').value = '';
+      document.getElementById('useIssuedToName').value = '';
       document.getElementById('useProductInfo').textContent = '';
       Layout.openModal('useModal');
     },
@@ -301,6 +314,8 @@
           department: document.getElementById('useDepartment').value || null,
           purpose: document.getElementById('usePurpose').value || null,
           reference: document.getElementById('useReference').value || null,
+          notes: document.getElementById('useNotes').value || null,
+          issuedToName: document.getElementById('useIssuedToName').value || null,
           autoCreateJournal: document.getElementById('useAutoJournal').checked
         });
         if (res?.success) {
@@ -325,7 +340,11 @@
               <td>${this.fmtQty(u.quantity)} ${Layout.esc(u.unit)}</td>
               <td>${this.fmt(u.totalCost)}</td>
               <td>${Layout.esc(u.department || '-')}</td>
-              <td>${Layout.esc(u.purpose || '-')}</td>
+              <td>
+                ${Layout.esc(u.purpose || '-')}
+                ${u.issuedToName ? `<div style="font-size:11px;color:#0891b2;margin-top:2px">👤 ${Layout.esc(u.issuedToName)}</div>` : ''}
+                ${u.notes ? `<div style="font-size:11px;color:var(--gray-600);margin-top:2px;white-space:pre-wrap;line-height:1.4">📝 ${Layout.esc(u.notes)}</div>` : ''}
+              </td>
               <td>${Layout.esc(u.reference || '-')}</td>
             </tr>`).join('');
         }

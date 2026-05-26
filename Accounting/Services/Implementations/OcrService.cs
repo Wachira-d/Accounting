@@ -47,6 +47,7 @@ public class OcrService : IOcrService
     private readonly Ocr.AzureDiPatternLearner _azureLearner;
     private readonly Ocr.VendorKnownGoodCorrector _knownGoodCorrector;
     private readonly Ocr.RdComplianceValidator? _rdComplianceValidator;
+    private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -61,8 +62,10 @@ public class OcrService : IOcrService
         Services.Interfaces.IOcrQuotaService quota,
         Ocr.AzureDiPatternLearner azureLearner,
         Ocr.VendorKnownGoodCorrector knownGoodCorrector,
-        Ocr.RdComplianceValidator? rdComplianceValidator = null)
+        Ocr.RdComplianceValidator? rdComplianceValidator = null,
+        Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null)
     {
+        _docWorkflowLearner = docWorkflowLearner;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -734,6 +737,40 @@ public class OcrService : IOcrService
                 {
                     extractedData.ReasoningTrace.Add(
                         $"[VendorIntel] แนะนำสร้าง {vendorPred.DocumentType.Value} (confidence {vendorPred.DocumentTypeConfidence:P0}) — รอผู้ใช้ยืนยัน");
+                }
+                // Federated fallback — when per-tenant VendorIntel has no
+                // confident prediction (new vendor for this tenant, but a
+                // vendor the SaaS as a whole has seen before), consult the
+                // cross-tenant pool. Only fires when:
+                //   1. We have NO TargetDocumentType yet, AND
+                //   2. VendorIntel's confidence stayed below MediumConfidence,
+                //   3. And the scanned-paper type was identifiable.
+                // The federated pattern needs k=3 distinct contributing
+                // tenants to be "active" — under the floor, this is silent.
+                if (_docWorkflowLearner != null
+                    && string.IsNullOrEmpty(extractedData.TargetDocumentType)
+                    && (vendorPred.DocumentTypeConfidence < VendorIntelligenceService.MediumConfidence)
+                    && !string.IsNullOrEmpty(extractedData.DocumentType))
+                {
+                    try
+                    {
+                        var fedVKey = !string.IsNullOrEmpty(extractedData.VendorTaxId)
+                            ? $"tax:{new string(extractedData.VendorTaxId.Where(char.IsDigit).ToArray())}"
+                            : !string.IsNullOrEmpty(extractedData.VendorName)
+                                ? $"name:{extractedData.VendorName.Trim().ToLowerInvariant()}"
+                                : null;
+                        if (!string.IsNullOrEmpty(fedVKey))
+                        {
+                            var (fedTarget, fedTenants) = await _docWorkflowLearner.PredictAsync(fedVKey, extractedData.DocumentType);
+                            if (!string.IsNullOrEmpty(fedTarget))
+                            {
+                                extractedData.TargetDocumentType = fedTarget;
+                                extractedData.ReasoningTrace.Add(
+                                    $"[Federated] 🌐 ระบบกลางแนะนำสร้าง {fedTarget} (จาก {fedTenants} ลูกค้าที่ใช้ vendor เดียวกัน)");
+                            }
+                        }
+                    }
+                    catch { /* federation outage — silent */ }
                 }
 
                 // Auto-fill debit account when per-line learner had no result
@@ -2188,6 +2225,46 @@ public class OcrService : IOcrService
                 correction.ExpenseCategory ?? result.ExpenseCategory,
                 correction.DebitAccountCode,
                 debitName);
+        }
+
+        // Federated doc-workflow learning — when the user confirms what
+        // TargetDocumentType to create for a given (Vendor, ScannedType),
+        // contribute that mapping to the cross-tenant pool. Lets the
+        // next tenant who scans the SAME vendor's SAME scanned doc type
+        // (e.g. "all utility receipts from MEA become PaymentVouchers")
+        // get the right TargetDocumentType pre-selected.
+        if (_docWorkflowLearner != null)
+        {
+            var scannedDocType = correction.DocumentType ?? result.ScannedDocumentType ?? result.DocumentType;
+            var targetDocType = correction.TargetDocumentType ?? result.TargetDocumentType;
+            if (!string.IsNullOrEmpty(scannedDocType) && !string.IsNullOrEmpty(targetDocType))
+            {
+                // Inline normalization (same shape ExpenseCategoryLearner uses):
+                // tax-id wins when valid 13-digit; else lowercased name.
+                var taxId = correction.VendorTaxId ?? result.ExtractedVendorTaxId;
+                var name = correction.VendorName ?? result.ExtractedVendorName;
+                string vKey = "";
+                if (!string.IsNullOrEmpty(taxId))
+                {
+                    var digits = new string(taxId.Where(char.IsDigit).ToArray());
+                    if (digits.Length == 13) vKey = $"tax:{digits}";
+                }
+                if (string.IsNullOrEmpty(vKey) && !string.IsNullOrEmpty(name))
+                    vKey = $"name:{name.Trim().ToLowerInvariant()}";
+
+                if (!string.IsNullOrEmpty(vKey))
+                {
+                    try
+                    {
+                        await _docWorkflowLearner.RecordConfirmAsync(companyId, vKey, scannedDocType, targetDocType);
+                        await _db.SaveChangesAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Federated doc-workflow contribution write failed (non-fatal)");
+                    }
+                }
+            }
         }
 
         // Forward correction to local AI service for learning

@@ -48,7 +48,12 @@ internal static class FixedAssetDetector
         for (int i = 0; i < lines.Count; i++)
         {
             var line = lines[i];
-            var desc = (line.Description ?? "").ToLowerInvariant();
+            // Apply bilingual canonicalization first so a keyword like
+            // "computer" matches Thai "คอมพิวเตอร์" lines and vice versa
+            // through the shared $-prefixed canonical tokens. The
+            // category-keyword rules below can stay English-only — Thai
+            // input gets translated up to the same token in advance.
+            var desc = BilingualTerms.Canonicalize(line.Description ?? "");
             var unitPrice = line.UnitPrice ?? (line.Quantity is > 0 && line.Amount is > 0
                 ? line.Amount.Value / line.Quantity.Value : line.Amount ?? 0m);
 

@@ -423,18 +423,25 @@
         let cfg = {};
         try { cfg = JSON.parse(b.configJson || '{}'); } catch(_) {}
         const esc = this.esc;
-        switch (b.blockType) {
+        const link = (u) => esc(this.resolveUrl(u));
+        // Normalize blockType — server serializes enum as string ("Hero")
+        // via JsonStringEnumConverter, but legacy/preview paths may send the
+        // numeric value. Accept both so this switch never silently misses.
+        const t = typeof b.blockType === 'string'
+          ? ({Hero:1,RichText:2,Image:3,Gallery:4,Video:5,ProductGrid:6,BookingCalendar:8,ContactForm:9,Map:11,Testimonials:12,Faq:13,PricingTable:14,CallToAction:15,Newsletter:17,Divider:19,Html:20,CartSummary:23}[b.blockType] ?? b.blockType)
+          : b.blockType;
+        switch (t) {
           case 1: { // Hero
             const bg = cfg.backgroundUrl ? `style="background-image:url('${esc(cfg.backgroundUrl)}')"` : '';
             const cls = cfg.backgroundUrl ? 'blk-hero with-bg' : 'blk-hero';
             return `<div class="${cls}" ${bg}>
               ${cfg.headline ? `<h1>${esc(cfg.headline)}</h1>` : ''}
               ${cfg.subheadline ? `<p>${esc(cfg.subheadline)}</p>` : ''}
-              ${cfg.ctaText ? `<a href="${esc(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>` : ''}
+              ${cfg.ctaText ? `<a href="${link(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>` : ''}
             </div>`;
           }
           case 2: { // RichText (HTML allowed — content authored by site owner)
-            return `<div class="blk-richtext">${cfg.content || ''}</div>`;
+            return `<div class="blk-richtext">${this.rewriteInternalLinks(cfg.content || '')}</div>`;
           }
           case 3: { // Image
             return `<figure class="blk-image"><img src="${esc(cfg.url||'')}" alt="${esc(cfg.alt||'')}">${cfg.caption?`<figcaption>${esc(cfg.caption)}</figcaption>`:''}</figure>`;
@@ -521,7 +528,8 @@
           case 15: { // CTA
             return `<div class="blk-cta">
               ${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}
-              ${cfg.ctaText?`<a href="${esc(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>`:''}
+              ${cfg.subheadline?`<p>${esc(cfg.subheadline)}</p>`:''}
+              ${cfg.ctaText?`<a href="${link(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>`:''}
             </div>`;
           }
           case 19: { return `<div class="blk-divider"><hr></div>`; }
@@ -654,7 +662,38 @@
         el.content = content;
       },
 
-      esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+      esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
+
+      // Rewrite an internal slug-style URL (e.g. "/services", "/contact",
+      // "products/abc") so it stays inside the current site when we are on
+      // path-based routing (/site/{key}/...). Absolute URLs, anchors,
+      // mailto/tel and protocol-relative links pass through unchanged.
+      resolveUrl(u) {
+        if (!u) return '#';
+        const s = String(u).trim();
+        if (!s || s === '#') return '#';
+        if (/^(https?:)?\/\//i.test(s)) return s;
+        if (/^(mailto:|tel:|sms:|javascript:|#|data:)/i.test(s)) return s;
+        if (!this.pathBased || !this.basePath) return s.startsWith('/') ? s : '/' + s;
+        const clean = s.startsWith('/') ? s : '/' + s;
+        // Already prefixed (avoid double-prefix on re-render)
+        if (clean === this.basePath || clean.startsWith(this.basePath + '/')) return clean;
+        return this.basePath + clean;
+      },
+
+      // Walk anchors inside authored HTML (RichText blocks) and rewrite
+      // internal links so they target the current site on path-based hosting.
+      rewriteInternalLinks(html) {
+        if (!html) return '';
+        try {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = html;
+          tmp.querySelectorAll('a[href]').forEach(a => {
+            a.setAttribute('href', this.resolveUrl(a.getAttribute('href')));
+          });
+          return tmp.innerHTML;
+        } catch (_) { return html; }
+      }
     };
 
     // ======================================================================

@@ -383,6 +383,13 @@ public class SystemOcrVendorIntelligence : BaseEntity
     // SystemOcrCategoryMapping.IndustryBreakdownJson. Lets the query-
     // time consumer weight this row toward same-industry similarity.
     public string? IndustryBreakdownJson { get; set; }
+
+    /// <summary>Number of DISTINCT tenants who have contributed at least
+    /// one training event to this row. Used by VendorIntelligenceService
+    /// to decide whether the row crossed the k-anonymity floor (k=3)
+    /// before any sensitive AVG fields are surfaced cross-tenant.
+    /// Maintained by GlobalVendorIntelLearner.</summary>
+    public int TenantContributionCount { get; set; }
 }
 
 /// <summary>

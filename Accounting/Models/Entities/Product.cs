@@ -163,6 +163,9 @@ public class SuppliesUsageLog : TenantEntity
     public string? Department { get; set; }      // แผนก/ห้องที่เบิก
     public string? Purpose { get; set; }         // วัตถุประสงค์
     public string? Reference { get; set; }       // เลขที่อ้างอิง
+    public string? Notes { get; set; }           // หมายเหตุเพิ่มเติม (multi-line)
+    public string? IssuedToUserId { get; set; }  // ผู้รับวัสดุ (UserId)
+    public string? IssuedToName { get; set; }    // ชื่อผู้รับ (สำหรับเบิกให้คนนอกระบบ เช่น ผู้รับเหมา)
     public Guid? JournalEntryId { get; set; }
     public JournalEntry? JournalEntry { get; set; }
 }

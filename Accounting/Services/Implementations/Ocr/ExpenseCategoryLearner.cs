@@ -13,11 +13,14 @@ public class ExpenseCategoryLearner
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<ExpenseCategoryLearner> _logger;
+    private readonly GlobalExpenseCategoryLearner? _global;
 
-    public ExpenseCategoryLearner(AccountingDbContext db, ILogger<ExpenseCategoryLearner> logger)
+    public ExpenseCategoryLearner(AccountingDbContext db, ILogger<ExpenseCategoryLearner> logger,
+        GlobalExpenseCategoryLearner? global = null)
     {
         _db = db;
         _logger = logger;
+        _global = global;
     }
 
     /// <summary>
@@ -168,6 +171,28 @@ public class ExpenseCategoryLearner
             // Convert weighted score back to a confidence-like value
             var confidence = ScoreConfidence((int)Math.Round(best.Score)) * 0.35m;
             return (best.AccountCode, best.AccountName, confidence);
+        }
+
+        // ── Final fallback: federated cross-tenant consensus ──
+        // Only consults patterns that crossed the k-anonymity gate
+        // (≥3 distinct tenants, ≥5 confirms). Tiny confidence so a
+        // weak per-tenant signal still wins, but better than nothing
+        // for brand-new tenants with zero local history.
+        if (_global != null)
+        {
+            try
+            {
+                var (gCode, gName, gTenants, gConfirms) = await _global.PredictAsync(vendorKey, NormalizeDescription(description));
+                if (!string.IsNullOrEmpty(gCode))
+                {
+                    // Tiered confidence based on how many tenants agreed.
+                    var globalConf = gTenants >= 10 ? 0.55m
+                                   : gTenants >= 5 ? 0.45m
+                                   : 0.35m;
+                    return (gCode, gName, globalConf);
+                }
+            }
+            catch { /* federation outage — fall through */ }
         }
 
         return (null, null, 0m);
@@ -334,6 +359,21 @@ public class ExpenseCategoryLearner
         await _db.SaveChangesAsync();
         _logger.LogInformation("Learned category mapping: company={C} vendor={V} keyword={K} → {Code}",
             companyId, vendorKey, keyword, accountCode);
+
+        // Federated contribution — anonymized, k-anonymity gate inside.
+        // Failure non-fatal: per-tenant write above already committed.
+        if (_global != null)
+        {
+            try
+            {
+                await _global.RecordConfirmAsync(companyId, vendorKey, keyword, accountCode, accountName);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Federated expense-category learner write failed (non-fatal)");
+            }
+        }
     }
 
     private static string NormalizeVendorKey(string? taxId, string? name)

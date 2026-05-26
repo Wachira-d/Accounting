@@ -419,7 +419,29 @@
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
+          <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
           <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสารทันทีตามข้อมูลที่แกะได้ (สถานะ Draft)">สร้างเอกสารทันที</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stock Import Modal (one-click OCR → stock / supplies / fixed asset) -->
+    <div class="modal-overlay" id="stockImportModal">
+      <div class="modal" style="max-width:1200px">
+        <div class="modal-header">
+          <h3 class="modal-title">📦 นำเข้าจาก OCR — สต็อก · วัสดุสิ้นเปลือง · สินทรัพย์</h3>
+          <button class="modal-close" onclick="Layout.closeModal('stockImportModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="stockImportBody">
+          <!-- populated by Page.openStockImport() -->
+        </div>
+        <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:auto;color:var(--gray-700)">
+            <input type="checkbox" id="stockImportLearn" checked> เรียนรู้ชื่อสินค้าตามผู้ขายนี้
+          </label>
+          <span style="font-size:11px;color:var(--gray-500);font-style:italic">เลือกปลายทาง (📦 / 🧻 / 🏢) ในแต่ละแถว — ระบบเดาให้แล้ว</span>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('stockImportModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้า</button>
         </div>
       </div>
     </div>
@@ -1966,6 +1988,423 @@
           Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;
           btn.textContent = 'สร้างเอกสารทันที';
+        }
+      },
+
+      /**
+       * One-click stock import from the OCR scan currently in the review
+       * modal. Opens a second modal listing every line item the OCR
+       * extracted, pre-matched against the product catalog. The user only
+       * needs to glance + confirm — auto-matched rows show the existing
+       * product name + cost; un-matched rows show "+ สร้างใหม่" with a
+       * pre-filled product name from the OCR description.
+       *
+       * Server-side ProductMatcher uses a 5-stage cascade (vendor-bound
+       * alias → global alias → code/SKU/barcode hit → pg_trgm trigram →
+       * Levenshtein fallback). On confirm, the server creates any missing
+       * products + writes ProductAlias rows scoped to the scan's vendor —
+       * so the NEXT receipt from that vendor matches the same wording
+       * instantly without re-prompting.
+       */
+      async openStockImport() {
+        const scan = this._reviewScan;
+        if (!scan) return;
+        const api = Layout.api(); if (!api) return;
+        const body = document.getElementById('stockImportBody');
+        body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-500)">กำลังเทียบรายการกับสินค้าในระบบ...</div>';
+        Layout.openModal('stockImportModal');
+
+        try {
+          const res = await api.ocrStockPreview(scan.id);
+          const preview = res?.data ?? res;
+          const lines = preview?.lines || [];
+          this._stockPreview = preview;
+
+          if (!lines.length) {
+            body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--gray-500)">
+              OCR ไม่พบรายการสินค้าในเอกสารนี้ — กรุณาตรวจสอบสแกนอีกครั้งหรือเพิ่มรายการในเอกสารโดยตรง
+            </div>`;
+            return;
+          }
+
+          const vendorBadge = preview.vendorName
+            ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:4px;font-size:11px">ผู้ขาย: ${Layout.esc(preview.vendorName)}</span>`
+            : `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:11px">ยังไม่จับคู่ผู้ขาย — ระบบจะไม่ผูก alias กับผู้ขาย</span>`;
+
+          body.innerHTML = `
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:12px;color:#1e3a8a;line-height:1.6">
+              <strong>📦 ${lines.length} รายการ</strong> &nbsp;${vendorBadge}<br>
+              ระบบจับคู่กับสินค้าในคลังให้แล้ว — ตรวจสอบ + แก้ไขจำนวน/ราคา/สินค้า → กดยืนยัน
+              สินค้าที่ยังไม่มีในระบบจะถูกสร้างให้อัตโนมัติ ครั้งต่อไประบบจะจดจำชื่อนี้ของผู้ขายเป็นสินค้าเดียวกัน
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="background:var(--gray-100);border-bottom:2px solid var(--gray-300)">
+                  <th style="padding:8px 6px;text-align:left;width:30%">รายการ OCR</th>
+                  <th style="padding:8px 6px;text-align:left;width:32%">สินค้าในระบบ</th>
+                  <th style="padding:8px 6px;text-align:right;width:10%">จำนวน</th>
+                  <th style="padding:8px 6px;text-align:left;width:8%">หน่วย</th>
+                  <th style="padding:8px 6px;text-align:right;width:12%">ราคาทุน/หน่วย</th>
+                  <th style="padding:8px 6px;text-align:center;width:8%">สถานะ</th>
+                </tr>
+              </thead>
+              <tbody id="stockImportRows">
+                ${lines.map((ln, i) => this.renderStockImportRow(ln, i)).join('')}
+              </tbody>
+            </table>
+            <div style="margin-top:12px;padding:10px 14px;background:#f9fafb;border-radius:8px;font-size:11px;color:var(--gray-600);line-height:1.6">
+              <strong>คะแนนความมั่นใจ:</strong>
+              <span style="color:#059669">● 85-100%</span> จับคู่แม่นยำ
+              · <span style="color:#d97706">● 65-84%</span> คล้ายแต่ตรวจ
+              · <span style="color:#dc2626">● ต่ำกว่า 65%</span> สร้างใหม่
+              &nbsp;|&nbsp;
+              <strong>ปลายทาง:</strong>
+              📦 สต็อก (ขายต่อ) · 🧻 วัสดุสิ้นเปลือง (เบิกใช้) · 🏢 สินทรัพย์ถาวร (≥฿5,000 + เข้าเกณฑ์ — มีค่าเสื่อม)
+              — ระบบเดาให้ คลิกชิปเพื่อเปลี่ยนปลายทาง
+            </div>`;
+        } catch (e) {
+          body.innerHTML = `<div style="padding:20px;color:var(--danger)">โหลด preview ไม่สำเร็จ: ${Layout.esc(e.message || e)}</div>`;
+        }
+      },
+
+      renderStockImportRow(line, idx) {
+        const best = line.bestMatch;
+        const willCreate = line.willCreateNew || !best;
+        const conf = best ? Math.round(best.confidence * 100) : 0;
+        const confColor = conf >= 85 ? '#059669' : conf >= 65 ? '#d97706' : '#dc2626';
+
+        // Default to converted qty/unit when the server proposed a
+        // UnitConversion (e.g. "1 ลัง" → "12 ชิ้น"). Otherwise fall back
+        // to the detected qty/unit from OCR.
+        const qty = (line.convertedQuantity != null) ? line.convertedQuantity
+                   : (line.detectedQuantity ?? line.quantity ?? 1);
+        // Unit precedence: explicit conversion → detected from text →
+        // matched product's unit → global federated suggestion → "ชิ้น"
+        const unit = line.convertedUnit || line.detectedUnit
+                   || best?.unit
+                   || ((willCreate && line.globalSuggestion?.unit) || 'ชิ้น');
+        const cost = line.unitPrice ?? best?.costPrice ?? 0;
+
+        // Product cell — pre-selected dropdown of [Best, ...Alternatives, +Create new]
+        const allCands = best ? [best, ...(line.alternatives || [])] : (line.alternatives || []);
+        const productOptions = allCands.map((c, ci) =>
+          `<option value="${c.productId}" data-cost="${c.costPrice}" data-unit="${Layout.esc(c.unit||'ชิ้น')}"
+                   ${ci === 0 && !willCreate ? 'selected' : ''}>
+            ${Layout.esc(c.name)} ${c.code ? `(${Layout.esc(c.code)})` : ''} · ${Math.round(c.confidence*100)}%
+          </option>`).join('');
+
+        // When the cross-tenant federated pool has an active pattern
+        // for this wording, prefer its canonical label as the
+        // "create new" pre-fill — gives the user a cleaner generic
+        // product name instead of the raw OCR description.
+        const gs = line.globalSuggestion;
+        const newProdName = Layout.esc((willCreate && gs?.canonicalLabel) ? gs.canonicalLabel : (line.description || '')).substring(0, 200);
+
+        // Per-row hint stripe — price anomaly OR conversion explainer OR global pattern
+        const hints = [];
+        if (line.priceAnomaly && line.priceAnomalyHint) {
+          hints.push(`<div style="background:#fff7ed;border-left:3px solid #f97316;color:#9a3412;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            ⚠️ ${Layout.esc(line.priceAnomalyHint)}
+          </div>`);
+        }
+        if (line.conversionHint) {
+          hints.push(`<div style="background:#ecfdf5;border-left:3px solid #10b981;color:#065f46;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            🔄 ${Layout.esc(line.conversionHint)}
+          </div>`);
+        }
+        if (gs && (gs.canonicalLabel || gs.brand || gs.unit)) {
+          const bits = [];
+          if (gs.canonicalLabel) bits.push(`ชื่อมาตรฐาน "${Layout.esc(gs.canonicalLabel)}"`);
+          if (gs.brand) bits.push(`แบรนด์ ${Layout.esc(gs.brand)}`);
+          if (gs.unit) bits.push(`หน่วย ${Layout.esc(gs.unit)}`);
+          if (gs.categoryHint) bits.push(`หมวด ${Layout.esc(gs.categoryHint)}`);
+          hints.push(`<div style="background:#eff6ff;border-left:3px solid #2563eb;color:#1e3a8a;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            🌐 ระบบกลางรู้จักสินค้านี้ — ${bits.join(' · ')}
+            <span style="color:#64748b">(${gs.tenantCount} ผู้ใช้ยืนยัน · ${gs.totalConfirms} ครั้ง)</span>
+          </div>`);
+        }
+
+        // Destination picker — 3-way (Stock / Supplies / Asset). The
+        // server's preview pre-selects FixedAsset for lines the
+        // FixedAssetDetector flagged (price ≥ ฿5k + capital-asset
+        // keyword); the user can override per-row.
+        //
+        // The server sends `defaultDestination` as the enum NAME (string,
+        // due to JsonStringEnumConverter), not the integer. Normalize
+        // both forms to integer here so the dataset attribute is always
+        // numeric and the JS comparisons hold.
+        const destMap = { 'Stock': 0, 'Supplies': 1, 'FixedAsset': 2, 0: 0, 1: 1, 2: 2 };
+        const defaultDest = destMap[line.defaultDestination] ?? 0;
+        const dests = [
+          { v: 0, icon: '📦', label: 'สต็อก',         clr: '#0369a1' },
+          { v: 1, icon: '🧻', label: 'วัสดุสิ้นเปลือง', clr: '#7c3aed' },
+          { v: 2, icon: '🏢', label: 'สินทรัพย์ถาวร',   clr: '#b91c1c' }
+        ];
+        const destPicker = `
+          <div class="si-dest-picker" style="display:inline-flex;gap:4px;margin-top:6px;padding:2px;background:#f3f4f6;border-radius:6px">
+            ${dests.map(d => `
+              <button type="button" data-dest="${d.v}"
+                      onclick="Page.onStockImportDestChange(this, ${idx})"
+                      style="font-size:11px;padding:3px 8px;border:none;border-radius:4px;cursor:pointer;
+                             background:${d.v === defaultDest ? 'white' : 'transparent'};
+                             color:${d.v === defaultDest ? d.clr : '#6b7280'};
+                             font-weight:${d.v === defaultDest ? '600' : '400'};
+                             box-shadow:${d.v === defaultDest ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'}">
+                ${d.icon} ${d.label}
+              </button>`).join('')}
+          </div>`;
+
+        // Asset hint banner — appears when the detector flagged this line
+        if (line.isLikelyAsset) {
+          const reasons = (line.assetReasons || []).slice(0, 3).join(' · ');
+          const fed = line.globalAssetSuggestion
+            ? ` 🌐 ระบบกลาง ${line.globalAssetSuggestion.tenantCount} ผู้ใช้ยืนยัน`
+            : '';
+          hints.push(`<div style="background:#fef2f2;border-left:3px solid #b91c1c;color:#7f1d1d;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px">
+            🏢 น่าจะเป็นสินทรัพย์ถาวร · ${Layout.esc(line.suggestedAssetCategory || 'ทั่วไป')}
+            · อายุ ~${Math.round((line.suggestedUsefulLifeMonths || 60) / 12)} ปี
+            ${reasons ? `· เหตุผล: ${Layout.esc(reasons)}` : ''}${fed}
+          </div>`);
+        }
+
+        return `
+        <tr data-line-idx="${idx}" data-will-create="${willCreate ? '1' : '0'}" data-dest="${defaultDest}" style="border-bottom:1px solid var(--gray-200)">
+          <td style="padding:8px 6px;vertical-align:top">
+            <div style="font-weight:500;color:var(--gray-900)">${Layout.esc(line.description || '-')}</div>
+            <div style="font-size:11px;color:var(--gray-500);margin-top:2px">
+              ${line.amount != null ? `ยอด: ฿${Layout.money(line.amount)}` : ''}
+            </div>
+            ${destPicker}
+            ${hints.join('')}
+          </td>
+          <td style="padding:8px 6px;vertical-align:top">
+            <select class="form-input si-product" style="width:100%;font-size:12px" onchange="Page.onStockImportProductChange(this, ${idx})">
+              ${productOptions}
+              <option value="__create__" ${willCreate ? 'selected' : ''}>+ สร้างสินค้าใหม่</option>
+            </select>
+            <input type="text" class="form-input si-new-name" placeholder="ชื่อสินค้าใหม่"
+                   value="${newProdName}"
+                   style="width:100%;font-size:12px;margin-top:4px;${willCreate ? '' : 'display:none'}">
+          </td>
+          <td style="padding:8px 6px;vertical-align:top;text-align:right">
+            <input type="number" class="form-input si-qty" step="0.01" min="0" value="${qty}"
+                   style="width:80px;text-align:right;font-size:12px">
+          </td>
+          <td style="padding:8px 6px;vertical-align:top">
+            <input type="text" class="form-input si-unit" value="${Layout.esc(unit)}" style="width:80px;font-size:12px">
+          </td>
+          <td style="padding:8px 6px;vertical-align:top;text-align:right">
+            <input type="number" class="form-input si-cost" step="0.01" min="0" value="${Number(cost).toFixed(2)}"
+                   style="width:100px;text-align:right;font-size:12px;${line.priceAnomaly ? 'background:#fff7ed;border-color:#fdba74' : ''}">
+            ${line.expectedUnitCost != null && line.priceAnomaly
+              ? `<div style="font-size:10px;color:#9a3412">ทุนเดิม: ฿${Number(line.expectedUnitCost).toLocaleString('th-TH',{minimumFractionDigits:2})}</div>`
+              : ''}
+          </td>
+          <td style="padding:8px 6px;vertical-align:middle;text-align:center">
+            ${willCreate
+              ? `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">สร้างใหม่</span>`
+              : `<span style="color:${confColor};font-weight:600;font-size:13px">${conf}%</span>
+                 <div style="font-size:10px;color:var(--gray-500)">${Layout.esc(best.reason||'')}</div>
+                 <button class="btn-link" style="font-size:10px;color:#dc2626;padding:0;background:none;border:none;cursor:pointer;text-decoration:underline;margin-top:2px"
+                         onclick="Page.rejectMatch(${idx}, '${best.productId}', this)">ไม่ใช่อันนี้</button>`}
+          </td>
+        </tr>
+        <tr class="si-asset-row" data-asset-for="${idx}" style="display:${defaultDest === 2 ? 'table-row' : 'none'};background:#fef2f2;border-bottom:1px solid var(--gray-200)">
+          <td colspan="6" style="padding:10px 14px">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;font-size:12px">
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">หมวดสินทรัพย์</label>
+                <input type="text" class="form-input si-asset-category" value="${Layout.esc(line.suggestedAssetCategory || '')}" placeholder="เช่น คอมพิวเตอร์/ยานพาหนะ" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">อายุการใช้งาน (เดือน)</label>
+                <input type="number" class="form-input si-asset-life" min="1" value="${line.suggestedUsefulLifeMonths || 60}" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">วิธีคิดค่าเสื่อม</label>
+                <select class="form-input si-asset-method" style="width:100%;font-size:12px">
+                  <option value="StraightLine" ${(line.globalAssetSuggestion?.depreciationMethod ?? 'StraightLine') === 'StraightLine' ? 'selected' : ''}>เส้นตรง (Straight Line)</option>
+                  <option value="DecliningBalance" ${line.globalAssetSuggestion?.depreciationMethod === 'DecliningBalance' ? 'selected' : ''}>ยอดลดลง (Declining)</option>
+                  <option value="DoubleDecliningBalance" ${line.globalAssetSuggestion?.depreciationMethod === 'DoubleDecliningBalance' ? 'selected' : ''}>ยอดลดลงสองเท่า</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">มูลค่าซาก</label>
+                <input type="number" class="form-input si-asset-salvage" min="0" step="0.01" value="0" placeholder="0" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">หมายเลขซีเรียล (ถ้ามี)</label>
+                <input type="text" class="form-input si-asset-serial" placeholder="SN/รหัสเครื่อง" style="width:100%;font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:#7f1d1d;font-weight:600;display:block;margin-bottom:2px">รหัสสินทรัพย์ (อัตโนมัติ)</label>
+                <input type="text" class="form-input si-asset-code" placeholder="FA-XXXXX (เว้นว่าง = ออกให้)" style="width:100%;font-size:12px">
+              </div>
+            </div>
+            <div style="font-size:11px;color:#9a3412;margin-top:8px;line-height:1.4">
+              💡 ระบบจะสร้างสินทรัพย์ + ตั้งตารางค่าเสื่อมราคาตามมาตรฐานบัญชี และผูก JE เริ่มต้น (Dr สินทรัพย์ / Cr เจ้าหนี้)
+            </div>
+          </td>
+        </tr>`;
+      },
+
+      /**
+       * Switch this row's destination (Stock / Supplies / Asset).
+       * Updates the chip styles, toggles the asset-fields panel, and
+       * stores the choice on the row dataset for confirmStockImport
+       * to read.
+       */
+      onStockImportDestChange(btnEl, idx) {
+        const newDest = parseInt(btnEl.dataset.dest);
+        const row = btnEl.closest('tr');
+        row.dataset.dest = String(newDest);
+
+        // Restyle chips in this picker
+        const picker = btnEl.closest('.si-dest-picker');
+        const colors = { '0': '#0369a1', '1': '#7c3aed', '2': '#b91c1c' };
+        picker.querySelectorAll('button').forEach(b => {
+          const v = b.dataset.dest;
+          const active = parseInt(v) === newDest;
+          b.style.background = active ? 'white' : 'transparent';
+          b.style.color = active ? colors[v] : '#6b7280';
+          b.style.fontWeight = active ? '600' : '400';
+          b.style.boxShadow = active ? '0 1px 2px rgba(0,0,0,0.1)' : 'none';
+        });
+
+        // Show/hide asset fields panel beneath the row
+        const assetRow = document.querySelector(`tr.si-asset-row[data-asset-for="${idx}"]`);
+        if (assetRow) assetRow.style.display = newDest === 2 ? 'table-row' : 'none';
+      },
+
+      /**
+       * Mark a suggested product as NOT this OCR'd wording. Persisted
+       * server-side so future scans of the same wording from the same
+       * vendor will not re-surface the rejected candidate. The row
+       * collapses to "+ สร้างใหม่" mode after rejection so the user can
+       * proceed with the import.
+       */
+      async rejectMatch(idx, productId, btnEl) {
+        const scan = this._reviewScan;
+        if (!scan) return;
+        const sourceLine = (this._stockPreview?.lines || []).find(l => l.lineIndex === idx);
+        if (!sourceLine || !productId) return;
+        if (!confirm(`บันทึกว่า "${sourceLine.description || ''}" ≠ "${sourceLine.bestMatch?.name || ''}" ?\nระบบจะไม่เสนอสินค้านี้สำหรับชื่อนี้อีก`)) return;
+        try {
+          await Layout.api().ocrRejectMatch(scan.id, {
+            ocrDescription: sourceLine.description || '',
+            rejectedProductId: productId,
+            reason: null
+          });
+          Layout.toast('บันทึกการปฏิเสธแล้ว');
+          // Collapse this row into "create new" mode
+          const row = btnEl.closest('tr');
+          const select = row.querySelector('.si-product');
+          select.value = '__create__';
+          this.onStockImportProductChange(select, idx);
+        } catch (e) {
+          Layout.toast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
+      },
+
+      onStockImportProductChange(selectEl, idx) {
+        const row = selectEl.closest('tr');
+        const newNameInput = row.querySelector('.si-new-name');
+        const costInput = row.querySelector('.si-cost');
+        const unitInput = row.querySelector('.si-unit');
+        const statusCell = row.lastElementChild;
+
+        if (selectEl.value === '__create__') {
+          row.dataset.willCreate = '1';
+          newNameInput.style.display = '';
+          statusCell.innerHTML = `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">สร้างใหม่</span>`;
+        } else {
+          row.dataset.willCreate = '0';
+          newNameInput.style.display = 'none';
+          // Pre-fill cost + unit from selected product (only if user hasn't edited)
+          const opt = selectEl.selectedOptions[0];
+          if (opt) {
+            if (opt.dataset.cost && !costInput.dataset.userEdited) costInput.value = Number(opt.dataset.cost).toFixed(2);
+            if (opt.dataset.unit && !unitInput.dataset.userEdited) unitInput.value = opt.dataset.unit;
+          }
+          statusCell.innerHTML = `<span style="color:#059669;font-weight:600;font-size:13px">✓ จับคู่แล้ว</span>`;
+        }
+      },
+
+      async confirmStockImport() {
+        const scan = this._reviewScan;
+        if (!scan) return;
+        const api = Layout.api(); if (!api) return;
+
+        const sourceLines = this._stockPreview?.lines || [];
+        const rows = document.querySelectorAll('#stockImportRows tr[data-line-idx]');
+        const lines = [];
+        for (const row of rows) {
+          const idx = parseInt(row.dataset.lineIdx);
+          const dest = parseInt(row.dataset.dest || '0');
+          const willCreate = row.dataset.willCreate === '1';
+          const select = row.querySelector('.si-product');
+          const qty = parseFloat(row.querySelector('.si-qty').value) || 0;
+          const unit = row.querySelector('.si-unit').value.trim() || 'ชิ้น';
+          const cost = parseFloat(row.querySelector('.si-cost').value) || 0;
+
+          // Allow asset lines with qty 0 (capitalize 1 piece by default).
+          if (qty <= 0 && dest !== 2) continue;
+
+          // Common asset fields — pulled from the asset-row beneath this main row
+          const assetRow = document.querySelector(`tr.si-asset-row[data-asset-for="${idx}"]`);
+          const assetFields = (dest === 2 && assetRow) ? {
+            assetCode: (assetRow.querySelector('.si-asset-code')?.value || '').trim() || null,
+            assetCategory: (assetRow.querySelector('.si-asset-category')?.value || '').trim() || null,
+            usefulLifeMonths: parseInt(assetRow.querySelector('.si-asset-life')?.value) || 60,
+            salvageValue: parseFloat(assetRow.querySelector('.si-asset-salvage')?.value) || 0,
+            serialNumber: (assetRow.querySelector('.si-asset-serial')?.value || '').trim() || null,
+            depreciationMethod: assetRow.querySelector('.si-asset-method')?.value || 'StraightLine'
+          } : {};
+
+          if (dest === 2 || willCreate) {
+            const sourceLine = sourceLines.find(l => l.lineIndex === idx);
+            const categoryHint = sourceLine?.globalSuggestion?.categoryHint || null;
+            const name = (row.querySelector('.si-new-name')?.value || '').trim()
+                       || sourceLine?.description || '';
+            if (!name && dest !== 2) continue;
+            lines.push({
+              lineIndex: idx,
+              productId: null,
+              newProductName: name,
+              newProductCode: null,
+              newProductCategory: categoryHint,
+              quantity: dest === 2 ? Math.max(1, qty) : qty,
+              unit, unitCost: cost, vatRate: null,
+              destination: dest,
+              ...assetFields
+            });
+          } else {
+            lines.push({
+              lineIndex: idx, productId: select.value, newProductName: null,
+              quantity: qty, unit, unitCost: cost, vatRate: null,
+              destination: dest
+            });
+          }
+        }
+        if (lines.length === 0) { Layout.toast('ไม่มีรายการที่จะนำเข้า', 'error'); return; }
+
+        const learn = document.getElementById('stockImportLearn').checked;
+        const btn = document.getElementById('stockImportConfirmBtn');
+        btn.disabled = true; btn.textContent = 'กำลังนำเข้า...';
+
+        try {
+          const res = await api.ocrImportStock(scan.id, { lines, learnAliases: learn, moveStock: true });
+          const r = res?.data ?? res;
+          const bits = [`นำเข้าทั้งหมด ${r.linesProcessed} รายการ`];
+          if (r.stockMovementsCreated) bits.push(`📦 สต็อก ${r.stockMovementsCreated}`);
+          if (r.fixedAssetsCreated) bits.push(`🏢 สินทรัพย์ ${r.fixedAssetsCreated}`);
+          if (r.productsCreated) bits.push(`สร้างสินค้าใหม่ ${r.productsCreated}`);
+          if (r.aliasesLearned) bits.push(`alias ${r.aliasesLearned}`);
+          Layout.toast(bits.join(' · '));
+          Layout.closeModal('stockImportModal');
+        } catch (err) {
+          Layout.toast('นำเข้าไม่สำเร็จ: ' + (err.message || err), 'error');
+          btn.disabled = false; btn.textContent = '✓ ยืนยันนำเข้าสต็อก';
         }
       },
 

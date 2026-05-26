@@ -209,6 +209,485 @@ public class OcrController : ControllerBase
     }
 
     /// <summary>
+    /// Build a per-line preview of what would happen if the user pushed the
+    /// "นำเข้าสต็อก" button on this OCR scan. For each extracted line item,
+    /// runs the ProductMatcher cascade (alias → code-hit → trigram → fuzzy)
+    /// and returns the top-1 candidate plus a few alternatives, with the
+    /// confidence score that pre-selects the row in the UI. Lines whose
+    /// best confidence stays below the threshold are flagged
+    /// <c>WillCreateNew = true</c> so the modal opens them in "create
+    /// product" mode by default. No DB writes happen here — purely a
+    /// read-only suggestion endpoint the UI polls on modal open.
+    /// </summary>
+    [HttpGet("{scanId:guid}/stock-preview")]
+    public async Task<ActionResult<ApiResponse<OcrStockPreviewResponse>>> StockPreview(
+        Guid companyId, Guid scanId,
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher,
+        [FromServices] Services.Implementations.Ocr.GlobalProductLearner globalLearner,
+        [FromServices] Services.Implementations.Ocr.GlobalAssetCategoryLearner globalAssetLearner)
+    {
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (scan == null) return NotFound(new ApiResponse<OcrStockPreviewResponse>(false, null, "ไม่พบผลการสแกน"));
+
+        // Lazy backfill — first time the company opens the import modal,
+        // seed aliases from any existing purchase DocumentLines so the
+        // matcher works without a cold start. Cheap: skip when there's
+        // already at least one alias on file.
+        var hasAliases = await _db.ProductAliases
+            .AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted);
+        if (!hasAliases)
+        {
+            await matcher.BackfillAliasesFromHistoryAsync(companyId, User.Identity?.Name ?? "ocr-backfill");
+        }
+
+        var lines = new List<OcrLineItemDto>();
+        if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+        {
+            try { lines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+            catch { /* malformed JSON — treat as empty so the UI still opens */ }
+        }
+
+        // Run the fixed-asset detector across all lines once. Returns
+        // one LineDecision per OCR line — IsPotentialAsset flag + a
+        // suggested category + useful-life + confidence. Pre-filtered
+        // by the ฿5k threshold + capital-asset keyword list. Cheap
+        // (pure in-memory).
+        var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
+            lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList());
+
+        var resultLines = new List<OcrStockPreviewLine>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            var desc = line.Description ?? "";
+            var matches = await matcher.MatchAsync(companyId, desc, scan.MatchedContactId);
+            var best = matches.FirstOrDefault();
+            var alternatives = matches.Skip(1).ToList();
+
+            var detectedUnit = Services.Implementations.Ocr.ProductMatcher.DetectUnit(desc);
+            var detectedQty = line.Quantity ?? Services.Implementations.Ocr.ProductMatcher.DetectQuantity(desc);
+
+            // ── Price anomaly (matched product but OCR'd price is way off) ──
+            bool priceAnomaly = false;
+            decimal? expectedCost = null;
+            string? priceHint = null;
+            if (best != null && line.UnitPrice.HasValue && best.CostPrice > 0)
+            {
+                expectedCost = best.CostPrice;
+                var diff = Math.Abs(line.UnitPrice.Value - best.CostPrice);
+                var pct = diff / best.CostPrice;
+                if (pct >= 0.30m && diff >= 5m)  // 30%+ AND ≥ 5฿ absolute
+                {
+                    priceAnomaly = true;
+                    var dir = line.UnitPrice.Value > best.CostPrice ? "สูงกว่า" : "ต่ำกว่า";
+                    priceHint = $"ราคา OCR ฿{line.UnitPrice:N2} {dir}ทุนเดิม ฿{best.CostPrice:N2} ({Math.Round(pct * 100)}%) — ตรวจสอบว่าจับคู่ถูกชนิด/ขนาดไหม";
+                }
+            }
+
+            // ── Unit-conversion auto-fill ──
+            // When OCR'd unit is "ลัง" or "โหล" but the matched product
+            // is stocked in "ชิ้น" with a conversion on file, propose
+            // converting the qty up-front. The user can untick.
+            decimal? convQty = null;
+            string? convUnit = null;
+            decimal? convRate = null;
+            string? convHint = null;
+            if (best != null && !string.IsNullOrEmpty(detectedUnit) && !detectedUnit.Equals(best.Unit, StringComparison.OrdinalIgnoreCase))
+            {
+                var conversion = await _db.UnitConversions
+                    .AsNoTracking()
+                    .Where(u => u.CompanyId == companyId && u.ProductId == best.ProductId && !u.IsDeleted
+                            && u.FromUnit == detectedUnit && u.ToUnit == best.Unit)
+                    .FirstOrDefaultAsync();
+                if (conversion != null && conversion.ConversionRate > 0 && detectedQty.HasValue)
+                {
+                    convQty = detectedQty.Value * conversion.ConversionRate;
+                    convUnit = conversion.ToUnit;
+                    convRate = conversion.ConversionRate;
+                    convHint = $"1 {conversion.FromUnit} = {conversion.ConversionRate:0.##} {conversion.ToUnit} — แปลงเป็น {convQty:0.##} {conversion.ToUnit} อัตโนมัติ";
+                }
+            }
+
+            // Global federated suggestion (only consulted when there's
+            // no strong local match — saves work on rows the matcher
+            // already nailed). Threshold is adaptive — vendors with a
+            // hand-curated alias dictionary (≥10 confirmed mappings) get
+            // a lower bar for auto-accept.
+            GlobalProductSuggestion? globalSugg = null;
+            var threshold = await matcher.GetVendorAdaptiveThresholdAsync(companyId, scan.MatchedContactId);
+            var willCreate = best == null || best.Confidence < threshold;
+            if (willCreate)
+            {
+                try
+                {
+                    var norm = Services.Implementations.Ocr.ProductMatcher.Normalize(desc);
+                    var pattern = await globalLearner.GetActivePatternAsync(norm);
+                    if (pattern != null)
+                    {
+                        globalSugg = new GlobalProductSuggestion(
+                            CanonicalLabel: pattern.CanonicalLabel,
+                            Brand: pattern.Brand,
+                            Unit: pattern.Unit,
+                            CategoryHint: pattern.CategoryHint,
+                            TenantCount: pattern.TenantCount,
+                            TotalConfirms: pattern.TotalConfirms);
+                    }
+                }
+                catch { /* federation outage is silent */ }
+            }
+
+            // ── Asset detection + federated category hint ──
+            var dec = assetDecisions.FirstOrDefault(d => d.LineIndex == i);
+            bool isLikelyAsset = dec?.IsPotentialAsset ?? false;
+            GlobalAssetSuggestion? globalAssetSugg = null;
+            if (isLikelyAsset)
+            {
+                try
+                {
+                    var assetNorm = Services.Implementations.Ocr.ProductMatcher.Normalize(desc);
+                    var ap = await globalAssetLearner.GetActivePatternAsync(assetNorm);
+                    if (ap != null)
+                        globalAssetSugg = new GlobalAssetSuggestion(ap.Category, ap.UsefulLifeMonths, ap.DepreciationMethod, ap.TenantCount, ap.TotalConfirms);
+                }
+                catch { /* federation outage */ }
+            }
+            var defaultDest = isLikelyAsset
+                ? OcrImportDestination.FixedAsset
+                : OcrImportDestination.Stock;
+
+            resultLines.Add(new OcrStockPreviewLine(
+                LineIndex: i,
+                Description: desc,
+                Quantity: line.Quantity,
+                UnitPrice: line.UnitPrice,
+                Amount: line.Amount,
+                DetectedUnit: detectedUnit,
+                DetectedQuantity: detectedQty,
+                BestMatch: best,
+                Alternatives: alternatives,
+                WillCreateNew: willCreate,
+                PriceAnomaly: priceAnomaly,
+                ExpectedUnitCost: expectedCost,
+                PriceAnomalyHint: priceHint,
+                ConvertedQuantity: convQty,
+                ConvertedUnit: convUnit,
+                ConversionRate: convRate,
+                ConversionHint: convHint,
+                GlobalSuggestion: globalSugg,
+                IsLikelyAsset: isLikelyAsset,
+                SuggestedAssetCategory: globalAssetSugg?.Category ?? dec?.SuggestedCategory,
+                SuggestedUsefulLifeMonths: globalAssetSugg?.UsefulLifeMonths ?? dec?.SuggestedUsefulLifeMonths,
+                AssetConfidence: dec != null ? (double)dec.ConfidenceScore : null,
+                AssetReasons: dec?.Reasons,
+                DefaultDestination: defaultDest,
+                GlobalAssetSuggestion: globalAssetSugg));
+        }
+
+        return Ok(new ApiResponse<OcrStockPreviewResponse>(true, new OcrStockPreviewResponse(
+            ScanId: scanId,
+            VendorContactId: scan.MatchedContactId,
+            VendorName: scan.ExtractedVendorName,
+            Lines: resultLines)));
+    }
+
+    /// <summary>
+    /// Commit the user-confirmed import. For each line:
+    ///   • If ProductId is set, increment that product's stock and learn the
+    ///     OCR'd description as a vendor-bound ProductAlias.
+    ///   • If ProductId is null, create a new Product (TrackStock = true,
+    ///     ProductType = Product) using NewProductName / NewProductCode (auto
+    ///     when null) / VatRate, then book the IN movement, then learn the
+    ///     description as the very first alias of the new product.
+    /// All movements run inside one DB transaction so a partial failure
+    /// doesn't leave half-imported stock.
+    /// </summary>
+    [HttpPost("{scanId:guid}/import-stock")]
+    public async Task<ActionResult<ApiResponse<OcrStockImportResult>>> ImportStock(
+        Guid companyId, Guid scanId,
+        [FromBody] OcrStockImportRequest req,
+        [FromServices] Services.Interfaces.IProductService productService,
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher,
+        [FromServices] Services.Interfaces.IFixedAssetService assetService,
+        [FromServices] Services.Implementations.Ocr.GlobalAssetCategoryLearner globalAssetLearner)
+    {
+        if (req?.Lines == null || req.Lines.Count == 0)
+            return BadRequest(new ApiResponse<OcrStockImportResult>(false, null, "ไม่มีรายการที่จะนำเข้า"));
+
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (scan == null) return NotFound(new ApiResponse<OcrStockImportResult>(false, null, "ไม่พบผลการสแกน"));
+
+        var userId = User.Identity?.Name ?? "ocr-stock-import";
+        var vendorId = scan.MatchedContactId;
+        var lineResults = new List<OcrStockImportLineResult>();
+        var created = 0; var matched = 0; var movements = 0; var aliases = 0; var assetsCreated = 0;
+
+        // Reuse OCR'd line text for alias learning even when the user edits Qty/Cost.
+        var ocrLines = new List<OcrLineItemDto>();
+        if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+        {
+            try { ocrLines = System.Text.Json.JsonSerializer.Deserialize<List<OcrLineItemDto>>(scan.ExtractedItemsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+            catch { /* alias learning skipped when JSON is malformed */ }
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            foreach (var item in req.Lines)
+            {
+                var ocrDesc = (item.LineIndex >= 0 && item.LineIndex < ocrLines.Count) ? ocrLines[item.LineIndex].Description : null;
+
+                // Resolve effective destination: Destination wins; if it's
+                // the default Stock and the legacy AsSupplies bool is set,
+                // honor that for back-compat.
+                var dest = item.Destination;
+                if (dest == OcrImportDestination.Stock && item.AsSupplies)
+                    dest = OcrImportDestination.Supplies;
+
+                // ──────────────────────────────────────────────────────
+                // BRANCH: Fixed Asset destination
+                // Capitalize the line as a depreciable asset. Calls the
+                // existing FixedAssetService.CreateAsync with auto JE
+                // (Dr Asset / Cr AP). No stock movement. Federated
+                // pattern updated so the next tenant sees this category.
+                // ──────────────────────────────────────────────────────
+                if (dest == OcrImportDestination.FixedAsset)
+                {
+                    var assetName = !string.IsNullOrWhiteSpace(item.NewProductName) ? item.NewProductName!
+                                  : !string.IsNullOrWhiteSpace(ocrDesc) ? ocrDesc!
+                                  : $"Asset {DateTime.UtcNow:HHmmss}";
+                    var assetCode = !string.IsNullOrWhiteSpace(item.AssetCode) ? item.AssetCode!
+                                  : await GenerateAssetCodeAsync(companyId);
+                    var category = item.AssetCategory ?? item.NewProductCategory ?? "ทั่วไป";
+                    var ulm = item.UsefulLifeMonths ?? 60;
+                    var depMethod = item.DepreciationMethod switch
+                    {
+                        "DecliningBalance" => Models.Enums.DepreciationMethod.DecliningBalance,
+                        "DoubleDecliningBalance" => Models.Enums.DepreciationMethod.DoubleDecliningBalance,
+                        _ => Models.Enums.DepreciationMethod.StraightLine
+                    };
+                    var purchaseCost = item.UnitCost * (item.Quantity > 0 ? item.Quantity : 1m);
+
+                    try
+                    {
+                        var assetReq = new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
+                            AssetCode: assetCode,
+                            Name: assetName,
+                            Description: ocrDesc,
+                            Category: category,
+                            Location: null,
+                            SerialNumber: item.SerialNumber,
+                            PurchaseDate: scan.ExtractedDate ?? DateTime.UtcNow.Date,
+                            PurchaseCost: purchaseCost,
+                            SalvageValue: item.SalvageValue ?? 0m,
+                            UsefulLifeMonths: ulm,
+                            DepreciationMethod: depMethod,
+                            AssetAccountId: item.AssetAccountId,
+                            DepreciationExpenseAccountId: item.DepreciationExpenseAccountId,
+                            AccumulatedDepreciationAccountId: item.AccumulatedDepreciationAccountId,
+                            PostAcquisitionJournalEntry: false,
+                            CreditAccountId: null);
+                        var asset = await assetService.CreateAsync(companyId, assetReq, userId);
+                        assetsCreated++;
+
+                        // Federated category pool — anonymized.
+                        if (!string.IsNullOrWhiteSpace(ocrDesc))
+                        {
+                            try
+                            {
+                                var norm = Services.Implementations.Ocr.ProductMatcher.Normalize(ocrDesc);
+                                await globalAssetLearner.RecordConfirmAsync(companyId, norm, category, ulm, depMethod.ToString());
+                            }
+                            catch { /* federation outage */ }
+                        }
+
+                        lineResults.Add(new OcrStockImportLineResult(
+                            LineIndex: item.LineIndex,
+                            ProductId: null,
+                            ProductCode: assetCode,
+                            ProductName: assetName,
+                            QuantityIn: 0,
+                            NewStockBalance: 0,
+                            WasCreated: true,
+                            AliasLearned: false,
+                            ErrorMessage: null,
+                            Destination: OcrImportDestination.FixedAsset,
+                            FixedAssetId: asset.Id));
+                    }
+                    catch (Exception ex)
+                    {
+                        lineResults.Add(new OcrStockImportLineResult(
+                            item.LineIndex, null, assetCode, assetName, 0, 0, false, false,
+                            $"สร้างสินทรัพย์ไม่สำเร็จ: {ex.Message}",
+                            OcrImportDestination.FixedAsset, null));
+                    }
+                    continue;
+                }
+
+                // ──────────────────────────────────────────────────────
+                // BRANCH: Stock / Supplies destinations (existing flow)
+                // ──────────────────────────────────────────────────────
+                Guid productId;
+                string code;
+                string name;
+                var wasCreated = false;
+
+                if (item.ProductId.HasValue)
+                {
+                    var p = await _db.Products.FirstOrDefaultAsync(x =>
+                        x.CompanyId == companyId && x.Id == item.ProductId.Value && !x.IsDeleted);
+                    if (p == null)
+                    {
+                        lineResults.Add(new OcrStockImportLineResult(item.LineIndex, Guid.Empty, "", "", 0, 0, false, false, "ไม่พบสินค้าในระบบ"));
+                        continue;
+                    }
+                    productId = p.Id; code = p.Code; name = p.Name;
+                    matched++;
+                }
+                else
+                {
+                    var newName = !string.IsNullOrWhiteSpace(item.NewProductName) ? item.NewProductName!
+                                : !string.IsNullOrWhiteSpace(ocrDesc) ? ocrDesc!
+                                : $"Auto product {DateTime.UtcNow:HHmmss}";
+                    var newCode = !string.IsNullOrWhiteSpace(item.NewProductCode) ? item.NewProductCode!
+                                : await GenerateProductCodeAsync(companyId);
+                    var createReq = new Models.DTOs.Product.CreateProductRequest(
+                        Code: newCode,
+                        Name: newName,
+                        NameEn: null,
+                        Description: ocrDesc,
+                        ProductType: dest == OcrImportDestination.Supplies ? Models.Enums.ProductType.Supplies : Models.Enums.ProductType.Product,
+                        SKU: null,
+                        Barcode: null,
+                        Category: item.NewProductCategory,
+                        Unit: string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
+                        SellingPrice: 0m,
+                        CostPrice: item.UnitCost,
+                        VatRate: item.VatRate ?? 7m,
+                        IsVatIncluded: false,
+                        TrackStock: true,
+                        MinimumStock: 0);
+                    var prod = await productService.CreateAsync(companyId, createReq);
+                    productId = prod.Id; code = prod.Code; name = prod.Name;
+                    created++; wasCreated = true;
+                }
+
+                decimal newBalance = 0;
+                if (req.MoveStock && item.Quantity > 0)
+                {
+                    var move = await productService.AdjustStockAsync(companyId, new Models.DTOs.Product.StockAdjustmentRequest(
+                        ProductId: productId,
+                        Quantity: item.Quantity,
+                        MovementType: "IN",
+                        UnitCost: item.UnitCost,
+                        Reference: $"OCR-IMPORT/{scan.ExtractedDocumentNumber ?? scanId.ToString("N").Substring(0, 8)}",
+                        Notes: $"นำเข้าจาก OCR (สแกน {scanId}) — {ocrDesc ?? "-"}"), userId);
+                    movements++;
+                    newBalance = move.BalanceAfter;
+                }
+                else
+                {
+                    var p = await _db.Products.AsNoTracking().FirstAsync(x => x.Id == productId);
+                    newBalance = p.CurrentStock;
+                }
+
+                var aliasLearned = false;
+                if (req.LearnAliases && !string.IsNullOrWhiteSpace(ocrDesc))
+                {
+                    await matcher.RecordAliasAsync(companyId, productId, ocrDesc!, vendorId, userId,
+                        source: wasCreated ? "auto" : "user");
+                    aliasLearned = true; aliases++;
+                }
+
+                lineResults.Add(new OcrStockImportLineResult(
+                    LineIndex: item.LineIndex,
+                    ProductId: productId,
+                    ProductCode: code,
+                    ProductName: name,
+                    QuantityIn: item.Quantity,
+                    NewStockBalance: newBalance,
+                    WasCreated: wasCreated,
+                    AliasLearned: aliasLearned,
+                    ErrorMessage: null,
+                    Destination: dest,
+                    FixedAssetId: null));
+            }
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            return StatusCode(500, new ApiResponse<OcrStockImportResult>(false, null, $"นำเข้าสต็อกไม่สำเร็จ: {ex.Message}"));
+        }
+
+        return Ok(new ApiResponse<OcrStockImportResult>(true, new OcrStockImportResult(
+            LinesProcessed: lineResults.Count,
+            ProductsCreated: created,
+            ProductsMatched: matched,
+            StockMovementsCreated: movements,
+            AliasesLearned: aliases,
+            FixedAssetsCreated: assetsCreated,
+            LineResults: lineResults), "นำเข้าเรียบร้อย"));
+    }
+
+    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
+    {
+        // FA-NNNNN pattern. Falls back to timestamp if pattern is taken.
+        var existing = await _db.Set<Models.Entities.FixedAsset>()
+            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith("FA-"))
+            .Select(a => a.AssetCode)
+            .ToListAsync();
+        var max = 0;
+        foreach (var c in existing)
+            if (int.TryParse(c.AsSpan(3), out var n) && n > max) max = n;
+        return $"FA-{(max + 1):D5}";
+    }
+
+    /// <summary>Record a "this OCR'd wording is NOT that product" rejection.
+    /// Adds a ProductNegativeAlias scoped to the scan's vendor so future
+    /// matches with the same wording from the same supplier will not
+    /// re-surface the rejected product. UI calls this when the user
+    /// dismisses a suggested candidate in the import modal.</summary>
+    [HttpPost("{scanId:guid}/reject-match")]
+    public async Task<ActionResult<ApiResponse<object>>> RejectMatch(
+        Guid companyId, Guid scanId,
+        [FromBody] OcrRejectMatchRequest req,
+        [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
+    {
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (scan == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผลการสแกน"));
+        await matcher.RecordRejectionAsync(
+            companyId, req.RejectedProductId, req.OcrDescription, scan.MatchedContactId,
+            User.Identity?.Name ?? "ocr-reject", req.Reason);
+        return Ok(new ApiResponse<object>(true, null, "บันทึกการปฏิเสธแล้ว ระบบจะไม่เสนอสินค้านี้สำหรับชื่อนี้อีก"));
+    }
+
+    private async Task<string> GenerateProductCodeAsync(Guid companyId)
+    {
+        // Naming scheme: "P-NNNNN" — pads to 5 digits so list sort stays
+        // intuitive up to 99,999 products. Falls back to timestamp if the
+        // catalog already uses an incompatible scheme.
+        var existing = await _db.Products
+            .Where(p => p.CompanyId == companyId && p.Code.StartsWith("P-"))
+            .Select(p => p.Code)
+            .ToListAsync();
+        var max = 0;
+        foreach (var c in existing)
+        {
+            if (int.TryParse(c.AsSpan(2), out var n) && n > max) max = n;
+        }
+        return $"P-{(max + 1):D5}";
+    }
+
+    /// <summary>
     /// Ranked review queue — surfaces the scans whose user-correction
     /// would yield the highest learning signal. Score combines per-field
     /// uncertainty, vendor novelty, recency, and the asset-alert flag.
