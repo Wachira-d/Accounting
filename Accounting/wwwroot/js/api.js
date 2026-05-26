@@ -169,6 +169,8 @@ const API = {
       createFiscalPeriod: (d) => API.post(`${base}/accounting/fiscal-periods`, d),
       ensureFiscalYear: (year) => API.post(`${base}/accounting/fiscal-periods/ensure-year?year=${year}`),
       closeFiscalPeriod: (id) => API.post(`${base}/accounting/fiscal-periods/${id}/close`),
+      updateFiscalPeriod: (id, d, force = false) => API.put(`${base}/accounting/fiscal-periods/${id}${force ? '?force=true' : ''}`, d),
+      deleteFiscalPeriod: (id) => API.del(`${base}/accounting/fiscal-periods/${id}`),
       // Documents
       getDocuments: (q = '') => API.get(`${base}/document${q}`),
       getDocument: (id) => API.get(`${base}/document/${id}`),

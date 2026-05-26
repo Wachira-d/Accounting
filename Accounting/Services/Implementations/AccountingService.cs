@@ -1940,13 +1940,32 @@ public partial class AccountingService : IAccountingService
 
     /// <summary>
     /// Fix a fiscal period that was created with the wrong start/end dates
-    /// (or year/month). Allowed only when the period is still Open AND no
-    /// data has landed in it yet — once anything's been posted into the
-    /// window, changing the dates would silently re-bucket transactions
-    /// across periods and break every report. Same uniqueness guard as
-    /// Create: (CompanyId, Year, Month) stays unique.
+    /// (or year/month). Two modes:
+    ///
+    ///   <paramref name="forceReassignEntries"/> = false (default, safe)
+    ///     Block when ANY linked JE / OpeningBalance exists, OR when
+    ///     entries' EntryDate falls in either the OLD or the NEW window
+    ///     of this period. Caller must void / unlink first.
+    ///
+    ///   <paramref name="forceReassignEntries"/> = true (intentional cascade)
+    ///     For the typo-fix workflow ("created with wrong year, has 324
+    ///     JEs to migrate"): change the dates AND walk every JE / OB
+    ///     row that was previously linked to this period OR whose date
+    ///     falls in the OLD/NEW window, re-binding each to whichever
+    ///     fiscal period now contains its date (or null when no period
+    ///     covers it). All in one transaction so we never have partial
+    ///     state. The Filed-status JEs aren't moved across into other
+    ///     companies, just re-linked within this company's period table.
+    ///
+    /// Closed/Locked periods always refuse — caller must Reopen first.
+    /// (Year, Month) uniqueness within the company is preserved. New
+    /// date window is also checked against other periods' ranges to
+    /// catch accidental overlap that would otherwise leave the date
+    /// → period mapping ambiguous.
     /// </summary>
-    public async Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(Guid companyId, Guid periodId, CreateFiscalPeriodRequest request)
+    public async Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(
+        Guid companyId, Guid periodId, CreateFiscalPeriodRequest request,
+        bool forceReassignEntries = false)
     {
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f => f.Id == periodId && f.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบงวดบัญชี");
@@ -1957,7 +1976,7 @@ public partial class AccountingService : IAccountingService
         if (request.StartDate > request.EndDate)
             throw new ArgumentException("วันเริ่มต้นต้องไม่หลังวันสิ้นสุด");
 
-        // If the year/month is changing, ensure (Year, Month) stays unique.
+        // (Year, Month) uniqueness
         if ((period.Year != request.Year || period.Month != request.Month)
             && await _db.FiscalPeriods.AnyAsync(f => f.CompanyId == companyId
                 && f.Year == request.Year && f.Month == request.Month && f.Id != periodId))
@@ -1965,35 +1984,107 @@ public partial class AccountingService : IAccountingService
             throw new InvalidOperationException($"งวดบัญชี {request.Year}/{request.Month} มีอยู่แล้ว");
         }
 
-        // Hard block: if any JE / OpeningBalance / Document already lives
-        // in either the OLD window OR the NEW window, refuse — the safe
-        // way to fix the dates is to Delete + Create again on an empty
-        // period, since changing dates with live data would re-bucket it.
+        // New-date overlap with another period — always refuse, even
+        // with force. Overlapping windows make the date→period mapping
+        // ambiguous, which would break cascading reassignment + future
+        // posting.
+        var overlap = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.Id != periodId
+                     && f.StartDate <= request.EndDate && f.EndDate >= request.StartDate)
+            .Select(f => f.Name)
+            .FirstOrDefaultAsync();
+        if (overlap != null)
+            throw new InvalidOperationException(
+                $"ช่วงวันที่ทับซ้อนกับงวด {overlap} — กรุณาเลือกช่วงที่ไม่ทับซ้อน");
+
         var oldStart = period.StartDate; var oldEnd = period.EndDate;
         var newStart = request.StartDate; var newEnd = request.EndDate;
-        var jeCount = await _db.JournalEntries.AsNoTracking()
-            .CountAsync(j => j.CompanyId == companyId
-                && (j.FiscalPeriodId == periodId
-                    || (j.EntryDate >= oldStart && j.EntryDate <= oldEnd)
-                    || (j.EntryDate >= newStart && j.EntryDate <= newEnd)));
-        if (jeCount > 0)
-            throw new InvalidOperationException(
-                $"ไม่สามารถแก้ไขช่วงวันที่ของงวดได้ — มีใบสำคัญ {jeCount} รายการที่กระทบงวด " +
-                "ถ้าจำเป็นต้องแก้กรุณา void ใบสำคัญในงวดก่อน แล้วค่อยแก้");
-        var obCount = await _db.OpeningBalances.AsNoTracking()
-            .CountAsync(o => o.CompanyId == companyId && o.FiscalPeriodId == periodId);
-        if (obCount > 0)
-            throw new InvalidOperationException(
-                $"ไม่สามารถแก้ไขได้ — งวดนี้มี Opening Balance {obCount} รายการอยู่");
 
-        period.Year = request.Year;
-        period.Month = request.Month;
-        period.Name = $"{request.Year}/{request.Month:D2}";
-        period.StartDate = request.StartDate;
-        period.EndDate = request.EndDate;
-        period.UpdatedAt = DateTime.UtcNow;
+        if (!forceReassignEntries)
+        {
+            // Safe path — refuse if anything is in either window.
+            var jeCount = await _db.JournalEntries.AsNoTracking()
+                .CountAsync(j => j.CompanyId == companyId
+                    && (j.FiscalPeriodId == periodId
+                        || (j.EntryDate >= oldStart && j.EntryDate <= oldEnd)
+                        || (j.EntryDate >= newStart && j.EntryDate <= newEnd)));
+            if (jeCount > 0)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถแก้ไขช่วงวันที่ของงวดได้ — มีใบสำคัญ {jeCount} รายการที่กระทบงวด " +
+                    $"ถ้ายืนยันว่าต้องการแก้ ระบบจะผูกใบสำคัญใหม่ตามวันที่ให้อัตโนมัติ (เลือก 'แก้ไข + ผูกใหม่')");
+            var obCount = await _db.OpeningBalances.AsNoTracking()
+                .CountAsync(o => o.CompanyId == companyId && o.FiscalPeriodId == periodId);
+            if (obCount > 0)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถแก้ไขได้ — งวดนี้มี Opening Balance {obCount} รายการอยู่ — เลือก 'แก้ไข + ผูกใหม่' เพื่อย้ายอัตโนมัติ");
+        }
 
-        await _db.SaveChangesAsync();
+        // ────────────────────────────────────────────────────────────
+        // Force path — wrap the whole thing in a transaction so a
+        // partial cascade can't leave JEs pointing at the period they
+        // just got reassigned away from.
+        // ────────────────────────────────────────────────────────────
+        await using var tx = forceReassignEntries
+            ? await _db.Database.BeginTransactionAsync()
+            : null;
+        try
+        {
+            // Apply the new dates / year / month first so the upcoming
+            // bucket-lookup includes this period's new range.
+            period.Year = request.Year;
+            period.Month = request.Month;
+            period.Name = $"{request.Year}/{request.Month:D2}";
+            period.StartDate = newStart;
+            period.EndDate = newEnd;
+            period.UpdatedAt = DateTime.UtcNow;
+
+            if (forceReassignEntries)
+            {
+                // Snapshot of all periods (post-edit) so a single in-
+                // memory scan can re-bucket without N+1 queries.
+                var allPeriods = await _db.FiscalPeriods
+                    .Where(f => f.CompanyId == companyId)
+                    .ToListAsync();
+                Guid? PeriodForDate(DateTime d)
+                {
+                    var match = allPeriods.FirstOrDefault(p => d >= p.StartDate && d <= p.EndDate);
+                    return match?.Id;
+                }
+
+                // JEs in either window or previously linked to this period
+                var affectedJes = await _db.JournalEntries
+                    .Where(j => j.CompanyId == companyId
+                        && (j.FiscalPeriodId == periodId
+                            || (j.EntryDate >= oldStart && j.EntryDate <= oldEnd)
+                            || (j.EntryDate >= newStart && j.EntryDate <= newEnd)))
+                    .ToListAsync();
+                foreach (var j in affectedJes)
+                {
+                    var target = PeriodForDate(j.EntryDate);
+                    if (j.FiscalPeriodId != target)
+                    {
+                        j.FiscalPeriodId = target;
+                        j.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+
+                // OpeningBalance: rows already point at THIS period via
+                // a non-nullable FK. The period itself moved (dates
+                // changed) but the FK relationship stays valid — OB
+                // represents "opening balance for THIS period", and
+                // moving the period's dates moves the meaning of
+                // "opening" with it. No reassignment needed.
+            }
+
+            await _db.SaveChangesAsync();
+            if (tx != null) await tx.CommitAsync();
+        }
+        catch
+        {
+            if (tx != null) await tx.RollbackAsync();
+            throw;
+        }
+
         return MapPeriodToResponse(period);
     }
 

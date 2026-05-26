@@ -231,7 +231,44 @@
           }
           this._editId = null;
           await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          // The server refuses the date change when JEs / OBs are
+          // linked but offers a cascade-reassign path. Detect the
+          // signature in the message + offer to retry with force=true.
+          const msg = String(e.message || '');
+          const blockedByEntries = this._editId
+            && (msg.includes('แก้ไข + ผูกใหม่') || msg.includes('มีใบสำคัญ') || msg.includes('Opening Balance'));
+          if (blockedByEntries) {
+            const ok = await Layout.confirmDanger({
+              title: 'แก้ไขงวด + ผูกใบสำคัญใหม่ตามวันที่',
+              message: `<div style="line-height:1.7">
+                <p>${Layout.esc(msg)}</p>
+                <p style="background:#FEF3C7;border-left:4px solid #D97706;padding:10px 12px;font-size:13px;margin-top:10px">
+                  <b>ระบบจะดำเนินการให้:</b><br>
+                  1. แก้ปี/เดือน/วันที่ของงวดตามที่กรอก<br>
+                  2. ไล่ใบสำคัญที่อยู่ในงวดเดิม + งวดใหม่ ผูกใหม่ตามวันที่จริง<br>
+                  3. ใบที่ตกนอกทุกงวด → ไม่ผูกงวด (FiscalPeriodId = null)<br>
+                  4. ทั้งหมดอยู่ใน 1 transaction — ถ้าผิดพลาดจะ rollback กลับ
+                </p>
+                <p style="color:#92400e;font-size:13px;margin-top:8px">
+                  ⚠ ใบสำคัญที่ <b>Filed</b> หรืออยู่ในงวดที่ <b>ปิดแล้ว</b> จะถูกแตะถ้าวันที่อยู่ในช่วงที่กระทบ —
+                  กรุณาตรวจว่าอยากให้ผูกใหม่จริง
+                </p>
+              </div>`,
+              mode: 'math'
+            });
+            if (!ok) return;
+            try {
+              await API.put(`/api/companies/${cid}/accounting/fiscal-periods/${this._editId}?force=true`, body);
+              Layout.closeModal('formModal');
+              Layout.toast('แก้ไขสำเร็จ + ผูกใบสำคัญใหม่ตามวันที่');
+              this._editId = null;
+              await this.load();
+              return;
+            } catch (e2) { Layout.toast(e2.message, 'error'); return; }
+          }
+          Layout.toast(msg, 'error');
+        }
       },
       _closeId: null,
       async closePeriod(id) {
