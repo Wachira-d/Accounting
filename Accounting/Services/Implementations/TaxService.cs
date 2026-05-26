@@ -358,6 +358,14 @@ public partial class TaxService : ITaxService
                 var outputVatLines = grp.Where(l => IsOutputVat(l.Account)).ToList();
                 var inputVatLines = grp.Where(l => IsInputVat(l.Account)).ToList();
 
+                // Try to derive taxpayer info from the JE — manual VAT
+                // adjustments don't have a SourceDocument/Contact link,
+                // but the JE Description or Reference frequently names
+                // the vendor + may embed a 13-digit tax id. Falls back
+                // to the JE description verbatim so the column isn't
+                // blank in the รายงานภาษีซื้อ/ขาย export.
+                var (jePayerName, jePayerId) = ExtractTaxpayerFromJournalEntry(je);
+
                 // Output VAT: credit balance on liability account = VAT on sales
                 var outputVatAmt = outputVatLines.Sum(l => l.CreditAmount - l.DebitAmount);
                 if (outputVatAmt > 0)
@@ -372,6 +380,8 @@ public partial class TaxService : ITaxService
                         LineOrder = lineOrder++,
                         TransactionDate = je.EntryDate,
                         Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                        TaxPayerName = jePayerName,
+                        TaxPayerId = jePayerId,
                         IncomeAmount = baseAmount,
                         TaxRate = companyVatRate,
                         TaxAmount = outputVatAmt,
@@ -393,6 +403,8 @@ public partial class TaxService : ITaxService
                         LineOrder = lineOrder++,
                         TransactionDate = je.EntryDate,
                         Description = $"[ภาษีซื้อ-JE] {je.EntryNumber} {je.Description}".Trim(),
+                        TaxPayerName = jePayerName,
+                        TaxPayerId = jePayerId,
                         IncomeAmount = baseAmount,
                         TaxRate = companyVatRate,
                         TaxAmount = inputVatAmt,
@@ -799,6 +811,45 @@ public partial class TaxService : ITaxService
         report.TotalTaxWithheld = totalTax;
         report.OutputVat = totalSso; // Reuse field for SSO total
         report.Notes = $"จำนวนพนักงาน: {employeeGroups.Count()} คน | ปีภาษี: {year}";
+    }
+
+    /// <summary>Pull taxpayer name + tax-id from a manual VAT journal
+    /// entry that has no SourceDocument link. We try (in order):
+    ///   1. A 13-digit number anywhere in JE Description / Reference /
+    ///      Note / any line Description → use as TaxId
+    ///   2. JE Description (trimmed of "VAT:", "[JE]" prefixes etc.)
+    ///      → use as Name; fall back to JE Reference if blank
+    /// Returns (name, taxId) where either may be empty/null — both
+    /// columns in รายงานภาษีซื้อ/ขาย accept that, but the user sees
+    /// at least the JE description text instead of a totally blank row.
+    /// </summary>
+    private static (string Name, string? TaxId) ExtractTaxpayerFromJournalEntry(JournalEntry je)
+    {
+        var sources = new[] {
+            je.Description ?? "",
+            je.Reference ?? "",
+            je.Note ?? ""
+        }.Concat(je.Lines?.Select(l => l.Description ?? "") ?? Array.Empty<string>()).ToList();
+
+        // Tax id — first 13-digit run found
+        string? taxId = null;
+        foreach (var s in sources)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(s, @"\b\d{13}\b");
+            if (m.Success) { taxId = m.Value; break; }
+        }
+
+        // Name — strip common bookkeeping prefixes from the description
+        var name = (je.Description ?? je.Reference ?? "").Trim();
+        foreach (var prefix in new[] { "VAT:", "ภาษี:", "[JE]", "[VAT]", "ภาษีซื้อ-", "ภาษีขาย-", "บันทึกภาษี" })
+        {
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                name = name[prefix.Length..].Trim();
+        }
+        // Drop the embedded tax-id from the name display when present
+        if (taxId != null) name = name.Replace(taxId, "").Trim(' ', '|', '-', '·');
+        if (string.IsNullOrWhiteSpace(name)) name = "(JE) " + je.EntryNumber;
+        return (name, taxId);
     }
 
     /// <summary>Thai personal income tax (PIT) progressive rates</summary>
