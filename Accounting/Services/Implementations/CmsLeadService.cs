@@ -245,7 +245,7 @@ public class CmsLeadService
                 ? lead.CustomerCompany!
                 : (lead.CustomerName ?? "(ไม่ระบุชื่อ)"),
             ContactType = !string.IsNullOrEmpty(lead.CustomerCompany)
-                ? Models.Enums.ContactType.Company
+                ? Models.Enums.ContactType.JuristicPerson
                 : Models.Enums.ContactType.Individual,
             TaxId = lead.CustomerTaxId,
             Email = lead.CustomerEmail,

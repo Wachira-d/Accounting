@@ -256,6 +256,7 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>
+              ${p.trackStock ? `<button class="btn btn-sm btn-primary" onclick="Page.quickAdjustStock('${p.id}','${(p.name||'').replace(/'/g, '&apos;')}','${p.unit||''}',${p.currentStock||0},${p.costPrice||0})" title="เพิ่ม/ลด/ปรับสต็อก">📦 สต็อก</button>` : ''}
             </td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages||1, 'Page.goPage');
@@ -353,6 +354,25 @@
         document.getElementById('adjQty').value='';document.getElementById('adjCost').value=this._current.costPrice||'';
         document.getElementById('adjRef').value='';document.getElementById('adjNote').value='';document.getElementById('adjType').value='IN';
         Layout.closeModal('detailModal');Layout.openModal('adjustModal');
+      },
+      /**
+       * One-click stock adjust from the products table row — skips
+       * the detail modal so common stock changes (receive 12 units,
+       * write off 1 broken unit) take 2 clicks instead of 4.
+       * Synthesizes _current from the row data so saveAdjustStock
+       * has what it needs without an extra getById round trip.
+       */
+      quickAdjustStock(id, name, unit, currentStock, costPrice) {
+        this._current = { id, name, unit, currentStock, costPrice };
+        document.getElementById('adjQty').value = '';
+        document.getElementById('adjCost').value = costPrice || '';
+        document.getElementById('adjRef').value = '';
+        document.getElementById('adjNote').value = '';
+        document.getElementById('adjType').value = 'IN';
+        // If the adjust modal has a header/info slot, mention which product
+        const titleEl = document.querySelector('#adjustModal .modal-title');
+        if (titleEl) titleEl.textContent = `ปรับสต็อก — ${name} (คงเหลือ ${currentStock} ${unit})`;
+        Layout.openModal('adjustModal');
       },
       async saveAdjustStock() {
         const api=Layout.api(); if(!api||!this._current)return;
