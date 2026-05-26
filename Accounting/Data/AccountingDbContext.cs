@@ -326,6 +326,7 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteSeoRedirect> SiteSeoRedirects => Set<SiteSeoRedirect>();
 
     // Commerce
+    public DbSet<CmsLead> CmsLeads => Set<CmsLead>();
     public DbSet<SiteProduct> SiteProducts => Set<SiteProduct>();
     public DbSet<SiteProductTranslation> SiteProductTranslations => Set<SiteProductTranslation>();
     public DbSet<SitePricingTier> SitePricingTiers => Set<SitePricingTier>();

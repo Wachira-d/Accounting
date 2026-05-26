@@ -2724,6 +2724,47 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GACPSeens_Pattern_Company" ON "GlobalAssetCategoryTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== CmsLeads — unified lead capture for RFQ/viewing/demo/enrollment/etc =====
+            """
+            CREATE TABLE IF NOT EXISTS "CmsLeads" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "SiteId" uuid NOT NULL,
+                "LeadNumber" varchar(50) NOT NULL,
+                "LeadType" integer NOT NULL DEFAULT 0,
+                "Status" integer NOT NULL DEFAULT 0,
+                "SourceSlug" varchar(100) NULL,
+                "CustomerName" varchar(200) NULL,
+                "CustomerEmail" varchar(200) NULL,
+                "CustomerPhone" varchar(50) NULL,
+                "CustomerCompany" varchar(200) NULL,
+                "CustomerTaxId" varchar(50) NULL,
+                "Message" text NULL,
+                "DataJson" text NULL,
+                "AssignedToUserId" uuid NULL,
+                "AssignedToName" varchar(200) NULL,
+                "QualifiedAt" timestamp NULL,
+                "QuotedAt" timestamp NULL,
+                "WonAt" timestamp NULL,
+                "LostAt" timestamp NULL,
+                "LostReason" varchar(500) NULL,
+                "InternalNotes" text NULL,
+                "ErpDocumentId" uuid NULL,
+                "ContactId" uuid NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_CmsLeads" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_CmsLeads_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id"),
+                CONSTRAINT "FK_CmsLeads_Sites" FOREIGN KEY ("SiteId") REFERENCES "Sites"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Company_Site_Created" ON "CmsLeads" ("CompanyId", "SiteId", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Status" ON "CmsLeads" ("CompanyId", "SiteId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_CmsLeads_Company_LeadNumber" ON "CmsLeads" ("CompanyId", "LeadNumber") WHERE "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

@@ -922,7 +922,23 @@ Instagram: @yourshop</p>"
   <li>เอกสารที่ต้องการ (Form D/E, COA, COO ฯลฯ)</li>
 </ul>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "ส่งคำขอใบเสนอราคา", submitText = "ส่ง RFQ", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "ส่งคำขอใบเสนอราคา (RFQ)",
+                submitText = "ส่ง RFQ",
+                emailTo = "",
+                leadType = "Rfq",
+                askCompany = true,
+                askTaxId = true,
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "product_category", label = "หมวดสินค้าที่สนใจ", type = "text", required = true },
+                    new { name = "quantity", label = "จำนวน / MOQ ที่ต้องการ", type = "text", required = true },
+                    new { name = "target_price", label = "ราคาเป้าหมาย (THB ต่อหน่วย)", type = "number" },
+                    new { name = "ship_to_country", label = "ประเทศ / จังหวัดปลายทาง", type = "text" },
+                    new { name = "needs_oem", label = "ต้องการ OEM / Private Label", type = "select", options = new[] { "ไม่ต้องการ", "ต้องการ OEM", "ต้องการ Private Label" } },
+                    new { name = "needs_docs", label = "เอกสารที่ต้องการ", type = "text" }
+                }
+            }))
         }),
 
         (new("Distributor Program", "distributor", PageType.Standard, "โปรแกรมตัวแทนจำหน่าย"), new() {
@@ -1066,7 +1082,19 @@ WhatsApp: +66 XX XXX XXXX</p>"
                     new { name = "Premium", price = "฿1,290/สัปดาห์", features = new[] { "ผัก 12+ ชนิด + ผลไม้ + น้ำผึ้ง" } }
                 }
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "กรอกข้อมูลสมัคร", submitText = "ส่งใบสมัคร", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "สมัครรับผักจากฟาร์ม (CSA)",
+                submitText = "ส่งใบสมัคร",
+                emailTo = "",
+                leadType = "Subscription",
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "box_size", label = "ขนาด box", type = "select", options = new[] { "Single (1 คน)", "Family (3-4 คน)", "Premium (4-6 คน)" }, required = true },
+                    new { name = "delivery_frequency", label = "ความถี่ในการส่ง", type = "select", options = new[] { "ทุกสัปดาห์", "ทุก 2 สัปดาห์", "เดือนละครั้ง" } },
+                    new { name = "delivery_address", label = "ที่อยู่จัดส่ง", type = "textarea", required = true },
+                    new { name = "allergies", label = "แพ้อาหาร / ไม่กินผักชนิดใด", type = "text" }
+                }
+            }))
         }),
 
         (new("สินค้าฟาร์ม", "products", PageType.Category, "ผัก ผลไม้ ไข่ น้ำผึ้ง"), new() {
@@ -1531,7 +1559,19 @@ WhatsApp: +66 XX XXX XXXX</p>"
 
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อทีม"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ปรึกษาฟรี 1 ชั่วโมง", subheadline = "ตอบกลับใน 1 วันทำการ" })),
-            new(CmsBlockType.ContactForm, J(new { headline = "นัดปรึกษา", submitText = "ส่ง", emailTo = "" })),
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "นัดปรึกษา / นัด demo",
+                submitText = "ส่งคำขอนัด",
+                emailTo = "",
+                leadType = "Demo",
+                askCompany = true,
+                extraFields = new object[] {
+                    new { name = "company_size", label = "ขนาดบริษัท", type = "select", options = new[] { "1-10 คน", "11-50 คน", "51-200 คน", "201+ คน" } },
+                    new { name = "use_case", label = "วัตถุประสงค์ที่ต้องการใช้งาน", type = "textarea" },
+                    new { name = "current_tool", label = "ปัจจุบันใช้ระบบ / เครื่องมืออะไรอยู่", type = "text" },
+                    new { name = "preferred_time", label = "ช่วงเวลาที่สะดวก", type = "text" }
+                }
+            })),
             new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · LINE: @consulting · 📧 hello@consulting.com</p>" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
         })
@@ -1677,7 +1717,21 @@ WhatsApp: +66 XX XXX XXXX</p>"
 
         (new("ติดต่อจ้างงาน", "contact", PageType.Standard, "ติดต่อจ้างงาน · brief ฟรี"), new() {
             new(CmsBlockType.Hero, J(new { headline = "Let's work together", subheadline = "Brief ฟรี 30 นาที · ตอบกลับใน 1 วัน" })),
-            new(CmsBlockType.ContactForm, J(new { headline = "ส่ง Brief", submitText = "ส่ง", emailTo = "" })),
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "ส่ง Brief โปรเจ็ค — ขอใบเสนอราคา",
+                submitText = "ส่ง Brief",
+                emailTo = "",
+                leadType = "Quote",
+                askCompany = true,
+                extraFields = new object[] {
+                    new { name = "project_type", label = "ประเภทงาน", type = "select",
+                          options = new[] { "Web Design", "Logo / Branding", "Graphic Design", "Photography", "Copywriting", "Video", "อื่นๆ" }, required = true },
+                    new { name = "budget_range", label = "งบประมาณ", type = "select",
+                          options = new[] { "<฿5,000", "฿5,000-15,000", "฿15,000-50,000", "฿50,000-200,000", "฿200,000+" } },
+                    new { name = "deadline", label = "deadline ที่ต้องการ", type = "date" },
+                    new { name = "deliverables", label = "ผลลัพธ์ที่ต้องการ", type = "textarea" }
+                }
+            })),
             new(CmsBlockType.RichText, J(new {
                 content = @"<p>📧 hello@freelancer.com · 📱 LINE: @freelancer<br>
 🌐 Behance · Dribbble · GitHub: @yourhandle</p>"
@@ -1802,7 +1856,22 @@ WhatsApp: +66 XX XXX XXXX</p>"
   <li>เวลาที่ต้องการเสร็จ</li>
 </ul>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดโครงการ", submitText = "ส่งคำขอใบเสนอราคา", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "รายละเอียดโครงการ — ขอใบเสนอราคา",
+                submitText = "ส่งคำขอใบเสนอราคา",
+                emailTo = "",
+                leadType = "Quote",
+                askCompany = true,
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "project_type", label = "ประเภทโครงการ", type = "select",
+                          options = new[] { "บ้านพักอาศัย", "ทาวน์เฮาส์", "อาคารพาณิชย์", "ต่อเติม/รีโนเวท", "สำนักงาน", "โรงงาน", "อื่นๆ" }, required = true },
+                    new { name = "project_size_sqm", label = "พื้นที่ก่อสร้าง (ตร.ม.)", type = "number" },
+                    new { name = "budget_baht", label = "งบประมาณ (บาท)", type = "number" },
+                    new { name = "timeline", label = "ระยะเวลาที่ต้องการ", type = "text" },
+                    new { name = "site_location", label = "ที่ตั้งโครงการ (จังหวัด/อำเภอ)", type = "text" }
+                }
+            }))
         }),
 
         (new("เกี่ยวกับเรา", "about", PageType.Standard, "บริษัทรับเหมา"), new() {
@@ -1924,7 +1993,22 @@ WhatsApp: +66 XX XXX XXXX</p>"
 
         (new("นัดดูทรัพย์", "viewing", PageType.Standard, "นัดดูบ้าน / คอนโด"), new() {
             new(CmsBlockType.Hero, J(new { headline = "นัดดูทรัพย์", subheadline = "เลือกวัน · นายหน้าพาชม · ตอบทุกคำถาม" })),
-            new(CmsBlockType.ContactForm, J(new { headline = "ระบุทรัพย์ที่สนใจ", submitText = "ส่งคำขอนัด", emailTo = "" })),
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "ระบุทรัพย์ที่สนใจ — นัดดู",
+                submitText = "ส่งคำขอนัด",
+                emailTo = "",
+                leadType = "Viewing",
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "property_type", label = "ประเภททรัพย์", type = "select",
+                          options = new[] { "บ้านเดี่ยว", "ทาวน์เฮาส์/ทาวน์โฮม", "คอนโด", "ที่ดิน", "อาคารพาณิชย์" }, required = true },
+                    new { name = "property_id_or_url", label = "เลขประกาศ / URL ทรัพย์ที่สนใจ", type = "text" },
+                    new { name = "budget_range", label = "งบประมาณ", type = "select",
+                          options = new[] { "<2 ล้าน", "2-5 ล้าน", "5-10 ล้าน", "10-30 ล้าน", "30 ล้านขึ้นไป" } },
+                    new { name = "preferred_date", label = "วันที่สะดวกนัดดู", type = "date" },
+                    new { name = "move_in_timeline", label = "ระยะเวลาที่ต้องการย้ายเข้า", type = "text" }
+                }
+            })),
             new(CmsBlockType.BookingCalendar, "{}")
         }),
 
@@ -2217,7 +2301,23 @@ WhatsApp: +66 XX XXX XXXX</p>"
   <li><strong>Master</strong> — รุ่น 10 · เริ่ม 5 เม.ย. · เหลือ 3 ที่</li>
 </ul>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "ลงทะเบียน", submitText = "ส่งใบสมัคร", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "ลงทะเบียนเรียน",
+                submitText = "ส่งใบสมัคร",
+                emailTo = "",
+                leadType = "Enrollment",
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "course", label = "หลักสูตรที่สมัคร", type = "select",
+                          options = new[] { "Foundation (พื้นฐาน)", "Workshop (ขั้นกลาง)", "Master (ขั้นสูง)" }, required = true },
+                    new { name = "batch", label = "รอบเรียนที่สนใจ", type = "text" },
+                    new { name = "experience_level", label = "ระดับประสบการณ์ปัจจุบัน", type = "select",
+                          options = new[] { "ยังไม่มีพื้นฐาน", "เริ่มต้น", "ระดับกลาง", "ระดับสูง" } },
+                    new { name = "payment_method", label = "วิธีชำระเงิน", type = "select",
+                          options = new[] { "โอนครั้งเดียว", "ผ่อน 0% 3 เดือน", "ผ่อน 6 เดือน (มีดอกเบี้ย)" } },
+                    new { name = "id_card_or_passport", label = "เลขบัตรประชาชน / Passport (สำหรับออกใบเสร็จ)", type = "text" }
+                }
+            }))
         }),
 
         (new("ผู้สอน", "instructors", PageType.Standard, "ทีมผู้สอน"), new() {
@@ -2358,7 +2458,24 @@ WhatsApp: +66 XX XXX XXXX</p>"
   <li>ต้องการคนยกไหม</li>
 </ul>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดงานขนส่ง", submitText = "ส่งคำขอ", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "รายละเอียดงานขนส่ง",
+                submitText = "ส่งคำขอ",
+                emailTo = "",
+                leadType = "ShipmentQuote",
+                askCompany = true,
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "service_type", label = "ประเภทบริการ", type = "select",
+                          options = new[] { "Parcel (พัสดุ)", "Truck 4 ล้อ", "Truck 6 ล้อ", "Truck 10 ล้อ", "Moving (ขนย้าย)", "Cold Chain", "Express same-day", "International" }, required = true },
+                    new { name = "origin", label = "ต้นทาง (จังหวัด/อำเภอ)", type = "text", required = true },
+                    new { name = "destination", label = "ปลายทาง (จังหวัด/อำเภอ)", type = "text", required = true },
+                    new { name = "weight_kg", label = "น้ำหนัก (กก.)", type = "number" },
+                    new { name = "dimensions", label = "ขนาด (กว้าง × ยาว × สูง ซม.)", type = "text" },
+                    new { name = "pickup_date", label = "วันที่ต้องการขนส่ง", type = "date" },
+                    new { name = "needs_loaders", label = "ต้องการคนยกของ", type = "select", options = new[] { "ไม่ต้องการ", "1 คน", "2 คน", "3 คนขึ้นไป" } }
+                }
+            }))
         }),
 
         (new("Tracking", "tracking", PageType.Standard, "ติดตามพัสดุ"), new() {
@@ -2637,7 +2754,25 @@ WhatsApp: +66 XX XXX XXXX</p>"
   <li>Budget · Timeline · Expected delivery</li>
 </ul>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "รายละเอียดผลิตภัณฑ์", submitText = "ส่ง RFQ", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new {
+                headline = "รายละเอียดผลิตภัณฑ์ — Request For Quote (RFQ)",
+                submitText = "ส่ง RFQ",
+                emailTo = "",
+                leadType = "Rfq",
+                askCompany = true,
+                askTaxId = true,
+                phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "product_type", label = "ประเภทผลิตภัณฑ์", type = "text", required = true },
+                    new { name = "specifications", label = "Spec / Material ที่ต้องการ", type = "textarea", required = true },
+                    new { name = "quantity_moq", label = "จำนวน (MOQ + repeat ต่อเดือน/ปี)", type = "text", required = true },
+                    new { name = "packaging", label = "บรรจุภัณฑ์ / Labelling", type = "text" },
+                    new { name = "standards", label = "มาตรฐานที่ต้องการ (ISO/GMP/HACCP/มอก./อย./Halal)", type = "text" },
+                    new { name = "export_country", label = "ประเทศปลายทาง (ถ้าส่งออก)", type = "text" },
+                    new { name = "target_price", label = "Target price (THB / USD ต่อหน่วย)", type = "text" },
+                    new { name = "needed_by", label = "Expected delivery date", type = "date" }
+                }
+            }))
         }),
 
         (new("เกี่ยวกับเรา", "about", PageType.Standard, "เกี่ยวกับโรงงาน"), new() {

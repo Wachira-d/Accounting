@@ -78,6 +78,11 @@ public class SiteProductResponse
     public string? Tags { get; set; }
     public string? Slug { get; set; }
     public string? ImageUrlsJson { get; set; }
+    /// <summary>First URL extracted from ImageUrlsJson — what the
+    /// product card on the storefront shows as the main thumbnail.
+    /// Computed server-side so the client doesn't have to parse
+    /// JSON-in-JSON and pick the first entry every render.</summary>
+    public string? FeaturedImageUrl { get; set; }
     public List<PricingTierResponse>? PricingTiers { get; set; }
     public DateTime CreatedAt { get; set; }
 }

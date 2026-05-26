@@ -334,6 +334,18 @@ const API = {
       cmsUpdateSite: (id, d) => API.put(`${base}/cms/sites/${id}`, d),
       cmsDeleteSite: (id) => API.del(`${base}/cms/sites/${id}`),
       cmsPublishSite: (id) => API.post(`${base}/cms/sites/${id}/publish`, {}),
+
+      // CMS commerce — order/booking management for the site owner
+      cmsListOrders: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/commerce/orders${q}`),
+      cmsGetOrder: (siteId, orderId) => API.get(`${base}/cms/sites/${siteId}/commerce/orders/${orderId}`),
+      cmsUpdateOrderStatus: (siteId, orderId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/orders/${orderId}/status`, d),
+      cmsListBookings: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/bookings${q}`),
+      cmsGetBooking: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/bookings/${id}`),
+      cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
+      cmsListLeads: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/leads${q}`),
+      cmsGetLead: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/leads/${id}`),
+      cmsUpdateLeadStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/leads/${id}/status`, d),
+      cmsConvertLeadToQuotation: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/leads/${id}/convert-to-quotation`, d),
       cmsListThemes: () => API.get(`${base}/cms/themes`),
       cmsGetTheme: (id) => API.get(`${base}/cms/themes/${id}`),
       cmsCreateTheme: (d) => API.post(`${base}/cms/themes`, d),

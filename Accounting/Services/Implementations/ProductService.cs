@@ -58,7 +58,10 @@ public class ProductService : IProductService
     {
         var product = await _db.Products
             .Include(p => p.UnitConversions)
-            .FirstOrDefaultAsync(p => p.Id == productId && p.CompanyId == companyId)
+            .Include(p => p.SalesAccount)
+            .Include(p => p.PurchaseAccount)
+            .Include(p => p.InventoryAccount)
+            .FirstOrDefaultAsync(p => p.Id == productId && p.CompanyId == companyId && !p.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบสินค้า");
         return MapToResponse(product);
     }
@@ -161,14 +164,23 @@ public class ProductService : IProductService
 
     public async Task<List<StockMovementResponse>> GetStockMovementsAsync(Guid companyId, Guid productId)
     {
+        // Skip the Include — we already know the productId, and we
+        // resolve the name once below from a single Products lookup.
+        // Avoids an NRE when a StockMovement row references a deleted
+        // Product (a real possibility after migrations/imports). Also
+        // halves the SQL row count for high-traffic products.
         var movements = await _db.StockMovements
-            .Include(m => m.Product)
-            .Where(m => m.CompanyId == companyId && m.ProductId == productId)
+            .AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.ProductId == productId && !m.IsDeleted)
             .OrderByDescending(m => m.MovementDate)
             .ToListAsync();
+        var productName = await _db.Products.AsNoTracking()
+            .Where(p => p.Id == productId && p.CompanyId == companyId)
+            .Select(p => p.Name)
+            .FirstOrDefaultAsync() ?? "(ไม่พบสินค้า)";
 
         return movements.Select(m => new StockMovementResponse(
-            m.Id, m.ProductId, m.Product.Name, m.MovementDate,
+            m.Id, m.ProductId, productName, m.MovementDate,
             m.MovementType, m.Quantity, m.UnitCost, m.BalanceAfter, m.Reference, m.Notes)).ToList();
     }
 
