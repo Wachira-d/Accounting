@@ -56,6 +56,9 @@ public class AccountingDbContext : DbContext
     public DbSet<GlobalProductPatternTenantSeen> GlobalProductPatternTenantSeens => Set<GlobalProductPatternTenantSeen>();
     public DbSet<GlobalExpenseCategoryPattern> GlobalExpenseCategoryPatterns => Set<GlobalExpenseCategoryPattern>();
     public DbSet<GlobalExpenseCategoryTenantSeen> GlobalExpenseCategoryTenantSeens => Set<GlobalExpenseCategoryTenantSeen>();
+    public DbSet<SystemOcrVendorIntelTenantSeen> SystemOcrVendorIntelTenantSeens => Set<SystemOcrVendorIntelTenantSeen>();
+    public DbSet<GlobalDocWorkflowPattern> GlobalDocWorkflowPatterns => Set<GlobalDocWorkflowPattern>();
+    public DbSet<GlobalDocWorkflowTenantSeen> GlobalDocWorkflowTenantSeens => Set<GlobalDocWorkflowTenantSeen>();
     public DbSet<StockCount> StockCounts => Set<StockCount>();
     public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
     public DbSet<InventorySnapshot> InventorySnapshots => Set<InventorySnapshot>();

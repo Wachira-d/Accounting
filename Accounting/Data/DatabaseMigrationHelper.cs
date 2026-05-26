@@ -2626,6 +2626,64 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GECPSeens_Pattern_Company" ON "GlobalExpenseCategoryTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== SystemOcrVendorIntelligence — track distinct contributing tenants =====
+            """ALTER TABLE "SystemOcrVendorIntelligence" ADD COLUMN IF NOT EXISTS "TenantContributionCount" integer NOT NULL DEFAULT 0;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "SystemOcrVendorIntelTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "SystemIntelId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SVITenantSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_SVITenantSeens_Intel" FOREIGN KEY ("SystemIntelId") REFERENCES "SystemOcrVendorIntelligence"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SVITenantSeens_Intel_Company" ON "SystemOcrVendorIntelTenantSeens" ("SystemIntelId", "CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== GlobalDocWorkflowPatterns — federated doc-type prediction =====
+            // (VendorKey, ScannedDocType) → TargetDocType consensus across tenants.
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalDocWorkflowPatterns" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "VendorKey" varchar(200) NOT NULL,
+                "ScannedDocType" varchar(50) NOT NULL,
+                "TargetDocType" varchar(50) NOT NULL,
+                "TenantCount" integer NOT NULL DEFAULT 0,
+                "TotalConfirms" integer NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastConfirmedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" varchar(20) NOT NULL DEFAULT 'candidate',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GlobalDocWorkflowPatterns" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_GDWP_Vendor_Scanned" ON "GlobalDocWorkflowPatterns" ("VendorKey", "ScannedDocType") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "GlobalDocWorkflowTenantSeens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PatternId" uuid NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_GDWPSeens" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_GDWPSeens_Pattern" FOREIGN KEY ("PatternId") REFERENCES "GlobalDocWorkflowPatterns"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_GDWPSeens_Pattern_Company" ON "GlobalDocWorkflowTenantSeens" ("PatternId", "CompanyId") WHERE "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

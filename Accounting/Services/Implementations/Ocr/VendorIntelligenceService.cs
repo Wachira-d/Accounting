@@ -42,10 +42,14 @@ public class VendorIntelligenceService
         DocumentType.PaymentVoucher,
     };
 
-    public VendorIntelligenceService(AccountingDbContext db, ILogger<VendorIntelligenceService> logger)
+    private readonly GlobalVendorIntelLearner? _globalLearner;
+
+    public VendorIntelligenceService(AccountingDbContext db, ILogger<VendorIntelligenceService> logger,
+        GlobalVendorIntelLearner? globalLearner = null)
     {
         _db = db;
         _logger = logger;
+        _globalLearner = globalLearner;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -601,6 +605,23 @@ public class VendorIntelligenceService
         try
         {
             await _db.SaveChangesAsync();
+            // Federated contribution — record that this tenant has now
+            // trained on this vendor at least once. Increments distinct-
+            // tenant counter on the global SystemOcrVendorIntelligence
+            // row (idempotent per tenant). Failure non-fatal: per-
+            // tenant write above already committed.
+            if (_globalLearner != null)
+            {
+                try
+                {
+                    await _globalLearner.RecordContributionAsync(companyId, key, vendorName, vendorTaxId);
+                    await _db.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Federated vendor-intel contribution write failed (non-fatal)");
+                }
+            }
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex) && retryCount < 2)
         {
