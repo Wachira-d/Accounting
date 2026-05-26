@@ -1190,7 +1190,11 @@ public class CmsCommerceService : ICmsCommerceService
         };
     }
 
-    private async Task ReverseStockIfDeductedAsync(Guid companyId, SiteOrder order)
+    // Synchronous body — only stages entity changes on the change
+    // tracker, no DB roundtrip. Returns Task so the call sites can
+    // `await` it uniformly without us actually awaiting anything in
+    // here. Caller's SaveChanges flushes the staged changes.
+    private Task ReverseStockIfDeductedAsync(Guid companyId, SiteOrder order)
     {
         foreach (var line in order.Lines.Where(l => l.StockDeducted))
         {
@@ -1209,6 +1213,7 @@ public class CmsCommerceService : ICmsCommerceService
                 MovementDate = DateTime.UtcNow
             });
         }
+        return Task.CompletedTask;
     }
 
     private async Task<string> NextLeadNumberAsync(Guid companyId)
