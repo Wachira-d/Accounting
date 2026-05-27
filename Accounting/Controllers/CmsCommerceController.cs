@@ -269,11 +269,18 @@ public class CmsCommerceController : ControllerBase
     [AllowAnonymous]
     [HttpPost("orders/{orderId:guid}/convert-to-quotation")]
     public async Task<ActionResult<ApiResponse<ConvertToQuotationResponse>>> ConvertOrderToQuotation(
-        Guid companyId, Guid siteId, Guid orderId)
+        Guid companyId, Guid siteId, Guid orderId,
+        [FromBody] ConvertOrderToQuotationRequest? req,
+        [FromServices] IDocumentService docService)
     {
-        var result = await _commerceService.ConvertOrderToQuotationAsync(companyId, siteId, orderId);
+        var notes = req?.CustomerNotes;
+        if (!string.IsNullOrEmpty(notes) && notes.Length > 1000) notes = notes[..1000];
+        var result = await _commerceService.ConvertOrderToQuotationAsync(companyId, siteId, orderId, notes, docService);
         if (result == null) return NotFound(new ApiResponse<ConvertToQuotationResponse>(false, null, "ไม่พบคำสั่งซื้อ"));
-        return Ok(new ApiResponse<ConvertToQuotationResponse>(true, result, "เปลี่ยนเป็นใบเสนอราคาแล้ว — ร้านจะติดต่อกลับเร็วๆ นี้"));
+        var msg = result.QuotationDocumentId.HasValue
+            ? $"ออกใบเสนอราคา {result.QuotationNumber} เรียบร้อย"
+            : "ยกเลิกคำสั่งซื้อ + บันทึกเป็นคำขอใบเสนอราคา — ร้านจะติดต่อกลับ";
+        return Ok(new ApiResponse<ConvertToQuotationResponse>(true, result, msg));
     }
 
     /// <summary>Returns the site's configured payment options so the

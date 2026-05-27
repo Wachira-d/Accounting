@@ -1116,12 +1116,23 @@ public class CmsCommerceService : ICmsCommerceService
     }
 
     /// <summary>Customer wants a Quotation document instead of a
-    /// committed order. Cancel the SiteOrder (returns stock if it
-    /// was reserved), then create a CmsLead with the cart items in
-    /// DataJson + immediately spin up a Quotation document so the
-    /// customer + owner have a real reviewable quote.</summary>
+    /// committed order. The flow:
+    ///   1. Cancel the SiteOrder + reverse any deducted stock.
+    ///   2. Resolve-or-create the ERP Contact (same logic as
+    ///      SyncOrderToErpAsync — match by email, else new Contact).
+    ///   3. Create a real Quotation Document via IDocumentService
+    ///      (proper number sequence + JE handling). Cart lines map
+    ///      1-to-1 to DocumentLineRequest, preserving product code
+    ///      so the line typeahead links back to the master product.
+    ///   4. Stamp the customer's free-text note as the document's
+    ///      CustomFooterNotes — appears at the bottom of the PDF.
+    ///   5. Also create a CmsLead (Quote, status=Quoted) so the
+    ///      owner-side sales pipeline reflects the conversion.
+    /// Customer gets the actual quotation number back so they can be
+    /// shown "ออกใบเสนอราคา QUO-... เรียบร้อย" on the success page.</summary>
     public async Task<ConvertToQuotationResponse?> ConvertOrderToQuotationAsync(
-        Guid companyId, Guid siteId, Guid orderId)
+        Guid companyId, Guid siteId, Guid orderId,
+        string? customerNotes, IDocumentService docService)
     {
         var order = await _db.SiteOrders
             .Include(o => o.Lines)!.ThenInclude(l => l.SiteProduct)!.ThenInclude(sp => sp!.Product)
@@ -1129,26 +1140,74 @@ public class CmsCommerceService : ICmsCommerceService
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId && !o.IsDeleted);
         if (order == null) return null;
 
-        // Pre-block double-conversion: already cancelled or already linked to a doc
+        // Pre-block double-conversion
         if (order.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue)
+        {
+            var existing = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == order.ErpDocumentId.Value)
+                .Select(d => d.DocumentNumber)
+                .FirstOrDefaultAsync();
             return new ConvertToQuotationResponse
             {
                 OrderId = order.Id,
                 LeadId = Guid.Empty,
                 LeadNumber = "(already-converted)",
-                QuotationDocumentId = order.ErpDocumentId
+                QuotationDocumentId = order.ErpDocumentId,
+                QuotationNumber = existing
             };
+        }
 
-        // Reverse stock if we already deducted
         await ReverseStockIfDeductedAsync(companyId, order);
 
-        // Mark the order cancelled with a note explaining why
         order.Status = SiteOrderStatus.Cancelled;
         order.CancelledAt = DateTime.UtcNow;
         order.CancellationReason = "เปลี่ยนเป็นใบเสนอราคาตามคำขอลูกค้า";
 
-        // Build a CmsLead (Quote) with the cart summary in DataJson
-        var fields = new Dictionary<string, object?>
+        var contactId = await ResolveOrCreateContactFromOrderAsync(companyId, order);
+
+        Guid? quotationId = null;
+        string? quotationNumber = null;
+        if (contactId.HasValue && order.Lines.Any())
+        {
+            // Cart line → document line: preserve product code so the
+            // master-product link survives, keep VatRate as the cart
+            // recorded it (DocumentService re-derives VatAmount).
+            var lines = order.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
+                Description: !string.IsNullOrEmpty(l.ProductName) ? l.ProductName
+                           : (l.SiteProduct?.Product?.Name ?? "(ไม่ระบุชื่อ)"),
+                Quantity: l.Quantity,
+                Unit: string.IsNullOrEmpty(l.Unit) ? "ชิ้น" : l.Unit,
+                UnitPrice: l.UnitPrice,
+                DiscountPercent: 0m,
+                VatRate: l.VatRate,
+                WithholdingTaxRate: 0m,
+                AccountId: null,
+                ProductCode: l.SiteProduct?.Product?.Code)).ToList();
+
+            var docReq = new Models.DTOs.Document.CreateDocumentRequest(
+                DocumentType: Models.Enums.DocumentType.Quotation,
+                DocumentDate: DateTime.UtcNow.Date,
+                DueDate: null,
+                ContactId: contactId.Value,
+                Reference: order.OrderNumber,
+                Notes: $"ลูกค้าขอใบเสนอราคาผ่านหน้าเว็บ — เปลี่ยนจาก order {order.OrderNumber}",
+                Lines: lines,
+                CustomFooterNotes: string.IsNullOrWhiteSpace(customerNotes) ? null : customerNotes);
+
+            try
+            {
+                var doc = await docService.CreateDocumentAsync(companyId, docReq, "storefront-customer");
+                quotationId = doc.Id;
+                quotationNumber = doc.DocumentNumber;
+                order.ErpDocumentId = doc.Id;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ConvertOrderToQuotation: doc creation failed for order {OrderId}, falling back to lead-only", orderId);
+            }
+        }
+
+        var leadFields = new Dictionary<string, object?>
         {
             ["original_order"] = order.OrderNumber,
             ["order_total"] = order.TotalAmount,
@@ -1163,22 +1222,22 @@ public class CmsCommerceService : ICmsCommerceService
             CompanyId = companyId,
             SiteId = siteId,
             LeadType = LeadType.Quote,
-            Status = LeadStatus.New,
+            Status = quotationId.HasValue ? LeadStatus.Quoted : LeadStatus.New,
             SourceSlug = "order-success",
             CustomerName = order.ShippingName ?? order.Customer?.FullName,
             CustomerEmail = order.Customer?.Email,
             CustomerPhone = order.ShippingPhone ?? order.Customer?.Phone,
             CustomerCompany = order.BillingName,
             CustomerTaxId = order.BillingTaxId,
-            Message = order.CustomerNotes,
-            DataJson = System.Text.Json.JsonSerializer.Serialize(fields),
+            ContactId = contactId,
+            Message = string.IsNullOrWhiteSpace(customerNotes) ? order.CustomerNotes : customerNotes,
+            DataJson = System.Text.Json.JsonSerializer.Serialize(leadFields),
             LeadNumber = await NextLeadNumberAsync(companyId),
+            ErpDocumentId = quotationId,
+            QuotedAt = quotationId.HasValue ? DateTime.UtcNow : null,
             CreatedBy = "storefront-convert"
         };
         _db.Set<CmsLead>().Add(lead);
-        await _db.SaveChangesAsync();
-
-        order.ErpDocumentId = null;   // owner will quote via lead → Quotation flow
         await _db.SaveChangesAsync();
 
         return new ConvertToQuotationResponse
@@ -1186,8 +1245,52 @@ public class CmsCommerceService : ICmsCommerceService
             OrderId = order.Id,
             LeadId = lead.Id,
             LeadNumber = lead.LeadNumber,
-            QuotationDocumentId = null
+            QuotationDocumentId = quotationId,
+            QuotationNumber = quotationNumber
         };
+    }
+
+    /// <summary>Match-or-create ERP Contact for an online order — mirror
+    /// of the resolution logic in SyncOrderToErpAsync. Matches by the
+    /// customer's email first (most reliable), else creates a new
+    /// IsCustomer=true Contact populated from the shipping/billing
+    /// fields on the order. Returns null only when even the new-row
+    /// insert fails — practically unreachable.</summary>
+    private async Task<Guid?> ResolveOrCreateContactFromOrderAsync(Guid companyId, SiteOrder order)
+    {
+        if (order.Customer?.ContactId.HasValue == true) return order.Customer.ContactId.Value;
+
+        var matchEmail = order.Customer?.Email ?? order.ShippingEmail;
+        if (!string.IsNullOrEmpty(matchEmail))
+        {
+            var existing = await _db.Contacts
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted && c.Email == matchEmail);
+            if (existing != null)
+            {
+                if (!existing.IsCustomer) existing.IsCustomer = true;
+                if (order.Customer != null) order.Customer.ContactId = existing.Id;
+                return existing.Id;
+            }
+        }
+
+        var name = order.Customer?.FullName ?? order.ShippingName ?? order.BillingName;
+        if (string.IsNullOrWhiteSpace(name)) name = "Online Guest";
+        var newContact = new Contact
+        {
+            CompanyId = companyId,
+            Name = name,
+            Email = order.Customer?.Email ?? order.ShippingEmail,
+            Phone = order.Customer?.Phone ?? order.ShippingPhone,
+            TaxId = order.BillingTaxId,
+            BranchCode = order.BillingBranchCode,
+            IsCustomer = true,
+            Address = order.ShippingAddress,
+            CreatedBy = "storefront-quotation"
+        };
+        _db.Contacts.Add(newContact);
+        await _db.SaveChangesAsync();
+        if (order.Customer != null) order.Customer.ContactId = newContact.Id;
+        return newContact.Id;
     }
 
     // Synchronous body — only stages entity changes on the change
