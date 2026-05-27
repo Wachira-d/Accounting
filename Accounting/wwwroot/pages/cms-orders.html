@@ -119,6 +119,17 @@
               <input type="text" id="gwBankName2" class="form-input" placeholder="ชื่อ-นามสกุล / ชื่อนิติบุคคล">
             </div>
           </div>
+          <div style="border-top:1px solid var(--gray-200);margin:18px 0 6px;padding-top:14px">
+            <div class="form-group">
+              <label class="form-label">📄 ข้อความท้ายใบเสนอราคา (Footer)</label>
+              <textarea id="gwQuoteFooter" class="form-input" rows="4" maxlength="1000"
+                placeholder="ข้อความที่จะแสดงท้ายเอกสารใบเสนอราคาทุกใบ — เช่น 'ราคานี้ยืนยัน 7 วัน · ต้องรอยืนยันเวลาจัดส่งอีกครั้ง · ชำระเงิน 50% มัดจำเมื่อยืนยันคำสั่งซื้อ'"
+                style="font-family:inherit;resize:vertical;line-height:1.5"></textarea>
+              <small style="color:var(--gray-500);font-size:11px;display:block;margin-top:4px">
+                แสดงทุกใบเสนอราคาที่ระบบออกอัตโนมัติจากเว็บลูกค้า — เจ้าของตั้งครั้งเดียวใช้กับทุกใบ
+              </small>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('gatewayModal')">ยกเลิก</button>
@@ -200,12 +211,19 @@
       },
       async loadGatewayStatus() {
         const api = Layout.api(); if (!api || !this.siteId) return;
+        // Two parallel loads: payment-gateway list + commerce config
+        // (for the quotation-footer message). Both feed the same modal
+        // so they're refreshed together.
         try {
-          const res = await api.cmsListGateways(this.siteId);
-          const list = res?.data || [];
+          const [gwRes, cfgRes] = await Promise.all([
+            api.cmsListGateways(this.siteId),
+            api.cmsGetCommerceConfig(this.siteId).catch(() => null)
+          ]);
+          const list = gwRes?.data || [];
           const any = list.some(g => (g.promptPayId || g.bankAccountNumber) && g.isActive);
           document.getElementById('payConfigBanner').style.display = any ? 'none' : 'flex';
           this._existingGateway = list.find(g => g.isActive) || list[0] || null;
+          this._commerceConfig = cfgRes?.data || null;
         } catch (e) { /* silently — owner can still open the modal */ }
       },
       openGatewayModal() {
@@ -214,6 +232,7 @@
         document.getElementById('gwBankName').value = g?.bankName || '';
         document.getElementById('gwBankAccount').value = g?.bankAccountNumber || '';
         document.getElementById('gwBankName2').value = g?.bankAccountName || '';
+        document.getElementById('gwQuoteFooter').value = this._commerceConfig?.quotationMessageTh || '';
         Layout.openModal('gatewayModal');
       },
       async saveGateway() {
@@ -222,27 +241,36 @@
         const bankName = document.getElementById('gwBankName').value.trim();
         const bankAcc = document.getElementById('gwBankAccount').value.trim();
         const bankAccName = document.getElementById('gwBankName2').value.trim();
-        if (!ppId && !bankAcc) {
-          Layout.toast('กรุณากรอก PromptPay หรือเลขบัญชีอย่างน้อย 1 อย่าง', 'error');
+        const quoteFooter = document.getElementById('gwQuoteFooter').value.trim();
+        if (!ppId && !bankAcc && !quoteFooter) {
+          Layout.toast('กรุณากรอกข้อมูลอย่างน้อย 1 ช่อง', 'error');
           return;
         }
-        const payload = {
-          // PaymentGatewayType enum — 0=PromptPay, 1=BankTransfer, 2=CreditCard, ... — using 0 as the generic Thai SME default
-          gatewayType: ppId ? 'PromptPay' : 'BankTransfer',
-          name: ppId ? 'PromptPay' : (bankName || 'Bank Transfer'),
-          promptPayId: ppId || null,
-          bankName: bankName || null,
-          bankAccountNumber: bankAcc || null,
-          bankAccountName: bankAccName || null,
-          isTestMode: false
-        };
         try {
-          if (this._existingGateway?.id) {
-            await api.cmsUpdateGateway(this.siteId, this._existingGateway.id, payload);
-          } else {
-            await api.cmsCreateGateway(this.siteId, payload);
+          // Save gateway (if PromptPay or bank info was provided)
+          if (ppId || bankAcc) {
+            const payload = {
+              gatewayType: ppId ? 'PromptPay' : 'BankTransfer',
+              name: ppId ? 'PromptPay' : (bankName || 'Bank Transfer'),
+              promptPayId: ppId || null,
+              bankName: bankName || null,
+              bankAccountNumber: bankAcc || null,
+              bankAccountName: bankAccName || null,
+              isTestMode: false
+            };
+            if (this._existingGateway?.id) {
+              await api.cmsUpdateGateway(this.siteId, this._existingGateway.id, payload);
+            } else {
+              await api.cmsCreateGateway(this.siteId, payload);
+            }
           }
-          Layout.toast('บันทึกวิธีรับเงินเรียบร้อย');
+          // Save the quotation-footer text — empty string clears the
+          // previous value (server treats null as "no change", so we
+          // pass empty string explicitly when the field was wiped).
+          if ((this._commerceConfig?.quotationMessageTh || '') !== quoteFooter) {
+            await api.cmsUpdateCommerceConfig(this.siteId, { quotationMessageTh: quoteFooter });
+          }
+          Layout.toast('บันทึกการตั้งค่าเรียบร้อย');
           Layout.closeModal('gatewayModal');
           await this.loadGatewayStatus();
         } catch (e) { Layout.toast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'error'); }

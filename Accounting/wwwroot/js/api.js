@@ -347,6 +347,8 @@ const API = {
       cmsListGateways: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/payment-gateways`),
       cmsCreateGateway: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/payment-gateways`, d),
       cmsUpdateGateway: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/payment-gateways/${id}`, d),
+      cmsGetCommerceConfig: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/config`),
+      cmsUpdateCommerceConfig: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/config`, d),
       cmsListLeads: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/leads${q}`),
       cmsGetLead: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/leads/${id}`),
       cmsUpdateLeadStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/leads/${id}/status`, d),

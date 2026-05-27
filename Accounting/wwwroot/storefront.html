@@ -1189,10 +1189,10 @@
                   คุณจะได้เลขที่ใบเสนอราคาเพื่ออ้างอิงกับร้าน
                 </div>
                 <label style="display:block;margin-top:12px;font-size:12px;color:var(--text-secondary);font-weight:600">
-                  หมายเหตุเพิ่มเติม (จะแสดงท้ายเอกสาร — ไม่บังคับ)
+                  ข้อความถึงร้าน (ถ้ามี — ไม่บังคับ)
                 </label>
                 <textarea id="quoteNotes_${orderId}" rows="3" maxlength="1000"
-                  placeholder="เช่น ขอราคาพิเศษ · ขอเงื่อนไขจัดส่ง · เงื่อนไขการชำระเงิน · ระยะเวลายืนยันราคา ฯลฯ"
+                  placeholder="เช่น สอบถามรายละเอียดเพิ่ม · ขอคำแนะนำ · ขอแก้รายการก่อนออกใบเสนอราคา ฯลฯ — ข้อความนี้จะถึงร้านโดยตรง"
                   style="width:100%;margin-top:6px;padding:10px;border:1px solid #D1D5DB;border-radius:6px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
                 <button class="btn btn-outline" style="margin-top:12px" onclick="Store.convertOrderToQuotation('${orderId}')">📄 ออกใบเสนอราคา</button>
               </details>

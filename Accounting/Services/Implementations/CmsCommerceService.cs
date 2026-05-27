@@ -1169,6 +1169,25 @@ public class CmsCommerceService : ICmsCommerceService
         string? quotationNumber = null;
         if (contactId.HasValue && order.Lines.Any())
         {
+            // Owner-configured footer (e.g. "ราคานี้ยืนยัน 7 วัน · จัดส่งภายใน
+            // 3-5 วันทำการหลังชำระเงิน · รอยืนยันเวลาจัดส่งอีกครั้ง") — pulled
+            // from SiteCommerceConfig.QuotationMessageTh. Customer can't
+            // edit the footer; their typed-in note goes into Document.Notes
+            // as an internal message-to-merchant.
+            var commerceConfig = await _db.Set<SiteCommerceConfig>().AsNoTracking()
+                .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
+            var ownerFooter = commerceConfig?.QuotationMessageTh;
+
+            // Customer's free-text → internal Notes section (not footer).
+            // Prefixed so the owner can tell it apart from system-generated
+            // attribution at a glance in the Document detail view.
+            var notesParts = new List<string>
+            {
+                $"ลูกค้าขอใบเสนอราคาผ่านหน้าเว็บ — เปลี่ยนจาก order {order.OrderNumber}"
+            };
+            if (!string.IsNullOrWhiteSpace(customerNotes))
+                notesParts.Add($"ข้อความจากลูกค้า: {customerNotes}");
+
             // Cart line → document line: preserve product code so the
             // master-product link survives, keep VatRate as the cart
             // recorded it (DocumentService re-derives VatAmount).
@@ -1190,9 +1209,9 @@ public class CmsCommerceService : ICmsCommerceService
                 DueDate: null,
                 ContactId: contactId.Value,
                 Reference: order.OrderNumber,
-                Notes: $"ลูกค้าขอใบเสนอราคาผ่านหน้าเว็บ — เปลี่ยนจาก order {order.OrderNumber}",
+                Notes: string.Join("\n", notesParts),
                 Lines: lines,
-                CustomFooterNotes: string.IsNullOrWhiteSpace(customerNotes) ? null : customerNotes);
+                CustomFooterNotes: string.IsNullOrWhiteSpace(ownerFooter) ? null : ownerFooter);
 
             try
             {
