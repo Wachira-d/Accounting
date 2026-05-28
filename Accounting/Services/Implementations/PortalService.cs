@@ -2,10 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Cms;
 using Accounting.Models.DTOs.Portal;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -436,4 +438,117 @@ public class PortalService : IPortalService
         p.Id, p.ContactId, contactName, p.Email, p.DisplayName,
         p.IsActive, p.LastLoginAt,
         p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment);
+
+    // ====================================================================
+    // Customer-self-service payments — portal customers paying invoices
+    // ====================================================================
+
+    /// <summary>Return the first active payment gateway across any of
+    /// this company's sites. The customer portal is per-company, not
+    /// per-site, so we surface whichever gateway the owner has
+    /// configured (typical SME has one PromptPay + bank-transfer
+    /// gateway shared across all their sites). When no gateway is
+    /// configured, HasPaymentMethod is false and the portal hides
+    /// the slip-upload UI.</summary>
+    public async Task<StorefrontPaymentOptions> GetCompanyPaymentOptionsAsync(Guid companyId)
+    {
+        var gw = await _db.Set<SitePaymentGateway>().AsNoTracking()
+            .Where(g => g.CompanyId == companyId && g.IsActive && !g.IsDeleted)
+            .OrderBy(g => g.SortOrder)
+            .FirstOrDefaultAsync();
+        if (gw == null) return new StorefrontPaymentOptions { HasPaymentMethod = false };
+        var has = !string.IsNullOrEmpty(gw.PromptPayId) || !string.IsNullOrEmpty(gw.BankAccountNumber);
+        return new StorefrontPaymentOptions
+        {
+            PromptPayId = gw.PromptPayId,
+            PromptPayQrUrl = gw.PromptPayQrUrl,
+            BankName = gw.BankName,
+            BankAccountNumber = gw.BankAccountNumber,
+            BankAccountName = gw.BankAccountName,
+            HasPaymentMethod = has
+        };
+    }
+
+    /// <summary>Portal customer uploads a slip against a specific
+    /// invoice/tax-invoice. Creates a Payment row tied to the document
+    /// in status=Pending, with the slip stored as a FileAttachment.
+    /// Owner confirms via /pages/documents (existing Payment workflow).
+    /// Strict ownership check: document.ContactId must match the
+    /// portal user's contact id — prevents one customer from uploading
+    /// to another customer's invoice.</summary>
+    public async Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
+        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount)
+    {
+        if (file == null || file.Length == 0)
+            throw new ArgumentException("กรุณาเลือกไฟล์สลิป");
+        if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
+            throw new ArgumentException("รองรับเฉพาะรูปภาพหรือ PDF");
+
+        var doc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var balance = doc.TotalAmount - doc.PaidAmount;
+        var pay = amount ?? balance;
+        if (pay <= 0) throw new InvalidOperationException("ยอดที่จะชำระต้องมากกว่า 0");
+        if (pay > doc.TotalAmount * 1.05m) throw new InvalidOperationException("ยอดสลิปมากกว่ายอดในเอกสาร — ตรวจสอบอีกครั้ง");
+
+        // Save file under wwwroot/uploads/portal-slips/{yyyy-MM}/...
+        var ext = System.IO.Path.GetExtension(file.FileName);
+        if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
+        var relDir = $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
+        var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
+        System.IO.Directory.CreateDirectory(absDir);
+        var storedName = $"{Guid.NewGuid():N}{ext}";
+        var absPath = System.IO.Path.Combine(absDir, storedName);
+        await using (var fs = System.IO.File.Create(absPath)) await file.CopyToAsync(fs);
+        var relUrl = "/" + relDir + "/" + storedName;
+
+        _db.Set<FileAttachment>().Add(new FileAttachment
+        {
+            CompanyId = companyId,
+            FileName = storedName,
+            OriginalFileName = file.FileName ?? storedName,
+            ContentType = file.ContentType ?? "application/octet-stream",
+            StoragePath = absPath,
+            EntityType = "Document",
+            EntityId = doc.Id,
+            UploadedByUserId = Guid.Empty,
+            CreatedBy = "portal-customer"
+        });
+
+        // Payment entity has no Status field — owner confirms by
+        // posting a JE / marking the Document. We leave Notes with
+        // a clear "[PENDING-VERIFY]" prefix so the existing payments
+        // list shows it as awaiting owner confirmation.
+        var payment = new Payment
+        {
+            CompanyId = companyId,
+            PaymentNumber = await NextPaymentNumberAsync(companyId),
+            PaymentDate = DateTime.UtcNow.Date,
+            PaymentMethod = PaymentMethod.BankTransfer,
+            DocumentId = doc.Id,
+            Amount = pay,
+            Reference = $"slip-{file.FileName}",
+            Notes = $"[PENDING-VERIFY] แนบสลิปจาก Portal ลูกค้า · ไฟล์: {relUrl}",
+            CreatedBy = "portal-customer"
+        };
+        _db.Payments.Add(payment);
+        await _db.SaveChangesAsync();
+
+        return new PortalSlipUploadResponse(payment.Id, doc.Id, relUrl, pay, payment.CreatedAt);
+    }
+
+    private async Task<string> NextPaymentNumberAsync(Guid companyId)
+    {
+        var prefix = $"PAY-{DateTime.UtcNow:yyyyMM}-";
+        var last = await _db.Payments
+            .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(prefix))
+            .Select(p => p.PaymentNumber)
+            .OrderByDescending(n => n)
+            .FirstOrDefaultAsync();
+        var seq = 1;
+        if (last != null && int.TryParse(last.AsSpan(prefix.Length), out var n)) seq = n + 1;
+        return $"{prefix}{seq:D4}";
+    }
 }

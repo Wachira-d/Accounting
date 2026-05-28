@@ -1,5 +1,7 @@
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Cms;
 using Accounting.Models.DTOs.Portal;
+using Microsoft.AspNetCore.Http;
 
 namespace Accounting.Services.Interfaces;
 
@@ -23,4 +25,15 @@ public interface IPortalService
     Task<byte[]> DownloadDocumentPdfAsync(Guid companyId, Guid contactId, Guid documentId);
     Task<PortalStatementResponse> GetMyStatementAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate);
     Task<List<PortalPaymentResponse>> GetMyPaymentsAsync(Guid companyId, Guid contactId);
+
+    // Customer-self-service payments
+    /// <summary>Surface the company's first active PromptPay / bank
+    /// gateway so the portal can render QR + account info for the
+    /// customer to pay an outstanding invoice.</summary>
+    Task<StorefrontPaymentOptions> GetCompanyPaymentOptionsAsync(Guid companyId);
+    /// <summary>Record a slip uploaded by the portal customer against
+    /// a specific Document (invoice). Creates a Payment row in
+    /// Pending status; owner reviews + marks Confirmed.</summary>
+    Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
+        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount);
 }

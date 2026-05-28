@@ -94,6 +94,38 @@ public class PortalPublicController : ControllerBase
         return Ok(new ApiResponse<PortalStatementResponse>(true, await _service.GetMyStatementAsync(companyId, contactId.Value, fromDate, toDate)));
     }
 
+    /// <summary>Return PromptPay + bank-account details for the
+    /// company so the portal can render QR + transfer instructions
+    /// to the customer. Anonymous (no token required) — the same
+    /// gateway info is also rendered on the public storefront's
+    /// order-success page, so exposing it via portal is no broader.</summary>
+    [HttpGet("{companyId:guid}/payment-options")]
+    public async Task<ActionResult<ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>>> GetPaymentOptions(Guid companyId)
+        => Ok(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(true, await _service.GetCompanyPaymentOptionsAsync(companyId)));
+
+    /// <summary>Customer uploads a payment slip for one of their
+    /// outstanding invoices. Server enforces the ownership check —
+    /// the document's ContactId must match the JWT's contact id, so
+    /// one customer can't upload to another customer's document.</summary>
+    [HttpPost("{companyId:guid}/documents/{documentId:guid}/upload-slip")]
+    [Authorize]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<PortalSlipUploadResponse>>> UploadDocumentSlip(
+        Guid companyId, Guid documentId, IFormFile? file, [FromForm] decimal? amount)
+    {
+        var contactId = GetContactIdFromToken();
+        if (contactId == null) return Unauthorized(new ApiResponse<PortalSlipUploadResponse>(false, null!, "Invalid portal token"));
+        if (file == null) return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, "กรุณาเลือกไฟล์สลิป"));
+        try
+        {
+            var result = await _service.UploadDocumentSlipAsync(companyId, contactId.Value, documentId, file, amount);
+            return Ok(new ApiResponse<PortalSlipUploadResponse>(true, result, "ส่งสลิปแล้ว — ทางร้านจะตรวจสอบและยืนยันการชำระเงิน"));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
+        catch (ArgumentException ex) { return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
+    }
+
     private Guid? GetContactIdFromToken()
     {
         var authHeader = Request.Headers.Authorization.FirstOrDefault();
