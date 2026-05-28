@@ -47,6 +47,11 @@ public class Product : TenantEntity
 
     public bool IsActive { get; set; } = true;
 
+    // Media — JSON array of image URLs (gallery). First is featured.
+    // Gets surfaced on /pages/products.html cards and falls through to the
+    // storefront when SiteProduct.ImageUrlsJson hasn't been overridden.
+    public string? ImageUrlsJson { get; set; }
+
     // Relationships
     public ICollection<UnitConversion> UnitConversions { get; set; } = new List<UnitConversion>();
 }

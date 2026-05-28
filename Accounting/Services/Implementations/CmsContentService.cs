@@ -14,11 +14,13 @@ public class CmsContentService : ICmsContentService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsContentService> _logger;
+    private readonly IImageProcessingService? _images;
 
-    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger)
+    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, IImageProcessingService? images = null)
     {
         _db = db;
         _logger = logger;
+        _images = images;
     }
 
     // ===== Pages =====
@@ -512,13 +514,24 @@ public class CmsContentService : ICmsContentService
 
     public async Task<MediaResponse> UploadMediaAsync(Guid companyId, Guid siteId, string fileName, string contentType, Stream fileStream, string userId)
     {
-        var uniqueName = $"{Guid.NewGuid():N}{Path.GetExtension(fileName)}";
         var basePath = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "cms", companyId.ToString(), siteId.ToString());
         Directory.CreateDirectory(basePath);
-        var filePath = Path.Combine(basePath, uniqueName);
 
-        using (var fs = new FileStream(filePath, FileMode.Create))
-            await fileStream.CopyToAsync(fs);
+        string uniqueName; string filePath;
+        if (_images != null && _images.IsProcessableImage(contentType))
+        {
+            var webBase = $"/uploads/cms/{companyId}/{siteId}";
+            var processed = await _images.ProcessAndSaveAsync(fileStream, contentType, fileName, basePath, webBase, ImageProfile.Banner);
+            filePath = processed.AbsolutePath;
+            uniqueName = Path.GetFileName(filePath);
+        }
+        else
+        {
+            uniqueName = $"{Guid.NewGuid():N}{Path.GetExtension(fileName)}";
+            filePath = Path.Combine(basePath, uniqueName);
+            using (var fs = new FileStream(filePath, FileMode.Create))
+                await fileStream.CopyToAsync(fs);
+        }
 
         var media = new SiteMedia
         {

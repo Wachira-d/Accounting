@@ -15,12 +15,14 @@ public class CmsCommerceService : ICmsCommerceService
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCommerceService> _logger;
     private readonly string _encryptionKey;
+    private readonly IImageProcessingService? _images;
 
-    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger, IConfiguration config)
+    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger, IConfiguration config, IImageProcessingService? images = null)
     {
         _db = db;
         _logger = logger;
         _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
+        _images = images;
     }
 
     // ===== Products =====
@@ -117,7 +119,7 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<SiteProductResponse?> GetProductAsync(Guid companyId, Guid siteId, Guid siteProductId)
     {
-        return await _db.SiteProducts.AsNoTracking()
+        var result = await _db.SiteProducts.AsNoTracking()
             .Where(p => p.Id == siteProductId && p.SiteId == siteId && p.CompanyId == companyId)
             .Select(p => new SiteProductResponse
             {
@@ -145,6 +147,7 @@ public class CmsCommerceService : ICmsCommerceService
                 Tags = p.Tags,
                 Slug = p.Slug,
                 ImageUrlsJson = p.ImageUrlsJson,
+                ProductImageUrlsJson = p.Product.ImageUrlsJson,
                 PricingTiers = p.PricingTiers.OrderBy(t => t.MinQuantity).Select(t => new PricingTierResponse
                 {
                     Id = t.Id, TierName = t.TierName, MinQuantity = t.MinQuantity,
@@ -153,6 +156,16 @@ public class CmsCommerceService : ICmsCommerceService
                 CreatedAt = p.CreatedAt
             })
             .FirstOrDefaultAsync();
+        if (result != null)
+        {
+            // Featured image falls through to the master Product gallery if the
+            // site listing doesn't have its own override. ImageUrlsJson stays
+            // strictly site-override so the editor UI shows only what the admin
+            // explicitly picked for this site listing.
+            var sitePick = ExtractFirstImageUrl(result.ImageUrlsJson);
+            result.FeaturedImageUrl = sitePick ?? ExtractFirstImageUrl(result.ProductImageUrlsJson);
+        }
+        return result;
     }
 
     public async Task<SiteProductResponse?> GetProductBySlugAsync(Guid companyId, Guid siteId, string slug)
@@ -210,14 +223,22 @@ public class CmsCommerceService : ICmsCommerceService
                 AvailableStock = p.Product.CurrentStock,
                 CategoryName = p.SiteCategory != null ? p.SiteCategory.Name : null,
                 IsVisible = p.IsVisible, IsFeatured = p.IsFeatured, SortOrder = p.SortOrder,
-                Slug = p.Slug, ImageUrlsJson = p.ImageUrlsJson, CreatedAt = p.CreatedAt
+                Slug = p.Slug, ImageUrlsJson = p.ImageUrlsJson,
+                ProductImageUrlsJson = p.Product.ImageUrlsJson,
+                CreatedAt = p.CreatedAt
             })
             .ToListAsync();
 
         // Featured image — first URL from the JSON array. The
-        // storefront card uses this as the main thumbnail.
+        // storefront card uses this as the main thumbnail. Falls
+        // back to the master Product's gallery when the site listing
+        // hasn't been given its own images yet. ImageUrlsJson stays
+        // pure site-override so the editor UI is unambiguous.
         foreach (var item in raw)
-            item.FeaturedImageUrl = ExtractFirstImageUrl(item.ImageUrlsJson);
+        {
+            var sitePick = ExtractFirstImageUrl(item.ImageUrlsJson);
+            item.FeaturedImageUrl = sitePick ?? ExtractFirstImageUrl(item.ProductImageUrlsJson);
+        }
 
         return new PagedResponse<SiteProductResponse>(raw, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
@@ -1062,18 +1083,31 @@ public class CmsCommerceService : ICmsCommerceService
         if (order == null) return null;
 
         // Persist file under wwwroot/uploads/order-slips/{yyyy-MM}/{guid}{ext}
-        var ext = System.IO.Path.GetExtension(file.FileName);
-        if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
+        // Compress images via ImageProcessingService (Slip profile); PDFs pass through.
         var relDir = $"uploads/order-slips/{DateTime.UtcNow:yyyy-MM}";
         var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
         System.IO.Directory.CreateDirectory(absDir);
-        var storedName = $"{Guid.NewGuid():N}{ext}";
-        var absPath = System.IO.Path.Combine(absDir, storedName);
-        await using (var fs = System.IO.File.Create(absPath))
+        string storedName; string absPath; string relUrl;
+        if (_images != null && _images.IsProcessableImage(file.ContentType ?? ""))
         {
-            await file.CopyToAsync(fs);
+            await using var s = file.OpenReadStream();
+            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType ?? "", file.FileName ?? "slip", absDir, "/" + relDir, ImageProfile.Slip);
+            absPath = processed.AbsolutePath;
+            storedName = System.IO.Path.GetFileName(absPath);
+            relUrl = processed.RelativeUrl;
         }
-        var relUrl = "/" + relDir + "/" + storedName;
+        else
+        {
+            var ext = System.IO.Path.GetExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
+            storedName = $"{Guid.NewGuid():N}{ext}";
+            absPath = System.IO.Path.Combine(absDir, storedName);
+            await using (var fs = System.IO.File.Create(absPath))
+            {
+                await file.CopyToAsync(fs);
+            }
+            relUrl = "/" + relDir + "/" + storedName;
+        }
 
         // FileAttachment record — gives the file an audit + ownership row
         var fa = new FileAttachment

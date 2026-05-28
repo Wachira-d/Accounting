@@ -86,6 +86,19 @@
             <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ</label><input type="number" class="form-input" id="fMinStock" value="0"></div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+
+          <!-- Image gallery: only enabled after save (need productId).
+               First image becomes the storefront thumbnail. -->
+          <div class="form-group" id="fImagesGroup" style="display:none">
+            <label class="form-label">รูปสินค้า <span style="font-size:11px;color:#64748b;font-weight:400">(รูปแรก = รูปหน้าปก · ระบบบีบอัดอัตโนมัติ)</span></label>
+            <div id="fImagesGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+            <label class="btn btn-ghost btn-sm" for="fImageInput" style="cursor:pointer">📷 เพิ่มรูป</label>
+            <input type="file" id="fImageInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display:none" onchange="Page.uploadImage(this.files[0])">
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">รองรับ JPG/PNG/WebP/GIF · บีบอัดเป็น JPEG ≤1200px อัตโนมัติ</div>
+          </div>
+          <div class="form-group" id="fImagesHint" style="font-size:12px;color:#64748b">
+            💡 หลังบันทึกข้อมูลสินค้าครั้งแรก จะมีช่องให้อัพโหลดรูปสินค้า
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -256,7 +269,7 @@
           items.forEach(p => Page._cache[p.id] = p);
           tbody.innerHTML = items.map(p => `<tr>
             <td class="font-medium">${p.code}</td>
-            <td>${p.name}</td>
+            <td>${p.featuredImageUrl ? `<img src="${Layout.esc(p.featuredImageUrl)}" alt="" style="width:32px;height:32px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:6px;border:1px solid #e2e8f0" loading="lazy">` : ''}${p.name}</td>
             <td>${typeMap[p.productType]||p.productType}</td>
             <td>${p.category || '-'}</td>
             <td>${p.unit}</td>
@@ -280,6 +293,7 @@
         document.getElementById('fUnit').value='ชิ้น';document.getElementById('fSellPrice').value='';document.getElementById('fCostPrice').value='0';
         document.getElementById('fType').value='Product';document.getElementById('fVat').value='7';document.getElementById('fVatIncl').checked=false;
         document.getElementById('fTrackStock').checked=true;document.getElementById('fMinStock').value='0';document.getElementById('fCode').disabled=false;
+        this._toggleImageSection(null);
         Layout.openModal('formModal');
       },
       openEdit(id) {
@@ -294,15 +308,87 @@
         document.getElementById('fVat').value=p.vatRate==0?'0':'7';document.getElementById('fVatIncl').checked=p.isVatIncluded;
         document.getElementById('fTrackStock').checked=p.trackStock;document.getElementById('fMinStock').value=p.minimumStock;
         document.getElementById('fDesc').value=p.description||'';
+        this._toggleImageSection(p);
         Layout.openModal('formModal');
+      },
+      _toggleImageSection(p) {
+        const grp = document.getElementById('fImagesGroup');
+        const hint = document.getElementById('fImagesHint');
+        if (p && p.id) {
+          grp.style.display = '';
+          hint.style.display = 'none';
+          this._renderImages(p.imageUrls || []);
+        } else {
+          grp.style.display = 'none';
+          hint.style.display = '';
+        }
+      },
+      _renderImages(urls) {
+        const grid = document.getElementById('fImagesGrid');
+        if (!urls || urls.length === 0) {
+          grid.innerHTML = '<div style="font-size:12px;color:#94a3b8;padding:8px">ยังไม่มีรูป</div>';
+          return;
+        }
+        grid.innerHTML = urls.map((u, i) => `
+          <div style="position:relative;width:96px;height:96px;border-radius:8px;overflow:hidden;border:${i===0?'2px solid #16a34a':'1px solid #e2e8f0'};background:#f8fafc">
+            <img src="${Layout.esc(u)}" style="width:100%;height:100%;object-fit:cover" loading="lazy">
+            ${i===0?'<div style="position:absolute;bottom:0;left:0;right:0;background:#16a34a;color:#fff;font-size:10px;text-align:center;padding:2px">หน้าปก</div>':''}
+            <button type="button" onclick="Page.deleteImage('${encodeURIComponent(u)}')" title="ลบ" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.9);color:#fff;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:14px;line-height:1">&times;</button>
+          </div>`).join('');
+      },
+      async uploadImage(file) {
+        if (!file) return;
+        const id = document.getElementById('editId').value;
+        if (!id) { Layout.toast('กรุณาบันทึกสินค้าก่อนเพิ่มรูป','warning'); return; }
+        const api = Layout.api(); if (!api) return;
+        const fd = new FormData(); fd.append('file', file);
+        const inp = document.getElementById('fImageInput');
+        try {
+          const res = await api.uploadProductImage(id, fd);
+          this._renderImages(res.data.imageUrls || []);
+          if (this._cache[id]) this._cache[id] = res.data;
+          await this.load();
+          Layout.toast('อัพโหลดรูปสำเร็จ');
+        } catch(e) { Layout.toast(e.message,'error'); }
+        finally { inp.value=''; }
+      },
+      async deleteImage(encUrl) {
+        const id = document.getElementById('editId').value;
+        if (!id) return;
+        if (!confirm('ลบรูปนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          // The encUrl arriving from the inline onclick is already encoded once
+          // by `encodeURIComponent`; decode here so api.deleteProductImage can
+          // re-encode without double-escaping.
+          const res = await api.deleteProductImage(id, decodeURIComponent(encUrl));
+          this._renderImages(res.data.imageUrls || []);
+          if (this._cache[id]) this._cache[id] = res.data;
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
       },
       async save() {
         const api=Layout.api(); if(!api)return;
         const id=document.getElementById('editId').value;
         try {
-          if(id) { await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null}); }
-          else { await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null}); }
-          Layout.closeModal('formModal');Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ');await this.load();
+          let saved;
+          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null}); }
+          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null}); }
+          Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ — ตอนนี้อัพโหลดรูปได้แล้ว');
+          await this.load();
+          // Keep modal open so the user can upload images right after creating —
+          // first save creates the product (gets an id), then the image section
+          // unlocks. Switch the modal into edit mode for the new row.
+          const p = saved?.data;
+          if (p && p.id) {
+            document.getElementById('editId').value = p.id;
+            document.getElementById('fCode').disabled = true;
+            document.getElementById('formTitle').textContent = 'แก้ไขสินค้า';
+            this._cache[p.id] = p;
+            this._toggleImageSection(p);
+          } else {
+            Layout.closeModal('formModal');
+          }
         } catch(e) { Layout.toast(e.message,'error'); }
       },
 

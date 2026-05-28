@@ -78,6 +78,12 @@ public class SiteProductResponse
     public string? Tags { get; set; }
     public string? Slug { get; set; }
     public string? ImageUrlsJson { get; set; }
+    /// <summary>Master Product gallery JSON — used as fallback when
+    /// SiteProduct.ImageUrlsJson hasn't been overridden. Not exposed
+    /// to the storefront client; consumed server-side to compute
+    /// FeaturedImageUrl + merge into ImageUrlsJson before serialization.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ProductImageUrlsJson { get; set; }
     /// <summary>First URL extracted from ImageUrlsJson — what the
     /// product card on the storefront shows as the main thumbnail.
     /// Computed server-side so the client doesn't have to parse

@@ -13,11 +13,15 @@ public class SettingsService : ISettingsService
 {
     private readonly AccountingDbContext _db;
     private readonly ISecretProtector _secrets;
+    private readonly IImageProcessingService _images;
+    private readonly IWebHostEnvironment _env;
 
-    public SettingsService(AccountingDbContext db, ISecretProtector secrets)
+    public SettingsService(AccountingDbContext db, ISecretProtector secrets, IImageProcessingService images, IWebHostEnvironment env)
     {
         _db = db;
         _secrets = secrets;
+        _images = images;
+        _env = env;
     }
 
     public async Task<CompanySettingsResponse> GetSettingsAsync(Guid companyId)
@@ -93,24 +97,16 @@ public class SettingsService : ISettingsService
         if (!allowedTypes.Contains(contentType.ToLower()))
             throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น");
 
-        // Create upload directory
-        var uploadDir = Path.Combine("uploads", "logos", companyId.ToString());
-        Directory.CreateDirectory(uploadDir);
-
         // Delete old logo if exists
         if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
             File.Delete(settings.LogoPath);
 
-        // Save new logo
-        var ext = Path.GetExtension(fileName);
-        var savedFileName = $"logo_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
-        var filePath = Path.Combine(uploadDir, savedFileName);
+        var dir = Path.Combine(_env.WebRootPath, "uploads", "logos", companyId.ToString());
+        var web = $"/uploads/logos/{companyId}";
+        var processed = await _images.ProcessAndSaveAsync(fileStream, contentType, fileName, dir, web, ImageProfile.Logo);
 
-        using (var fs = new FileStream(filePath, FileMode.Create))
-            await fileStream.CopyToAsync(fs);
-
-        settings.LogoPath = filePath;
-        settings.LogoUrl = $"/uploads/logos/{companyId}/{savedFileName}";
+        settings.LogoPath = processed.AbsolutePath;
+        settings.LogoUrl = processed.RelativeUrl;
         await _db.SaveChangesAsync();
 
         return MapToResponse(companyId, settings);

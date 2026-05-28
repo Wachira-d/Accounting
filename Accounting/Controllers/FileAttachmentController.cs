@@ -13,10 +13,12 @@ namespace Accounting.Controllers;
 public class FileAttachmentController : ControllerBase
 {
     private readonly IFileAttachmentService _attachmentService;
+    private readonly IImageProcessingService _images;
 
-    public FileAttachmentController(IFileAttachmentService attachmentService)
+    public FileAttachmentController(IFileAttachmentService attachmentService, IImageProcessingService images)
     {
         _attachmentService = attachmentService;
+        _images = images;
     }
 
     [HttpPost("{entityType}/{entityId:guid}")]
@@ -32,19 +34,35 @@ public class FileAttachmentController : ControllerBase
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "ประเภทไม่ถูกต้อง"));
 
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        var shortGuid = Guid.NewGuid().ToString("N")[..8];
-        var fileName = $"{entityType}_{entityId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{Path.GetExtension(file.FileName)}";
-        var storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
-        var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
+        var storageDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "attachments", companyId.ToString());
+        Directory.CreateDirectory(storageDir);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        using (var stream = new FileStream(fullPath, FileMode.Create))
+        string fileName; string storagePath; long finalSize;
+        if (_images.IsProcessableImage(file.ContentType))
         {
-            await file.CopyToAsync(stream);
+            // Choose profile by entity type — slip-like things stay readable, the rest get the generic cap.
+            var profile = entityType is "Payment" or "Document" ? ImageProfile.Slip : ImageProfile.Generic;
+            await using var s = file.OpenReadStream();
+            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, storageDir, $"/uploads/attachments/{companyId}", profile);
+            fileName = Path.GetFileName(processed.AbsolutePath);
+            storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
+            finalSize = processed.FinalBytes;
+        }
+        else
+        {
+            var shortGuid = Guid.NewGuid().ToString("N")[..8];
+            fileName = $"{entityType}_{entityId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{Path.GetExtension(file.FileName)}";
+            storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
+            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
+            using (var stream = new FileStream(fullPath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream);
+            }
+            finalSize = file.Length;
         }
 
         var result = await _attachmentService.UploadAsync(companyId, entityType, entityId,
-            fileName, file.FileName, file.ContentType, file.Length, storagePath, userId);
+            fileName, file.FileName, file.ContentType, finalSize, storagePath, userId);
 
         return StatusCode(201, new ApiResponse<FileAttachmentResponse>(true, result, "อัพโหลดไฟล์สำเร็จ"));
     }

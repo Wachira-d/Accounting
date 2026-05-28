@@ -107,6 +107,7 @@ builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules
 builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
