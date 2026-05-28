@@ -833,6 +833,9 @@ const API = {
       removePosOrderItem: (orderId, itemId) => API.del(`${base}/pos/orders/${orderId}/items/${itemId}`),
       updatePosOrderItemQty: (orderId, itemId, qty) => API.put(`${base}/pos/orders/${orderId}/items/${itemId}/qty`, { quantity: qty }),
       setPosItemDiscount: (orderId, itemId, body) => API.put(`${base}/pos/orders/${orderId}/items/${itemId}/discount`, body),
+      setPosTip: (orderId, tipAmount) => API.put(`${base}/pos/orders/${orderId}/tip`, { tipAmount }),
+      applyPosCoupon: (orderId, code) => API.post(`${base}/pos/orders/${orderId}/coupon`, { code }),
+      splitPosOrder: (orderId, checks) => API.post(`${base}/pos/orders/${orderId}/split`, { checks }),
       updatePosItemStatus: (orderId, itemId, d) => API.post(`${base}/pos/orders/${orderId}/items/${itemId}/status`, d),
       // POS - Payment
       addPosPayment: (d) => API.post(`${base}/pos/payments`, d),

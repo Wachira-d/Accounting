@@ -2065,6 +2065,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "ImageUrlsJson" text NULL;
             """,
 
+            // POS: tip + coupon columns
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "TipAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponCode" varchar(50) NULL;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponDiscountAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+
             // Sensitivity classification: 0=None / 1=Payroll / 2=ExecutivePay / 3=HrPersonal / 9=Confidential.
             // Documents (payroll vouchers) and JEs (auto-generated payroll JEs) stamp
             // this so SensitivityService can redact for users lacking the matching role.

@@ -679,6 +679,196 @@ public partial class PosService
         return await GetOrderAsync(companyId, orderId);
     }
 
+    /// <summary>Set the tip amount on an open order. Re-runs RecalculateOrder so
+    /// NetAmount (what the customer hands over) reflects tip on top of bill.</summary>
+    public async Task<OrderResponse> SetTipAsync(Guid companyId, Guid orderId, decimal tipAmount)
+    {
+        if (tipAmount < 0) throw new ArgumentException("ทิปต้องไม่ติดลบ");
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — เพิ่ม/แก้ทิปไม่ได้");
+        order.TipAmount = Math.Round(tipAmount, 2, MidpointRounding.AwayFromZero);
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Apply a coupon code. Resolves against active CmsCoupons first
+    /// (cross-channel — same codes the storefront accepts work in POS too), and
+    /// records the absolute discount amount as CouponDiscountAmount. Empty code
+    /// clears the coupon.</summary>
+    public async Task<OrderResponse> ApplyCouponAsync(Guid companyId, Guid orderId, string? code)
+    {
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — เปลี่ยนคูปองไม่ได้");
+
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        var subtotal = order.Items.Where(i => !i.IsDeleted).Sum(i => i.SubTotal);
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            order.CouponCode = null;
+            order.CouponDiscountAmount = 0;
+            RecalculateOrder(order, vatRate);
+            await _db.SaveChangesAsync();
+            return await GetOrderAsync(companyId, orderId);
+        }
+
+        var trimmedCode = code.Trim().ToUpperInvariant();
+        var now = DateTime.UtcNow;
+        // SiteCoupon is the canonical coupon table — cross-channel by design,
+        // shared between storefront and POS. Filter by company so cashier can't
+        // use another company's code accidentally.
+        var coupon = await _db.Set<SiteCoupon>().AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId
+                && c.Code.ToUpper() == trimmedCode
+                && c.IsActive
+                && !c.IsDeleted
+                && (c.StartsAt == null || c.StartsAt <= now)
+                && (c.ExpiresAt == null || c.ExpiresAt >= now)
+                && (c.MaxUses == null || c.CurrentUses < c.MaxUses));
+        if (coupon == null)
+            throw new InvalidOperationException($"คูปอง \"{trimmedCode}\" ไม่ถูกต้อง / หมดอายุ / หมดสิทธิ์ใช้");
+
+        if (coupon.MinOrderAmount.HasValue && subtotal < coupon.MinOrderAmount.Value)
+            throw new InvalidOperationException($"ยอดขั้นต่ำสำหรับคูปองนี้ {coupon.MinOrderAmount:N2} บาท");
+
+        decimal discount = coupon.DiscountType switch
+        {
+            CouponDiscountType.Percentage  => Math.Round(subtotal * coupon.DiscountValue / 100m, 2, MidpointRounding.AwayFromZero),
+            CouponDiscountType.FixedAmount => coupon.DiscountValue,
+            CouponDiscountType.FreeShipping => 0, // POS = walk-in; free shipping doesn't apply
+            _ => 0
+        };
+        if (coupon.MaxDiscountAmount.HasValue && discount > coupon.MaxDiscountAmount.Value)
+            discount = coupon.MaxDiscountAmount.Value;
+        if (discount > subtotal) discount = subtotal;
+
+        order.CouponCode = trimmedCode;
+        order.CouponDiscountAmount = discount;
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Split an open order into N child orders. Each entry in
+    /// <paramref name="itemGroups"/> is the list of item-ids that belongs to
+    /// that check. Items not included are kept on the parent. We create child
+    /// orders with copies of the original items (qty / price / discount intact)
+    /// then void the items left behind on the parent.
+    /// Returns parent + children in one list so the cashier can decide which to
+    /// keep open. Payments cannot have been recorded on the source order.</summary>
+    public async Task<List<OrderResponse>> SplitOrderAsync(Guid companyId, Guid orderId, List<List<Guid>> itemGroups, string userId)
+    {
+        if (itemGroups == null || itemGroups.Count == 0)
+            throw new ArgumentException("ต้องระบุการแบ่งอย่างน้อย 1 บิล");
+        var parent = await _db.PosOrders
+            .Include(o => o.Items).ThenInclude(i => i.Modifiers)
+            .Include(o => o.Payments)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (parent.Status == PosOrderStatus.Completed || parent.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แยกบิลไม่ได้");
+        if (parent.Payments.Any(p => !p.IsDeleted))
+            throw new InvalidOperationException("มีการชำระเงินแล้ว — ยกเลิกการชำระก่อนแยกบิล");
+
+        // Validate: every requested item id belongs to the parent + no item assigned twice.
+        var validIds = parent.Items.Where(i => !i.IsDeleted).Select(i => i.Id).ToHashSet();
+        var seen = new HashSet<Guid>();
+        foreach (var group in itemGroups)
+        {
+            foreach (var id in group)
+            {
+                if (!validIds.Contains(id)) throw new ArgumentException($"รายการ {id} ไม่อยู่ในออเดอร์ต้นทาง");
+                if (!seen.Add(id)) throw new ArgumentException($"รายการ {id} ถูกระบุซ้ำในการแยกบิล");
+            }
+        }
+
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posPrefix = $"POS-{posYm}-";
+
+        // Compute next number once, then increment per child to avoid round trips.
+        var maxPos = await _db.PosOrders
+            .IgnoreQueryFilters()
+            .Where(o => o.CompanyId == companyId && o.OrderNumber.StartsWith(posPrefix))
+            .Select(o => o.OrderNumber)
+            .MaxAsync() as string;
+        var seq = 1;
+        if (maxPos != null && int.TryParse(maxPos.Substring(posPrefix.Length), out var parsed)) seq = parsed + 1;
+
+        var children = new List<PosOrder>();
+        var splitIdx = 1;
+        foreach (var group in itemGroups)
+        {
+            if (group.Count == 0) { splitIdx++; continue; }
+            var child = new PosOrder
+            {
+                CompanyId = companyId,
+                SessionId = parent.SessionId,
+                OrderNumber = $"{posPrefix}{seq:D4}",
+                OrderType = parent.OrderType,
+                CustomerName = parent.CustomerName,
+                TableNumber = parent.TableNumber == null ? null : $"{parent.TableNumber}/{splitIdx}",
+                Notes = $"แยกจาก {parent.OrderNumber} (ส่วนที่ {splitIdx})",
+                Reference = parent.OrderNumber,
+                Status = PosOrderStatus.Open,
+                CreatedBy = userId
+            };
+            seq++; splitIdx++;
+            foreach (var srcItemId in group)
+            {
+                var srcItem = parent.Items.First(i => i.Id == srcItemId);
+                var copy = new PosOrderItem
+                {
+                    CompanyId = companyId,
+                    ProductId = srcItem.ProductId,
+                    ServicePackageId = srcItem.ServicePackageId,
+                    ItemName = srcItem.ItemName,
+                    ItemCode = srcItem.ItemCode,
+                    Unit = srcItem.Unit,
+                    Quantity = srcItem.Quantity,
+                    UnitPrice = srcItem.UnitPrice,
+                    DiscountAmount = srcItem.DiscountAmount,
+                    DiscountPercent = srcItem.DiscountPercent,
+                    SubTotal = srcItem.SubTotal,
+                    TotalAmount = srcItem.TotalAmount,
+                    VatAmount = 0,
+                    LineOrder = srcItem.LineOrder,
+                    Status = srcItem.Status,
+                    Notes = srcItem.Notes,
+                };
+                child.Items.Add(copy);
+                // Mark the source item as moved (delete-on-parent).
+                srcItem.IsDeleted = true;
+            }
+            RecalculateOrder(child, vatRate);
+            _db.PosOrders.Add(child);
+            children.Add(child);
+        }
+
+        // Recompute parent — items left after split (if any) stay there.
+        RecalculateOrder(parent, vatRate);
+        // If everything was moved out, void the parent so reports don't see a ghost row.
+        if (!parent.Items.Any(i => !i.IsDeleted))
+            parent.Status = PosOrderStatus.Voided;
+
+        await _db.SaveChangesAsync();
+
+        var result = new List<OrderResponse>();
+        if (parent.Status != PosOrderStatus.Voided)
+            result.Add(await GetOrderAsync(companyId, parent.Id));
+        foreach (var c in children)
+            result.Add(await GetOrderAsync(companyId, c.Id));
+        return result;
+    }
+
     public async Task<OrderResponse> UpdateItemStatusAsync(Guid companyId, Guid orderId, Guid itemId, UpdateItemStatusRequest request)
     {
         var item = await _db.PosOrderItems.FirstOrDefaultAsync(i => i.Id == itemId && i.OrderId == orderId)
@@ -820,6 +1010,26 @@ public partial class PosService
         // Credit: VAT Payable (if any)
         if (order.VatAmount > 0 && vatAccount != null)
             lines.Add(new(vatAccount.Id, 0, order.VatAmount, $"ภาษีขาย POS #{order.OrderNumber}"));
+
+        // Credit: เงินรับฝาก-ทิปพนักงาน (Liability) — tip is NOT revenue, it's
+        // held in trust for the staff and paid out via payroll. Cr 2160 by
+        // default; fall back to any 21xx liability with "ทิป" in name.
+        if (order.TipAmount > 0)
+        {
+            var tipAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "2160")
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("216") && a.Level >= 4)
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("21") && a.AccountName.Contains("ทิป") && a.Level >= 4);
+            if (tipAccount != null)
+                lines.Add(new(tipAccount.Id, 0, order.TipAmount, $"ทิปลูกค้า POS #{order.OrderNumber}"));
+            // If no tip-account exists, fold into Sales so JE balances — better
+            // than dropping the entry. The log warning lets owner correct later.
+            else
+            {
+                _logger.LogWarning("No tip-liability account (2160) for company {Cid}; tip {Tip:N2} posted to sales for order {Order}.",
+                    companyId, order.TipAmount, order.OrderNumber);
+                lines.Add(new(salesAccount.Id, 0, order.TipAmount, $"ทิป (ไม่มีบัญชี 2160) POS #{order.OrderNumber}"));
+            }
+        }
 
         // COGS: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — record cost of goods sold so
         // the P&L gross profit is correct (was previously omitted).
@@ -1026,15 +1236,21 @@ public partial class PosService
     {
         var activeItems = order.Items.Where(i => !i.IsDeleted).ToList();
         order.SubTotal = activeItems.Sum(i => i.SubTotal);
-        order.DiscountAmount = order.SubTotal * order.DiscountPercent / 100;
+        // DiscountAmount = % discount + coupon discount. CouponDiscountAmount is
+        // tracked separately for reporting but it stacks on the same line.
+        var pctDiscount = order.SubTotal * order.DiscountPercent / 100;
+        order.DiscountAmount = pctDiscount + order.CouponDiscountAmount;
         var afterDiscount = order.SubTotal - order.DiscountAmount;
+        if (afterDiscount < 0) afterDiscount = 0; // coupon can't drive total negative
         order.ServiceChargeAmount = Math.Round(afterDiscount * order.ServiceChargePercent / 100, 2, MidpointRounding.AwayFromZero);
         order.TotalAmount = afterDiscount + order.ServiceChargeAmount;
         order.VatAmount = vatRate > 0
             ? Math.Round(order.TotalAmount * vatRate / (100 + vatRate), 2, MidpointRounding.AwayFromZero)
             : 0;
         order.RoundingAmount = Math.Round(order.TotalAmount) - order.TotalAmount;
-        order.NetAmount = order.TotalAmount + order.RoundingAmount;
+        // Tip is added AFTER rounding so the lookup amount stays clean — what the
+        // customer hands over is NetAmount + TipAmount.
+        order.NetAmount = order.TotalAmount + order.RoundingAmount + order.TipAmount;
     }
 
     private static OrderResponse MapOrder(PosOrder o) => new(
@@ -1048,7 +1264,10 @@ public partial class PosService
         o.Items.Where(i => !i.IsDeleted).Select(MapOrderItem).ToList(),
         o.Payments.Select(MapPayment).ToList(),
         DocumentId: o.DocumentId,
-        DocumentNumber: null);
+        DocumentNumber: null,
+        TipAmount: o.TipAmount,
+        CouponCode: o.CouponCode,
+        CouponDiscountAmount: o.CouponDiscountAmount);
 
     private static OrderItemResponse MapOrderItem(PosOrderItem i) => new(
         i.Id, i.ProductId, i.ServicePackageId, i.ItemName, i.ItemCode,

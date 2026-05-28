@@ -193,6 +193,7 @@ public class DocumentService : IDocumentService
                 ContactId = request.ContactId,
                 Reference = request.Reference,
                 Notes = request.Notes,
+                Sensitivity = request.Sensitivity,
                 ProjectId = request.ProjectId,
                 BankAccountId = request.BankAccountId,
                 PaymentAccountId = request.PaymentAccountId,

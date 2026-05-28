@@ -112,7 +112,10 @@ public record OrderResponse(
     List<OrderItemResponse> Items,
     List<PaymentResponse> Payments,
     Guid? DocumentId = null,
-    string? DocumentNumber = null);
+    string? DocumentNumber = null,
+    decimal TipAmount = 0,
+    string? CouponCode = null,
+    decimal CouponDiscountAmount = 0);
 
 // ===== Offline sale sync — atomic create+pay+complete, idempotent =====
 public record OfflineOrderRequest(

@@ -138,6 +138,27 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> SetItemDiscount(Guid companyId, Guid orderId, Guid itemId, [FromBody] SetItemDiscountRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetItemDiscountAsync(companyId, orderId, itemId, request.DiscountAmount, request.DiscountPercent)));
 
+    public record SetTipRequest(decimal TipAmount);
+    [HttpPut("orders/{orderId:guid}/tip")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SetTip(Guid companyId, Guid orderId, [FromBody] SetTipRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetTipAsync(companyId, orderId, request.TipAmount)));
+
+    public record ApplyCouponRequest2(string? Code);
+    [HttpPost("orders/{orderId:guid}/coupon")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> ApplyCoupon(Guid companyId, Guid orderId, [FromBody] ApplyCouponRequest2 request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.ApplyCouponAsync(companyId, orderId, request.Code)));
+
+    public record SplitOrderRequest(List<List<Guid>> Checks);
+    /// <summary>Split an order into multiple checks. Caller sends a list of
+    /// item-id groups — each group becomes a new child order. The original
+    /// order is voided. Returns all child orders in order.</summary>
+    [HttpPost("orders/{orderId:guid}/split")]
+    public async Task<ActionResult<ApiResponse<List<OrderResponse>>>> SplitOrder(Guid companyId, Guid orderId, [FromBody] SplitOrderRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return Ok(new ApiResponse<List<OrderResponse>>(true, await _pos.SplitOrderAsync(companyId, orderId, request.Checks, userId)));
+    }
+
     // ===== Payment =====
     [HttpPost("payments")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddPayment(Guid companyId, [FromBody] CreatePaymentRequest request)

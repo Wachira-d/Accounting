@@ -32,7 +32,12 @@ public record CreateDocumentRequest(
     // service auto-fetches the BoT mid-rate at DocumentDate if ExchangeRate
     // is omitted; callers can override with a contracted rate.
     string Currency = "THB",
-    decimal? ExchangeRate = null);
+    decimal? ExchangeRate = null,
+    // ===== Sensitivity classification (optional) =====
+    // Internal callers (e.g. PayrollService) pass Sensitivity to gate the
+    // resulting document behind the matching role. External clients leave it
+    // None (the default) and the document is publicly visible within the company.
+    SensitivityKind Sensitivity = SensitivityKind.None);
 
 public record DocumentLineRequest(
     string Description,

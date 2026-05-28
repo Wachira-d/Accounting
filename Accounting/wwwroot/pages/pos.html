@@ -183,10 +183,16 @@
         </div>
         <div class="order-summary" id="orderSummary" style="display:none;">
           <div class="sum-row"><span data-i18n="common.total">รวม</span><span id="sumSubtotal">0.00</span></div>
-          <div class="sum-row"><span>ส่วนลด</span><span id="sumDiscount">0.00</span></div>
+          <div class="sum-row" id="sumDiscountRow" style="display:none"><span>ส่วนลด <span id="sumCouponBadge" style="display:none;font-size:10px;background:#fef3c7;color:#92400e;border-radius:3px;padding:1px 6px;margin-left:4px"></span></span><span id="sumDiscount">0.00</span></div>
           <div class="sum-row"><span>Service Charge</span><span id="sumSc">0.00</span></div>
           <div class="sum-row"><span>VAT 7%</span><span id="sumVat">0.00</span></div>
+          <div class="sum-row" id="sumTipRow" style="display:none"><span>💝 ทิปพนักงาน</span><span id="sumTip">0.00</span></div>
           <div class="sum-row sum-total"><span>ยอดสุทธิ</span><span id="sumNet">0.00</span></div>
+          <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+            <button type="button" onclick="Page.openTip()" style="flex:1;background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:6px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">💝 ทิป</button>
+            <button type="button" onclick="Page.openCoupon()" style="flex:1;background:#fef3c7;border:1px solid #fbbf24;color:#92400e;padding:6px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">🎟️ คูปอง</button>
+            <button type="button" onclick="Page.openSplit()" style="flex:1;background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;padding:6px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">✂️ แยกบิล</button>
+          </div>
         </div>
         <div class="order-actions">
           <div id="changeDisplay" class="change-display" style="display:none;">
@@ -259,6 +265,21 @@
         <div class="modal-footer" style="gap:8px">
           <button class="btn btn-secondary" onclick="Layout.closeModal('payPadModal')">ยกเลิก</button>
           <button class="btn btn-pay" style="font-size:16px;padding:12px 28px" onclick="Page.payPadConfirm()">✓ ยืนยันการชำระ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Split-bill modal -->
+    <div class="modal-overlay" id="splitModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title">✂️ แยกบิล</h3>
+          <button class="modal-close" onclick="Layout.closeModal('splitModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="splitModalBody" style="padding:14px"></div>
+        <div class="modal-footer" style="gap:8px">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('splitModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.confirmSplit()">✓ ยืนยันแยกบิล</button>
         </div>
       </div>
     </div>
@@ -1541,11 +1562,134 @@
 
       updateSummaryFromOrder(order) {
         document.getElementById('sumSubtotal').textContent = Layout.money(order.subTotal);
-        document.getElementById('sumDiscount').textContent = Layout.money(order.discountAmount);
+        const discRow = document.getElementById('sumDiscountRow');
+        if (order.discountAmount > 0) {
+          discRow.style.display = '';
+          document.getElementById('sumDiscount').textContent = Layout.money(order.discountAmount);
+          const badge = document.getElementById('sumCouponBadge');
+          if (order.couponCode) { badge.style.display=''; badge.textContent='🎟 '+order.couponCode; }
+          else badge.style.display='none';
+        } else discRow.style.display='none';
         document.getElementById('sumSc').textContent = Layout.money(order.serviceChargeAmount);
         document.getElementById('sumVat').textContent = Layout.money(order.vatAmount);
+        const tipRow = document.getElementById('sumTipRow');
+        if (order.tipAmount > 0) {
+          tipRow.style.display='';
+          document.getElementById('sumTip').textContent = Layout.money(order.tipAmount);
+        } else tipRow.style.display='none';
         document.getElementById('sumNet').textContent = Layout.money(order.netAmount);
         this.paidTotal = (order.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
+      },
+
+      // ===== Tip =====
+      async openTip() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        const cur = this.currentOrder?.tipAmount || 0;
+        const subtotal = this.currentOrder?.subTotal || 0;
+        const input = prompt(`💝 ทิปพนักงาน\nยอดบิล (ก่อนทิป): ${subtotal.toFixed(2)} บาท\n\nพิมพ์จำนวนทิป (บาท), "10%"/"15%"/"20%" หรือเว้นว่างเพื่อยกเลิก`, cur > 0 ? String(cur) : '');
+        if (input === null) return;
+        const t = input.trim();
+        let tip = 0;
+        if (t === '') tip = 0;
+        else if (t.endsWith('%')) {
+          const pct = parseFloat(t.slice(0,-1));
+          if (isNaN(pct) || pct < 0 || pct > 100) { Layout.toast('เปอร์เซ็นต์ 0-100','warning'); return; }
+          tip = Math.round(subtotal * pct) / 100 * 1; tip = +(subtotal * pct / 100).toFixed(2);
+        } else {
+          tip = parseFloat(t);
+          if (isNaN(tip) || tip < 0) { Layout.toast('จำนวนไม่ถูกต้อง','warning'); return; }
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.setPosTip(this.currentOrderId, tip);
+          this._syncCartFromServer(res.data);
+          Layout.toast(tip > 0 ? `บันทึกทิป ${tip.toFixed(2)} บาท` : 'ลบทิปแล้ว');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Coupon =====
+      async openCoupon() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        const cur = this.currentOrder?.couponCode || '';
+        const input = prompt('🎟️ ใส่โค้ดคูปอง (เว้นว่างเพื่อลบคูปอง)', cur);
+        if (input === null) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.applyPosCoupon(this.currentOrderId, input.trim() || null);
+          this._syncCartFromServer(res.data);
+          if (input.trim()) Layout.toast(`ใช้คูปอง "${input.trim()}" — ลด ${res.data.couponDiscountAmount} บาท`);
+          else Layout.toast('ลบคูปองแล้ว');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Split bill =====
+      async openSplit() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        if (!this.cart.length) { Layout.toast('ไม่มีรายการให้แยก','warning'); return; }
+        if ((this.currentOrder?.payments || []).length > 0) { Layout.toast('มีการชำระเงินแล้ว — ยกเลิกการชำระก่อนแยกบิล','warning'); return; }
+        // Initial state: every item belongs to check #1.
+        this._splitChecks = this.cart.map(_ => 1);
+        this._splitCount = 2;
+        this._renderSplitModal();
+        Layout.openModal('splitModal');
+      },
+      _renderSplitModal() {
+        const body = document.getElementById('splitModalBody');
+        const checkCount = this._splitCount;
+        const totalsByCheck = Array(checkCount).fill(0);
+        const html = this.cart.map((c, i) => {
+          const lineTotal = (c.unitPrice * c.quantity) - (c.discountAmount || 0);
+          totalsByCheck[this._splitChecks[i] - 1] += lineTotal;
+          return `<div style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #f1f5f9">
+            <div style="flex:1">${Layout.esc(c.name)} <span style="color:#94a3b8">×${c.quantity}</span></div>
+            <div style="color:#0f172a;font-weight:600">${Layout.money(lineTotal)}</div>
+            <select onchange="Page._splitChecks[${i}]=parseInt(this.value);Page._renderSplitModal()" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px">
+              ${Array.from({length: checkCount}, (_, k) => `<option value="${k+1}" ${this._splitChecks[i]===k+1?'selected':''}>บิล ${k+1}</option>`).join('')}
+            </select>
+          </div>`;
+        }).join('');
+        const totals = totalsByCheck.map((t,k) =>
+          `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;text-align:center;flex:1">
+            <div style="font-size:11px;color:#64748b">บิล ${k+1}</div>
+            <div style="font-weight:700;font-size:16px;color:#0f172a">${Layout.money(t)}</div>
+          </div>`).join('');
+        body.innerHTML = `
+          <div style="display:flex;gap:8px;margin-bottom:12px">${totals}</div>
+          <div style="display:flex;gap:6px;margin-bottom:12px">
+            <button onclick="Page._splitCount=Math.max(2,Page._splitCount-1);Page._renderSplitModal()" style="padding:6px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer">− บิล</button>
+            <button onclick="Page._splitCount=Math.min(8,Page._splitCount+1);Page._renderSplitModal()" style="padding:6px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer">+ บิล</button>
+            <button onclick="Page._splitEvenly()" style="padding:6px 12px;background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;border-radius:6px;cursor:pointer;font-weight:600">⚖️ แบ่งเฉลี่ย</button>
+          </div>
+          <div style="max-height:300px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px">${html}</div>
+          <div style="margin-top:10px;font-size:11px;color:#64748b">💡 แต่ละบิลต้องมีอย่างน้อย 1 รายการ · ระบบจะสร้างบิลใหม่ + ยกเลิกบิลต้นทาง</div>`;
+      },
+      _splitEvenly() {
+        // Distribute items round-robin so each check has roughly equal item count.
+        this._splitChecks = this.cart.map((_, i) => (i % this._splitCount) + 1);
+        this._renderSplitModal();
+      },
+      async confirmSplit() {
+        const groups = Array.from({length: this._splitCount}, () => []);
+        this.cart.forEach((c, i) => {
+          if (c.serverItemId) groups[this._splitChecks[i] - 1].push(c.serverItemId);
+        });
+        if (groups.some(g => g.length === 0)) { Layout.toast('แต่ละบิลต้องมีอย่างน้อย 1 รายการ','warning'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.splitPosOrder(this.currentOrderId, groups);
+          Layout.closeModal('splitModal');
+          Layout.toast(`แยกบิลสำเร็จ — ${res.data.length} บิลใหม่ พักไว้ในรายการบิลพัก`);
+          // After split, every child is Open. Hold them all + reset the screen
+          // so the cashier sees a fresh panel and can recall whichever bill to charge.
+          for (const o of res.data) {
+            await api.updatePosOrderStatus(o.id, { status: 'OnHold' });
+          }
+          this.resetOrder();
+          this._refreshHeldCount();
+        } catch(e) { Layout.toast(e.message,'error'); }
       },
 
       // ===== Pay-pad calculator =====
