@@ -130,6 +130,15 @@ public class OcrScanResult : TenantEntity
     public decimal? ExtractedTotalAmount { get; set; }
     public string? ExtractedItemsJson { get; set; }       // JSON of line items
 
+    // ─── Buyer side of the document (the customer on a sales doc, or
+    // "us" on a supplier doc). Persisted so the RD-compliance warning
+    // "ใบกำกับ ≥ ฿1,000 ควรระบุเลขผู้เสียภาษีของผู้ซื้อ" stops false-
+    // firing when the page reloads — previously these only lived on
+    // the in-memory OcrExtractedData and were lost after the initial
+    // scan response. ───
+    public string? BuyerName { get; set; }
+    public string? BuyerTaxId { get; set; }
+
     // ─── Document role inference ──────────────────────────────────────
     // Thai-accounting workflow separates THREE distinct concepts:
     //   • ScannedDocumentType — the physical paper we OCR'd (e.g. "Receipt")
