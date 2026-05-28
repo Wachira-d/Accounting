@@ -318,6 +318,7 @@
                   <td>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${d.id}')">ดู</button>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${esc(d.documentNumber)}')">PDF</button>
+                    ${d.balanceDue > 0 ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${d.id}', ${d.balanceDue}, '${esc(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
               }).join('')}</tbody>
@@ -445,7 +446,99 @@
       }
     },
 
-    closeModal() { document.getElementById('modalBg')?.classList.remove('open'); }
+    closeModal() { document.getElementById('modalBg')?.classList.remove('open'); },
+
+    // ============================================================
+    // PAY — customer-self-service payment against an open invoice
+    // ============================================================
+
+    /**
+     * Open the slip-upload modal pre-filled for the given document.
+     * Fetches the company's payment-options (PromptPay + bank) and
+     * renders QR + transfer instructions + amount field + file picker
+     * + confirm button. Form submit POSTs multipart to
+     * /api/portal/{cid}/documents/{docId}/upload-slip.
+     */
+    async openPay(documentId, balanceDue, docNumber) {
+      const titleEl = document.getElementById('modalTitle');
+      const bodyEl = document.getElementById('modalBody');
+      const footerEl = document.getElementById('modalFooter');
+      titleEl.textContent = `💳 ชำระ ${docNumber}`;
+      bodyEl.innerHTML = '<div class="empty">กำลังโหลดวิธีรับเงิน...</div>';
+      footerEl.innerHTML = '<button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>';
+      document.getElementById('modalBg').classList.add('open');
+
+      let pay = null;
+      try {
+        const r = await fetch(`/api/portal/${this.companyId}/payment-options`);
+        if (r.ok) pay = (await r.json()).data;
+      } catch (_) {}
+
+      const ppId = pay?.promptPayId;
+      const ppQr = ppId
+        ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(buildPromptPayPayload(ppId, balanceDue))}&margin=8`
+        : (pay?.promptPayQrUrl || null);
+      const hasPay = pay?.hasPaymentMethod;
+
+      bodyEl.innerHTML = `
+        <div style="background:#FEF3C7;border-left:3px solid #D97706;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:14px">
+          ยอดค้างชำระ: <strong>฿${money(balanceDue)}</strong> · เอกสาร <strong>${esc(docNumber)}</strong>
+        </div>
+        ${!hasPay ? `<div class="empty" style="background:#FEF2F2;color:#991b1b;border-radius:8px">ทางร้านยังไม่ได้ตั้งค่าวิธีรับเงิน — กรุณาติดต่อร้านโดยตรง</div>` : `
+        ${ppQr ? `
+          <div style="text-align:center;background:#F9FAFB;padding:18px;border-radius:8px;margin-bottom:14px">
+            <div style="font-size:13px;color:var(--gray-500);margin-bottom:8px">สแกน QR PromptPay</div>
+            <img src="${ppQr}" alt="PromptPay QR" style="width:220px;height:220px">
+            <div style="font-size:12px;color:var(--gray-500);margin-top:8px">PromptPay: <strong>${esc(ppId||'')}</strong></div>
+          </div>` : ''}
+        ${pay?.bankAccountNumber ? `
+          <div style="background:#F9FAFB;padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:14px">
+            <div style="font-weight:600;margin-bottom:4px">หรือโอนเข้าบัญชี</div>
+            <div>ธนาคาร: <strong>${esc(pay.bankName||'-')}</strong></div>
+            <div>เลขบัญชี: <strong style="font-family:monospace">${esc(pay.bankAccountNumber)}</strong></div>
+            <div>ชื่อบัญชี: <strong>${esc(pay.bankAccountName||'-')}</strong></div>
+          </div>` : ''}
+        <form id="paySlipForm" onsubmit="Portal.uploadSlip(event, '${documentId}', '${esc(docNumber)}')" style="display:grid;gap:10px">
+          <div class="field" style="margin-bottom:0">
+            <label>จำนวนที่โอน (บาท)</label>
+            <input type="number" step="0.01" min="0.01" name="amount" value="${Number(balanceDue||0).toFixed(2)}" required>
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label>แนบสลิป (รูปภาพ/PDF)</label>
+            <input type="file" name="file" accept="image/*,.pdf" required>
+          </div>
+          <div class="err" id="paySlipErr"></div>
+          <button type="submit" class="btn btn-primary" style="margin-top:6px" id="paySlipBtn">📎 ส่งสลิป</button>
+        </form>`}
+      `;
+      footerEl.innerHTML = '<button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>';
+    },
+
+    async uploadSlip(ev, documentId, docNumber) {
+      ev.preventDefault();
+      const form = ev.target;
+      const btn = document.getElementById('paySlipBtn');
+      const err = document.getElementById('paySlipErr');
+      err.textContent = '';
+      btn.disabled = true; btn.textContent = 'กำลังอัปโหลด...';
+
+      const fd = new FormData(form);
+      try {
+        const r = await fetch(`/api/portal/${this.companyId}/documents/${documentId}/upload-slip`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${this.auth.accessToken}` },
+          body: fd
+        });
+        const j = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(j?.message || 'อัปโหลดไม่สำเร็จ');
+        toast(j?.message || `ส่งสลิปสำหรับ ${docNumber} แล้ว — ร้านจะตรวจสอบและยืนยัน`, 'ok');
+        this.closeModal();
+        if (this.activeTab === 'documents') await this.loadDocuments();
+      } catch (e) {
+        err.textContent = e.message || 'อัปโหลดไม่สำเร็จ';
+        btn.disabled = false; btn.textContent = '📎 ส่งสลิป';
+      }
+    }
   };
 
   // ============================================================
@@ -466,6 +559,36 @@
     'ReceiptVoucher':'ใบสำคัญรับ','CertificateInLieu':'ใบรับรองแทนใบเสร็จ'
   };
   function docTypeLabel(t) { return DOC_TYPE[t] || t; }
+  /**
+   * EMVCo-compliant PromptPay QR payload — same client-side TLV
+   * builder the storefront uses. Encodes a phone (10 digit) or tax-id
+   * (13 digit) + amount + CRC16/CCITT-FALSE checksum so the customer's
+   * mobile-banking app reads it.
+   */
+  function buildPromptPayPayload(ppId, amount) {
+    const digits = String(ppId).replace(/\D/g, '');
+    let target;
+    if (digits.length === 13) target = digits;
+    else if (digits.startsWith('0') && digits.length === 10) target = '0066' + digits.slice(1);
+    else if (digits.length === 10) target = '0066' + digits;
+    else target = digits;
+    const aid = '0016A000000677010111';
+    const idTag = digits.length === 13 ? '02' : '01';
+    const idTlv = idTag + String(target.length).padStart(2, '0') + target;
+    const m29 = aid + idTlv;
+    const tlv = (id, v) => id + String(v.length).padStart(2, '0') + v;
+    let body = tlv('00','01') + tlv('01', amount > 0 ? '12' : '11') +
+               tlv('29', m29) + tlv('53', '764') + tlv('58','TH');
+    if (amount > 0) body += tlv('54', Number(amount).toFixed(2));
+    const partial = body + '6304';
+    let crc = 0xFFFF;
+    for (let i = 0; i < partial.length; i++) {
+      crc ^= partial.charCodeAt(i) << 8;
+      for (let j = 0; j < 8; j++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+    }
+    return partial + crc.toString(16).toUpperCase().padStart(4, '0');
+  }
+
   function toast(msg, kind = 'ok') {
     const div = document.createElement('div');
     div.className = `toast toast-${kind}`;

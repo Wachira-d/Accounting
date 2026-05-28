@@ -223,6 +223,10 @@
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('สินทรัพย์ถาวร');
         await Promise.all([this.load(), this.loadAccounts()]);
+        // Deep-link from the OCR import-result table — ?id={assetId}
+        // auto-opens the detail modal.
+        const deepId = new URLSearchParams(location.search).get('id');
+        if (deepId) await this.viewDetail(deepId);
       },
       async loadAccounts() {
         const api = Layout.api(); if (!api) return;

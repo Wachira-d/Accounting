@@ -375,6 +375,25 @@
               ${o.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${o.erpDocumentId}" style="color:#059669;text-decoration:underline">ดูในระบบบัญชี</a></div>` : ''}
             </div>
             ${o.customerNotes ? `<div style="margin-top:10px;font-size:12px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(o.customerNotes)}</span></div>` : ''}
+            ${(o.payments && o.payments.length) ? `
+            <h4 style="margin-top:16px;margin-bottom:6px;font-size:13px">💳 การชำระเงิน (${o.payments.length} รายการ)</h4>
+            <div style="display:grid;gap:10px">
+              ${o.payments.map(p => {
+                const cls = p.status === 'Paid' ? 'pill-paid' : p.status === 'Pending' ? 'pill-due' : 'pill-overdue';
+                return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px 12px;font-size:12px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center">
+                  <div>
+                    <div style="font-weight:600">${Layout.esc(p.paymentMethod || '-')} · <span class="status-pill ${cls}">${Layout.esc(p.status||'Pending')}</span></div>
+                    <div style="color:var(--gray-600);margin-top:2px">฿${Number(p.amount||0).toLocaleString('th-TH',{minimumFractionDigits:2})} ${p.reference?'· '+Layout.esc(p.reference):''}</div>
+                    ${p.paidAt?`<div style="color:#059669;font-size:11px">ยืนยันเมื่อ ${Layout.date(p.paidAt)}</div>`:''}
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    ${p.slipUrl ? `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>` : ''}
+                    ${p.status === 'Pending' ? `<span style="font-size:11px;color:var(--gray-500)">ตรวจสลิปแล้ว → กดยืนยันคำสั่งซื้อด้านล่าง</span>` : ''}
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>
+            ` : ''}
             ${workflow ? `
             <h4 style="margin-top:16px;margin-bottom:6px;font-size:13px">ดำเนินการต่อ</h4>
             <div class="workflow-step">

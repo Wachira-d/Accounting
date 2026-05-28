@@ -319,22 +319,63 @@ public class ImportExportService : IImportExportService
 
     // ===== Import Helpers =====
 
-    private Task ImportContactAsync(Guid companyId, Dictionary<string, string> row)
+    private async Task ImportContactAsync(Guid companyId, Dictionary<string, string> row)
     {
+        var name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required");
+        var taxId = row.GetValueOrDefault("TaxId");
+        var email = row.GetValueOrDefault("Email");
+
+        // Idempotent on re-import: match by TaxId (most reliable for
+        // businesses), then by Email when TaxId is blank. Re-import
+        // updates the matched row in place instead of creating a
+        // duplicate. This makes the typical migration workflow
+        // "fix CSV → re-import" safe to repeat without dedup cleanup.
+        Contact? existing = null;
+        if (!string.IsNullOrWhiteSpace(taxId))
+        {
+            existing = await _db.Contacts.FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && !c.IsDeleted && c.TaxId == taxId);
+        }
+        if (existing == null && !string.IsNullOrWhiteSpace(email))
+        {
+            existing = await _db.Contacts.FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && !c.IsDeleted && c.Email == email);
+        }
+
+        var isCustomer = bool.TryParse(row.GetValueOrDefault("IsCustomer"), out var isCust) && isCust;
+        var isSupplier = bool.TryParse(row.GetValueOrDefault("IsSupplier"), out var isSup) && isSup;
+
+        if (existing != null)
+        {
+            existing.Name = name;
+            if (!string.IsNullOrWhiteSpace(taxId)) existing.TaxId = taxId;
+            if (!string.IsNullOrWhiteSpace(email)) existing.Email = email;
+            // OR-merge customer/supplier flags so a row imported as
+            // both supplier + customer keeps both flags set on the
+            // matched contact (typical Thai SME has same vendor as
+            // both for service exchanges).
+            existing.IsCustomer = existing.IsCustomer || isCustomer;
+            existing.IsSupplier = existing.IsSupplier || isSupplier;
+            existing.Phone = row.GetValueOrDefault("Phone") ?? existing.Phone;
+            existing.Address = row.GetValueOrDefault("Address") ?? existing.Address;
+            existing.ContactPerson = row.GetValueOrDefault("ContactPerson") ?? existing.ContactPerson;
+            existing.UpdatedAt = DateTime.UtcNow;
+            return;
+        }
+
         var contact = new Contact
         {
             CompanyId = companyId,
-            Name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required"),
-            TaxId = row.GetValueOrDefault("TaxId"),
-            IsCustomer = bool.TryParse(row.GetValueOrDefault("IsCustomer"), out var isCust) && isCust,
-            IsSupplier = bool.TryParse(row.GetValueOrDefault("IsSupplier"), out var isSup) && isSup,
-            Email = row.GetValueOrDefault("Email"),
+            Name = name,
+            TaxId = taxId,
+            IsCustomer = isCustomer,
+            IsSupplier = isSupplier,
+            Email = email,
             Phone = row.GetValueOrDefault("Phone"),
             Address = row.GetValueOrDefault("Address"),
             ContactPerson = row.GetValueOrDefault("ContactPerson")
         };
         _db.Contacts.Add(contact);
-        return Task.CompletedTask;
     }
 
     private async Task ImportProductAsync(Guid companyId, Dictionary<string, string> row)

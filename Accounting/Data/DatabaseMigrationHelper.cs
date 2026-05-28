@@ -1317,6 +1317,8 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "DuplicateOfScanId" uuid NULL;
             """,
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerName" varchar(500) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerTaxId" varchar(20) NULL;""",
 
             // OcrScanResults: which OCR engine produced this result
             """

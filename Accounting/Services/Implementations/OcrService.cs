@@ -578,6 +578,14 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Zone Analysis]\n" + extractedData.ZoneSummary;
             if (!string.IsNullOrEmpty(extractedData.BuyerName))
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Buyer] {extractedData.BuyerName} TaxID:{extractedData.BuyerTaxId ?? "N/A"}";
+            // Persist buyer fields so subsequent loads (list endpoint,
+            // page reload) still have them. Without this, MapToResponse
+            // would re-read the entity, see NULL on Buyer*, and the
+            // RD-compliance UI would warn "ควรระบุเลขผู้เสียภาษีของผู้ซื้อ"
+            // every time the user opened the scan even though OCR did
+            // pick the value up correctly on the initial run.
+            scanResult.BuyerName = extractedData.BuyerName;
+            scanResult.BuyerTaxId = extractedData.BuyerTaxId;
             if (extractedData.FieldConfidence.Count > 0)
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
                     string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
@@ -3431,8 +3439,11 @@ public class OcrService : IOcrService
             paymentTermsDays, items,
             r.RawTextContent,
             data?.FieldConfidence,
-            data?.BuyerName,
-            data?.BuyerTaxId,
+            // Prefer the in-memory extraction (fresh scan path) but
+            // fall back to the persisted entity values when remapping
+            // a list row or a page reload where `data` is null.
+            data?.BuyerName ?? r.BuyerName,
+            data?.BuyerTaxId ?? r.BuyerTaxId,
             dbdInfo,
             r.ScannedDocumentType,
             r.OurRole,
