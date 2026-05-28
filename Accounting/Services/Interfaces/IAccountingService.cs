@@ -63,6 +63,6 @@ public interface IAccountingService
     /// <summary>สร้างงวดบัญชีรายเดือนที่ขาดทั้งปีในคราวเดียว — คืนจำนวนที่สร้าง</summary>
     Task<int> EnsureFiscalYearPeriodsAsync(Guid companyId, int year);
     Task CloseFiscalPeriodAsync(Guid companyId, Guid periodId);
-    Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(Guid companyId, Guid periodId, CreateFiscalPeriodRequest request);
+    Task<FiscalPeriodResponse> UpdateFiscalPeriodAsync(Guid companyId, Guid periodId, CreateFiscalPeriodRequest request, bool forceReassignEntries = false);
     Task DeleteFiscalPeriodAsync(Guid companyId, Guid periodId);
 }

@@ -1183,12 +1183,18 @@
               </details>
 
               <details class="sf-pay-card" style="border:1px solid var(--gray-300,#D1D5DB);background:#fff;border-radius:12px;padding:18px 22px">
-                <summary style="cursor:pointer;font-weight:600;font-size:16px;list-style:none">📄 ขอใบเสนอราคาก่อน (ยังไม่ตกลงซื้อ)</summary>
+                <summary style="cursor:pointer;font-weight:600;font-size:16px;list-style:none">📄 ขอใบเสนอราคา (ออกใบให้ทันที)</summary>
                 <div style="margin-top:12px;font-size:13px;color:var(--text-secondary);line-height:1.6">
-                  คำสั่งซื้อจะถูกเปลี่ยนเป็น <strong>คำขอใบเสนอราคา</strong> — ร้านจะออกใบเสนอราคาให้พิจารณาก่อน
-                  ตัดสินใจ ไม่มีการตัดสต็อก ไม่มีการชำระเงินตอนนี้
+                  ระบบจะ <strong>ออกใบเสนอราคาตามรายการในตะกร้าทันที</strong> ไม่ตัดสต็อก ไม่ชำระเงินตอนนี้
+                  คุณจะได้เลขที่ใบเสนอราคาเพื่ออ้างอิงกับร้าน
                 </div>
-                <button class="btn btn-outline" style="margin-top:12px" onclick="Store.convertOrderToQuotation('${orderId}')">เปลี่ยนเป็นใบเสนอราคา</button>
+                <label style="display:block;margin-top:12px;font-size:12px;color:var(--text-secondary);font-weight:600">
+                  ข้อความถึงร้าน (ถ้ามี — ไม่บังคับ)
+                </label>
+                <textarea id="quoteNotes_${orderId}" rows="3" maxlength="1000"
+                  placeholder="เช่น สอบถามรายละเอียดเพิ่ม · ขอคำแนะนำ · ขอแก้รายการก่อนออกใบเสนอราคา ฯลฯ — ข้อความนี้จะถึงร้านโดยตรง"
+                  style="width:100%;margin-top:6px;padding:10px;border:1px solid #D1D5DB;border-radius:6px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
+                <button class="btn btn-outline" style="margin-top:12px" onclick="Store.convertOrderToQuotation('${orderId}')">📄 ออกใบเสนอราคา</button>
               </details>
 
             </div>
@@ -1254,12 +1260,18 @@
       },
 
       async convertOrderToQuotation(orderId) {
-        if (!confirm('เปลี่ยนคำสั่งซื้อนี้เป็นใบเสนอราคา?\nคำสั่งซื้อจะถูกยกเลิกและร้านจะออกใบเสนอราคาให้ดูก่อนตัดสินใจซื้อ')) return;
+        const notesEl = document.getElementById('quoteNotes_' + orderId);
+        const notes = (notesEl?.value || '').trim();
+        if (!confirm('ออกใบเสนอราคาตามรายการในตะกร้าใช่หรือไม่?\nคำสั่งซื้อจะถูกยกเลิก ไม่ตัดสต็อก ไม่ชำระเงิน — ร้านจะได้รับเอกสารใหม่ทันที')) return;
         try {
-          const r = await fetch(this._url(`/commerce/orders/${orderId}/convert-to-quotation`), { method: 'POST' });
+          const r = await fetch(this._url(`/commerce/orders/${orderId}/convert-to-quotation`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customerNotes: notes || null })
+          });
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'เปลี่ยนไม่สำเร็จ');
-          alert(j?.message || 'เปลี่ยนเป็นใบเสนอราคาแล้ว');
+          alert(j?.message || 'ออกใบเสนอราคาเรียบร้อย');
           location.reload();
         } catch (e) {
           alert(e.message || 'เปลี่ยนไม่สำเร็จ');

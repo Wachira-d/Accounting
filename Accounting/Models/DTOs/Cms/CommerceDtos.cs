@@ -246,6 +246,22 @@ public class ConvertToQuotationResponse
     public Guid LeadId { get; set; }
     public string LeadNumber { get; set; } = "";
     public Guid? QuotationDocumentId { get; set; }
+    /// <summary>Document number of the newly-created Quotation (e.g.
+    /// "QUO-202601-0042"). Surfaced so the storefront can show a
+    /// "ดูใบเสนอราคา {QuotationNumber}" link immediately.</summary>
+    public string? QuotationNumber { get; set; }
+}
+
+/// <summary>Optional body for the storefront's "ขอใบเสนอราคา" button —
+/// lets the customer attach a free-text note that lands on the
+/// Quotation document's footer (CustomFooterNotes) so the printed PDF
+/// shows their custom request below the line items.</summary>
+public class ConvertOrderToQuotationRequest
+{
+    /// <summary>Free-text note from the customer — shown at the bottom
+    /// of the Quotation PDF in the Notes section. Limited to 1000 chars
+    /// server-side. Optional; null leaves the document without a footer.</summary>
+    public string? CustomerNotes { get; set; }
 }
 
 public class StorefrontPaymentOptions

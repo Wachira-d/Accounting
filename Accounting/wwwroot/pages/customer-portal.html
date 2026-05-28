@@ -86,7 +86,11 @@ const Page = {
   init() {
     if (!Layout.init('customer-portal')) return;
     Layout.setTitle('Portal ลูกค้า');
-    document.getElementById('portalUrl').value = window.location.origin + '/portal/login.html';
+    // Customer-facing entry point — pre-filled with the company id
+    // so the owner can copy-paste a ready-to-share link.
+    const cid = Layout.getCompanyId();
+    document.getElementById('portalUrl').value =
+      window.location.origin + '/portal.html' + (cid ? `?company=${cid}` : '');
     this.load();
   },
 

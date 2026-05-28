@@ -302,10 +302,18 @@ public class AccountingController : ControllerBase
     /// with no posted data inside the old or new window.</summary>
     [HttpPut("fiscal-periods/{periodId:guid}")]
     public async Task<ActionResult<ApiResponse<FiscalPeriodResponse>>> UpdateFiscalPeriod(
-        Guid companyId, Guid periodId, [FromBody] CreateFiscalPeriodRequest request)
+        Guid companyId, Guid periodId, [FromBody] CreateFiscalPeriodRequest request,
+        [FromQuery] bool force = false)
     {
-        var result = await _accountingService.UpdateFiscalPeriodAsync(companyId, periodId, request);
-        return Ok(new ApiResponse<FiscalPeriodResponse>(true, result, "แก้ไขงวดบัญชีสำเร็จ"));
+        // ?force=true → cascade-reassign linked JEs + OpeningBalances
+        // to whatever fiscal period their date now falls in, instead
+        // of hard-refusing the edit. Used when the user fixed a typo
+        // in the period's start/end (e.g. wrong year) and just wants
+        // everything to re-bucket cleanly.
+        var result = await _accountingService.UpdateFiscalPeriodAsync(companyId, periodId, request, force);
+        return Ok(new ApiResponse<FiscalPeriodResponse>(true, result, force
+            ? "แก้ไขงวดบัญชีสำเร็จ + ผูกใบสำคัญใหม่ตามวันที่"
+            : "แก้ไขงวดบัญชีสำเร็จ"));
     }
 
     /// <summary>Delete an Open fiscal period that has no JEs/openings yet
