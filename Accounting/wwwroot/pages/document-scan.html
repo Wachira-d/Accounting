@@ -2053,6 +2053,16 @@
         const api = Layout.api(); if (!api) return;
         const body = document.getElementById('stockImportBody');
         body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-500)">กำลังเทียบรายการกับสินค้าในระบบ...</div>';
+        // Reset footer in case a previous import session swapped it
+        // with the "เสร็จสิ้น" success-only button.
+        const footer = document.querySelector('#stockImportModal .modal-footer');
+        if (footer) footer.innerHTML = `
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:auto;color:var(--gray-700)">
+            <input type="checkbox" id="stockImportLearn" checked> เรียนรู้ชื่อสินค้าตามผู้ขายนี้
+          </label>
+          <span style="font-size:11px;color:var(--gray-500);font-style:italic">เลือกปลายทาง (📦 / 🧻 / 🏢) ในแต่ละแถว — ระบบเดาให้แล้ว</span>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('stockImportModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้า</button>`;
         Layout.openModal('stockImportModal');
 
         try {
@@ -2442,11 +2452,97 @@
           if (r.productsCreated) bits.push(`สร้างสินค้าใหม่ ${r.productsCreated}`);
           if (r.aliasesLearned) bits.push(`alias ${r.aliasesLearned}`);
           Layout.toast(bits.join(' · '));
-          Layout.closeModal('stockImportModal');
+          // Replace the import form with a per-line result table so the
+          // user can see EXACTLY what each row became (stock / supplies
+          // / fixed asset), the resulting product code + name, the new
+          // stock balance, and a clickable link to open the detail page
+          // for each item. Closing the modal is a deliberate user
+          // action ("เสร็จสิ้น") — they review before exiting.
+          this._renderImportResult(r);
         } catch (err) {
           Layout.toast('นำเข้าไม่สำเร็จ: ' + (err.message || err), 'error');
           btn.disabled = false; btn.textContent = '✓ ยืนยันนำเข้าสต็อก';
         }
+      },
+
+      _renderImportResult(r) {
+        // Destination → label / colour / route helpers
+        const destInfo = {
+          'Stock':      { lbl: '📦 สต็อก',           clr: '#0369a1', bg: '#dbeafe', route: id => `/pages/products.html?id=${id}` },
+          'Supplies':   { lbl: '🧻 วัสดุสิ้นเปลือง', clr: '#7c3aed', bg: '#ede9fe', route: id => `/pages/products.html?id=${id}` },
+          'FixedAsset': { lbl: '🏢 สินทรัพย์',       clr: '#b91c1c', bg: '#fee2e2', route: id => `/pages/fixed-assets.html?id=${id}` },
+          0: 'Stock', 1: 'Supplies', 2: 'FixedAsset'   // numeric fallback
+        };
+        const norm = (d) => typeof d === 'number' ? (destInfo[d] || 'Stock') : (d || 'Stock');
+        const lineResults = r.lineResults || [];
+        const sourceLines = this._stockPreview?.lines || [];
+
+        const rows = lineResults.map(lr => {
+          const sourceLine = sourceLines.find(l => l.lineIndex === lr.lineIndex);
+          const ocrDesc = sourceLine?.description || '-';
+          const dKey = norm(lr.destination);
+          const d = destInfo[dKey] || destInfo['Stock'];
+          const targetId = (dKey === 'FixedAsset') ? lr.fixedAssetId : lr.productId;
+          const failed = !!lr.errorMessage;
+          const action = failed
+            ? `<span style="color:#dc2626;font-size:11px">${Layout.esc(lr.errorMessage)}</span>`
+            : targetId
+              ? `<a href="${d.route(targetId)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูในระบบ">ดู →</a>`
+              : '';
+          return `<tr style="border-bottom:1px solid var(--gray-100)">
+            <td style="padding:8px 6px;font-size:12px;color:var(--gray-700);max-width:220px">
+              <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${Layout.esc(ocrDesc)}">${Layout.esc(ocrDesc)}</div>
+            </td>
+            <td style="padding:8px 6px"><span class="status-pill" style="background:${d.bg};color:${d.clr};padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">${d.lbl}</span></td>
+            <td style="padding:8px 6px">
+              ${lr.productCode ? `<div style="font-weight:600;font-size:12px">${Layout.esc(lr.productCode)}</div>` : ''}
+              <div style="font-size:11px;color:var(--gray-600)">${Layout.esc(lr.productName || '-')}</div>
+              ${lr.wasCreated ? '<div style="font-size:10px;color:#059669;margin-top:2px">✓ สร้างใหม่</div>' : (lr.productId || lr.fixedAssetId ? '<div style="font-size:10px;color:var(--gray-500);margin-top:2px">↻ ผูกกับของเดิม</div>' : '')}
+              ${lr.aliasLearned ? '<div style="font-size:10px;color:#1e40af;margin-top:2px">🌐 alias เรียนรู้แล้ว</div>' : ''}
+            </td>
+            <td style="padding:8px 6px;text-align:right;font-size:12px">
+              ${lr.quantityIn > 0 ? `+${Number(lr.quantityIn).toLocaleString('th-TH')}` : '-'}
+            </td>
+            <td style="padding:8px 6px;text-align:right;font-size:12px;font-weight:600">
+              ${dKey === 'FixedAsset' ? '-' : Number(lr.newStockBalance||0).toLocaleString('th-TH')}
+            </td>
+            <td style="padding:8px 6px;text-align:center">${action}</td>
+          </tr>`;
+        }).join('');
+
+        const body = document.getElementById('stockImportBody');
+        body.innerHTML = `
+          <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#065f46">
+            <div style="font-weight:600;margin-bottom:4px">✓ นำเข้าเรียบร้อย</div>
+            <div>
+              นำเข้าทั้งหมด <strong>${r.linesProcessed}</strong> รายการ
+              ${r.stockMovementsCreated ? ` · 📦 สต็อก <strong>${r.stockMovementsCreated}</strong>` : ''}
+              ${r.fixedAssetsCreated ? ` · 🏢 สินทรัพย์ <strong>${r.fixedAssetsCreated}</strong>` : ''}
+              ${r.productsCreated ? ` · สร้างสินค้าใหม่ <strong>${r.productsCreated}</strong>` : ''}
+              ${r.aliasesLearned ? ` · เรียนรู้ <strong>${r.aliasesLearned}</strong> alias` : ''}
+            </div>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="background:var(--gray-100);border-bottom:2px solid var(--gray-300)">
+                <th style="padding:8px 6px;text-align:left;font-size:11px">รายการ OCR</th>
+                <th style="padding:8px 6px;text-align:left;font-size:11px">ปลายทาง</th>
+                <th style="padding:8px 6px;text-align:left;font-size:11px">รหัส / ชื่อ</th>
+                <th style="padding:8px 6px;text-align:right;font-size:11px">จำนวนเข้า</th>
+                <th style="padding:8px 6px;text-align:right;font-size:11px">คงเหลือใหม่</th>
+                <th style="padding:8px 6px;text-align:center;font-size:11px"></th>
+              </tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--gray-500)">ไม่มีรายการที่นำเข้าได้</td></tr>'}</tbody>
+          </table>
+          <div style="margin-top:14px;font-size:11px;color:var(--gray-500);line-height:1.6">
+            💡 คลิก <strong>"ดู →"</strong> เพื่อเปิดสินค้า / วัสดุ / สินทรัพย์ในระบบ
+            (เปิดในแท็บใหม่ — รายการนำเข้านี้จะยังอยู่ให้กลับมาดูได้)
+          </div>`;
+        // Swap the footer too — confirm button is no longer relevant
+        const footer = document.querySelector('#stockImportModal .modal-footer');
+        if (footer) footer.innerHTML = `
+          <button class="btn btn-primary" onclick="Layout.closeModal('stockImportModal')">เสร็จสิ้น</button>`;
       },
 
       /**

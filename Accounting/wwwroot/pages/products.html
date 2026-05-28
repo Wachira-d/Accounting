@@ -230,6 +230,12 @@
         if (!Layout.init('products')) return;
         Layout.setTitle('สินค้า/บริการ');
         await this.load();
+        // Deep-link support — when the OCR import-result table (or any
+        // other page) links here with ?id={productId}, auto-open the
+        // detail modal so the user lands on the right product without
+        // having to search the list.
+        const deepId = new URLSearchParams(location.search).get('id');
+        if (deepId) await this.viewDetail(deepId);
       },
       async load() {
         const api = Layout.api(); if (!api) return;
