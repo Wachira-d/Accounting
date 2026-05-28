@@ -1324,6 +1324,72 @@ public partial class PosService
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4);
     }
 
+    /// <summary>Email a plain-HTML copy of the receipt to a customer address.
+    /// Uses the company's email sender (Microsoft Graph / Gmail / SMTP) — falls
+    /// back to the global SMTP if no per-company config exists. The order must
+    /// be Completed; we don't send drafts.</summary>
+    public async Task EmailReceiptAsync(Guid companyId, Guid orderId, string email)
+    {
+        if (_emailFactory == null)
+            throw new InvalidOperationException("ระบบส่งอีเมลยังไม่ตั้งค่า — ติดต่อแอดมิน");
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            throw new ArgumentException("อีเมลไม่ถูกต้อง");
+        var order = await _db.PosOrders
+            .Include(o => o.Items).Include(o => o.Payments)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status != PosOrderStatus.Completed)
+            throw new InvalidOperationException("ออเดอร์ยังไม่ปิดบิล — ส่งใบเสร็จไม่ได้");
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var companyName = company?.Name ?? company?.NameEn ?? "ร้านค้า";
+
+        var itemsHtml = string.Concat(order.Items.Where(i => !i.IsDeleted).Select(i =>
+            $"<tr><td>{System.Net.WebUtility.HtmlEncode(i.ItemName)}</td><td style='text-align:center'>{i.Quantity}</td><td style='text-align:right'>{i.UnitPrice:N2}</td><td style='text-align:right'>{i.TotalAmount:N2}</td></tr>"));
+        var paymentsHtml = string.Concat(order.Payments.Where(p => !p.IsDeleted).Select(p =>
+            $"<tr><td>{PaymentMethodThaiLabel(p.PaymentMethod)}</td><td style='text-align:right'>{p.Amount:N2}</td></tr>"));
+
+        var html = $@"<!DOCTYPE html><html><body style='font-family:Tahoma,sans-serif;max-width:520px;margin:auto;padding:20px;color:#0f172a'>
+<h2 style='text-align:center;margin:0 0 4px'>{System.Net.WebUtility.HtmlEncode(companyName)}</h2>
+<div style='text-align:center;color:#64748b;font-size:13px;margin-bottom:14px'>ใบเสร็จรับเงิน #{order.OrderNumber}</div>
+<div style='border-top:1px dashed #cbd5e1;border-bottom:1px dashed #cbd5e1;padding:10px 0'>
+  <div>วันที่: {order.CompletedAt:yyyy-MM-dd HH:mm}</div>
+  {(string.IsNullOrEmpty(order.TableNumber) ? "" : $"<div>โต๊ะ: {order.TableNumber}</div>")}
+  {(string.IsNullOrEmpty(order.CustomerName) ? "" : $"<div>ลูกค้า: {System.Net.WebUtility.HtmlEncode(order.CustomerName)}</div>")}
+</div>
+<table style='width:100%;border-collapse:collapse;margin:14px 0;font-size:13px'>
+  <thead><tr style='background:#f1f5f9'><th style='text-align:left;padding:6px'>รายการ</th><th style='padding:6px'>จน.</th><th style='text-align:right;padding:6px'>ราคา</th><th style='text-align:right;padding:6px'>รวม</th></tr></thead>
+  <tbody>{itemsHtml}</tbody>
+</table>
+<div style='border-top:1px dashed #cbd5e1;padding-top:10px'>
+  <div style='display:flex;justify-content:space-between'><span>รวม</span><span>{order.SubTotal:N2}</span></div>
+  {(order.DiscountAmount > 0 ? $"<div style='display:flex;justify-content:space-between;color:#dc2626'><span>ส่วนลด</span><span>-{order.DiscountAmount:N2}</span></div>" : "")}
+  {(order.ServiceChargeAmount > 0 ? $"<div style='display:flex;justify-content:space-between'><span>Service Charge</span><span>{order.ServiceChargeAmount:N2}</span></div>" : "")}
+  {(order.VatAmount > 0 ? $"<div style='display:flex;justify-content:space-between'><span>VAT</span><span>{order.VatAmount:N2}</span></div>" : "")}
+  {(order.TipAmount > 0 ? $"<div style='display:flex;justify-content:space-between;color:#16a34a'><span>ทิป</span><span>{order.TipAmount:N2}</span></div>" : "")}
+  <div style='display:flex;justify-content:space-between;font-weight:700;font-size:16px;border-top:1px solid #0f172a;padding-top:6px;margin-top:6px'><span>ยอดสุทธิ</span><span>{order.NetAmount:N2} ฿</span></div>
+</div>
+<table style='width:100%;margin-top:14px;font-size:13px'>
+  <thead><tr style='background:#f1f5f9'><th style='text-align:left;padding:6px'>การชำระเงิน</th><th style='text-align:right;padding:6px'>จำนวน</th></tr></thead>
+  <tbody>{paymentsHtml}</tbody>
+</table>
+<div style='text-align:center;color:#64748b;font-size:11px;margin-top:20px'>ขอบคุณที่ใช้บริการ — ส่งจากระบบ POS อัตโนมัติ</div>
+</body></html>";
+
+        var sender = await _emailFactory.GetSenderAsync(companyId);
+        var msg = new EmailMessage
+        {
+            FromAddress = company?.Email ?? "noreply@accounting.local",
+            FromName = companyName,
+            To = new List<string> { email.Trim() },
+            Subject = $"ใบเสร็จรับเงิน #{order.OrderNumber} - {companyName}",
+            HtmlBody = html,
+        };
+        var result = await sender.SendAsync(msg);
+        if (!result.Success)
+            throw new InvalidOperationException("ส่งอีเมลไม่สำเร็จ: " + result.ErrorMessage);
+        _logger.LogInformation("Receipt for order {Order} emailed to {Email}", order.OrderNumber, email);
+    }
+
     private static string PaymentMethodThaiLabel(PaymentMethod m) => m switch
     {
         PaymentMethod.Cash         => "เงินสด",

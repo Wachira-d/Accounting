@@ -163,10 +163,15 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
     { await _service.VoidPayrollAsync(companyId, runId); return Ok(new ApiResponse<bool>(true, true)); }
 
-    // Reports
+    // Reports — ภงด.1 exposes individual employee salary/WHT and is sensitive
+    // payroll data, so it sits behind the same Payroll permission gate. ภงด.3
+    // (vendor / freelancer WHT) stays open since it's part of the regular AP flow.
     [HttpGet("pnd1/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd1(Guid companyId, int year, int month)
-        => Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
+    }
 
     [HttpGet("pnd3/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd3(Guid companyId, int year, int month)

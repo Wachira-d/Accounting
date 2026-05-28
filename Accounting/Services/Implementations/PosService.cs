@@ -13,12 +13,14 @@ public partial class PosService : IPosService
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;
     private readonly ILogger<PosService> _logger;
+    private readonly IEmailSenderFactory? _emailFactory;
 
-    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger)
+    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger, IEmailSenderFactory? emailFactory = null)
     {
         _db = db;
         _accountingService = accountingService;
         _logger = logger;
+        _emailFactory = emailFactory;
     }
 
     // ==================== Terminal ====================

@@ -1875,12 +1875,74 @@
           const res = await api.completePosOrder(orderId);
           const snap = this._buildReceiptSnapshot(res?.data);
           Layout.toast('ปิดบิลสำเร็จ!');
+          // Stash the completed order so the post-checkout actions (issue tax
+          // invoice, email receipt) know which order to act on.
+          this._lastCompletedOrder = res?.data;
           // Thank-you screen on the customer display (if window is open).
           this._pushCustomerDisplay({ type: 'paid', change: snap.change });
           this.resetOrder();
           if ((this._printSettings || this.loadPrintSettings()).autoPrint !== false)
             this.printReceipt(snap);
+          this._showPostCheckoutActions();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /// <summary>Toast-style action bar that lets the cashier issue a full tax
+      /// invoice (เต็มรูป — needed when the customer is a juristic person)
+      /// OR email a copy of the e-receipt right after checkout. Auto-dismisses
+      /// after 12 s so the next sale isn't blocked.</summary>
+      _showPostCheckoutActions() {
+        const o = this._lastCompletedOrder;
+        if (!o) return;
+        const existing = document.getElementById('postCheckoutBar');
+        if (existing) existing.remove();
+        const bar = document.createElement('div');
+        bar.id = 'postCheckoutBar';
+        bar.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:12px 18px;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);z-index:10000;display:flex;gap:10px;align-items:center;font-size:13px';
+        bar.innerHTML = `
+          <span>#${this.esc(o.orderNumber)} ปิดแล้ว ฿${o.netAmount.toFixed(2)}</span>
+          <button onclick="Page.openIssueTaxInvoice('${o.id}')" style="background:#3b82f6;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">📄 ออกใบกำกับเต็ม</button>
+          <button onclick="Page.openEmailReceipt('${o.id}')" style="background:#10b981;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">📧 ส่งอีเมล</button>
+          <button onclick="document.getElementById('postCheckoutBar').remove()" style="background:transparent;color:#94a3b8;border:none;cursor:pointer;font-size:18px;padding:0 4px">×</button>`;
+        document.body.appendChild(bar);
+        setTimeout(() => { const el = document.getElementById('postCheckoutBar'); if (el) el.remove(); }, 12000);
+      },
+      esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); },
+
+      async openIssueTaxInvoice(orderId) {
+        const customerName = prompt('ชื่อผู้ซื้อ (จะแสดงในใบกำกับเต็ม)');
+        if (customerName === null) return;
+        const taxId = prompt('เลขผู้เสียภาษีของผู้ซื้อ (13 หลัก) — เว้นว่างได้ถ้าบุคคลธรรมดา', '');
+        if (taxId === null) return;
+        const address = prompt('ที่อยู่ผู้ซื้อ (สำคัญสำหรับใบกำกับเต็ม)', '');
+        if (address === null) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.issuePosTaxInvoice(orderId, {
+            customerName: customerName.trim(),
+            customerTaxId: taxId.trim() || null,
+            customerAddress: address.trim() || null
+          });
+          Layout.toast(`✓ ออกใบกำกับเต็ม #${res.data.documentNumber || ''} แล้ว`, 'success');
+          const bar = document.getElementById('postCheckoutBar'); if (bar) bar.remove();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async openEmailReceipt(orderId) {
+        const email = prompt('อีเมลที่จะส่งใบเสร็จไป');
+        if (!email) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await fetch(`/api/companies/${Layout.getCompanyId()}/pos/orders/${orderId}/email-receipt`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          }).then(r => r.json()).then(j => {
+            if (!j.success) throw new Error(j.message || 'send failed');
+            Layout.toast(`✓ ส่งใบเสร็จไปที่ ${email} แล้ว`, 'success');
+            const bar = document.getElementById('postCheckoutBar'); if (bar) bar.remove();
+          });
+        } catch(e) { Layout.toast('ส่งไม่สำเร็จ: ' + e.message, 'error'); }
       },
 
       // ===== Offline sale queue (IndexedDB) =====

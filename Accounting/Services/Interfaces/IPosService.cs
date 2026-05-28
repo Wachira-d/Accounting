@@ -30,6 +30,7 @@ public interface IPosService
     Task<OrderResponse> SetTipAsync(Guid companyId, Guid orderId, decimal tipAmount);
     Task<OrderResponse> ApplyCouponAsync(Guid companyId, Guid orderId, string? code);
     Task<List<OrderResponse>> SplitOrderAsync(Guid companyId, Guid orderId, List<List<Guid>> itemGroupsPerCheck, string userId);
+    Task EmailReceiptAsync(Guid companyId, Guid orderId, string email);
     Task VoidOrderAsync(Guid companyId, Guid orderId, string userId);
     /// <summary>คืนเงินบางส่วน/ทั้งหมดของออเดอร์ที่ปิดบิลแล้ว — กลับรายการ GL ตามสัดส่วน + คืนสต็อก</summary>
     Task<OrderResponse> RefundOrderAsync(Guid companyId, Guid orderId, RefundOrderRequest request, string userId);

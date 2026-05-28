@@ -148,6 +148,14 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> ApplyCoupon(Guid companyId, Guid orderId, [FromBody] ApplyCouponRequest2 request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.ApplyCouponAsync(companyId, orderId, request.Code)));
 
+    public record EmailReceiptRequest(string Email);
+    [HttpPost("orders/{orderId:guid}/email-receipt")]
+    public async Task<ActionResult<ApiResponse<string>>> EmailReceipt(Guid companyId, Guid orderId, [FromBody] EmailReceiptRequest request)
+    {
+        await _pos.EmailReceiptAsync(companyId, orderId, request.Email);
+        return Ok(new ApiResponse<string>(true, null, "ส่งใบเสร็จทางอีเมลแล้ว"));
+    }
+
     public record SplitOrderRequest(List<List<Guid>> Checks);
     /// <summary>Split an order into multiple checks. Caller sends a list of
     /// item-id groups — each group becomes a new child order. The original
