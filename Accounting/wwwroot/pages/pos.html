@@ -66,6 +66,34 @@
     .empty-order { text-align:center; color:var(--gray-400); padding:40px 20px; font-size:14px; }
     .change-display { background:var(--gray-100); border-radius:6px; padding:8px 12px; margin-top:4px; text-align:center; font-size:13px; }
     .change-display .change-amount { font-size:20px; font-weight:700; color:var(--success); }
+
+    /* ===== Pay-pad calculator modal ===== */
+    .paypad-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:12px; }
+    .paypad-tabs .ppt { padding:10px 0; background:#f1f5f9; border:2px solid transparent; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; }
+    .paypad-tabs .ppt.active { background:#ecfdf5; border-color:#10b981; color:#047857; }
+    .paypad-summary { background:#f8fafc; border-radius:8px; padding:10px 14px; margin-bottom:10px; }
+    .paypad-summary .ppr { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:14px; }
+    .paypad-summary .ppr-due { border-top:1px solid #e2e8f0; padding-top:8px; margin-top:4px; font-size:16px; }
+    .paypad-summary .ppr-due strong { color:#dc2626; font-size:20px; }
+    .paypad-received { margin-bottom:10px; }
+    .paypad-received label { display:block; font-size:13px; color:#475569; margin-bottom:4px; font-weight:600; }
+    .paypad-received input { width:100%; padding:14px 16px; font-size:28px; font-weight:700; text-align:right; border:2px solid #cbd5e1; border-radius:8px; background:#fff; color:#0f172a; }
+    .paypad-change { display:flex; justify-content:space-between; align-items:center; background:#ecfdf5; border:1px solid #6ee7b7; border-radius:8px; padding:10px 14px; margin-top:8px; }
+    .paypad-change strong { font-size:24px; color:#047857; }
+    .paypad-quick { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:8px; }
+    .paypad-quick button { padding:10px 0; background:#fef3c7; border:1px solid #fbbf24; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer; }
+    .paypad-quick button:hover { background:#fde68a; }
+    .paypad-keys { display:grid; grid-template-columns:repeat(3,1fr) 1fr 1fr; grid-template-rows:repeat(4,1fr); gap:6px; }
+    .paypad-keys button { padding:18px 0; background:#fff; border:1px solid #cbd5e1; border-radius:8px; font-size:22px; font-weight:600; cursor:pointer; }
+    .paypad-keys button:hover { background:#f1f5f9; }
+    .paypad-keys button:active { background:#e2e8f0; transform:scale(0.97); }
+    .paypad-keys .pk-back { background:#fef3c7; grid-column:4; grid-row:1/3; }
+    .paypad-keys .pk-clear { background:#fee2e2; color:#b91c1c; grid-column:5; grid-row:1/3; }
+    @media (max-width:540px) {
+      .paypad-received input { font-size:24px; padding:12px; }
+      .paypad-keys button { padding:14px 0; font-size:18px; }
+    }
+
     /* Session setup overlay */
     .session-setup { position:absolute; inset:0; background:rgba(255,255,255,.95); display:flex; align-items:center; justify-content:center; z-index:10; }
     .session-card { background:#fff; border-radius:var(--radius-lg); box-shadow:var(--shadow-xl); padding:32px; width:400px; max-width:90vw; }
@@ -160,27 +188,75 @@
           <div class="sum-row sum-total"><span>ยอดสุทธิ</span><span id="sumNet">0.00</span></div>
         </div>
         <div class="order-actions">
-          <div class="pay-row">
-            <select id="payMethod">
-              <option value="Cash">เงินสด</option>
-              <option value="PromptPay">พร้อมเพย์</option>
-              <option value="BankTransfer">โอน</option>
-              <option value="CreditCard">บัตร</option>
-            </select>
-            <input type="number" id="payAmount" placeholder="จำนวนเงิน" step="0.01">
-            <input type="text" id="payRef" placeholder="อ้างอิง" style="max-width:100px;">
-          </div>
           <div id="changeDisplay" class="change-display" style="display:none;">
             เงินทอน: <span class="change-amount" id="changeAmount">0.00</span>
           </div>
           <div class="btn-row">
-            <button class="btn btn-pay" onclick="Page.addPayment()">ชำระเงิน</button>
+            <button class="btn btn-pay" onclick="Page.openPayPad()" style="font-size:18px;padding:14px 0">💰 ชำระเงิน</button>
             <button class="btn btn-complete" onclick="Page.completeOrder()">ปิดบิล</button>
-            <button class="btn btn-void" onclick="Page.voidOrder()" data-i18n="common.cancel">ยกเลิก</button>
           </div>
           <div class="btn-row">
-            <button class="btn btn-secondary" style="flex:1;font-size:13px;" onclick="Page.printKitchenTicket()" title="พิมพ์ใบออเดอร์ส่งครัว/บาร์">🍳 พิมพ์เข้าครัว/บาร์</button>
+            <button class="btn btn-void" style="flex:1" onclick="Page.voidOrder()" data-i18n="common.cancel">ยกเลิก</button>
+            <button class="btn btn-secondary" style="flex:2;font-size:13px;" onclick="Page.printKitchenTicket()" title="พิมพ์ใบออเดอร์ส่งครัว/บาร์">🍳 พิมพ์เข้าครัว/บาร์</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payment keypad modal — calculator-style for cash/transfer/card.
+         Big buttons + change calc + quick-cash presets. -->
+    <div class="modal-overlay" id="payPadModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">💰 ชำระเงิน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('payPadModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:14px">
+          <div class="paypad-tabs" id="payPadTabs">
+            <button type="button" class="ppt active" data-method="Cash" onclick="Page.payPadMethod(this,'Cash')">💵 เงินสด</button>
+            <button type="button" class="ppt" data-method="PromptPay" onclick="Page.payPadMethod(this,'PromptPay')">📱 พร้อมเพย์</button>
+            <button type="button" class="ppt" data-method="BankTransfer" onclick="Page.payPadMethod(this,'BankTransfer')">🏦 โอน</button>
+            <button type="button" class="ppt" data-method="CreditCard" onclick="Page.payPadMethod(this,'CreditCard')">💳 บัตร</button>
+          </div>
+          <div class="paypad-summary">
+            <div class="ppr"><span>ยอดที่ต้องชำระ</span><strong id="ppDue">0.00</strong></div>
+            <div class="ppr"><span>ชำระแล้ว</span><span id="ppPaid">0.00</span></div>
+            <div class="ppr ppr-due"><span>คงเหลือ</span><strong id="ppRemaining">0.00</strong></div>
+          </div>
+          <div class="paypad-received">
+            <label>รับเงินมา <span id="ppRecvLabel" style="font-size:12px;color:#64748b">(พิมพ์ตัวเลขด้านล่าง)</span></label>
+            <input type="text" id="ppReceived" readonly value="0" inputmode="none">
+            <div class="paypad-change" id="ppChangeRow" style="display:none">
+              <span>💸 เงินทอน</span><strong id="ppChange">0.00</strong>
+            </div>
+          </div>
+          <div class="paypad-quick" id="ppQuickRow">
+            <button type="button" onclick="Page.payPadExact()">พอดี</button>
+            <button type="button" onclick="Page.payPadAdd(100)">+100</button>
+            <button type="button" onclick="Page.payPadAdd(500)">+500</button>
+            <button type="button" onclick="Page.payPadAdd(1000)">+1,000</button>
+          </div>
+          <div class="paypad-keys">
+            <button type="button" onclick="Page.payPadKey('7')">7</button>
+            <button type="button" onclick="Page.payPadKey('8')">8</button>
+            <button type="button" onclick="Page.payPadKey('9')">9</button>
+            <button type="button" onclick="Page.payPadKey('4')">4</button>
+            <button type="button" onclick="Page.payPadKey('5')">5</button>
+            <button type="button" onclick="Page.payPadKey('6')">6</button>
+            <button type="button" onclick="Page.payPadKey('1')">1</button>
+            <button type="button" onclick="Page.payPadKey('2')">2</button>
+            <button type="button" onclick="Page.payPadKey('3')">3</button>
+            <button type="button" onclick="Page.payPadKey('0')">0</button>
+            <button type="button" onclick="Page.payPadKey('00')">00</button>
+            <button type="button" onclick="Page.payPadKey('.')">.</button>
+            <button type="button" class="pk-back" onclick="Page.payPadBackspace()">⌫</button>
+            <button type="button" class="pk-clear" onclick="Page.payPadClear()">C</button>
+          </div>
+          <input type="text" id="ppRef" placeholder="เลขอ้างอิง (เช็ค / สลิป / 4 ตัวท้ายบัตร)" style="width:100%;margin-top:10px;padding:8px;border:1px solid #cbd5e1;border-radius:6px">
+        </div>
+        <div class="modal-footer" style="gap:8px">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('payPadModal')">ยกเลิก</button>
+          <button class="btn btn-pay" style="font-size:16px;padding:12px 28px" onclick="Page.payPadConfirm()">✓ ยืนยันการชำระ</button>
         </div>
       </div>
     </div>
@@ -1244,16 +1320,83 @@
           });
         }
         this.renderCart();
+        // If the order is already on the server, push the change so totals stay correct.
+        if (this.currentOrderId) this._pushCartChange(existing, item, type, id);
+      },
+
+      // Sync a single add-to-cart action with the server. We do it after the local
+      // optimistic update so the UI feels snappy, then reconcile on response.
+      async _pushCartChange(existing, item, type, id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          if (existing && existing.serverItemId) {
+            const res = await api.updatePosOrderItemQty(this.currentOrderId, existing.serverItemId, existing.quantity);
+            this._syncCartFromServer(res.data);
+          } else {
+            const res = await api.addPosOrderItem(this.currentOrderId, {
+              productId: type === 'product' ? id : null,
+              servicePackageId: type === 'package' ? id : null,
+              itemName: item.name,
+              quantity: 1,
+              unitPrice: item.price,
+              modifiers: []
+            });
+            this._syncCartFromServer(res.data);
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // Rebuild this.cart from the server's authoritative item list so qty/price
+      // never drift from the GL. Preserves the visible row order.
+      _syncCartFromServer(order) {
+        if (!order || !order.items) return;
+        this.cart = order.items.filter(i => !i.isDeleted).map(i => ({
+          type: i.productId ? 'product' : 'package',
+          itemId: i.productId || i.servicePackageId,
+          serverItemId: i.id,
+          name: i.itemName,
+          unitPrice: i.unitPrice,
+          quantity: i.quantity
+        }));
+        this.currentOrder = order;
+        this.renderCart();
+        this.updateSummaryFromOrder(order);
       },
 
       removeFromCart(idx) {
+        const line = this.cart[idx];
+        if (this.currentOrderId && line && line.serverItemId) {
+          const api = Layout.api(); if (!api) return;
+          api.removePosOrderItem(this.currentOrderId, line.serverItemId)
+            .then(() => api.getPosOrder(this.currentOrderId))
+            .then(res => this._syncCartFromServer(res.data))
+            .catch(e => Layout.toast(e.message, 'error'));
+          return;
+        }
         this.cart.splice(idx, 1);
         this.renderCart();
       },
 
       updateQty(idx, delta) {
-        this.cart[idx].quantity += delta;
-        if (this.cart[idx].quantity <= 0) this.cart.splice(idx, 1);
+        const line = this.cart[idx];
+        if (!line) return;
+        const newQty = line.quantity + delta;
+        if (this.currentOrderId && line.serverItemId) {
+          const api = Layout.api(); if (!api) return;
+          if (newQty <= 0) {
+            api.removePosOrderItem(this.currentOrderId, line.serverItemId)
+              .then(() => api.getPosOrder(this.currentOrderId))
+              .then(res => this._syncCartFromServer(res.data))
+              .catch(e => Layout.toast(e.message, 'error'));
+          } else {
+            api.updatePosOrderItemQty(this.currentOrderId, line.serverItemId, newQty)
+              .then(res => this._syncCartFromServer(res.data))
+              .catch(e => Layout.toast(e.message, 'error'));
+          }
+          return;
+        }
+        line.quantity = newQty;
+        if (line.quantity <= 0) this.cart.splice(idx, 1);
         this.renderCart();
       },
 
@@ -1327,9 +1470,10 @@
           this.currentOrder = res.data;
           this.currentOrderId = res.data.id;
           document.getElementById('orderTitle').textContent = `#${res.data.orderNumber}`;
-          // Sync cart with server response
+          // Sync local cart from the server's items (their ids let us
+          // edit individual lines later without recreating the order).
           this.paidTotal = 0;
-          this.updateSummaryFromOrder(res.data);
+          this._syncCartFromServer(res.data);
           return this.currentOrderId;
         } catch (e) { Layout.toast(e.message, 'error'); return null; }
       },
@@ -1343,35 +1487,128 @@
         this.paidTotal = (order.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
       },
 
-      async addPayment() {
+      // ===== Pay-pad calculator =====
+      async openPayPad() {
         const orderId = await this.createOrderIfNeeded();
         if (!orderId) return;
+        this._payPadMethod = 'Cash';
+        // Reset tab UI
+        document.querySelectorAll('#payPadTabs .ppt').forEach(b => b.classList.toggle('active', b.dataset.method === 'Cash'));
+        document.getElementById('ppReceived').value = '0';
+        document.getElementById('ppRef').value = '';
+        this._payPadRecalc();
+        Layout.openModal('payPadModal');
+      },
+      payPadMethod(btn, method) {
+        this._payPadMethod = method;
+        document.querySelectorAll('#payPadTabs .ppt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // Hide change row for non-cash (you don't give change for a transfer).
+        document.getElementById('ppQuickRow').style.display = method === 'Cash' ? '' : 'none';
+        document.getElementById('ppRecvLabel').textContent = method === 'Cash'
+          ? '(รับเงินสดมา)'
+          : '(ใส่จำนวนที่จะหัก จากใบนี้)';
+        // For non-cash default the received field to the remaining balance.
+        if (method !== 'Cash') {
+          const remaining = this._payPadRemaining();
+          document.getElementById('ppReceived').value = remaining.toFixed(2);
+        } else {
+          document.getElementById('ppReceived').value = '0';
+        }
+        this._payPadRecalc();
+      },
+      _payPadRemaining() {
+        const order = this.currentOrder;
+        if (!order) return 0;
+        const paid = (order.payments || []).reduce((s, p) => s + p.amount, 0);
+        return Math.max(0, +(order.netAmount - paid).toFixed(2));
+      },
+      _payPadRecalc() {
+        const order = this.currentOrder;
+        const net = order?.netAmount || 0;
+        const paid = (order?.payments || []).reduce((s, p) => s + p.amount, 0);
+        const remaining = Math.max(0, +(net - paid).toFixed(2));
+        const received = parseFloat(document.getElementById('ppReceived').value) || 0;
+        document.getElementById('ppDue').textContent = Layout.money(net);
+        document.getElementById('ppPaid').textContent = Layout.money(paid);
+        document.getElementById('ppRemaining').textContent = Layout.money(remaining);
+        // Change only applies to cash AND only when received exceeds remaining.
+        if (this._payPadMethod === 'Cash' && received > remaining) {
+          document.getElementById('ppChangeRow').style.display = '';
+          document.getElementById('ppChange').textContent = Layout.money(received - remaining);
+        } else {
+          document.getElementById('ppChangeRow').style.display = 'none';
+        }
+      },
+      payPadKey(k) {
+        const inp = document.getElementById('ppReceived');
+        let v = inp.value === '0' ? '' : inp.value;
+        if (k === '.') { if (v.includes('.')) return; if (!v) v = '0'; v += '.'; }
+        else v += k;
+        // Cap input to a sane max so a stray long-press doesn't enter ฿9-trillion.
+        if (v.length > 12) return;
+        inp.value = v;
+        this._payPadRecalc();
+      },
+      payPadBackspace() {
+        const inp = document.getElementById('ppReceived');
+        inp.value = inp.value.length <= 1 ? '0' : inp.value.slice(0, -1);
+        this._payPadRecalc();
+      },
+      payPadClear() {
+        document.getElementById('ppReceived').value = '0';
+        this._payPadRecalc();
+      },
+      payPadAdd(n) {
+        const inp = document.getElementById('ppReceived');
+        const cur = parseFloat(inp.value) || 0;
+        inp.value = (cur + n).toFixed(2);
+        this._payPadRecalc();
+      },
+      payPadExact() {
+        document.getElementById('ppReceived').value = this._payPadRemaining().toFixed(2);
+        this._payPadRecalc();
+      },
+      async payPadConfirm() {
         const api = Layout.api(); if (!api) return;
-        const method = document.getElementById('payMethod').value;
-        const amount = parseFloat(document.getElementById('payAmount').value);
-        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงิน', 'warning'); return; }
+        const orderId = this.currentOrderId;
+        if (!orderId) return;
+        const method = this._payPadMethod || 'Cash';
+        const received = parseFloat(document.getElementById('ppReceived').value) || 0;
+        const remaining = this._payPadRemaining();
+        if (received <= 0) { Layout.toast('ใส่จำนวนเงินก่อน', 'warning'); return; }
+        // For cash: amount = min(received, remaining) — overpayment becomes change.
+        // For non-cash: amount = received (no change concept).
+        const amount = method === 'Cash' ? Math.min(received, remaining) : received;
+        if (amount <= 0) { Layout.toast('ออเดอร์นี้ชำระครบแล้ว', 'warning'); return; }
         try {
           const res = await api.addPosPayment({
             orderId: orderId,
             paymentMethod: method,
             amount: amount,
-            receivedAmount: method === 'Cash' ? amount : amount,
-            referenceNo: document.getElementById('payRef').value || null
+            receivedAmount: received,
+            referenceNo: document.getElementById('ppRef').value || null
           });
-          this.currentOrder = res.data;
-          this.updateSummaryFromOrder(res.data);
+          this._syncCartFromServer(res.data);
           Layout.toast('บันทึกการชำระเงินสำเร็จ');
-          document.getElementById('payAmount').value = '';
-          document.getElementById('payRef').value = '';
-          // Show change for cash
+          // Show change badge in main order panel for cashier visibility.
           if (method === 'Cash') {
-            const net = res.data.netAmount;
-            const totalPaid = (res.data.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
-            if (totalPaid >= net) {
-              const lastPay = res.data.payments[res.data.payments.length - 1];
+            const lastPay = res.data.payments[res.data.payments.length - 1];
+            if (lastPay && lastPay.changeAmount > 0) {
               document.getElementById('changeDisplay').style.display = 'block';
               document.getElementById('changeAmount').textContent = Layout.money(lastPay.changeAmount);
             }
+          }
+          // Auto-close + auto-complete when fully paid.
+          const newRemaining = this._payPadRemaining();
+          if (newRemaining <= 0.005) {
+            Layout.closeModal('payPadModal');
+            // Tiny pause so the user sees the change amount before the receipt prints.
+            setTimeout(() => this.completeOrder(), 200);
+          } else {
+            // Partial payment — reset received for the next leg, keep modal open.
+            document.getElementById('ppReceived').value = '0';
+            this._payPadRecalc();
           }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

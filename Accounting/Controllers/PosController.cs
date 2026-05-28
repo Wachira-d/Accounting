@@ -128,6 +128,11 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemStatus(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemStatusRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateItemStatusAsync(companyId, orderId, itemId, request)));
 
+    public record UpdateItemQtyRequest(decimal Quantity);
+    [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/qty")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemQty(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemQtyRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateOrderItemQuantityAsync(companyId, orderId, itemId, request.Quantity)));
+
     // ===== Payment =====
     [HttpPost("payments")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddPayment(Guid companyId, [FromBody] CreatePaymentRequest request)

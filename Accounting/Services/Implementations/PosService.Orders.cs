@@ -604,6 +604,38 @@ public partial class PosService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>Set a new quantity on an existing line. Used by the POS UI's
+    /// +/- buttons after the order has been created on the server — keeps the
+    /// local cart and the server in sync so subtotal/VAT don't drift.</summary>
+    public async Task<OrderResponse> UpdateOrderItemQuantityAsync(Guid companyId, Guid orderId, Guid itemId, decimal newQuantity)
+    {
+        if (newQuantity < 0) throw new ArgumentException("จำนวนต้องไม่ติดลบ");
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แก้ไขจำนวนไม่ได้");
+        var item = order.Items.FirstOrDefault(i => i.Id == itemId && !i.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการ");
+
+        if (newQuantity == 0)
+        {
+            item.IsDeleted = true;
+        }
+        else
+        {
+            item.Quantity = newQuantity;
+            // Recompute per-line totals; VAT is computed at order level by RecalculateOrder.
+            item.SubTotal = Math.Round(item.UnitPrice * newQuantity - item.DiscountAmount, 2, MidpointRounding.AwayFromZero);
+            item.TotalAmount = item.SubTotal;
+        }
+
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
     public async Task<OrderResponse> UpdateItemStatusAsync(Guid companyId, Guid orderId, Guid itemId, UpdateItemStatusRequest request)
     {
         var item = await _db.PosOrderItems.FirstOrDefaultAsync(i => i.Id == itemId && i.OrderId == orderId)
@@ -699,20 +731,44 @@ public partial class PosService
 
     private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId)
     {
-        // Find accounts: Cash/Bank (Dr), Sales Revenue (Cr), VAT Payable (Cr)
-        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11111")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
+        // Sales / VAT / COGS / Inventory accounts — single source per company.
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
 
-        if (cashAccount == null || salesAccount == null) return; // Skip if no accounts configured
+        if (salesAccount == null) return; // Skip if no sales account configured
 
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
-        // Debit: Cash / Bank
-        lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
+        // Debit: one line per payment method (Cash → 1011, BankTransfer/PromptPay → 1012,
+        // CreditCard → 1131 บัตรเครดิตค้างรับ). When the order has multiple payments
+        // — e.g. half cash half transfer — we record each leg into its own account so
+        // the GL reconciles to the bank/cash position correctly.
+        var paymentsToBook = order.Payments?.Where(p => !p.IsDeleted).ToList() ?? new List<PosPayment>();
+        if (paymentsToBook.Count == 0)
+        {
+            // No payment records — fall back to a single debit using the default cash
+            // account so the JE still balances. Older orders without explicit payment
+            // method end up here.
+            var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash);
+            if (cashAccount == null) return;
+            lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
+        }
+        else
+        {
+            foreach (var pay in paymentsToBook)
+            {
+                var acct = await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod);
+                if (acct == null) continue;
+                // Use Amount (allocated to invoice), not ReceivedAmount, so cash-tendered-with-change
+                // posts the invoice value, not the full bill the customer handed over.
+                var debit = pay.Amount;
+                if (debit <= 0) continue;
+                var methodLabel = PaymentMethodThaiLabel(pay.PaymentMethod);
+                lines.Add(new(acct.Id, debit, 0, $"รับเงิน {methodLabel} POS #{order.OrderNumber}"));
+            }
+        }
 
         // Credit: Sales Revenue (net of VAT)
         var revenueAmount = order.NetAmount - order.VatAmount;
@@ -961,4 +1017,44 @@ public partial class PosService
 
     private static PaymentResponse MapPayment(PosPayment p) => new(
         p.Id, p.PaymentMethod, p.Amount, p.ReceivedAmount, p.ChangeAmount, p.ReferenceNo, p.CardLastFour, p.PaidAt);
+
+    // Cash/bank/card account picker keyed by PaymentMethod. Defaults match
+    // the Thai SME chart-of-accounts seeded by SeedCoaService:
+    //   1011 เงินสด / 1012 ธนาคาร / 1131 บัตรเครดิตค้างรับ
+    // Fallback by prefix lets companies with a customized COA still resolve.
+    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(Guid companyId, PaymentMethod method)
+    {
+        string preferred; string prefix;
+        switch (method)
+        {
+            case PaymentMethod.Cash:
+                preferred = "1011"; prefix = "111"; break;
+            case PaymentMethod.BankTransfer:
+            case PaymentMethod.PromptPay:
+            case PaymentMethod.DirectDebit:
+            case PaymentMethod.EWallet:
+                preferred = "1012"; prefix = "112"; break;
+            case PaymentMethod.CreditCard:
+                preferred = "1131"; prefix = "113"; break;
+            case PaymentMethod.Cheque:
+                preferred = "1012"; prefix = "112"; break;
+            default:
+                preferred = "1011"; prefix = "111"; break;
+        }
+
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == preferred)
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4);
+    }
+
+    private static string PaymentMethodThaiLabel(PaymentMethod m) => m switch
+    {
+        PaymentMethod.Cash         => "เงินสด",
+        PaymentMethod.BankTransfer => "โอนธนาคาร",
+        PaymentMethod.PromptPay    => "พร้อมเพย์",
+        PaymentMethod.CreditCard   => "บัตรเครดิต",
+        PaymentMethod.Cheque       => "เช็ค",
+        PaymentMethod.DirectDebit  => "หักบัญชี",
+        PaymentMethod.EWallet      => "e-Wallet",
+        _                          => m.ToString()
+    };
 }
