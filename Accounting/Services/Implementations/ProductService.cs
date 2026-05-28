@@ -109,7 +109,8 @@ public class ProductService : IProductService
             SuppliesAccountId = request.SuppliesAccountId,
             SuppliesExpenseAccountId = request.SuppliesExpenseAccountId,
             TrackStock = request.TrackStock || request.ProductType == ProductType.Supplies,
-            MinimumStock = request.MinimumStock
+            MinimumStock = request.MinimumStock,
+            PrintStation = string.IsNullOrWhiteSpace(request.PrintStation) ? null : request.PrintStation
         };
 
         _db.Products.Add(product);
@@ -170,6 +171,7 @@ public class ProductService : IProductService
         if (request.IsActive.HasValue) product.IsActive = request.IsActive.Value;
         if (request.TrackStock.HasValue) product.TrackStock = request.TrackStock.Value;
         if (request.MinimumStock.HasValue) product.MinimumStock = request.MinimumStock.Value;
+        if (request.PrintStation != null) product.PrintStation = string.IsNullOrWhiteSpace(request.PrintStation) ? null : request.PrintStation;
         if (request.SalesAccountId.HasValue) product.SalesAccountId = request.SalesAccountId;
         if (request.PurchaseAccountId.HasValue) product.PurchaseAccountId = request.PurchaseAccountId;
         if (request.InventoryAccountId.HasValue) product.InventoryAccountId = request.InventoryAccountId;
@@ -1147,7 +1149,8 @@ public class ProductService : IProductService
             p.InventoryAccountId, p.InventoryAccount?.AccountName,
             p.UnitConversions?.Select(MapConversion).ToList(),
             imgs,
-            imgs.Count > 0 ? imgs[0] : null);
+            imgs.Count > 0 ? imgs[0] : null,
+            p.PrintStation);
     }
 
     private static List<string> ParseImageUrls(string? json)

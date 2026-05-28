@@ -924,6 +924,22 @@ public partial class PosService
         order.Status = PosOrderStatus.Completed;
         order.CompletedAt = DateTime.UtcNow;
 
+        // Loyalty: award 1 point per ฿100 spent (NetAmount excluding tip) and
+        // bump visit counter / lastVisit on the linked Contact. Floor — fractions
+        // don't round up so a ฿149 sale earns 1 not 2.
+        if (order.CustomerId.HasValue)
+        {
+            var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == order.CustomerId.Value && c.CompanyId == companyId);
+            if (contact != null)
+            {
+                var spend = order.NetAmount - order.TipAmount;
+                var earn = (int)Math.Floor(spend / 100m);
+                if (earn > 0) contact.LoyaltyPoints += earn;
+                contact.LastVisitAt = DateTime.UtcNow;
+                contact.TotalVisitCount += 1;
+            }
+        }
+
         // Create journal entry for accounting integration
         await CreateSalesJournalEntryAsync(companyId, order, userId);
 

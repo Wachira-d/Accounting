@@ -291,7 +291,10 @@ public record ContactResponse(
     string? District = null,
     string? Province = null,
     string? PostalCode = null,
-    string? CountryCode = "TH");
+    string? CountryCode = "TH",
+    int LoyaltyPoints = 0,
+    DateTime? LastVisitAt = null,
+    int TotalVisitCount = 0);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

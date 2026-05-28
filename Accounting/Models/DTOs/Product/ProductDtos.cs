@@ -22,7 +22,8 @@ public record CreateProductRequest(
     Guid? SuppliesAccountId = null,
     Guid? SuppliesExpenseAccountId = null,
     bool TrackStock = false,
-    decimal MinimumStock = 0);
+    decimal MinimumStock = 0,
+    string? PrintStation = null);
 
 public record UpdateProductRequest(
     string? Name,
@@ -43,7 +44,8 @@ public record UpdateProductRequest(
     Guid? PurchaseAccountId,
     Guid? InventoryAccountId,
     Guid? SuppliesAccountId,
-    Guid? SuppliesExpenseAccountId);
+    Guid? SuppliesExpenseAccountId,
+    string? PrintStation = null);
 
 public record ProductResponse(
     Guid Id,
@@ -72,7 +74,8 @@ public record ProductResponse(
     string? InventoryAccountName,
     List<UnitConversionResponse>? UnitConversions = null,
     List<string>? ImageUrls = null,
-    string? FeaturedImageUrl = null);
+    string? FeaturedImageUrl = null,
+    string? PrintStation = null);
 
 public record StockAdjustmentRequest(
     Guid ProductId,

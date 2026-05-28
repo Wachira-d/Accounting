@@ -214,5 +214,11 @@ public class Contact : TenantEntity
     public string? ContactPerson { get; set; }
     public bool IsActive { get; set; } = true;
 
+    /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
+    /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>
+    public int LoyaltyPoints { get; set; } = 0;
+    public DateTime? LastVisitAt { get; set; }
+    public int TotalVisitCount { get; set; } = 0;
+
     public ICollection<Document> Documents { get; set; } = new List<Document>();
 }

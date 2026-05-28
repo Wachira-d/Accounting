@@ -2070,6 +2070,16 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponCode" varchar(50) NULL;""",
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponDiscountAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
 
+            // Loyalty points on Contact (per-tenant; reset never).
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "LoyaltyPoints" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "LastVisitAt" timestamp NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "TotalVisitCount" integer NOT NULL DEFAULT 0;""",
+
+            // Multi-printer routing — Product.PrintStation routes kitchen
+            // tickets per item ("Kitchen-Hot" / "Kitchen-Cold" / "Bar" / "Drinks").
+            // Null = goes to default cashier printer only.
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "PrintStation" varchar(50) NULL;""",
+
             // Sensitivity classification: 0=None / 1=Payroll / 2=ExecutivePay / 3=HrPersonal / 9=Confidential.
             // Documents (payroll vouchers) and JEs (auto-generated payroll JEs) stamp
             // this so SensitivityService can redact for users lacking the matching role.

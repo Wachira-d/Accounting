@@ -172,10 +172,15 @@
               <option value="4">นัดหมาย</option>
             </select>
           </div>
-          <div class="order-fields">
-            <input type="text" id="fCustomerName" placeholder="ชื่อลูกค้า (ไม่บังคับ)">
+          <div class="order-fields" style="position:relative">
+            <input type="text" id="fCustomerName" placeholder="ชื่อลูกค้า / เบอร์โทร (ไม่บังคับ)" autocomplete="off" oninput="Page.onCustomerInput(this.value)">
             <input type="text" id="fTableNo" placeholder="โต๊ะ">
             <input type="text" id="fQueueNo" placeholder="คิว" style="display:none;">
+            <div id="customerResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:100;max-height:260px;overflow:auto;font-size:13px"></div>
+          </div>
+          <div id="memberBadge" style="display:none;margin-top:6px;padding:6px 10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534;display:flex;align-items:center;gap:8px">
+            <span>🎁 <strong id="memberName">-</strong> · <span id="memberPoints">0</span> แต้ม · เคยมา <span id="memberVisits">0</span> ครั้ง</span>
+            <button type="button" onclick="Page.clearMember()" style="margin-left:auto;background:transparent;border:none;color:#64748b;cursor:pointer">×</button>
           </div>
         </div>
         <div class="order-items" id="orderItems">
@@ -1272,8 +1277,8 @@
           this.products = (prodRes.data?.items || prodRes.data || []).filter(p => p.isActive);
           this.packages = (pkgRes.data || []).filter(p => p.isActive);
           this.allItems = [
-            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า' })),
-            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ' }))
+            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า', printStation:p.printStation })),
+            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ', printStation:null }))
           ];
           this.buildCategories();
           this.filterItems();
@@ -1353,7 +1358,8 @@
             itemId: id,
             name: item.name,
             unitPrice: item.price,
-            quantity: 1
+            quantity: 1,
+            printStation: item.printStation
           });
         }
         this.renderCart();
@@ -1544,6 +1550,7 @@
           const res = await api.createPosOrder({
             sessionId: this.session.id,
             orderType: ot,
+            customerId: this._attachedCustomerId || null,
             customerName: document.getElementById('fCustomerName').value || null,
             tableNumber: document.getElementById('fTableNo').value || null,
             queueNumber: document.getElementById('fQueueNo').value || null,
@@ -1579,6 +1586,42 @@
         } else tipRow.style.display='none';
         document.getElementById('sumNet').textContent = Layout.money(order.netAmount);
         this.paidTotal = (order.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
+      },
+
+      // ===== Member / contact lookup =====
+      onCustomerInput(q) {
+        clearTimeout(this._custTimer);
+        this._custTimer = setTimeout(() => this._searchCustomer(q), 250);
+      },
+      async _searchCustomer(q) {
+        const results = document.getElementById('customerResults');
+        if (!q || q.length < 2) { results.style.display='none'; return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getContacts(`?search=${encodeURIComponent(q)}&pageSize=8`);
+          const items = (res.data?.items || []).filter(c => c.isCustomer !== false);
+          if (!items.length) { results.style.display='none'; return; }
+          results.style.display = '';
+          results.innerHTML = items.map(c => `
+            <div onclick="Page.attachCustomer('${c.id}','${(c.name||'').replace(/'/g,'\\\'')}',${c.loyaltyPoints||0},${c.totalVisitCount||0})" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+              <div style="font-weight:600">${Layout.esc(c.name)}</div>
+              <div style="font-size:11px;color:#64748b">${c.phone?'📞 '+Layout.esc(c.phone)+' · ':''}🎁 ${c.loyaltyPoints||0} แต้ม · มาแล้ว ${c.totalVisitCount||0} ครั้ง</div>
+            </div>`).join('');
+        } catch { results.style.display='none'; }
+      },
+      attachCustomer(id, name, points, visits) {
+        this._attachedCustomerId = id;
+        document.getElementById('fCustomerName').value = name;
+        document.getElementById('customerResults').style.display = 'none';
+        document.getElementById('memberName').textContent = name;
+        document.getElementById('memberPoints').textContent = points;
+        document.getElementById('memberVisits').textContent = visits;
+        document.getElementById('memberBadge').style.display = 'flex';
+      },
+      clearMember() {
+        this._attachedCustomerId = null;
+        document.getElementById('fCustomerName').value = '';
+        document.getElementById('memberBadge').style.display = 'none';
       },
 
       // ===== Tip =====
@@ -1985,7 +2028,7 @@
           clientOrderId: this._uuid(),
           sessionId: this.session.id,
           orderType: document.getElementById('orderType').value || 'DineIn',
-          customerId: null,
+          customerId: this._attachedCustomerId || null,
           customerName: document.getElementById('fCustomerName').value || null,
           tableNumber: document.getElementById('fTableNo').value || null,
           queueNumber: document.getElementById('fQueueNo').value || null,
@@ -2124,19 +2167,37 @@
         const table = document.getElementById('fTableNo')?.value || '';
         const queue = document.getElementById('fQueueNo')?.value || '';
         const cust = document.getElementById('fCustomerName')?.value || '';
-        const rows = this.cart.map(c =>
-          `<tr><td class="big">${c.quantity}×</td><td class="big">${esc(c.name)}</td></tr>`).join('');
-        const body = `
-          <h2>🍳 ออเดอร์เข้าครัว/บาร์</h2>
-          <div class="c b">${esc(typeLabel)}${table ? ' · โต๊ะ ' + esc(table) : ''}${queue ? ' · คิว ' + esc(queue) : ''}</div>
-          ${cust ? `<div class="c muted">ลูกค้า: ${esc(cust)}</div>` : ''}
-          <div class="c muted">เวลา: ${esc(new Date().toLocaleTimeString('th-TH'))}</div>
-          <div class="line"></div>
-          <table>${rows}</table>
-          <div class="line"></div>
-          <div class="c muted">รวม ${this.cart.reduce((s, c) => s + c.quantity, 0)} รายการ</div>`;
+
+        // Group items by PrintStation so each station prints its own ticket.
+        // Items with no PrintStation default to "ครัว" so nothing falls through.
+        const byStation = {};
+        this.cart.forEach(c => {
+          const station = c.printStation || 'ครัว';
+          (byStation[station] ??= []).push(c);
+        });
+        const stations = Object.keys(byStation).sort();
+        const stationIcon = { 'Kitchen-Hot':'🔥', 'Kitchen-Cold':'❄️', 'Bar':'🍹', 'Drinks':'🥤', 'ครัว':'🍳' };
+        const stationLabel = { 'Kitchen-Hot':'ครัวร้อน', 'Kitchen-Cold':'ครัวเย็น', 'Bar':'บาร์', 'Drinks':'เครื่องดื่ม' };
+
+        const sections = stations.map(st => {
+          const items = byStation[st];
+          const rows = items.map(c =>
+            `<tr><td class="big">${c.quantity}×</td><td class="big">${esc(c.name)}</td></tr>`).join('');
+          const label = stationLabel[st] || st;
+          const icon = stationIcon[st] || '🍴';
+          return `<div style="page-break-after:always">
+            <h2>${icon} ${esc(label)}</h2>
+            <div class="c b">${esc(typeLabel)}${table ? ' · โต๊ะ ' + esc(table) : ''}${queue ? ' · คิว ' + esc(queue) : ''}</div>
+            ${cust ? `<div class="c muted">ลูกค้า: ${esc(cust)}</div>` : ''}
+            <div class="c muted">เวลา: ${esc(new Date().toLocaleTimeString('th-TH'))}</div>
+            <div class="line"></div>
+            <table>${rows}</table>
+            <div class="line"></div>
+            <div class="c muted">รวม ${items.reduce((s, c) => s + c.quantity, 0)} รายการ · สถานี: ${esc(label)}</div>
+          </div>`;
+        }).join('');
         const s = this._printSettings || this.loadPrintSettings();
-        this._openPrintWindow('ออเดอร์ครัว', s.paper, 14, body);
+        this._openPrintWindow('ออเดอร์ครัว', s.paper, 14, sections);
       },
 
       async voidOrder() {
@@ -2238,11 +2299,14 @@
         this.currentOrderId = null;
         this.currentOrder = null;
         this.paidTotal = 0;
+        this._attachedCustomerId = null;
         document.getElementById('orderTitle').textContent = 'ออเดอร์ใหม่';
         document.getElementById('fCustomerName').value = '';
         document.getElementById('fTableNo').value = '';
         document.getElementById('fQueueNo').value = '';
         document.getElementById('changeDisplay').style.display = 'none';
+        const memberBadge = document.getElementById('memberBadge');
+        if (memberBadge) memberBadge.style.display = 'none';
         this.renderCart();
       },
 

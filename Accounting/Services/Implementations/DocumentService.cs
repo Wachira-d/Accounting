@@ -3106,7 +3106,10 @@ public class DocumentService : IDocumentService
         District: c.District,
         Province: c.Province,
         PostalCode: c.PostalCode,
-        CountryCode: c.CountryCode);
+        CountryCode: c.CountryCode,
+        LoyaltyPoints: c.LoyaltyPoints,
+        LastVisitAt: c.LastVisitAt,
+        TotalVisitCount: c.TotalVisitCount);
 
     // ==================== Smart Defaults ====================
 
