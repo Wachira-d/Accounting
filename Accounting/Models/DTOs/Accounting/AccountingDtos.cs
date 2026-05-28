@@ -98,7 +98,14 @@ public record JournalEntryResponse(
     string? Tags = null,
     Guid? SourceDocumentId = null,
     string? SourceDocumentNumber = null,
-    string? SourceDocumentType = null);
+    string? SourceDocumentType = null,
+    // Sensitivity stamp — non-None marks the entry as restricted (e.g.
+    // Payroll). When IsRedacted is set on the response, Lines / amounts /
+    // description have been blanked out for the requesting user; integration
+    // targets should treat this as a placeholder, not a real entry.
+    SensitivityKind Sensitivity = SensitivityKind.None,
+    bool IsRedacted = false,
+    string? RedactedReason = null);
 
 public record BatchVoidRequest(List<Guid> EntryIds);
 

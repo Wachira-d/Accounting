@@ -33,6 +33,12 @@ public class JournalEntry : TenantEntity
     public decimal TotalDebit { get; set; }
     public decimal TotalCredit { get; set; }
 
+    /// <summary>Access-control marker — JEs produced by the payroll run are
+    /// stamped Payroll so GL/General Ledger queries can redact them for
+    /// users without the matching permission. Default None for the regular
+    /// sales / purchase / cash stream.</summary>
+    public SensitivityKind Sensitivity { get; set; } = SensitivityKind.None;
+
     // Navigation
     public ICollection<JournalEntryLine> Lines { get; set; } = new List<JournalEntryLine>();
 }

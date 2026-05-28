@@ -9,7 +9,12 @@ public interface IDocumentService
     // Documents
     Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
+    /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
+    /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>
+    Task<DocumentResponse> GetDocumentForUserAsync(Guid companyId, Guid documentId, Guid userId);
     Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false);
+    /// <summary>Same as GetDocumentsAsync but redacts items the user lacks permission for.</summary>
+    Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false);
     Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>

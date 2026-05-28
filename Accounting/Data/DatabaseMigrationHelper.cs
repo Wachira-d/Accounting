@@ -2064,6 +2064,36 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "ImageUrlsJson" text NULL;
             """,
+
+            // Sensitivity classification: 0=None / 1=Payroll / 2=ExecutivePay / 3=HrPersonal / 9=Confidential.
+            // Documents (payroll vouchers) and JEs (auto-generated payroll JEs) stamp
+            // this so SensitivityService can redact for users lacking the matching role.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Sensitivity" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "Sensitivity" integer NOT NULL DEFAULT 0;
+            """,
+            // Per-company allow-list — one row per (Company, Kind, Role).
+            """
+            CREATE TABLE IF NOT EXISTS "SensitivityAccessRules" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "Kind" integer NOT NULL,
+                "Role" integer NOT NULL,
+                "CanView" boolean NOT NULL DEFAULT true,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SensitivityAccessRules" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_SensitivityAccessRules_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SensitivityAccessRules_Company_Kind_Role" ON "SensitivityAccessRules" ("CompanyId", "Kind", "Role") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Sensitivity" ON "Documents" ("CompanyId", "Sensitivity") WHERE "Sensitivity" > 0 AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_JournalEntries_Sensitivity" ON "JournalEntries" ("CompanyId", "Sensitivity") WHERE "Sensitivity" > 0 AND "IsDeleted" = false;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).

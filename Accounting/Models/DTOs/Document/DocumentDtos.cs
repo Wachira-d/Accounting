@@ -135,7 +135,15 @@ public record DocumentResponse(
     // Multi-currency — Currency is doc's denomination; ExchangeRate is THB per
     // 1 unit of Currency captured at Create. Both default to ("THB", 1).
     string Currency = "THB",
-    decimal ExchangeRate = 1m);
+    decimal ExchangeRate = 1m,
+    // Sensitivity — None for the regular sales/purchase stream. Payroll vouchers
+    // and other restricted records stamp this. When the requesting user lacks
+    // the matching permission the API returns a stub with IsRedacted=true and
+    // amounts/contact/notes blanked out so integration targets know the record
+    // exists but is hidden — they should not 404 or pretend it isn't there.
+    SensitivityKind Sensitivity = SensitivityKind.None,
+    bool IsRedacted = false,
+    string? RedactedReason = null);
 
 public record DocumentLineResponse(
     Guid Id,

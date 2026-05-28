@@ -231,6 +231,21 @@ public enum DocumentType
     CertificateInLieu = 15,   // ใบรับรองแทนใบเสร็จ
 }
 
+/// <summary>
+/// Sensitivity classification for documents, JEs, and payroll records.
+/// Owner configures, per company, which roles can see each kind. The API
+/// returns redacted stubs (not 404) so integration targets know the record
+/// exists but is hidden.
+/// </summary>
+public enum SensitivityKind
+{
+    None = 0,        // เปิดเผยปกติ
+    Payroll = 1,     // ข้อมูลเงินเดือน / ใบจ่ายเงินเดือน / สลิป / JE เงินเดือน
+    ExecutivePay = 2,// โบนัส / เงินพิเศษผู้บริหาร
+    HrPersonal = 3,  // ข้อมูลส่วนตัวพนักงาน
+    Confidential = 9 // เอกสารลับอื่นๆ — กำหนดสิทธิ์เอง
+}
+
 public enum DocumentStatus
 {
     Draft = 0,

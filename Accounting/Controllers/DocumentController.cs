@@ -79,7 +79,8 @@ public class DocumentController : ControllerBase
         [FromQuery] Guid? relatedDocumentId = null, [FromQuery] Guid? revenueContractId = null,
         [FromQuery] bool staleOnly = false)
     {
-        var result = await _documentService.GetDocumentsAsync(companyId, type, new PagedRequest(page, pageSize, search),
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
@@ -87,7 +88,8 @@ public class DocumentController : ControllerBase
     [HttpGet("{documentId:guid}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> GetDocument(Guid companyId, Guid documentId)
     {
-        var result = await _documentService.GetDocumentAsync(companyId, documentId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _documentService.GetDocumentForUserAsync(companyId, documentId, userId);
         return Ok(new ApiResponse<DocumentResponse>(true, result));
     }
 

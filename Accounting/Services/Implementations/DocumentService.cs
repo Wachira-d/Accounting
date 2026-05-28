@@ -26,6 +26,7 @@ public class DocumentService : IDocumentService
     private readonly IBankService? _bankService;
     private readonly ITaxService? _taxService;
     private readonly IBotExchangeRateService? _fxRates;
+    private readonly ISensitivityService? _sensitivity;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -36,7 +37,8 @@ public class DocumentService : IDocumentService
         INotificationEngine? notify = null,
         IBankService? bankService = null,
         ITaxService? taxService = null,
-        IBotExchangeRateService? fxRates = null)
+        IBotExchangeRateService? fxRates = null,
+        ISensitivityService? sensitivity = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -47,6 +49,7 @@ public class DocumentService : IDocumentService
         _lineNotify = lineNotify;
         _vendorIntel = vendorIntel;
         _crossTenantWorkflow = crossTenantWorkflow;
+        _sensitivity = sensitivity;
         _notify = notify;
         _bankService = bankService;
         _taxService = taxService;
@@ -300,6 +303,61 @@ public class DocumentService : IDocumentService
         var etax = await GetLatestEtaxAsync(companyId, new[] { documentId });
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
     }
+
+    public async Task<DocumentResponse> GetDocumentForUserAsync(Guid companyId, Guid documentId, Guid userId)
+    {
+        var full = await GetDocumentAsync(companyId, documentId);
+        if (full.Sensitivity == SensitivityKind.None || _sensitivity == null) return full;
+        var allowed = await _sensitivity.CanViewAsync(companyId, userId, full.Sensitivity);
+        if (allowed) return full;
+        // Fetch only the bare-minimum metadata needed for the stub.
+        var stub = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.DueDate, d.CreatedAt, d.Sensitivity })
+            .FirstAsync();
+        return new DocumentResponse(stub.Id, stub.DocumentNumber, stub.DocumentType, stub.Status,
+            stub.DocumentDate, stub.DueDate,
+            new ContactBrief(Guid.Empty, "[ซ่อน]", null),
+            0, 0, 0, 0, 0, 0, 0, null, null,
+            new List<DocumentLineResponse>(), stub.CreatedAt,
+            Sensitivity: stub.Sensitivity,
+            IsRedacted: true,
+            RedactedReason: SensitivityRedactReason(stub.Sensitivity));
+    }
+
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
+    {
+        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
+        if (_sensitivity == null) return page;
+        var visible = await _sensitivity.GetVisibleKindsAsync(companyId, userId);
+
+        // Replace any item the user can't see with a redacted stub. We keep
+        // the row in the list (don't filter out) so paging counts stay stable
+        // and integration targets see "row N is hidden" rather than "row N
+        // missing" — the latter is impossible to distinguish from a delete.
+        var redactedItems = page.Items.Select(it =>
+            it.Sensitivity == SensitivityKind.None || visible.Contains(it.Sensitivity)
+                ? it
+                : new DocumentResponse(it.Id, it.DocumentNumber, it.DocumentType, it.Status,
+                    it.DocumentDate, it.DueDate,
+                    new ContactBrief(Guid.Empty, "[ซ่อน]", null),
+                    0, 0, 0, 0, 0, 0, 0, null, null,
+                    new List<DocumentLineResponse>(), it.CreatedAt,
+                    Sensitivity: it.Sensitivity,
+                    IsRedacted: true,
+                    RedactedReason: SensitivityRedactReason(it.Sensitivity))
+        ).ToList();
+        return new PagedResponse<DocumentResponse>(redactedItems, page.TotalCount, page.Page, page.PageSize, page.TotalPages);
+    }
+
+    private static string SensitivityRedactReason(SensitivityKind kind) => kind switch
+    {
+        SensitivityKind.Payroll      => "ต้องมีสิทธิ์ดูข้อมูลเงินเดือน (perm:Payroll.View)",
+        SensitivityKind.ExecutivePay => "ต้องมีสิทธิ์ดูข้อมูลค่าตอบแทนผู้บริหาร",
+        SensitivityKind.HrPersonal   => "ต้องมีสิทธิ์ดูข้อมูลบุคลากร",
+        SensitivityKind.Confidential => "ต้องมีสิทธิ์ดูเอกสารลับ (perm:SensitiveDocs.View)",
+        _                            => "ต้องมีสิทธิ์เพิ่มเติม"
+    };
 
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
     {
@@ -3005,7 +3063,24 @@ public class DocumentService : IDocumentService
         AgingDays: d.AgingDays,
         StaleDays: ComputeStaleDays(d),
         Currency: d.Currency,
-        ExchangeRate: d.ExchangeRate);
+        ExchangeRate: d.ExchangeRate,
+        Sensitivity: d.Sensitivity);
+
+    /// <summary>Build the redacted stub returned to API consumers who lack
+    /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and
+    /// Sensitivity so the integration target knows the record exists and what
+    /// kind of access it would need; blanks out amounts / contact / notes /
+    /// lines. The destination system can decide whether to skip, place-hold,
+    /// or request access.</summary>
+    private static DocumentResponse RedactDocumentResponse(Document d, string reason) => new(
+        d.Id, d.DocumentNumber, d.DocumentType, d.Status,
+        d.DocumentDate, d.DueDate,
+        new ContactBrief(Guid.Empty, "[ซ่อน]", null),
+        0, 0, 0, 0, 0, 0, 0, null, null,
+        new List<DocumentLineResponse>(), d.CreatedAt,
+        Sensitivity: d.Sensitivity,
+        IsRedacted: true,
+        RedactedReason: reason);
 
     /// <summary>Days a document has been parked in a non-terminal status past
     /// the stale threshold — null when fresh or in a terminal status.

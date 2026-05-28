@@ -60,6 +60,11 @@ public class Document : TenantEntity
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
 
+    /// <summary>Access-control classification — None for the regular sales
+    /// stream, Payroll/ExecutivePay/HrPersonal for restricted records.
+    /// Owner picks which roles can see each kind in CompanySensitivitySettings.</summary>
+    public SensitivityKind Sensitivity { get; set; } = SensitivityKind.None;
+
     // Per-document overrides for the company's global appendix/footer templates.
     // When null, falls back to CompanySettings.{Type}Notes / {Type}Footer.
     public string? CustomAppendix { get; set; }

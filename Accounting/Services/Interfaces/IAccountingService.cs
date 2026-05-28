@@ -22,7 +22,11 @@ public interface IAccountingService
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
     Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId);
+    /// <summary>Sensitivity-aware GET — redacts the payload when the user can't see the JE.</summary>
+    Task<JournalEntryResponse> GetJournalEntryForUserAsync(Guid companyId, Guid entryId, Guid userId);
     Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null, string? tag = null, Guid? sourceDocumentId = null, string? sourceDocumentNumber = null);
+    /// <summary>Sensitivity-aware list — redacts entries the user can't see, preserves paging counts.</summary>
+    Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesForUserAsync(Guid companyId, Guid userId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null, string? tag = null, Guid? sourceDocumentId = null, string? sourceDocumentNumber = null);
     Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId);
     Task<JournalEntryResponse> UpdateJournalEntryAsync(Guid companyId, Guid entryId, UpdateJournalEntryRequest request, string updatedBy);
     Task VoidJournalEntryAsync(Guid companyId, Guid entryId);
