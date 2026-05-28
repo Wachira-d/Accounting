@@ -207,6 +207,8 @@ const API = {
       deleteProduct: (id) => API.del(`${base}/product/${id}`),
       adjustStock: (d) => API.post(`${base}/product/stock/adjust`, d),
       getStockMovements: (productId) => API.get(`${base}/product/${productId}/stock/movements`),
+      uploadProductImage: (productId, formData) => API.upload(`${base}/product/${productId}/images`, formData),
+      deleteProductImage: (productId, url) => API.del(`${base}/product/${productId}/images?url=${encodeURIComponent(url)}`),
       getLowStock: () => API.get(`${base}/product/stock/low`),
       // Unit Conversions
       getUnitConversions: (productId) => API.get(`${base}/product/${productId}/unit-conversions`),

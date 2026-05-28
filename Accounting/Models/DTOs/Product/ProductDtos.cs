@@ -70,7 +70,9 @@ public record ProductResponse(
     string? PurchaseAccountName,
     Guid? InventoryAccountId,
     string? InventoryAccountName,
-    List<UnitConversionResponse>? UnitConversions = null);
+    List<UnitConversionResponse>? UnitConversions = null,
+    List<string>? ImageUrls = null,
+    string? FeaturedImageUrl = null);
 
 public record StockAdjustmentRequest(
     Guid ProductId,

@@ -2060,6 +2060,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentDate" timestamp NULL;
             """,
+            // Product gallery images (JSON array of /uploads/products/... URLs).
+            """
+            ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "ImageUrlsJson" text NULL;
+            """,
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).

@@ -55,6 +55,38 @@ public class ProductController : ControllerBase
         return NoContent();
     }
 
+    // ===== Product images (gallery) =====
+
+    [HttpPost("{productId:guid}/images")]
+    [RequestSizeLimit(15 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<ProductResponse>>> UploadImage(
+        Guid companyId, Guid productId, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<ProductResponse>(false, null, "กรุณาเลือกไฟล์"));
+        await using var s = file.OpenReadStream();
+        var result = await _productService.AddImageAsync(companyId, productId, s, file.ContentType, file.FileName);
+        return Ok(new ApiResponse<ProductResponse>(true, result, "อัพโหลดรูปสำเร็จ"));
+    }
+
+    [HttpDelete("{productId:guid}/images")]
+    public async Task<ActionResult<ApiResponse<ProductResponse>>> DeleteImage(
+        Guid companyId, Guid productId, [FromQuery] string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return BadRequest(new ApiResponse<ProductResponse>(false, null, "ระบุ url ที่จะลบ"));
+        var result = await _productService.RemoveImageAsync(companyId, productId, url);
+        return Ok(new ApiResponse<ProductResponse>(true, result));
+    }
+
+    [HttpPut("{productId:guid}/images/order")]
+    public async Task<ActionResult<ApiResponse<ProductResponse>>> ReorderImages(
+        Guid companyId, Guid productId, [FromBody] List<string> orderedUrls)
+    {
+        var result = await _productService.ReorderImagesAsync(companyId, productId, orderedUrls ?? new());
+        return Ok(new ApiResponse<ProductResponse>(true, result));
+    }
+
     // ===== Stock =====
 
     [HttpPost("stock/adjust")]

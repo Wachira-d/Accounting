@@ -16,12 +16,14 @@ public class PortalService : IPortalService
 {
     private readonly AccountingDbContext _db;
     private readonly IPdfGenerationService? _pdfService;
+    private readonly IImageProcessingService? _images;
     private readonly string _portalSigningKey;
 
-    public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null)
+    public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null)
     {
         _db = db;
         _pdfService = pdfService;
+        _images = images;
         _portalSigningKey = Environment.GetEnvironmentVariable("PORTAL_SIGNING_KEY")
             ?? configuration["Portal:SigningKey"]
             ?? throw new InvalidOperationException("Portal signing key is not configured. Set PORTAL_SIGNING_KEY env var or Portal:SigningKey in config.");
@@ -494,15 +496,29 @@ public class PortalService : IPortalService
         if (pay > doc.TotalAmount * 1.05m) throw new InvalidOperationException("ยอดสลิปมากกว่ายอดในเอกสาร — ตรวจสอบอีกครั้ง");
 
         // Save file under wwwroot/uploads/portal-slips/{yyyy-MM}/...
-        var ext = System.IO.Path.GetExtension(file.FileName);
-        if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
+        // Run images through ImageProcessingService (Slip profile — compressed
+        // but still readable). PDFs and unknown types pass through untouched.
         var relDir = $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
         var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
         System.IO.Directory.CreateDirectory(absDir);
-        var storedName = $"{Guid.NewGuid():N}{ext}";
-        var absPath = System.IO.Path.Combine(absDir, storedName);
-        await using (var fs = System.IO.File.Create(absPath)) await file.CopyToAsync(fs);
-        var relUrl = "/" + relDir + "/" + storedName;
+        string storedName; string absPath; string relUrl;
+        if (_images != null && _images.IsProcessableImage(file.ContentType))
+        {
+            await using var s = file.OpenReadStream();
+            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, absDir, "/" + relDir, ImageProfile.Slip);
+            absPath = processed.AbsolutePath;
+            storedName = System.IO.Path.GetFileName(absPath);
+            relUrl = processed.RelativeUrl;
+        }
+        else
+        {
+            var ext = System.IO.Path.GetExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
+            storedName = $"{Guid.NewGuid():N}{ext}";
+            absPath = System.IO.Path.Combine(absDir, storedName);
+            await using (var fs = System.IO.File.Create(absPath)) await file.CopyToAsync(fs);
+            relUrl = "/" + relDir + "/" + storedName;
+        }
 
         _db.Set<FileAttachment>().Add(new FileAttachment
         {

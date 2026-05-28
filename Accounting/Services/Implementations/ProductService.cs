@@ -11,10 +11,73 @@ namespace Accounting.Services.Implementations;
 public class ProductService : IProductService
 {
     private readonly AccountingDbContext _db;
+    private readonly IImageProcessingService _images;
+    private readonly IWebHostEnvironment _env;
 
-    public ProductService(AccountingDbContext db)
+    public ProductService(AccountingDbContext db, IImageProcessingService images, IWebHostEnvironment env)
     {
         _db = db;
+        _images = images;
+        _env = env;
+    }
+
+    // ===== Product images (gallery) =====
+
+    public async Task<ProductResponse> AddImageAsync(Guid companyId, Guid productId, Stream input, string contentType, string fileName)
+    {
+        var p = await _db.Products.FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId && !x.IsDeleted)
+            ?? throw new InvalidOperationException("ไม่พบสินค้า");
+        if (!_images.IsProcessableImage(contentType) && contentType?.ToLowerInvariant() != "image/svg+xml")
+            throw new InvalidOperationException("รองรับเฉพาะไฟล์รูปภาพ (JPG/PNG/WebP/GIF/SVG)");
+
+        var dir = Path.Combine(_env.WebRootPath, "uploads", "products", companyId.ToString());
+        var web = $"/uploads/products/{companyId}";
+        var processed = await _images.ProcessAndSaveAsync(input, contentType, fileName, dir, web, ImageProfile.ProductMain, generateThumb: true);
+
+        var list = ParseImageUrls(p.ImageUrlsJson);
+        list.Add(processed.RelativeUrl);
+        p.ImageUrlsJson = System.Text.Json.JsonSerializer.Serialize(list);
+        await _db.SaveChangesAsync();
+        return MapToResponse(p);
+    }
+
+    public async Task<ProductResponse> RemoveImageAsync(Guid companyId, Guid productId, string url)
+    {
+        var p = await _db.Products.FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId && !x.IsDeleted)
+            ?? throw new InvalidOperationException("ไม่พบสินค้า");
+        var list = ParseImageUrls(p.ImageUrlsJson);
+        list.RemoveAll(u => u == url);
+        p.ImageUrlsJson = list.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(list);
+        await _db.SaveChangesAsync();
+
+        // Best-effort delete of the file + its thumbnail. Don't fail the request if the file is gone.
+        try
+        {
+            if (url.StartsWith("/uploads/products/", StringComparison.OrdinalIgnoreCase))
+            {
+                var abs = Path.Combine(_env.WebRootPath, url.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(abs)) File.Delete(abs);
+                var thumb = abs.Replace(Path.GetFileName(abs), Path.GetFileNameWithoutExtension(abs) + "_thumb.jpg");
+                if (File.Exists(thumb)) File.Delete(thumb);
+            }
+        }
+        catch { /* swallow — file cleanup is best-effort */ }
+
+        return MapToResponse(p);
+    }
+
+    public async Task<ProductResponse> ReorderImagesAsync(Guid companyId, Guid productId, List<string> orderedUrls)
+    {
+        var p = await _db.Products.FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId && !x.IsDeleted)
+            ?? throw new InvalidOperationException("ไม่พบสินค้า");
+        var current = ParseImageUrls(p.ImageUrlsJson);
+        // Keep only URLs that already belong to this product (prevent injection of arbitrary URLs)
+        var ordered = orderedUrls.Where(u => current.Contains(u)).Distinct().ToList();
+        // Append any current URLs the client forgot to include, preserving them
+        ordered.AddRange(current.Where(u => !ordered.Contains(u)));
+        p.ImageUrlsJson = ordered.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(ordered);
+        await _db.SaveChangesAsync();
+        return MapToResponse(p);
     }
 
     // ===== CRUD =====
@@ -1071,15 +1134,32 @@ public class ProductService : IProductService
 
     // ===== HELPERS =====
 
-    private static ProductResponse MapToResponse(Product p) => new(
-        p.Id, p.Code, p.Name, p.NameEn, p.Description, p.ProductType,
-        p.SKU, p.Barcode, p.Category, p.Unit, p.SellingPrice, p.CostPrice,
-        p.VatRate, p.IsVatIncluded, p.CurrentStock, p.MinimumStock,
-        p.TrackStock, p.IsActive,
-        p.SalesAccountId, p.SalesAccount?.AccountName,
-        p.PurchaseAccountId, p.PurchaseAccount?.AccountName,
-        p.InventoryAccountId, p.InventoryAccount?.AccountName,
-        p.UnitConversions?.Select(MapConversion).ToList());
+    private static ProductResponse MapToResponse(Product p)
+    {
+        var imgs = ParseImageUrls(p.ImageUrlsJson);
+        return new ProductResponse(
+            p.Id, p.Code, p.Name, p.NameEn, p.Description, p.ProductType,
+            p.SKU, p.Barcode, p.Category, p.Unit, p.SellingPrice, p.CostPrice,
+            p.VatRate, p.IsVatIncluded, p.CurrentStock, p.MinimumStock,
+            p.TrackStock, p.IsActive,
+            p.SalesAccountId, p.SalesAccount?.AccountName,
+            p.PurchaseAccountId, p.PurchaseAccount?.AccountName,
+            p.InventoryAccountId, p.InventoryAccount?.AccountName,
+            p.UnitConversions?.Select(MapConversion).ToList(),
+            imgs,
+            imgs.Count > 0 ? imgs[0] : null);
+    }
+
+    private static List<string> ParseImageUrls(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new();
+        try
+        {
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+            return list?.Where(u => !string.IsNullOrWhiteSpace(u)).ToList() ?? new();
+        }
+        catch { return new(); }
+    }
 
     private static UnitConversionResponse MapConversion(UnitConversion u) =>
         new(u.Id, u.ProductId, u.FromUnit, u.ToUnit, u.ConversionRate,

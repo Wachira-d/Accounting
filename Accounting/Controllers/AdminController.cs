@@ -11,6 +11,7 @@ using Accounting.Services;
 using Accounting.Services.Implementations;
 using Accounting.Services.Implementations.Email;
 using Accounting.Services.Interfaces;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +33,8 @@ public class AdminController : ControllerBase
     private readonly IEmailSenderFactory _emailSenderFactory;
     private readonly IOcrQuotaService _ocrQuota;
     private readonly ISecretProtector _secrets;
+    private readonly IImageProcessingService _images;
+    private readonly IWebHostEnvironment _env;
 
     public AdminController(
         AccountingDbContext db,
@@ -39,7 +42,9 @@ public class AdminController : ControllerBase
         IRecurringTransactionService recurringService,
         IEmailSenderFactory emailSenderFactory,
         IOcrQuotaService ocrQuota,
-        ISecretProtector secrets)
+        ISecretProtector secrets,
+        IImageProcessingService images,
+        IWebHostEnvironment env)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -47,6 +52,8 @@ public class AdminController : ControllerBase
         _emailSenderFactory = emailSenderFactory;
         _ocrQuota = ocrQuota;
         _secrets = secrets;
+        _images = images;
+        _env = env;
     }
 
     // ===== Dashboard Analytics =====
@@ -862,20 +869,10 @@ public class AdminController : ControllerBase
         if (!allowedTypes.Contains(file.ContentType))
             return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์ PNG, JPG, SVG, WebP, GIF"));
 
-        var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads");
-        Directory.CreateDirectory(uploadsDir);
-
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        var fileName = $"logo_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
-        var filePath = Path.Combine(uploadsDir, fileName);
-
-        using (var stream = new FileStream(filePath, FileMode.Create))
-        {
-            await file.CopyToAsync(stream);
-        }
-
-        var url = $"/uploads/{fileName}";
-        return Ok(new ApiResponse<object>(true, new { url }, "อัพโหลดโลโก้สำเร็จ"));
+        var dir = Path.Combine(_env.WebRootPath, "uploads");
+        await using var s = file.OpenReadStream();
+        var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, dir, "/uploads", ImageProfile.Logo);
+        return Ok(new ApiResponse<object>(true, new { url = processed.RelativeUrl }, "อัพโหลดโลโก้สำเร็จ"));
     }
 
     [HttpPost("upload-image")]
@@ -889,23 +886,20 @@ public class AdminController : ControllerBase
         if (!allowedTypes.Contains(file.ContentType))
             return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์รูปภาพ"));
 
-        var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads");
-        Directory.CreateDirectory(uploadsDir);
-
-        var allowedImageTypes = new[] { "general", "logo", "icon", "banner", "favicon" };
-        var safeType = allowedImageTypes.Contains(type) ? type : "general";
-
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        var fileName = $"{safeType}_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
-        var filePath = Path.Combine(uploadsDir, fileName);
-
-        using (var stream = new FileStream(filePath, FileMode.Create))
+        // Pick a sizing profile based on the caller's stated use.
+        // "icon" / "favicon" → square avatar profile; "logo" → Logo; "banner" → wide hero.
+        var profile = type switch
         {
-            await file.CopyToAsync(stream);
-        }
-
-        var url = $"/uploads/{fileName}";
-        return Ok(new ApiResponse<object>(true, new { url }, "อัพโหลดสำเร็จ"));
+            "logo"    => ImageProfile.Logo,
+            "icon"    => ImageProfile.Avatar,
+            "favicon" => ImageProfile.Avatar,
+            "banner"  => ImageProfile.Banner,
+            _         => ImageProfile.Generic
+        };
+        var dir = Path.Combine(_env.WebRootPath, "uploads");
+        await using var s = file.OpenReadStream();
+        var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, dir, "/uploads", profile);
+        return Ok(new ApiResponse<object>(true, new { url = processed.RelativeUrl }, "อัพโหลดสำเร็จ"));
     }
 
     // Public endpoint for landing page

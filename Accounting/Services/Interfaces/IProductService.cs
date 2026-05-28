@@ -11,6 +11,11 @@ public interface IProductService
     Task<ProductResponse> UpdateAsync(Guid companyId, Guid productId, UpdateProductRequest request);
     Task DeleteAsync(Guid companyId, Guid productId);
 
+    // Product images (gallery)
+    Task<ProductResponse> AddImageAsync(Guid companyId, Guid productId, Stream input, string contentType, string fileName);
+    Task<ProductResponse> RemoveImageAsync(Guid companyId, Guid productId, string url);
+    Task<ProductResponse> ReorderImagesAsync(Guid companyId, Guid productId, List<string> orderedUrls);
+
     // Stock
     Task<StockMovementResponse> AdjustStockAsync(Guid companyId, StockAdjustmentRequest request, string userId);
     Task<List<StockMovementResponse>> GetStockMovementsAsync(Guid companyId, Guid productId);

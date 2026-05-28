@@ -13,10 +13,14 @@ namespace Accounting.Controllers;
 public class SubscriptionController : ControllerBase
 {
     private readonly ISubscriptionService _subscriptionService;
+    private readonly IImageProcessingService _images;
+    private readonly IWebHostEnvironment _env;
 
-    public SubscriptionController(ISubscriptionService subscriptionService)
+    public SubscriptionController(ISubscriptionService subscriptionService, IImageProcessingService images, IWebHostEnvironment env)
     {
         _subscriptionService = subscriptionService;
+        _images = images;
+        _env = env;
     }
 
     // ===== Trial =====
@@ -163,20 +167,17 @@ public class SubscriptionController : ControllerBase
         if (!allowedTypes.Contains(file.ContentType.ToLower()))
             return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "รองรับเฉพาะไฟล์ JPG, PNG, WebP, PDF"));
 
-        // Save file
-        var fileName = $"slip_{paymentId}_{DateTime.UtcNow:yyyyMMddHHmmss}{Path.GetExtension(file.FileName)}";
+        // Compress + downsize slips. PDF passes through (we can't compress PDF here).
+        var dir = Path.Combine(_env.WebRootPath, "uploads", "slips");
+        await using var s = file.OpenReadStream();
+        var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, dir, "/uploads/slips", ImageProfile.Slip);
+        var fileName = Path.GetFileName(processed.AbsolutePath);
         var storagePath = Path.Combine("uploads", "slips", fileName);
-        var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
-
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        using (var stream = new FileStream(fullPath, FileMode.Create))
-        {
-            await file.CopyToAsync(stream);
-        }
+        var finalSize = processed.FinalBytes > 0 ? processed.FinalBytes : file.Length;
 
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.UploadPaymentSlipAsync(
-            paymentId, fileName, file.FileName, file.ContentType, file.Length, storagePath, userId);
+            paymentId, fileName, file.FileName, file.ContentType, finalSize, storagePath, userId);
 
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "อัพโหลดสลิปสำเร็จ"));
     }
