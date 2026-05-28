@@ -636,6 +636,49 @@ public partial class PosService
         return await GetOrderAsync(companyId, orderId);
     }
 
+    /// <summary>Apply a per-line discount. Either DiscountAmount (฿) or DiscountPercent
+    /// (%) can be set; passing percent re-computes amount from quantity × unit price.
+    /// Triggers RecalculateOrder so VAT / Service Charge / Net adjust correctly.</summary>
+    public async Task<OrderResponse> SetItemDiscountAsync(Guid companyId, Guid orderId, Guid itemId, decimal? discountAmount, decimal? discountPercent)
+    {
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แก้ไขส่วนลดไม่ได้");
+        var item = order.Items.FirstOrDefault(i => i.Id == itemId && !i.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการ");
+
+        var gross = Math.Round(item.UnitPrice * item.Quantity, 2, MidpointRounding.AwayFromZero);
+        if (discountPercent.HasValue)
+        {
+            if (discountPercent.Value < 0 || discountPercent.Value > 100)
+                throw new ArgumentException("ส่วนลดเปอร์เซ็นต์ต้องอยู่ระหว่าง 0-100");
+            item.DiscountPercent = discountPercent.Value;
+            item.DiscountAmount = Math.Round(gross * discountPercent.Value / 100m, 2, MidpointRounding.AwayFromZero);
+        }
+        else if (discountAmount.HasValue)
+        {
+            if (discountAmount.Value < 0) throw new ArgumentException("ส่วนลดต้องไม่ติดลบ");
+            if (discountAmount.Value > gross) throw new ArgumentException("ส่วนลดเกินยอดรายการ");
+            item.DiscountAmount = discountAmount.Value;
+            item.DiscountPercent = gross > 0 ? Math.Round(discountAmount.Value * 100 / gross, 2) : 0;
+        }
+        else
+        {
+            // No args = clear discount.
+            item.DiscountAmount = 0;
+            item.DiscountPercent = 0;
+        }
+
+        item.SubTotal = Math.Round(gross - item.DiscountAmount, 2, MidpointRounding.AwayFromZero);
+        item.TotalAmount = item.SubTotal;
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
     public async Task<OrderResponse> UpdateItemStatusAsync(Guid companyId, Guid orderId, Guid itemId, UpdateItemStatusRequest request)
     {
         var item = await _db.PosOrderItems.FirstOrDefaultAsync(i => i.Id == itemId && i.OrderId == orderId)

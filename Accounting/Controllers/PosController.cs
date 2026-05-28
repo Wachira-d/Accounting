@@ -133,6 +133,11 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemQty(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemQtyRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateOrderItemQuantityAsync(companyId, orderId, itemId, request.Quantity)));
 
+    public record SetItemDiscountRequest(decimal? DiscountAmount, decimal? DiscountPercent);
+    [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/discount")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SetItemDiscount(Guid companyId, Guid orderId, Guid itemId, [FromBody] SetItemDiscountRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetItemDiscountAsync(companyId, orderId, itemId, request.DiscountAmount, request.DiscountPercent)));
+
     // ===== Payment =====
     [HttpPost("payments")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddPayment(Guid companyId, [FromBody] CreatePaymentRequest request)

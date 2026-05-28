@@ -1372,11 +1372,51 @@
           serverItemId: i.id,
           name: i.itemName,
           unitPrice: i.unitPrice,
-          quantity: i.quantity
+          quantity: i.quantity,
+          discountAmount: i.discountAmount,
+          discountPercent: i.discountPercent
         }));
         this.currentOrder = order;
         this.renderCart();
         this.updateSummaryFromOrder(order);
+      },
+
+      // ===== Per-line discount =====
+      async openItemDiscount(idx) {
+        const line = this.cart[idx];
+        if (!line) return;
+        if (!this.currentOrderId || !line.serverItemId) {
+          // Item not yet on the server — flush it first so it has an id.
+          await this.createOrderIfNeeded();
+          if (!this.currentOrderId) return;
+          // After sync, the visible row order is preserved so the same idx points at the same line.
+        }
+        const gross = line.unitPrice * line.quantity;
+        const cur = line.discountAmount || 0;
+        const input = prompt(`ส่วนลด "${line.name}"\nยอดก่อนส่วนลด: ${gross.toFixed(2)} บาท\n\nพิมพ์จำนวน เช่น "10" (ลด ฿10) หรือ "10%" (ลด 10%) — เว้นว่างเพื่อยกเลิกส่วนลด`, cur > 0 ? String(cur) : '');
+        if (input === null) return; // cancelled
+        const trimmed = input.trim();
+        const api = Layout.api(); if (!api) return;
+        let body = {};
+        if (trimmed === '') body = { discountAmount: 0, discountPercent: 0 };
+        else if (trimmed.endsWith('%')) {
+          const pct = parseFloat(trimmed.slice(0, -1));
+          if (isNaN(pct) || pct < 0 || pct > 100) { Layout.toast('เปอร์เซ็นต์ 0-100','warning'); return; }
+          body = { discountPercent: pct };
+        } else {
+          const amt = parseFloat(trimmed);
+          if (isNaN(amt) || amt < 0) { Layout.toast('จำนวนไม่ถูกต้อง','warning'); return; }
+          if (amt > gross) { Layout.toast('ส่วนลดเกินยอดรายการ','warning'); return; }
+          body = { discountAmount: amt };
+        }
+        // Find serverItemId on the (possibly resynced) cart line.
+        const live = this.cart[idx];
+        if (!live?.serverItemId) { Layout.toast('ไม่พบรายการบนเซิร์ฟเวอร์','error'); return; }
+        try {
+          const res = await api.setPosItemDiscount(this.currentOrderId, live.serverItemId, body);
+          this._syncCartFromServer(res.data);
+          Layout.toast('บันทึกส่วนลดสำเร็จ');
+        } catch(e) { Layout.toast(e.message,'error'); }
       },
 
       removeFromCart(idx) {
@@ -1427,16 +1467,21 @@
           return;
         }
         sumEl.style.display = 'block';
-        el.innerHTML = this.cart.map((c, i) => `
+        el.innerHTML = this.cart.map((c, i) => {
+          const gross = c.unitPrice * c.quantity;
+          const disc = c.discountAmount || 0;
+          const net = gross - disc;
+          return `
           <div class="order-item-row">
-            <div class="oi-name">${c.name}</div>
+            <div class="oi-name">${c.name}${disc>0?`<div style="font-size:11px;color:#dc2626">ลด ${Layout.money(disc)}${c.discountPercent?` (${c.discountPercent}%)`:''}</div>`:''}</div>
             <button class="oi-remove" onclick="Page.updateQty(${i},-1)">-</button>
             <span class="oi-qty">${c.quantity}</span>
             <button class="oi-remove" style="color:var(--success)" onclick="Page.updateQty(${i},1)">+</button>
-            <div class="oi-price">${Layout.money(c.unitPrice * c.quantity)}</div>
+            <div class="oi-price">${disc>0?`<span style="text-decoration:line-through;color:#94a3b8;font-size:11px">${Layout.money(gross)}</span><br>`:''}${Layout.money(net)}</div>
+            <button class="oi-remove" style="color:#f59e0b;font-size:14px" onclick="Page.openItemDiscount(${i})" title="ส่วนลดรายการ">%</button>
             <button class="oi-remove" onclick="Page.removeFromCart(${i})">x</button>
-          </div>
-        `).join('');
+          </div>`;
+        }).join('');
         this.calcTotals();
       },
 

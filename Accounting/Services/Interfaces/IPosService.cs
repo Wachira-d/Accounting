@@ -26,6 +26,7 @@ public interface IPosService
     Task RemoveOrderItemAsync(Guid companyId, Guid orderId, Guid itemId);
     Task<OrderResponse> UpdateItemStatusAsync(Guid companyId, Guid orderId, Guid itemId, UpdateItemStatusRequest request);
     Task<OrderResponse> UpdateOrderItemQuantityAsync(Guid companyId, Guid orderId, Guid itemId, decimal newQuantity);
+    Task<OrderResponse> SetItemDiscountAsync(Guid companyId, Guid orderId, Guid itemId, decimal? discountAmount, decimal? discountPercent);
     Task VoidOrderAsync(Guid companyId, Guid orderId, string userId);
     /// <summary>คืนเงินบางส่วน/ทั้งหมดของออเดอร์ที่ปิดบิลแล้ว — กลับรายการ GL ตามสัดส่วน + คืนสต็อก</summary>
     Task<OrderResponse> RefundOrderAsync(Guid companyId, Guid orderId, RefundOrderRequest request, string userId);
