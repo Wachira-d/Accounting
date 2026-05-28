@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ชื่อแทนสินค้า (Product Aliases) - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">🔗 ชื่อแทนสินค้า (Product Aliases)</h2>
+        <p class="page-subtitle">รายการชื่อสินค้าจากใบเสร็จ/ใบกำกับของผู้ขายแต่ละราย — ระบบเรียนรู้อัตโนมัติเมื่อยืนยันใน OCR · ดู / ลบ / เพิ่มเองได้ที่หน้านี้</p>
+      </div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่ม Alias</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหา alias / ชื่อสินค้า..." id="searchInput" oninput="Page.debouncedLoad()">
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr>
+          <th>Alias (ชื่อตามใบเสร็จ)</th><th>สินค้าจริง</th><th>ผู้ขาย (ถ้ามี)</th>
+          <th style="text-align:right">ใช้แล้ว</th><th>ที่มา</th><th>วันที่ใช้ล่าสุด</th><th>จัดการ</th>
+        </tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination" style="margin-top:14px;text-align:center"></div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่ม Alias</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">สินค้าจริง *</label>
+            <select class="form-select" id="fProductId"><option value="">— เลือกสินค้า —</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Alias (ชื่อตามใบเสร็จ) *</label>
+            <input type="text" class="form-input" id="fAliasName" placeholder="เช่น 'น้ำมัน A 1L' หรือ 'A OIL 1L'">
+            <small style="color:#64748b;font-size:11px">พิมพ์เหมือนที่ปรากฏบนใบเสร็จของผู้ขาย — ระบบจะ normalize ให้</small>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ผู้ขาย (ถ้ามี)</label>
+            <select class="form-select" id="fContactId"><option value="">— ไม่ระบุ (ใช้กับทุกผู้ขาย) —</option></select>
+            <small style="color:#64748b;font-size:11px">ระบุผู้ขายเพื่อกัน "Cola 325ml" จากบริษัท A ไม่ไป match สินค้าของบริษัท B</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      page: 1, _t: null,
+      async init() {
+        if (!Layout.init('product-aliases')) return;
+        Layout.setTitle('ชื่อแทนสินค้า');
+        await Promise.all([this.load(), this.loadProducts(), this.loadContacts()]);
+      },
+      debouncedLoad() { clearTimeout(this._t); this._t = setTimeout(() => this.load(), 300); },
+      async load() {
+        const cid = Layout.getCompanyId();
+        const search = document.getElementById('searchInput').value;
+        const q = `?page=${this.page}&pageSize=50${search?'&search='+encodeURIComponent(search):''}`;
+        try {
+          const r = await fetch(`/api/companies/${cid}/product-aliases${q}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          this.render(j.data);
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      render(data) {
+        const tbody = document.getElementById('tableBody');
+        const items = data?.items || [];
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มี alias — ระบบจะสร้างให้อัตโนมัติเมื่อแสกน OCR และยืนยันการแมป</td></tr>'; return; }
+        tbody.innerHTML = items.map(a => `<tr>
+          <td><strong>${Layout.esc(a.aliasName)}</strong><div style="font-size:11px;color:#94a3b8">${Layout.esc(a.normalizedName)}</div></td>
+          <td>${Layout.esc(a.productCode)} · ${Layout.esc(a.productName)}</td>
+          <td>${a.contactName ? Layout.esc(a.contactName) : '<span style="color:#94a3b8">ทุกผู้ขาย</span>'}</td>
+          <td style="text-align:right">${a.timesUsed}×</td>
+          <td><span style="background:${a.source==='user'?'#dbeafe':a.source==='auto'?'#dcfce7':'#fef3c7'};color:${a.source==='user'?'#1e40af':a.source==='auto'?'#166534':'#92400e'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${Layout.esc(a.source)}</span></td>
+          <td style="font-size:12px;color:#64748b">${new Date(a.lastUsedAt).toLocaleDateString('th-TH')}</td>
+          <td><button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.del('${a.id}','${Layout.esc(a.aliasName).replace(/'/g,'\\\'')}')">ลบ</button></td>
+        </tr>`).join('');
+
+        const totalPages = data.totalPages || 1;
+        const pg = document.getElementById('pagination');
+        if (totalPages > 1) {
+          let html = '';
+          for (let p = 1; p <= totalPages; p++)
+            html += `<button class="btn btn-sm ${p===this.page?'btn-primary':'btn-ghost'}" onclick="Page.goPage(${p})">${p}</button> `;
+          pg.innerHTML = html;
+        } else pg.innerHTML = '';
+      },
+      goPage(p) { this.page = p; this.load(); },
+      async loadProducts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.getProducts('?pageSize=500');
+          const sel = document.getElementById('fProductId');
+          (r.data?.items || []).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id; opt.textContent = `${p.code} · ${p.name}`;
+            sel.appendChild(opt);
+          });
+        } catch {}
+      },
+      async loadContacts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.getContacts('?pageSize=500');
+          const sel = document.getElementById('fContactId');
+          (r.data?.items || []).filter(c => c.isSupplier).forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id; opt.textContent = c.name;
+            sel.appendChild(opt);
+          });
+        } catch {}
+      },
+      openCreate() {
+        document.getElementById('fProductId').value = '';
+        document.getElementById('fAliasName').value = '';
+        document.getElementById('fContactId').value = '';
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const productId = document.getElementById('fProductId').value;
+        const aliasName = document.getElementById('fAliasName').value.trim();
+        const contactId = document.getElementById('fContactId').value || null;
+        if (!productId || !aliasName) { Layout.toast('กรุณาเลือกสินค้าและพิมพ์ alias','warning'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/product-aliases`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId, aliasName, contactId })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.closeModal('formModal'); Layout.toast(j.message || 'บันทึกสำเร็จ');
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async del(id, name) {
+        if (!confirm(`ลบ alias "${name}"?`)) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/product-aliases/${id}`, {
+            method: 'DELETE', headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          if (!r.ok) throw new Error('ลบไม่สำเร็จ');
+          Layout.toast('ลบแล้ว'); await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      }
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>
