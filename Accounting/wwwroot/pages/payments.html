@@ -11,9 +11,13 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">การชำระเงิน</h2><p class="page-subtitle">รายการชำระเงินทั้งหมด</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกการชำระเงิน</button>
+      <button class="btn btn-primary" onclick="Page.openCreate()"
+              data-tour-step="1"
+              data-tour-text="ขั้นที่ 1 — บันทึกการชำระเงิน เลือกใบแจ้งหนี้/ใบกำกับที่จะตัดยอด ใส่จำนวน ช่องทาง (โอน/พร้อมเพย์/เช็ค/บัตร) — ระบบจะตัดลูกหนี้/เจ้าหนี้ + คำนวณ WHT ให้">+ บันทึกการชำระเงิน</button>
     </div>
-    <div class="toolbar">
+    <div class="toolbar"
+         data-tour-step="2"
+         data-tour-text="ค้นหา/กรองตามช่องทาง · กดที่แถวเพื่อดูรายละเอียด หรือพิมพ์ใบเสร็จรับเงิน">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="methodFilter" onchange="Page.load()">
         <option value="">ทุกช่องทาง</option>
@@ -190,6 +194,7 @@
       }
     };
     Page.init();
+    Layout.enableTour('payments');
   </script>
 </body>
 </html>

@@ -1519,6 +1519,34 @@ const Layout = {
     setTimeout(renderStep, 300);
   },
 
+  // One-liner page opt-in: auto-runs the tour on first visit and injects a
+  // floating "📘 สอนใช้หน้านี้" replay button. Pages just call
+  //   Layout.enableTour('document-scan')
+  // after DOM ready and add data-tour-step / data-tour-text on key elements.
+  enableTour(pageKey, opts) {
+    if (!pageKey) return;
+    const o = opts || {};
+    const hasSteps = document.querySelector('[data-tour-step]');
+    if (!hasSteps) return;
+    // Replay button
+    if (!document.getElementById('tourReplayBtn')) {
+      const btn = document.createElement('button');
+      btn.id = 'tourReplayBtn';
+      btn.type = 'button';
+      btn.className = 'tour-replay-btn';
+      btn.title = 'สอนใช้หน้านี้อีกครั้ง';
+      btn.innerHTML = '📘 สอนใช้หน้านี้';
+      btn.onclick = () => this.startTour(pageKey);
+      document.body.appendChild(btn);
+    }
+    // Auto-trigger on first visit
+    const key = 'tour:' + pageKey;
+    if (!localStorage.getItem(key)) {
+      const delay = o.delay || 600;
+      setTimeout(() => this.startTour(pageKey), delay);
+    }
+  },
+
   _toggleFab() {
     const menu = document.getElementById('fabMenu');
     if (!menu) return;

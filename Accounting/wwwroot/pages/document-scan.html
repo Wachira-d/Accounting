@@ -337,7 +337,9 @@
         <div style="font-weight:600;color:#134e4a;margin-bottom:2px">🧠 ระบบเรียนรู้อัตโนมัติ</div>
         <div style="font-size:12px;color:#0f766e">ระบบจะเรียนประเภทเอกสาร, รหัสบัญชี, WHT จากผู้ขายแต่ละรายโดยอัตโนมัติเมื่ออนุมัติเอกสาร</div>
       </div>
-      <button type="button" onclick="Page.backfillIntelligence()" style="background:#0d9488;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">
+      <button type="button" onclick="Page.backfillIntelligence()" style="background:#0d9488;color:white;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px"
+              data-tour-step="4"
+              data-tour-text="หากเคยนำเข้าเอกสารไว้แล้ว กดปุ่มนี้ให้ระบบเรียนรู้รูปแบบของผู้ขาย/หมวดบัญชี ครั้งต่อไปจะแม่นขึ้นมาก">
         เรียนรู้จากเอกสารเก่า
       </button>
     </div>
@@ -345,7 +347,9 @@
     <!-- Upload Zone — <label for="fileInput"> means clicking anywhere inside the
          zone opens the file picker via the browser's native label-input link.
          No JS click handler needed → no "must click twice" bug. -->
-    <label class="upload-zone" id="uploadZone" for="fileInput">
+    <label class="upload-zone" id="uploadZone" for="fileInput"
+           data-tour-step="1"
+           data-tour-text="ขั้นที่ 1 — ลากไฟล์ใบกำกับ/ใบเสร็จมาวาง หรือคลิกเลือกไฟล์ รองรับ JPG/PNG/PDF หลายไฟล์พร้อมกัน">
       <div class="upload-zone-icon">&#x1F4C4;</div>
       <h3>ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</h3>
       <p>รองรับหลายไฟล์พร้อมกัน</p>
@@ -357,10 +361,14 @@
       </div>
       <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none">
     </label>
-    <div class="upload-queue" id="uploadQueue"></div>
+    <div class="upload-queue" id="uploadQueue"
+         data-tour-step="2"
+         data-tour-text="ขั้นที่ 2 — ระบบ OCR จะอ่านข้อความและแสดงผลที่นี่ แต่ละการ์ดมีปุ่ม ✓ อนุมัติ / ✎ แก้ไข / 📦 นำเข้าสต็อก"></div>
 
     <!-- Auto-create threshold config -->
-    <div class="config-section" style="margin-top:20px">
+    <div class="config-section" style="margin-top:20px"
+         data-tour-step="3"
+         data-tour-text="ขั้นที่ 3 — ตั้งค่าความมั่นใจขั้นต่ำที่ระบบจะสร้างเอกสารอัตโนมัติโดยไม่ต้องอนุมัติทีละใบ (แนะนำ 85%)">
       <label>&#x2699;&#xFE0F; สร้างเอกสารอัตโนมัติเมื่อ confidence &ge;</label>
       <input type="range" class="threshold-slider" id="thresholdSlider" min="0" max="100" value="85" oninput="Page.onThresholdChange(this.value)">
       <input type="number" class="threshold-input" id="thresholdInput" min="0" max="100" value="85" onchange="Page.onThresholdInputChange(this.value)">
@@ -2625,7 +2633,7 @@
       }
     });
 
-    document.addEventListener('DOMContentLoaded', () => { Page.init(); });
+    document.addEventListener('DOMContentLoaded', () => { Page.init(); Layout.enableTour('document-scan'); });
   </script>
 </body>
 </html>

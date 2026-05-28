@@ -26,10 +26,14 @@
             <a class="dropdown-item" href="/pages/fixed-assets.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🏢 ไปหน้าสินทรัพย์ถาวร</a>
           </div>
         </div>
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินค้า</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มสินค้า/บริการ ตั้งราคา ผูกบาร์โค้ด เลือกประเภท (สินค้า/บริการ/ไม่ติดสต็อก) และบัญชีรายได้-สต๊อก">+ เพิ่มสินค้า</button>
       </div>
     </div>
-    <div class="toolbar">
+    <div class="toolbar"
+         data-tour-step="2"
+         data-tour-text="ค้นหา/กรอง · กดที่แถวเพื่อดูรายละเอียด แก้ราคา ปรับสต๊อก หรือดูประวัติการเคลื่อนไหว">
       <input type="text" class="search-input" placeholder="ค้นหาสินค้า..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="typeFilter" onchange="Page.load()">
         <option value="">ทุกประเภท</option>
@@ -633,6 +637,7 @@
     window.Page = Page;
     window.Import = Import;
     Page.init();
+    Layout.enableTour('products');
   </script>
 </body>
 </html>
