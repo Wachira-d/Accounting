@@ -23,10 +23,14 @@
         <h2 class="page-title">🔄 Migration Wizard</h2>
         <p class="page-subtitle">นำเข้าข้อมูลจากระบบ ERP เดิม — Chart of Accounts, Trial Balance, Opening Balances</p>
       </div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้าง Session ใหม่</button>
+      <button class="btn btn-primary" onclick="Page.openCreate()"
+              data-tour-step="1"
+              data-tour-text="ขั้นที่ 1 — สร้าง Session ใหม่ เลือกประเภท (ผังบัญชี / ยอดยกมา / งบทดลอง / Sub-Ledger AR/AP/สต๊อก/สินทรัพย์)">+ สร้าง Session ใหม่</button>
     </div>
 
-    <div id="sessionsList" style="margin-bottom:24px">
+    <div id="sessionsList" style="margin-bottom:24px"
+         data-tour-step="2"
+         data-tour-text="ขั้นที่ 2 — รายการ Session ที่สร้างไว้ คลิกเข้าเพื่อเปิด Wizard 3 ขั้น: อัพโหลด → mapping → preview/commit">
       <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด sessions...</div>
     </div>
 
@@ -314,6 +318,7 @@
       },
     };
     Page.init();
+    Layout.enableTour('migration-wizard');
   </script>
 </body>
 </html>

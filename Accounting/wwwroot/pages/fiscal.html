@@ -12,12 +12,20 @@
     <div class="page-header">
       <div><h2 class="page-title">งวดบัญชี</h2><p class="page-subtitle">จัดการงวดบัญชี เปิด/ปิดรอบบัญชี + ปิดสิ้นปี (Year-End Close)</p></div>
       <div class="flex gap-2">
-        <button class="btn btn-warning" onclick="Page.openYearEndModal()" title="ปิดงบประจำปี — สร้าง JE โอน P&L ไป Retained Earnings + ล็อกทุกเดือนในปี + roll opening balances">🏛️ ปิดสิ้นปี (Year-End)</button>
-        <button class="btn btn-secondary" onclick="Page.ensureYear()" title="สร้างงวดบัญชีรายเดือนที่ขาดทั้งปีในคราวเดียว">📅 สร้างงวดทั้งปี</button>
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงวดบัญชี</button>
+        <button class="btn btn-warning" onclick="Page.openYearEndModal()" title="ปิดงบประจำปี — สร้าง JE โอน P&L ไป Retained Earnings + ล็อกทุกเดือนในปี + roll opening balances"
+                data-tour-step="4"
+                data-tour-text="ปิดสิ้นปี — สิ้นปีกดปุ่มนี้ ระบบจะสร้าง JE ปิดบัญชีรายได้/ค่าใช้จ่ายเข้ากำไรสะสม + ล็อกทุกเดือน + ยกยอดเปิดปีถัดไป">🏛️ ปิดสิ้นปี (Year-End)</button>
+        <button class="btn btn-secondary" onclick="Page.ensureYear()" title="สร้างงวดบัญชีรายเดือนที่ขาดทั้งปีในคราวเดียว"
+                data-tour-step="2"
+                data-tour-text="สร้างงวดทั้งปี — กดครั้งเดียวสร้างงวดบัญชี 12 เดือนของปีปัจจุบัน ใช้ตอนเริ่มต้นปีใหม่">📅 สร้างงวดทั้งปี</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — สร้างงวดบัญชี (รายเดือน) ต้องสร้างก่อนถึงจะบันทึก JE/เอกสารในเดือนนั้นได้">+ สร้างงวดบัญชี</button>
       </div>
     </div>
-    <div class="table-container">
+    <div class="table-container"
+         data-tour-step="3"
+         data-tour-text="ตารางงวด — แต่ละแถวมีปุ่ม ✏️ แก้ไข (ถ้าใส่ปีผิดสามารถ force reassign JE ทั้งหมดได้) · 🔒 ปิดงวด · 🔓 เปิดงวด">
       <table class="table">
         <thead><tr><th>ชื่องวด</th><th>ปี</th><th>เดือน</th><th>วันเริ่มต้น</th><th>วันสิ้นสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
         <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
@@ -412,6 +420,7 @@
       },
     };
     Page.init();
+    Layout.enableTour('fiscal');
   </script>
 </body>
 </html>

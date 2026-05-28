@@ -206,6 +206,16 @@
           <button class="btn btn-ghost btn-sm" onclick="Portal.logout()">ออกจากระบบ</button>
         </div>
         <div class="container">
+          ${localStorage.getItem('portalIntroSeen') ? '' : `
+          <div id="portalIntro" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:14px;line-height:1.6;position:relative">
+            <button onclick="localStorage.setItem('portalIntroSeen','1');document.getElementById('portalIntro').remove()" style="position:absolute;top:8px;right:10px;background:transparent;border:none;font-size:20px;cursor:pointer;color:#64748b">&times;</button>
+            <strong style="color:#1e40af">👋 ยินดีต้อนรับสู่ Portal ลูกค้า</strong>
+            <ul style="margin:6px 0 0;padding-left:20px;color:#1e3a8a">
+              <li><strong>📄 เอกสาร</strong> — ดูใบเสนอราคา/ใบกำกับ/ใบเสร็จ กดดาวน์โหลด PDF</li>
+              <li><strong>💳 การชำระเงิน</strong> — ดูรายการที่ค้างชำระ กด <em>"💳 ชำระ"</em> เพื่อโอนด้วย QR PromptPay หรือแนบสลิป</li>
+              <li><strong>📊 Statement</strong> — สรุปยอดคงค้าง รายงานเดบิต/เครดิต ส่งออก PDF</li>
+            </ul>
+          </div>`}
           <div class="tabs">
             <button class="tab ${this.activeTab==='documents'?'active':''}" onclick="Portal.setTab('documents')">📄 เอกสาร</button>
             <button class="tab ${this.activeTab==='payments'?'active':''}" onclick="Portal.setTab('payments')">💳 การชำระเงิน</button>

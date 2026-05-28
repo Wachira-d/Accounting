@@ -30,12 +30,16 @@
     <div class="page-header">
       <div><h2 class="page-title">เว็บไซต์ของฉัน</h2><p class="page-subtitle">สร้างเว็บไซต์ ร้านค้าออนไลน์ หรือระบบจองนัดหมายสำหรับธุรกิจของคุณ</p></div>
       <div class="flex gap-2">
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างเว็บไซต์ใหม่</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — สร้างเว็บไซต์ใหม่ เลือก Template จาก 17 อุตสาหกรรม (ร้านค้า/ร้านอาหาร/โรงแรม/คลินิก/บริการ ฯลฯ)">+ สร้างเว็บไซต์ใหม่</button>
       </div>
     </div>
 
     <!-- Site list -->
-    <div id="sitesList" class="grid grid-2 gap-4" style="margin-bottom:20px">
+    <div id="sitesList" class="grid grid-2 gap-4" style="margin-bottom:20px"
+         data-tour-step="2"
+         data-tour-text="เว็บไซต์ที่สร้างไว้จะแสดงที่นี่ — กดเข้าไปแก้ไขเนื้อหา/สินค้า/สี/โลโก้ และ Publish เผยแพร่">
       <div class="text-center text-gray-400" style="padding:40px;grid-column:1/-1">กำลังโหลด...</div>
     </div>
 
@@ -624,6 +628,7 @@
     };
 
     Page.init();
+    Layout.enableTour('cms-sites');
   </script>
 </body>
 </html>
