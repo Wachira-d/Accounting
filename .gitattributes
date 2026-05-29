@@ -4,6 +4,17 @@
 * text=auto
 
 ###############################################################################
+# Git LFS — large ML model files. The sentence-embedding ONNX model
+# (~470 MB) + WordPiece vocab.txt (~1 MB) live under Accounting/models/.
+# Without LFS the repo would balloon and clone times would skyrocket.
+# Developers need `git lfs install` once; CI runners need the LFS pull
+# step. If LFS is not present the files come down as 134-byte pointers
+# and the ONNX service detects that + falls back to HashingEmbedding.
+###############################################################################
+*.onnx filter=lfs diff=lfs merge=lfs -text
+Accounting/models/vocab.txt filter=lfs diff=lfs merge=lfs -text
+
+###############################################################################
 # Set default behavior for command prompt diff.
 #
 # This is need for earlier builds of msysgit that does not have it on by

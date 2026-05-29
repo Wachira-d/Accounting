@@ -224,10 +224,34 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.GlAccountDistillationModel>();
 // Sentence-embedding service for Thai short text (vendor names, line
-// descriptions). Hashing-trick baseline today; swap to ONNX MiniLM by
-// changing this single line once the model file is checked in.
-builder.Services.AddSingleton<Accounting.Services.Ai.Embedding.IEmbeddingService,
-    Accounting.Services.Ai.Embedding.HashingEmbeddingService>();
+// descriptions). Try ONNX MiniLM first — if the LFS-tracked model file
+// is present and loadable, register it; otherwise transparently fall
+// back to HashingEmbeddingService so dev clones without `git lfs pull`
+// (or CI runners without LFS support) still build + run.
+{
+    var modelPath = Path.Combine(builder.Environment.ContentRootPath, "models", "sentence-encoder.onnx");
+    var vocabPath = Path.Combine(builder.Environment.ContentRootPath, "models", "vocab.txt");
+    var onnxOk = false;
+    try
+    {
+        if (File.Exists(modelPath) && new FileInfo(modelPath).Length > 1_000_000
+            && File.Exists(vocabPath) && new FileInfo(vocabPath).Length > 1024)
+        {
+            builder.Services.AddSingleton<Accounting.Services.Ai.Embedding.IEmbeddingService>(
+                _ => new Accounting.Services.Ai.Embedding.OnnxSentenceEmbeddingService(modelPath, vocabPath));
+            onnxOk = true;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"ONNX embedding init failed, falling back to hashing: {ex.Message}");
+    }
+    if (!onnxOk)
+    {
+        builder.Services.AddSingleton<Accounting.Services.Ai.Embedding.IEmbeddingService,
+            Accounting.Services.Ai.Embedding.HashingEmbeddingService>();
+    }
+}
 builder.Services.AddScoped<Accounting.Services.Ai.IAiOrchestrator, Accounting.Services.Ai.AiOrchestrator>();
 builder.Services.AddScoped<Accounting.Services.Ai.IOcrAiAugmenter, Accounting.Services.Ai.OcrAiAugmenter>();
 builder.Services.AddScoped<Accounting.Services.Ai.IDocumentAiAugmenter, Accounting.Services.Ai.DocumentAiAugmenter>();
