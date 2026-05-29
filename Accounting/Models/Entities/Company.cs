@@ -25,6 +25,7 @@ public class Company : BaseEntity
     public string? Address { get; set; }                  // free-text fallback / display
     public string? BuildingNumber { get; set; }           // บ้านเลขที่ (required by ETDA)
     public string? BuildingName { get; set; }             // ชื่ออาคาร
+    public string? Moo { get; set; }                      // หมู่ที่ (provincial / rural addresses)
     public string? StreetName { get; set; }               // ถนน/ซอย
     public string? SubDistrict { get; set; }              // แขวง/ตำบล
     public string? District { get; set; }                 // เขต/อำเภอ

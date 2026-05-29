@@ -181,14 +181,19 @@ const DbdLookup = {
     }
   },
 
-  // Try to parse Thai address into components
+  // Try to parse Thai address into components. We also surface หมู่ที่ (Moo)
+  // when the field is mapped, so callers that pre-include `moo` get it
+  // filled directly from the DBD address.
   _parseThaiAddress(addr, fieldIds) {
     if (!addr) return;
-    // Thai address patterns: ตำบล/แขวง, อำเภอ/เขต, จังหวัด, รหัสไปรษณีย์
+    // Thai address patterns: ตำบล/แขวง, อำเภอ/เขต, จังหวัด, รหัสไปรษณีย์, หมู่ที่
     const tumbonMatch = addr.match(/(?:ตำบล|แขวง|ต\.|ตำบล)([^\s,]+)/);
     const amphurMatch = addr.match(/(?:อำเภอ|เขต|อ\.|อำเภอ)([^\s,]+)/);
     const provinceMatch = addr.match(/(?:จังหวัด|จ\.)([^\s,]+)/);
     const postalMatch = addr.match(/(\d{5})/);
+    // Matches "หมู่ที่ 5" / "หมู่ 5" / "ม.5" and Thai-numeral variants.
+    // Group 1 is the digit run; we strip Thai numerals downstream.
+    const mooMatch = addr.match(/(?:หมู่ที่|หมู่|ม\.)\s*([0-9๐-๙]+)/);
 
     if (tumbonMatch && fieldIds.subDistrict) {
       const el = document.getElementById(fieldIds.subDistrict);
@@ -205,6 +210,12 @@ const DbdLookup = {
     if (postalMatch && fieldIds.postalCode) {
       const el = document.getElementById(fieldIds.postalCode);
       if (el) el.value = postalMatch[1];
+    }
+    if (mooMatch && fieldIds.moo) {
+      const el = document.getElementById(fieldIds.moo);
+      // Convert Thai numerals (๐-๙) → ASCII digits so the saved value is
+      // consistently "5" not "๕".
+      if (el) el.value = mooMatch[1].replace(/[๐-๙]/g, d => String.fromCharCode(0x30 + d.charCodeAt(0) - 0x0E50));
     }
   },
 

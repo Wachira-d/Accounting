@@ -403,7 +403,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         };
     }
 
-    private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode)
+    private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode,
+        string? moo = null, string? buildingNumber = null, string? streetName = null)
     {
         // Many contacts have BOTH a free-form Address (already typed as a full
         // address by the user, e.g. "44/75 ม.3 ต.สุรศักดิ์ อ.ศรีราชา จ.ชลบุรี 20110")
@@ -421,17 +422,29 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 addr.Contains("จ.") || addr.Contains("จังหวัด");
             if (looksComplete) return addr;
         }
-        return string.Join(" ", new[] { addr, subDistrict, district, province, postalCode }
+        // Structured fallback — include Moo + BuildingNumber + StreetName so a
+        // payee whose free-form Address is empty but structured fields are set
+        // doesn't end up with a half-printed cert.
+        return string.Join(" ", new[]
+            {
+                addr,
+                buildingNumber,
+                string.IsNullOrEmpty(moo) ? null : $"หมู่ {moo}",
+                string.IsNullOrEmpty(streetName) ? null : $"ถ.{streetName}",
+                subDistrict, district, province, postalCode
+            }
             .Where(s => !string.IsNullOrEmpty(s)));
     }
 
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
-        ComposeFullAddress(company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode),
+        ComposeFullAddress(company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode,
+            company.Moo, company.BuildingNumber, company.StreetName),
         w.PayeeContactId, w.PayeeContact.Name, w.PayeeContact.TaxId,
         w.PayeeContact.BranchCode,
-        ComposeFullAddress(w.PayeeContact.Address, w.PayeeContact.SubDistrict, w.PayeeContact.District, w.PayeeContact.Province, w.PayeeContact.PostalCode),
+        ComposeFullAddress(w.PayeeContact.Address, w.PayeeContact.SubDistrict, w.PayeeContact.District, w.PayeeContact.Province, w.PayeeContact.PostalCode,
+            w.PayeeContact.Moo, w.PayeeContact.BuildingNumber, w.PayeeContact.StreetName),
         w.TaxFormType, GetTaxFormName(w.TaxFormType),
         w.TaxYear, w.TaxMonth, w.CertificateType, w.Status,
         w.TotalIncomeAmount, w.TotalTaxAmount,

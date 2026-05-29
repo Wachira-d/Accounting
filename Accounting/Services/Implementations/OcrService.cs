@@ -1159,6 +1159,7 @@ public class OcrService : IOcrService
                     Phone = extractedData.VendorPhone,
                     Email = extractedData.VendorEmail,
                     BuildingNumber = addressParts.BuildingNumber,
+                    Moo = addressParts.Moo,
                     StreetName = addressParts.StreetName,
                     SubDistrict = addressParts.SubDistrict,
                     District = addressParts.District,
@@ -1222,6 +1223,7 @@ public class OcrService : IOcrService
                         Phone = extractedData.VendorPhone,
                         Email = extractedData.VendorEmail,
                         BuildingNumber = addressParts.BuildingNumber,
+                        Moo = addressParts.Moo,
                         StreetName = addressParts.StreetName,
                         SubDistrict = addressParts.SubDistrict,
                         District = addressParts.District,
@@ -1459,29 +1461,15 @@ public class OcrService : IOcrService
 
     /// <summary>
     /// Best-effort parse of a free-text Thai address into ETDA-compliant structured parts.
-    /// We extract what we can with regex; downstream UI lets user fix the rest. Better
-    /// to populate partial structure than leave Contact with only a free-text Address.
+    /// Delegates to ThaiAddressParser — the canonical parser handles หมู่ที่ +
+    /// Thai numerals + Bangkok aliases + multi-prefix variants which the inline
+    /// regex here used to miss.
     /// </summary>
-    private static (string? BuildingNumber, string? StreetName, string? SubDistrict, string? District, string? Province, string? PostalCode)
+    private static (string? BuildingNumber, string? StreetName, string? SubDistrict, string? District, string? Province, string? PostalCode, string? Moo)
         ParseAddressIntoParts(string? address)
     {
-        if (string.IsNullOrWhiteSpace(address))
-            return (null, null, null, null, null, null);
-
-        string? Match(string pattern)
-        {
-            var m = System.Text.RegularExpressions.Regex.Match(address, pattern);
-            return m.Success ? m.Groups[1].Value.Trim() : null;
-        }
-
-        var building = Match(@"(?:เลขที่\s*)?(\d+(?:/\d+)?)");
-        var street = Match(@"ถนน\s*([^\s]+)");
-        var subDistrict = Match(@"(?:ตำบล|แขวง)\s*([^\s]+)");
-        var district = Match(@"(?:อำเภอ|เขต)\s*([^\s]+)");
-        var province = Match(@"(?:จังหวัด)\s*([^\s]+)");
-        var postal = Match(@"(\d{5})(?!\d)");
-
-        return (building, street, subDistrict, district, province, postal);
+        var p = ThaiAddressParser.Parse(address);
+        return (p.BuildingNumber, p.StreetName, p.SubDistrict, p.District, p.Province, p.PostalCode, p.Moo);
     }
 
     /// <summary>

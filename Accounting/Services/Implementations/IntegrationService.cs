@@ -393,17 +393,39 @@ public class IntegrationService : IIntegrationService
                     ContactType = ParseContactType(request.ContactType),
                     IsCustomer = request.IsCustomer ?? true,
                     IsSupplier = request.IsSupplier ?? false,
-                    IsActive = true
+                    IsActive = true,
+                    // Structured address fields were previously dropped on
+                    // inbound sync — external CRMs that send them lost the
+                    // data on the trip in. Map them through, including the
+                    // newly-added Moo field.
+                    BuildingNumber = request.BuildingNumber,
+                    BuildingName = request.BuildingName,
+                    Moo = request.Moo,
+                    StreetName = request.StreetName,
+                    SubDistrict = request.SubDistrict,
+                    District = request.District,
+                    Province = request.Province,
+                    PostalCode = request.PostalCode,
                 };
                 _db.Set<Contact>().Add(contact);
             }
             else
             {
-                // Update existing
+                // Update existing — only overwrite when the request actually
+                // carries a value, so partial syncs don't blank out fields
+                // the receiving tenant has already enriched.
                 if (request.Phone != null) contact.Phone = request.Phone;
                 if (request.Email != null) contact.Email = request.Email;
                 if (request.Address != null) contact.Address = request.Address;
                 if (request.TaxId != null) contact.TaxId = request.TaxId;
+                if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
+                if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
+                if (request.Moo != null) contact.Moo = request.Moo;
+                if (request.StreetName != null) contact.StreetName = request.StreetName;
+                if (request.SubDistrict != null) contact.SubDistrict = request.SubDistrict;
+                if (request.District != null) contact.District = request.District;
+                if (request.Province != null) contact.Province = request.Province;
+                if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
             }
 
             await _db.SaveChangesAsync();
@@ -2268,7 +2290,7 @@ public class IntegrationService : IIntegrationService
                 c.Address, c.Phone, c.Email, c.CreatedAt,
                 c.BranchName, c.BuildingNumber, c.BuildingName, c.StreetName,
                 c.SubDistrict, c.District, c.Province, c.PostalCode,
-                c.CountryCode, c.ContactPerson, c.IsActive))
+                c.CountryCode, c.ContactPerson, c.IsActive, c.Moo))
             .ToListAsync();
 
         var totalPages = (int)Math.Ceiling((double)total / query.PageSize);

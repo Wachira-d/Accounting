@@ -39,6 +39,7 @@ public class CompanyService : ICompanyService
             SocialSecurityAccountNo = request.SocialSecurityAccountNo,
             BuildingNumber = request.BuildingNumber,
             BuildingName = request.BuildingName,
+            Moo = request.Moo,
             StreetName = request.StreetName,
             SubDistrict = request.SubDistrict,
             District = request.District,
@@ -203,6 +204,7 @@ public class CompanyService : ICompanyService
         if (request.SocialSecurityAccountNo != null) company.SocialSecurityAccountNo = request.SocialSecurityAccountNo;
         if (request.BuildingNumber != null) company.BuildingNumber = request.BuildingNumber;
         if (request.BuildingName != null) company.BuildingName = request.BuildingName;
+        if (request.Moo != null) company.Moo = request.Moo;
         if (request.StreetName != null) company.StreetName = request.StreetName;
         if (request.SubDistrict != null) company.SubDistrict = request.SubDistrict;
         if (request.District != null) company.District = request.District;
@@ -369,7 +371,7 @@ public class CompanyService : ICompanyService
             c.BusinessType, c.IndustryType, c.Status, c.JuristicId,
             c.IsVatRegistered, c.VatRate, c.IsWhtRegistered,
             c.IsSocialSecurityRegistered, c.SocialSecurityAccountNo,
-            c.Address, c.BuildingNumber, c.BuildingName, c.StreetName,
+            c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
             c.SubDistrict, c.District, c.Province,
             c.PostalCode, c.Phone, c.Fax, c.Email, c.Website,
             c.FiscalYearStartMonth, c.IsSetupComplete, sub);
@@ -378,6 +380,7 @@ public class CompanyService : ICompanyService
     private static string? ComposeAddress(Company c)
     {
         var parts = new[] { c.BuildingNumber, c.BuildingName,
+            string.IsNullOrEmpty(c.Moo) ? null : "หมู่ " + c.Moo,
             string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
             c.SubDistrict, c.District, c.Province, c.PostalCode }
             .Where(s => !string.IsNullOrWhiteSpace(s));

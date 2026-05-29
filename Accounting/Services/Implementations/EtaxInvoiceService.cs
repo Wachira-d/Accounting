@@ -870,10 +870,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var buildingNo = !string.IsNullOrEmpty(company.BuildingNumber)
             ? company.BuildingNumber!
             : (ExtractBuildingNumber(company.Address) ?? "0");
-        // Compose a line-one address: street name (if structured) else free-text address
-        var streetLine = !string.IsNullOrEmpty(company.StreetName)
-            ? $"ถ.{company.StreetName}"
-            : (company.Address ?? "");
+        // Compose a line-one address. ETDA has no dedicated Moo element so we
+        // prepend "หมู่ X" to the street line — without this, provincial
+        // sellers / buyers silently lose Moo from every e-Tax XML.
+        var streetLine = ComposeStreetLine(company.Moo, company.StreetName, company.Address);
 
         // ETDA XSD constrains CityName/CitySubDivisionName/CountrySubDivisionID to
         // numeric TISI 1099 codes (free-text Thai names FAIL XSD validation).
@@ -936,9 +936,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
             if (!string.IsNullOrEmpty(contact.BuildingName))
                 addressElements.Add(new XElement(ram + "BuildingName", contact.BuildingName));
-            var streetLine = !string.IsNullOrEmpty(contact.StreetName)
-                ? $"ถ.{contact.StreetName}"
-                : (contact.Address ?? "-");
+            // Moo prepended to street line — see ComposeStreetLine note above.
+            var streetLine = ComposeStreetLine(contact.Moo, contact.StreetName, contact.Address)
+                ?? "-";
             addressElements.Add(new XElement(ram + "LineOne", streetLine));
             addressElements.Add(new XElement(ram + "CityName", districtCode));
             addressElements.Add(new XElement(ram + "CitySubDivisionName", subDistrictCode));
@@ -969,6 +969,21 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     }
 
     /// <summary>Normalize postcode to 5 digits — first try the field, then extract from address.</summary>
+    /// <summary>Compose the LineOne street fragment for a TradeParty address.
+    /// ETDA Schematron has no dedicated Moo / VillageNo element, so we
+    /// prepend "หมู่ X" to whatever street fragment exists (or use it as
+    /// the only content when there's no street). Returns null when none of
+    /// the inputs are usable — caller decides how to fall back.</summary>
+    private static string? ComposeStreetLine(string? moo, string? streetName, string? freeTextFallback)
+    {
+        var hasMoo = !string.IsNullOrWhiteSpace(moo);
+        var hasStreet = !string.IsNullOrWhiteSpace(streetName);
+        if (hasMoo && hasStreet) return $"หมู่ {moo} ถ.{streetName}";
+        if (hasStreet) return $"ถ.{streetName}";
+        if (hasMoo) return $"หมู่ {moo}";
+        return string.IsNullOrWhiteSpace(freeTextFallback) ? null : freeTextFallback;
+    }
+
     private static string NormalizePostcode(string? postCode, string? addressFallback)
     {
         var pc = (postCode ?? "").Trim();

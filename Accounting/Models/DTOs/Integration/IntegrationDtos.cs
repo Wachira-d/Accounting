@@ -69,7 +69,11 @@ public record InboundCustomerRequest(
     string? BranchCode,
     bool? IsCustomer,          // default true
     bool? IsSupplier,          // default false
-    string? Notes);
+    string? Notes,
+    string? Moo = null,
+    string? BuildingNumber = null,
+    string? BuildingName = null,
+    string? StreetName = null);
 
 public record InboundInvoiceRequest(
     string? ExternalId, string? ExternalRef,
@@ -285,7 +289,8 @@ public record OutboundContactResponse(
     string? PostalCode,
     string? CountryCode,
     string? ContactPerson,
-    bool IsActive);
+    bool IsActive,
+    string? Moo = null);
 
 public record OutboundPaymentResponse(
     Guid Id, string PaymentNumber, Guid DocumentId, string? DocumentNumber,
