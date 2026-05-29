@@ -44,7 +44,7 @@
             <label class="form-checkbox">
               <input type="checkbox"> <span style="font-size:14px;color:var(--gray-600)" data-i18n="login.rememberMe">จดจำฉัน</span>
             </label>
-            <a href="#" style="font-size:14px;color:var(--primary)" data-i18n="login.forgotPassword">ลืมรหัสผ่าน?</a>
+            <a href="#" onclick="openForgotPassword(event)" style="font-size:14px;color:var(--primary)" data-i18n="login.forgotPassword">ลืมรหัสผ่าน?</a>
           </div>
           <button type="submit" class="btn btn-primary w-full btn-lg" id="loginBtn" data-i18n="login.loginBtn">
             เข้าสู่ระบบ
@@ -68,6 +68,27 @@
           <span data-i18n="login.noAccount">ยังไม่มีบัญชี?</span> <a href="/register.html" style="color:var(--primary);font-weight:600" data-i18n="login.registerLink">สมัครสมาชิกฟรี</a>
         </p>
       </div>
+    </div>
+  </div>
+
+  <!-- Forgot-password modal — opens from the "ลืมรหัสผ่าน?" link.
+       Server always replies success (regardless of whether the email exists)
+       so we don't leak which addresses are registered. -->
+  <div id="forgotModal" class="hidden" style="position:fixed;inset:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px">
+    <div style="background:#fff;border-radius:16px;max-width:420px;width:100%;padding:28px;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <h2 style="margin:0;font-size:20px;font-weight:700;color:#0f172a">รีเซ็ตรหัสผ่าน</h2>
+        <button type="button" onclick="closeForgotPassword()" style="background:none;border:0;font-size:24px;color:#64748b;cursor:pointer;padding:0;line-height:1">&times;</button>
+      </div>
+      <p style="margin:0 0 18px;font-size:14px;color:#475569;line-height:1.6">กรอกอีเมลที่คุณใช้สมัครสมาชิก ระบบจะส่งลิงก์รีเซ็ตรหัสผ่านให้ภายใน 1 ชั่วโมง</p>
+      <div id="forgotMsg" class="hidden" style="padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;line-height:1.5"></div>
+      <form onsubmit="handleForgotPassword(event)">
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label" for="forgotEmail">อีเมล</label>
+          <input type="email" id="forgotEmail" class="form-input" placeholder="you@example.com" required autocomplete="email">
+        </div>
+        <button type="submit" id="forgotBtn" class="btn btn-primary w-full btn-lg">ส่งลิงก์รีเซ็ต</button>
+      </form>
     </div>
   </div>
 
@@ -141,6 +162,56 @@
           handleSsoResponse('Facebook', response.authResponse.accessToken);
         }
       }, { scope: 'email,public_profile' });
+    }
+
+    function openForgotPassword(e) {
+      if (e) e.preventDefault();
+      const modal = document.getElementById('forgotModal');
+      const msg = document.getElementById('forgotMsg');
+      const input = document.getElementById('forgotEmail');
+      // Pre-fill from the login form to save a keystroke.
+      input.value = document.getElementById('email').value || '';
+      msg.classList.add('hidden');
+      modal.classList.remove('hidden');
+      setTimeout(() => input.focus(), 50);
+    }
+
+    function closeForgotPassword() {
+      document.getElementById('forgotModal').classList.add('hidden');
+    }
+
+    async function handleForgotPassword(e) {
+      e.preventDefault();
+      const btn = document.getElementById('forgotBtn');
+      const msg = document.getElementById('forgotMsg');
+      const email = document.getElementById('forgotEmail').value.trim();
+      msg.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = 'กำลังส่ง...';
+      try {
+        const res = await fetch('/api/auth/forgot-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json().catch(() => ({}));
+        // The endpoint always 200s with a generic success message even when
+        // the email isn't registered (avoids account enumeration). Surface
+        // whatever the server returned but treat any 200 as "check your email".
+        msg.textContent = data.message || data.data
+          || 'หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล';
+        msg.style.background = res.ok ? '#ecfdf5' : '#fef2f2';
+        msg.style.color = res.ok ? '#047857' : '#b91c1c';
+        msg.classList.remove('hidden');
+      } catch (err) {
+        msg.textContent = 'ส่งคำขอไม่สำเร็จ — โปรดลองอีกครั้งหรือเช็คการเชื่อมต่ออินเทอร์เน็ต';
+        msg.style.background = '#fef2f2';
+        msg.style.color = '#b91c1c';
+        msg.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'ส่งลิงก์รีเซ็ต';
+      }
     }
 
     async function handleLogin(e) {
