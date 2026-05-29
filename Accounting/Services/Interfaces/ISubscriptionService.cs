@@ -24,6 +24,13 @@ public interface ISubscriptionService
     Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType);
     Task IncrementUsageAsync(Guid companyId, string usageType);
 
+    /// <summary>Check whether <paramref name="additionalBytes"/> of new storage
+    /// would fit in the License-overlaid quota for this company. Aggregates
+    /// per-company Subscription storage + every CMS Site's storage under the
+    /// same License so all uploads (accounting docs + CMS media) share one
+    /// pool. Returns false when the upload would exceed the cap.</summary>
+    Task<bool> CanFitStorageAsync(Guid companyId, long additionalBytes);
+
     // Admin: Plan Templates
     Task<PlanTemplateResponse> CreatePlanTemplateAsync(CreatePlanTemplateRequest request);
     Task<List<PlanTemplateResponse>> GetPlanTemplatesAsync(bool includeInactive = false);

@@ -589,6 +589,54 @@ public class SubscriptionService : ISubscriptionService
         };
     }
 
+    public async Task<bool> CanFitStorageAsync(Guid companyId, long additionalBytes)
+    {
+        if (additionalBytes < 0) return true;
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return false;
+
+        long maxBytes;
+        List<Guid> poolCompanyIds;
+        if (sub.AccountSubscriptionId.HasValue)
+        {
+            var acct = await _db.AccountSubscriptions.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+            if (acct == null)
+            {
+                // Dangling pointer — fall back to per-company so the user isn't
+                // accidentally locked out by a deleted License.
+                maxBytes = sub.MaxStorageBytes;
+                poolCompanyIds = new List<Guid> { companyId };
+            }
+            else
+            {
+                maxBytes = acct.MaxStorageBytes;
+                poolCompanyIds = await _db.Subscriptions.AsNoTracking()
+                    .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
+                    .Select(s => s.CompanyId)
+                    .ToListAsync();
+            }
+        }
+        else
+        {
+            maxBytes = sub.MaxStorageBytes;
+            poolCompanyIds = new List<Guid> { companyId };
+        }
+
+        // Accounting-document storage tracked per-company.
+        var docBytes = await _db.Subscriptions.AsNoTracking()
+            .Where(s => poolCompanyIds.Contains(s.CompanyId) && !s.IsDeleted)
+            .SumAsync(s => (long?)s.CurrentStorageUsed) ?? 0L;
+        // CMS media storage tracked per-Site. Both pools share the same License
+        // budget so a tenant doesn't get to double-spend by routing big files
+        // through the CMS instead of the accounting upload path.
+        var cmsBytes = await _db.Sites.AsNoTracking()
+            .Where(s => poolCompanyIds.Contains(s.CompanyId) && !s.IsDeleted)
+            .SumAsync(s => (long?)s.CurrentStorageUsed) ?? 0L;
+
+        return docBytes + cmsBytes + additionalBytes <= maxBytes;
+    }
+
     public record AggregateUsage(
         int Documents, int MaxDocuments,
         int JournalEntries, int MaxJournalEntries,

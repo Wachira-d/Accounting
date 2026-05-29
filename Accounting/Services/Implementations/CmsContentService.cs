@@ -15,12 +15,14 @@ public class CmsContentService : ICmsContentService
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsContentService> _logger;
     private readonly IImageProcessingService? _images;
+    private readonly ISubscriptionService _subscription;
 
-    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, IImageProcessingService? images = null)
+    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, ISubscriptionService subscription, IImageProcessingService? images = null)
     {
         _db = db;
         _logger = logger;
         _images = images;
+        _subscription = subscription;
     }
 
     // ===== Pages =====
@@ -548,19 +550,24 @@ public class CmsContentService : ICmsContentService
             CreatedBy = userId
         };
 
+        // License-aware storage check: accounting docs + every CMS site under
+        // the same License share one storage pool. The check uses the
+        // License's MaxStorageBytes when this company is attached, otherwise
+        // the per-company Subscription limit. Without this every per-site
+        // cap (Site.MaxStorageBytes) created a parallel pool that ignored
+        // the License the customer is paying for.
+        if (!await _subscription.CanFitStorageAsync(companyId, media.FileSize))
+        {
+            File.Delete(filePath);
+            throw new InvalidOperationException("Storage quota exceeded — โปรดเคลียร์ไฟล์เก่าหรืออัปเกรด License");
+        }
+
         _db.SiteMediaItems.Add(media);
 
-        // Update site storage usage
+        // Per-site counter still maintained for the CMS dashboard / media
+        // library display; the License pool reads it back via CanFitStorageAsync.
         var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);
-        if (site != null)
-        {
-            site.CurrentStorageUsed += media.FileSize;
-            if (site.MaxStorageBytes.HasValue && site.CurrentStorageUsed > site.MaxStorageBytes.Value)
-            {
-                File.Delete(filePath);
-                throw new InvalidOperationException("Storage quota exceeded.");
-            }
-        }
+        if (site != null) site.CurrentStorageUsed += media.FileSize;
 
         await _db.SaveChangesAsync();
         return MapMediaResponse(media);
