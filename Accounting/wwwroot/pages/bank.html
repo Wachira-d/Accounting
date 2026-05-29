@@ -1129,11 +1129,12 @@
       _pickerAmtFilter: false,
       _compSelectedTxnId: null,
       _compUnreconciled: [],
-      // 🤖 Ask AI to suggest a match for a single unmatched bank txn.
-      // Surfaces the AI popover inline so the user can accept/dismiss
-      // without opening the full reconcile modal. AI's pick + alternatives
-      // come from /ai/bank/suggest-match which itself short-lists by
-      // amount ±15% + date ±14d + direction.
+      // 🤖 Quick AI suggestion popover for a single unmatched bank
+      // transaction. Shows the AI's top pick + alternatives inline so
+      // the user can verify before opening the full reconcile modal.
+      // The full modal already has its own AI button (rAiBtn at line
+      // 433) — this row-level button is the "did you mean..." entry
+      // point that lets the user pre-screen without modal overhead.
       askAiBankMatch(ev, transId) {
         const cid = Layout.getCompanyId(); if (!cid) return;
         const btn = ev?.currentTarget;
@@ -1141,19 +1142,16 @@
           anchorEl: btn,
           fetch: () => API.post(`/api/companies/${cid}/ai/bank/suggest-match`,
             { bankTransactionId: transId, currentMatchedDocId: null }),
+          // Accepting the AI pick opens the full reconcile modal so the
+          // user can complete the match (the modal's existing AI button
+          // can deep-link to the specific candidate row). Bank match
+          // is high-stakes (wrong invoice → wrong AR/AP) so we never
+          // auto-apply from this popover.
           applyAnswer: (docId) => {
             if (!docId || docId === '__NEW__') {
               Layout.toast('AI แนะนำให้สร้างเอกสารใหม่ — เปิดหน้าเลือกเต็ม', 'info');
-              this.openReconcileOne(transId);
-              return;
             }
-            // Open the reconcile modal pre-populated with the AI's pick.
             this.openReconcileOne(transId);
-            // The modal's picker handles selection by id; user confirms via existing button.
-            setTimeout(() => {
-              const cb = document.querySelector(`#pickerBody input[type=checkbox][data-id="${docId}"]`);
-              if (cb) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); }
-            }, 250);
           },
           answerToLabel: (v) => v === '__NEW__' ? 'สร้างเอกสารใหม่' : ('Document ' + v.substring(0, 8) + '…'),
         });

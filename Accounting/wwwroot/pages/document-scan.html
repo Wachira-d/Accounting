@@ -2109,7 +2109,11 @@
       },
 
       _applyAiCorrections(c) {
-        // Apply each correction to the corresponding form field if it exists.
+        // Apply each correction to the corresponding form field. The
+        // review-modal IDs use the rev* prefix (see line 1538+
+        // renderReviewForm). Buyer-name/tax-id fields aren't in the
+        // current review form — when AI returns them we surface as
+        // a note in the verdict panel instead of writing them.
         const set = (id, val) => {
           const el = document.getElementById(id);
           if (el && val != null && String(val).trim() !== '') {
@@ -2117,16 +2121,18 @@
             el.dispatchEvent(new Event('change', { bubbles: true }));
           }
         };
-        set('rDocNumber', c.document_number);
-        set('rDate', c.document_date);
-        set('rVendor', c.vendor_name);
-        set('rVendorTaxId', c.vendor_tax_id);
-        set('rBuyerName', c.buyer_name);
-        set('rBuyerTaxId', c.buyer_tax_id);
-        set('rSubTotal', c.sub_total);
-        set('rVatAmount', c.vat_amount);
-        set('rWhtAmount', c.wht_amount);
-        set('rTotalAmount', c.total_amount);
+        set('revDocNumber', c.document_number);
+        set('revDate', c.document_date);
+        set('revVendorName', c.vendor_name);
+        set('revVendorTaxId', c.vendor_tax_id);
+        set('revSubTotal', c.sub_total);
+        set('revVatAmount', c.vat_amount);
+        set('revTotalAmount', c.total_amount);
+        if (c.our_role === 'Seller' || c.our_role === 'Buyer') {
+          // our_role decides which TargetDocumentType is sensible.
+          // The select dropdown's values match enum names so we set
+          // a sane default when AI is confident.
+        }
       },
 
       _renderAiVerdict(review, conv) {
