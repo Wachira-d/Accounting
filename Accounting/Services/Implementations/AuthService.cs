@@ -46,7 +46,10 @@ public class AuthService : IAuthService
 
     public async Task<LoginResponse> RegisterAsync(RegisterRequest request)
     {
-        if (await _db.Users.AnyAsync(u => u.Email == request.Email))
+        // Normalize to lowercase — case-insensitive uniqueness so
+        // "Alice@Example.com" and "alice@example.com" can't both register.
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email))
             throw new InvalidOperationException("อีเมลนี้ถูกใช้งานแล้ว");
 
         ValidatePassword(request.Password);
@@ -61,7 +64,7 @@ public class AuthService : IAuthService
 
         var user = new User
         {
-            Email = request.Email,
+            Email = email,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             FullName = fullName,
             Phone = request.Phone
@@ -70,8 +73,46 @@ public class AuthService : IAuthService
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
-        // Create company if companyName provided
-        if (!string.IsNullOrWhiteSpace(request.CompanyName))
+        // Invitation acceptance — when the user registered via an invitation
+        // link, consume the matching pending invite for THIS email and skip
+        // the company-create branch below: they're joining an existing
+        // company, not creating their own. Invalid / expired / mismatched
+        // invitations are ignored (the new account is still created so the
+        // user isn't left on the signup page in confusion).
+        bool consumedInvite = false;
+        if (!string.IsNullOrWhiteSpace(request.InvitationToken))
+        {
+            var inv = await _db.CompanyInvitations
+                .FirstOrDefaultAsync(i => i.Token == request.InvitationToken && !i.IsDeleted);
+            if (inv != null
+                && inv.Status == Models.Enums.InvitationStatus.Pending
+                && inv.ExpiresAt > DateTime.UtcNow
+                && string.Equals(inv.Email, email, StringComparison.OrdinalIgnoreCase))
+            {
+                _db.CompanyUsers.Add(new CompanyUser
+                {
+                    CompanyId = inv.CompanyId,
+                    UserId = user.Id,
+                    Role = inv.Role,
+                });
+                inv.Status = Models.Enums.InvitationStatus.Accepted;
+                inv.AcceptedAt = DateTime.UtcNow;
+                inv.AcceptedByUserId = user.Id;
+                inv.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                consumedInvite = true;
+            }
+            else
+            {
+                _logger.LogInformation("Register with invitation token did not match a valid invite (token={Token}, email={Email}) — proceeding without auto-join",
+                    request.InvitationToken, email);
+            }
+        }
+
+        // Create company if companyName provided AND the user wasn't routed
+        // through an invitation. An invited member shouldn't auto-spawn a
+        // stub company they didn't ask for.
+        if (!consumedInvite && !string.IsNullOrWhiteSpace(request.CompanyName))
         {
             var company = new Company
             {
@@ -132,7 +173,10 @@ public class AuthService : IAuthService
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email)
+        // Case-insensitive login — see RegisterAsync for the normalization
+        // rationale.
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email)
             ?? throw new UnauthorizedAccessException("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
 
         // Check account lockout
@@ -212,7 +256,8 @@ public class AuthService : IAuthService
 
     public async Task<string> ForgotPasswordAsync(string email)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+        var normEmail = (email ?? string.Empty).Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail);
         if (user == null)
             return "หากอีเมลนี้มีในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่านทางอีเมล";
 
@@ -317,8 +362,9 @@ public class AuthService : IAuthService
 
         if (user == null)
         {
-            // Check if email already exists (local account)
-            user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            // Check if email already exists (local account) — case-insensitive.
+            var ssoEmailNorm = (email ?? string.Empty).Trim().ToLowerInvariant();
+            user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == ssoEmailNorm);
 
             if (user != null)
             {

@@ -4,6 +4,8 @@ using Accounting.Models.Enums;
 
 namespace Accounting.Services.Interfaces;
 
+public record AddUserResult(bool WasInvited, string Email, Guid? InvitationId);
+
 public interface ICompanyService
 {
     Task<CompanyResponse> CreateAsync(Guid userId, CreateCompanyRequest request);
@@ -11,7 +13,12 @@ public interface ICompanyService
     Task<List<CompanyResponse>> GetUserCompaniesAsync(Guid userId);
     Task<CompanyResponse> UpdateAsync(Guid companyId, Guid userId, UpdateCompanyRequest request);
     Task<List<CompanyMemberResponse>> GetMembersAsync(Guid companyId, Guid userId);
-    Task AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
+    /// <summary>Add (or invite) a user to a company by email. When the email
+    /// matches an existing user the link is created directly. When it
+    /// doesn't, a CompanyInvitation row is created and an email goes out
+    /// with a signup-and-accept link. Result.WasInvited distinguishes the
+    /// two outcomes so the controller can surface the right toast.</summary>
+    Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
     Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);
 

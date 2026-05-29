@@ -72,6 +72,14 @@ const ThaiAddress = (() => {
     return cache.postal[code];
   }
 
+  // Kick off the province fetch as soon as the script loads — by the time any
+  // modal opens, the list is usually warm. Failed requests are cached as null
+  // (well, undefined) so they retry on next demand instead of staying stuck.
+  getProvinces().catch(err => {
+    console.warn('[ThaiAddress] eager province load failed — will retry on demand', err);
+    cache.provinces = null;
+  });
+
   // Normalize a province alias to its canonical name. Falls through unchanged
   // when no alias matches — non-Bangkok provinces almost always have a single
   // canonical form so the dictionary stays small.
@@ -119,6 +127,86 @@ const ThaiAddress = (() => {
   // Inline status note attached just below the postal field — shown when a
   // 5-digit code has zero matches (typo) or when normalization rewrote a
   // province alias. Less intrusive than a toast.
+  // Custom suggestion popover — independent of HTML5 datalist. Some browsers
+  // suppress the datalist dropdown when the value field is empty / typed
+  // value doesn't match an option, and Chrome's datalist also has quirks
+  // around dynamic option loading. The popover is a flat <div> we position
+  // under the input + drive ourselves; works the same in every browser.
+  //
+  // Behavior: shows on focus + input. Filters by substring (case-insensitive,
+  // Thai-tolerant). Click an option → input.value updates, change event
+  // fires (so cascades + autofill react). Blur closes the popover after a
+  // tiny delay to let click land first.
+  function _attachSuggestionPopover(input, getOptionsAsync) {
+    const popId = '_thAddrPop_' + input.id;
+    if (document.getElementById(popId)) return;
+    const pop = document.createElement('div');
+    pop.id = popId;
+    pop.style.cssText = 'position:absolute;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);max-height:260px;overflow-y:auto;z-index:99998;display:none;font-size:13px;min-width:180px';
+    document.body.appendChild(pop);
+
+    let cached = null;
+    let lastFetchAt = 0;
+
+    function positionPopover() {
+      const r = input.getBoundingClientRect();
+      pop.style.left = (window.scrollX + r.left) + 'px';
+      pop.style.top  = (window.scrollY + r.bottom + 2) + 'px';
+      pop.style.width = Math.max(r.width, 180) + 'px';
+    }
+
+    function render(items) {
+      if (!items || !items.length) { pop.style.display = 'none'; return; }
+      pop.innerHTML = items.slice(0, 80).map(o =>
+        `<div class="thAddrOpt" data-v="${String(o).replace(/"/g, '&quot;')}" style="padding:8px 12px;cursor:pointer;color:#0f172a">${o}</div>`
+      ).join('');
+      pop.querySelectorAll('.thAddrOpt').forEach(el => {
+        el.addEventListener('mouseenter', () => el.style.background = '#f1f5f9');
+        el.addEventListener('mouseleave', () => el.style.background = '');
+        // mousedown preventDefault keeps the input from blurring before the
+        // click handler fires — without it, blur closes the popover first
+        // and the click never lands.
+        el.addEventListener('mousedown', e => e.preventDefault());
+        el.addEventListener('click', () => {
+          input.value = el.dataset.v;
+          pop.style.display = 'none';
+          // Fire change so the cascade refreshes the next datalist down +
+          // postal autofill triggers when user picks a tambon.
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+      positionPopover();
+      pop.style.display = 'block';
+    }
+
+    async function showFiltered() {
+      // Re-fetch every 60s so an out-of-date province cache (e.g. user
+      // opened the form, never closed it, gov-data deploy happened) self-
+      // heals on the next focus.
+      if (!cached || Date.now() - lastFetchAt > 60_000) {
+        try { cached = await getOptionsAsync(); lastFetchAt = Date.now(); }
+        catch { cached = []; }
+      }
+      const q = (input.value || '').trim().toLowerCase();
+      const filtered = q
+        ? cached.filter(o => String(o).toLowerCase().includes(q))
+        : cached;
+      render(filtered);
+    }
+
+    input.addEventListener('focus', showFiltered);
+    input.addEventListener('input', showFiltered);
+    input.addEventListener('blur', () => {
+      // Slight delay so the option's click handler runs first.
+      setTimeout(() => { pop.style.display = 'none'; }, 180);
+    });
+    // Reposition on viewport changes so a long page-scroll while the
+    // popover is open doesn't leave it stranded.
+    window.addEventListener('resize', () => {
+      if (pop.style.display === 'block') positionPopover();
+    });
+  }
+
   function _setNote(input, message, level) {
     const id = '_thAddrNote_' + input.id;
     let el = document.getElementById(id);
@@ -244,22 +332,40 @@ const ThaiAddress = (() => {
     try {
       const results = await getByPostal(code);
       if (!results || !results.length) return null;
-      if (results.length === 1) {
-        const r = results[0];
-        if (!sub.value)  sub.value  = r.subDistrictNameTh;
-        if (!dist.value) dist.value = r.districtNameTh;
-        if (!prov.value) prov.value = r.provinceNameTh;
-        await _refreshSubs(prov, dist, sub);
-        return results;
-      }
-      // Multi-match — let the picker do the work. Reuses the same modal the
-      // input listener uses. Pre-fills province if it's the only common one
-      // (saves a click when all matches share a province).
+
+      // Pre-fill anything the results unambiguously agree on, regardless of
+      // how many tambon rows we got back. Example: 20110 has multiple tambons
+      // under ศรีราชา but every one of them shares province=ชลบุรี and
+      // district=ศรีราชา — so fill both silently and ask the user only for
+      // the tambon. Without this two of three fields stayed blank because
+      // the picker exited silently on multi-match.
       const uniqueProvs = [...new Set(results.map(r => r.provinceNameTh))];
-      if (uniqueProvs.length === 1 && !prov.value) prov.value = uniqueProvs[0];
-      _showPostalPicker(code, results, { sub, dist, prov });
+      const uniqueDists = [...new Set(results.map(r => r.districtNameTh))];
+      const uniqueSubs  = [...new Set(results.map(r => r.subDistrictNameTh))];
+      if (!prov.value && uniqueProvs.length === 1) prov.value = uniqueProvs[0];
+      if (!dist.value && uniqueDists.length === 1) dist.value = uniqueDists[0];
+      if (!sub.value  && uniqueSubs.length  === 1) sub.value  = uniqueSubs[0];
+
+      // Are we done? If only the tambon is still ambiguous, show a picker
+      // narrowed to whatever the user (or our pre-fill) settled on. The
+      // picker's existing district-filter logic handles the narrowing.
+      if (!sub.value) {
+        const filtered = dist.value
+          ? results.filter(r => r.districtNameTh === dist.value)
+          : results;
+        if (filtered.length === 1) {
+          sub.value = filtered[0].subDistrictNameTh;
+        } else {
+          _showPostalPicker(code, results, { sub, dist, prov });
+        }
+      }
+      // Refresh datalists so manual edits get the right cascade options.
+      await _refreshSubs(prov, dist, sub);
       return results;
-    } catch { return null; }
+    } catch (e) {
+      console.warn('[ThaiAddress] postal autofill failed', e);
+      return null;
+    }
   }
 
   function enhance(ids) {
@@ -275,12 +381,76 @@ const ThaiAddress = (() => {
     _ensureList(dist, 'thAddrDistList');
     _ensureList(sub,  'thAddrSubList');
 
-    // Province list is small (~77) — load once and keep. Log failures so
-    // empty-dropdown symptoms are diagnosable from DevTools.
-    getProvinces().then(provs => {
-      _fillList('thAddrProvList', provs.map(p => p.nameTh));
-      if (prov.value) _refreshSubs(prov, dist, sub).catch(() => {});
-    }).catch(err => console.warn('[ThaiAddress] province load failed', err));
+    // Belt-and-suspenders: attach a custom suggestion popover to each input.
+    // The HTML5 datalist above is the keyboard-friendly default; the popover
+    // is the always-works fallback that fires on focus and shows up even
+    // when datalist is silently empty (browser quirks, slow API, etc.).
+    _attachSuggestionPopover(prov, async () => {
+      const provs = await getProvinces();
+      return provs.map(p => p.nameTh);
+    });
+    _attachSuggestionPopover(dist, async () => {
+      if (!prov.value) return [];
+      const provs = await getProvinces();
+      const p = _findByThai(provs, prov.value);
+      if (!p) return [];
+      const dists = await getDistricts(p.code);
+      return dists.map(d => d.nameTh);
+    });
+    _attachSuggestionPopover(sub, async () => {
+      if (!prov.value || !dist.value) return [];
+      const provs = await getProvinces();
+      const p = _findByThai(provs, prov.value);
+      if (!p) return [];
+      const dists = await getDistricts(p.code);
+      const d = _findByThai(dists, dist.value);
+      if (!d) return [];
+      const subs = await getSubDistricts(d.code);
+      return subs.map(s => s.nameTh);
+    });
+
+    // Helper: did the datalist actually get populated? We use this on focus
+    // to retry a fetch if the original load failed (network blip, cold
+    // cache, request still in flight when the user clicks). Without this
+    // retry the user sees the dropdown arrow but an empty list and there's
+    // no recovery path short of refreshing the page.
+    const _listIsEmpty = (id) => {
+      const dl = document.getElementById(id);
+      return !dl || dl.children.length === 0;
+    };
+
+    const _ensureProvOptions = async () => {
+      if (!_listIsEmpty('thAddrProvList')) return true;
+      try {
+        const provs = await getProvinces();
+        _fillList('thAddrProvList', provs.map(p => p.nameTh));
+        _setNote(prov, '', '');
+        return true;
+      } catch (err) {
+        console.warn('[ThaiAddress] province retry failed', err);
+        _setNote(prov, 'โหลดรายชื่อจังหวัดไม่สำเร็จ — โปรดลองรีเฟรชหน้า', 'warn');
+        return false;
+      }
+    };
+
+    // Eager attempt — usually completes long before the user clicks.
+    _ensureProvOptions().then(ok => {
+      if (ok && prov.value) _refreshSubs(prov, dist, sub).catch(() => {});
+    });
+
+    // Retry-on-focus handlers — when the user clicks any of the three
+    // cascading inputs, verify the relevant datalist is populated and
+    // refetch if not. This is the safety net for "dropdown arrow appears
+    // but the list is empty" symptoms.
+    prov.addEventListener('focus', _ensureProvOptions);
+    dist.addEventListener('focus', async () => {
+      await _ensureProvOptions();
+      if (prov.value) await _refreshDistricts(prov, dist, sub);
+    });
+    sub.addEventListener('focus', async () => {
+      await _ensureProvOptions();
+      if (prov.value && dist.value) await _refreshSubs(prov, dist, sub);
+    });
 
     // Province handlers — normalize aliases on blur, refresh cascade on
     // commit. We don't auto-clear district when province is wiped completely

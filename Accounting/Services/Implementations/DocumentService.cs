@@ -642,6 +642,7 @@ public class DocumentService : IDocumentService
 
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
                 await ApplyProjectBillingAsync(companyId, doc, +1);
+                await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
 
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
@@ -760,7 +761,12 @@ public class DocumentService : IDocumentService
     /// </summary>
     public async Task VoidDocumentAsync(Guid companyId, Guid documentId)
     {
-        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+        // Lines must be Include'd here so ApplyStockMovementsAsync (called
+        // during the void transaction below) can iterate them — otherwise
+        // doc.Lines is null and stock never gets restored on a void.
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         if (doc.Status == DocumentStatus.Voided)
@@ -853,6 +859,13 @@ public class DocumentService : IDocumentService
                 //    Skip Draft docs: never approved, so never billed.
                 if (doc.Status != DocumentStatus.Draft)
                     await ApplyProjectBillingAsync(companyId, doc, -1);
+
+                // 6b) Reverse any stock movement this document caused at
+                //     approval. Sign=-1 means a sale Invoice's OUT becomes IN
+                //     (stock restored), a purchase Invoice's IN becomes OUT.
+                //     Same Draft skip: drafts never decremented stock.
+                if (doc.Status != DocumentStatus.Draft)
+                    await ApplyStockMovementsAsync(companyId, doc, -1, "system-void");
 
                 // 7) Finally void the document itself
                 doc.Status = DocumentStatus.Voided;
@@ -2400,6 +2413,85 @@ public class DocumentService : IDocumentService
     ///   PaymentVoucher (link to PurchaseInvoice): Dr เจ้าหนี้, Cr เงินสด + Cr WHT Payable
     ///   PaymentVoucher (direct cash purchase): Dr ค่าใช้จ่าย + Dr ภาษีซื้อ, Cr เงินสด + Cr WHT Payable
     /// </summary>
+    /// <summary>Cascade product stock movements when a goods document is
+    /// approved (sign=+1) or voided (sign=-1). The sign on the document
+    /// type decides direction: sale Invoice / TaxInvoice = OUT (negative
+    /// stock movement), purchase PurchaseInvoice = IN, sales CreditNote
+    /// = IN (goods returned by customer). Documents that don't move goods
+    /// (Quotation, Receipt, PaymentVoucher, DeliveryNote alone, Debit Note
+    /// price-adjustment, etc.) return a zero direction and are skipped.
+    ///
+    /// Lines are matched to Products by (CompanyId, ProductCode). Lines
+    /// with no ProductCode, free-text descriptions, or matching a product
+    /// where TrackStock=false are skipped silently.
+    ///
+    /// Runs inside the approval/void transaction so a SaveChanges failure
+    /// rolls back both the document state and the stock delta. Without
+    /// this, sale Invoices left stock untouched and reconciling inventory
+    /// to GL revenue required manual stock adjustments every period.</summary>
+    private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
+    {
+        if (sign == 0) return;
+        // DeliveryNote intentionally NOT triggered here — when a tenant uses
+        // the full Quotation → SO → DN → Invoice chain, the Invoice is the
+        // financial recognition and triggers the stock move. Issuing the DN
+        // alone shouldn't double-count if the Invoice follows.
+        int direction = doc.DocumentType switch
+        {
+            DocumentType.Invoice or DocumentType.TaxInvoice => -1,  // sale OUT
+            DocumentType.PurchaseInvoice => +1,                     // purchase IN
+            DocumentType.CreditNote => +1,                          // sales return IN (goods come back)
+            _ => 0,
+        };
+        if (direction == 0) return;
+        // sign flips on void: a sale's OUT becomes an IN; the BalanceAfter
+        // walks back to where it was before.
+        var effective = direction * sign;
+        if (doc.Lines == null) return;
+
+        // Pre-load the full set of products this document touches in one
+        // query — avoids N+1 on long invoices.
+        var codes = doc.Lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!)
+            .Distinct()
+            .ToList();
+        if (codes.Count == 0) return;
+
+        var products = await _db.Products
+            .Where(p => p.CompanyId == companyId && codes.Contains(p.Code) && !p.IsDeleted)
+            .ToDictionaryAsync(p => p.Code);
+
+        var now = DateTime.UtcNow;
+        foreach (var line in doc.Lines)
+        {
+            if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
+            if (!products.TryGetValue(line.ProductCode!, out var product)) continue;
+            if (!product.TrackStock) continue;
+
+            var qtyDelta = effective * line.Quantity;
+            product.CurrentStock += qtyDelta;
+            _db.StockMovements.Add(new StockMovement
+            {
+                CompanyId = companyId,
+                ProductId = product.Id,
+                DocumentId = doc.Id,
+                MovementDate = now,
+                // MovementType is informational for reports — we tag based on
+                // direction so "IN" / "OUT" reads naturally even on a void.
+                MovementType = qtyDelta > 0 ? "IN" : "OUT",
+                Quantity = qtyDelta,
+                UnitCost = product.CostPrice,
+                BalanceAfter = product.CurrentStock,
+                Reference = doc.DocumentNumber,
+                Notes = sign > 0
+                    ? $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}"
+                    : $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                CreatedBy = actor,
+            });
+        }
+    }
+
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
         // Multi-currency: every Baht amount that hits the GL must be converted

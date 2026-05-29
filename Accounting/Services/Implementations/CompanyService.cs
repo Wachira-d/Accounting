@@ -4,6 +4,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
@@ -12,13 +13,26 @@ public class CompanyService : ICompanyService
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;
     private readonly ISubscriptionService? _subscriptionService;
+    private readonly IEmailService? _emailService;
+    private readonly ILogger<CompanyService>? _logger;
 
-    public CompanyService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService? subscriptionService = null)
+    public CompanyService(AccountingDbContext db, IAccountingService accountingService,
+        ISubscriptionService? subscriptionService = null,
+        IEmailService? emailService = null,
+        ILogger<CompanyService>? logger = null)
     {
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
+        _emailService = emailService;
+        _logger = logger;
     }
+
+    /// <summary>Lowercase + trim — the canonical form we store, search, and
+    /// compare emails by. Without this an Owner inviting "Alice@Example.COM"
+    /// would never match Alice's account registered as "alice@example.com".</summary>
+    private static string NormalizeEmail(string? email) =>
+        (email ?? string.Empty).Trim().ToLowerInvariant();
 
     public async Task<CompanyResponse> CreateAsync(Guid userId, CreateCompanyRequest request)
     {
@@ -249,14 +263,16 @@ public class CompanyService : ICompanyService
             .ToListAsync();
     }
 
-    public async Task AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request)
+    public async Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request)
     {
         await EnsureOwnerAccessAsync(companyId, ownerId);
 
+        var email = NormalizeEmail(request.Email);
+        if (string.IsNullOrEmpty(email))
+            throw new InvalidOperationException("กรุณาระบุอีเมล");
+
         // Hard limit: check effective MaxUsers — License's MaxUsersPerCompany
         // wins when the company is attached, otherwise per-company sub.MaxUsers.
-        // Without the overlay an Enterprise License (e.g. 100 users) is
-        // capped at the stale per-company FreeTrial limit (1).
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
         if (sub != null)
         {
@@ -267,26 +283,107 @@ public class CompanyService : ICompanyService
                     .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
                 if (acct != null) maxUsers = acct.MaxUsersPerCompany;
             }
+            // Pending invitations count towards the quota too — once accepted
+            // they become CompanyUsers, so a tenant can't sneak past the cap
+            // by spamming invites.
             var currentCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
-            if (currentCount >= maxUsers)
-                throw new InvalidOperationException($"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{maxUsers}) กรุณาอัปเกรดแพ็กเกจ");
+            var pendingInvites = await _db.CompanyInvitations.CountAsync(i =>
+                i.CompanyId == companyId && i.Status == InvitationStatus.Pending && !i.IsDeleted);
+            if (currentCount + pendingInvites >= maxUsers)
+                throw new InvalidOperationException(
+                    $"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{maxUsers}, มีคำเชิญรออยู่ {pendingInvites}) กรุณาอัปเกรดแพ็กเกจ");
         }
 
-        var targetUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email)
-            ?? throw new KeyNotFoundException($"ไม่พบผู้ใช้อีเมล {request.Email} ในระบบ (ผู้ใช้ต้องสมัครสมาชิกก่อน)");
+        // Case-insensitive user lookup. EF Core translates ToLower() to LOWER()
+        // on the server — works without an index but indexed lookups on a
+        // computed-column would be faster at scale. (Out of scope here.)
+        var targetUser = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
 
-        if (await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == targetUser.Id))
-            throw new InvalidOperationException("ผู้ใช้นี้เป็นสมาชิกอยู่แล้ว");
-
-        _db.CompanyUsers.Add(new CompanyUser
+        if (targetUser != null)
         {
-            UserId = targetUser.Id,
-            CompanyId = companyId,
-            Role = request.Role
-        });
+            if (await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == targetUser.Id))
+                throw new InvalidOperationException("ผู้ใช้นี้เป็นสมาชิกอยู่แล้ว");
+            _db.CompanyUsers.Add(new CompanyUser
+            {
+                UserId = targetUser.Id,
+                CompanyId = companyId,
+                Role = request.Role
+            });
+            await _db.SaveChangesAsync();
+            return new AddUserResult(WasInvited: false, Email: email, InvitationId: null);
+        }
 
+        // Invitee isn't a member of the platform yet — create an invitation
+        // record + email a signup link. Owner doesn't have to wait for the
+        // invitee to sign up first.
+        // De-dupe: if a pending invitation already exists for this (company,
+        // email), reuse it (refresh expiry + re-send email) instead of
+        // creating a parallel row.
+        var existing = await _db.CompanyInvitations.FirstOrDefaultAsync(i =>
+            i.CompanyId == companyId && i.Email == email
+            && i.Status == InvitationStatus.Pending && !i.IsDeleted);
+
+        var inv = existing ?? new CompanyInvitation
+        {
+            CompanyId = companyId,
+            Email = email,
+            Role = request.Role,
+            InvitedByUserId = ownerId,
+            Token = GenerateInviteToken(),
+            CreatedBy = ownerId.ToString(),
+        };
+        inv.Role = request.Role;       // refresh role on re-invite
+        inv.Status = InvitationStatus.Pending;
+        inv.ExpiresAt = DateTime.UtcNow.AddDays(7);
+        inv.UpdatedAt = DateTime.UtcNow;
+        inv.UpdatedBy = ownerId.ToString();
+        if (existing == null) _db.CompanyInvitations.Add(inv);
         await _db.SaveChangesAsync();
+
+        // Best-effort email send. If the SMTP config is wrong we still keep
+        // the invitation record so the Owner can resend later from the team
+        // page — they're not stuck with a half-created state.
+        if (_emailService != null)
+        {
+            try
+            {
+                var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+                var inviter = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == ownerId);
+                await _emailService.SendInvitationAsync(
+                    to: email,
+                    inviteeName: email.Split('@')[0],
+                    inviterName: inviter?.FullName ?? "Owner",
+                    companyName: company?.Name ?? "บริษัท",
+                    invitationToken: inv.Token,
+                    role: RoleLabel(request.Role));
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Invitation email send failed for {Email}", email);
+                // Throw a friendly error so the Owner knows the email didn't
+                // go out and can fix SMTP / try resending. The invitation
+                // row itself stayed so they can retry without re-typing.
+                throw new InvalidOperationException(
+                    "สร้างคำเชิญแล้วแต่ส่งอีเมลไม่สำเร็จ — โปรดตรวจการตั้งค่า SMTP แล้วลองส่งซ้ำ");
+            }
+        }
+        return new AddUserResult(WasInvited: true, Email: email, InvitationId: inv.Id);
     }
+
+    private static string GenerateInviteToken()
+        => Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+
+    private static string RoleLabel(UserRole r) => r switch
+    {
+        UserRole.Owner => "เจ้าของ",
+        UserRole.Accountant => "นักบัญชี",
+        UserRole.Staff => "พนักงาน",
+        UserRole.Auditor => "ผู้ตรวจสอบ",
+        UserRole.Viewer => "ผู้ดู",
+        UserRole.ExternalAccountant => "นักบัญชีภายนอก",
+        _ => r.ToString(),
+    };
 
     public async Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId)
     {

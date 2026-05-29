@@ -61,11 +61,15 @@ public class CompanyController : ControllerBase
     }
 
     [HttpPost("{companyId:guid}/users")]
-    public async Task<ActionResult<ApiResponse<string>>> AddUser(Guid companyId, [FromBody] AddCompanyUserRequest request)
+    public async Task<ActionResult<ApiResponse<object>>> AddUser(Guid companyId, [FromBody] AddCompanyUserRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        await _companyService.AddUserAsync(companyId, userId, request);
-        return StatusCode(201, new ApiResponse<string>(true, null, "เพิ่มผู้ใช้สำเร็จ"));
+        var result = await _companyService.AddUserAsync(companyId, userId, request);
+        var message = result.WasInvited
+            ? $"ส่งคำเชิญไปยัง {result.Email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล"
+            : "เพิ่มผู้ใช้สำเร็จ";
+        return StatusCode(201, new ApiResponse<object>(true,
+            new { result.WasInvited, result.Email, result.InvitationId }, message));
     }
 
     [HttpPut("{companyId:guid}/users/{targetUserId:guid}/role")]

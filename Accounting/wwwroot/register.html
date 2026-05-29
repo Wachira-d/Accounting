@@ -148,6 +148,37 @@
   <script src="/js/api.js"></script>
   <script>
     I18n.init();
+
+    // Invite mode: when arriving from /accept-invitation.html the URL carries
+    // ?invite=<token>&email=<addr>. Pre-fill the email, hide the company-name
+    // input (they're joining an existing company), and show a banner so the
+    // user understands why their form looks different.
+    (function _inviteBootstrap() {
+      const sp = new URLSearchParams(location.search);
+      const token = sp.get('invite');
+      const presetEmail = sp.get('email');
+      if (presetEmail) {
+        const e = document.getElementById('email');
+        if (e) { e.value = presetEmail; e.readOnly = true; }
+      }
+      if (!token) return;
+      const company = document.getElementById('companyName');
+      const companyGroup = company?.closest('.form-group');
+      if (companyGroup) companyGroup.style.display = 'none';
+      if (company) company.required = false;
+      const planSection = document.querySelector('input[name="plan"]')?.closest('.form-group, fieldset, div');
+      // Hide plan selection — invitees inherit the inviter's company plan.
+      if (planSection) planSection.style.display = 'none';
+      const form = document.querySelector('form');
+      if (form && !document.getElementById('inviteBanner')) {
+        const banner = document.createElement('div');
+        banner.id = 'inviteBanner';
+        banner.style.cssText = 'background:#ecfeff;border:1px solid #67e8f9;color:#0c4a6e;padding:12px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;line-height:1.6';
+        banner.innerHTML = '🎉 คุณกำลังสมัครสมาชิกเพื่อเข้าร่วมทีม — หลังสมัครเสร็จ ระบบจะพาคุณเข้าบริษัทอัตโนมัติ';
+        form.parentNode.insertBefore(banner, form);
+      }
+    })();
+
     let ssoConfig = { google: '', facebook: '' };
     fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
       ssoConfig = d.data || d;
@@ -274,14 +305,24 @@
       btn.textContent = 'กำลังสมัครสมาชิก...';
 
       try {
+        // ?invite=token preserved across the register form so the new
+        // account auto-joins the inviting company in the same request.
+        // The accept-invitation page hands this off when the invitee
+        // clicks "สมัครสมาชิกใหม่และตอบรับ".
+        const inviteToken = new URLSearchParams(location.search).get('invite') || null;
         const selectedPlan = document.querySelector('input[name="plan"]:checked')?.value || 'Pro';
         const res = await API.register({
           firstName: document.getElementById('firstName').value,
           lastName: document.getElementById('lastName').value,
           email: document.getElementById('email').value,
           password: password,
-          companyName: document.getElementById('companyName').value,
-          plan: selectedPlan
+          // When the user came in via an invite, they're joining an existing
+          // company — don't ask them to enter another company name (the
+          // backend skips company-creation when an invite is consumed, but
+          // submitting a value would still surface as a stale stub).
+          companyName: inviteToken ? null : document.getElementById('companyName').value,
+          plan: selectedPlan,
+          invitationToken: inviteToken,
         });
 
         if (res.success && res.data) {
