@@ -467,8 +467,19 @@ const Layout = {
     return `nextacc_hiddenMenu_${cid}`;
   },
   getHiddenMenuItems() {
-    try { return JSON.parse(localStorage.getItem(this._menuKey()) || '[]'); }
-    catch { return []; }
+    // Union of two sources:
+    //   1) Per-user localStorage list — controlled by the user via the
+    //      sidebar's "ซ่อน" toggle. Personal preference.
+    //   2) Server-loaded Owner company-wide hide list (in
+    //      this.myPermissions.ownerHiddenMenuIds) — the Owner has
+    //      hidden these for EVERYONE in the company via
+    //      /pages/settings-features.html.
+    let local = [];
+    try { local = JSON.parse(localStorage.getItem(this._menuKey()) || '[]'); }
+    catch { local = []; }
+    const ownerHidden = this.myPermissions?.ownerHiddenMenuIds || [];
+    if (!ownerHidden.length) return local;
+    return Array.from(new Set([...local, ...ownerHidden]));
   },
   setHiddenMenuItems(ids) {
     localStorage.setItem(this._menuKey(), JSON.stringify(ids || []));

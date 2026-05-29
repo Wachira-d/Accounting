@@ -100,6 +100,20 @@ public class MeController : ControllerBase
             .Select(e => new { e.Id, e.EmployeeCode, e.FirstNameTh, e.LastNameTh, e.DepartmentId })
             .FirstOrDefaultAsync(ct);
 
+        // Owner-level menu hide list — independent of features /
+        // permissions, applies to EVERYONE in the company. Layout.js
+        // unions this with allowedMenuIds (intersection-friendly).
+        var hiddenMenuIdsJson = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.OwnerHiddenMenuIdsJson)
+            .FirstOrDefaultAsync(ct);
+        List<string> hiddenMenuIds = new();
+        if (!string.IsNullOrWhiteSpace(hiddenMenuIdsJson))
+        {
+            try { hiddenMenuIds = System.Text.Json.JsonSerializer.Deserialize<List<string>>(hiddenMenuIdsJson) ?? new(); }
+            catch { /* malformed json — empty list */ }
+        }
+
         return Ok(new ApiResponse<object>(true, new
         {
             userId,
@@ -108,6 +122,7 @@ public class MeController : ControllerBase
             isFullAccess,
             menuIds,
             permissionKeys = permKeys,
+            hiddenMenuIds,
             employee = employee == null ? null : new
             {
                 id = employee.Id,

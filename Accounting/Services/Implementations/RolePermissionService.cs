@@ -194,12 +194,27 @@ public class RolePermissionService : IRolePermissionService
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         var isOwnerOrAdmin = cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin || user?.IsSystemAdmin == true;
 
+        // Owner-level company-wide hidden-menu list — applies on top of
+        // role permissions for everyone (including Owner / SystemAdmin).
+        // Layout.js subtracts these from the rendered sidebar.
+        var hiddenJson = await _db.Set<Models.Entities.CompanySettings>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.OwnerHiddenMenuIdsJson)
+            .FirstOrDefaultAsync();
+        List<string>? ownerHiddenMenuIds = null;
+        if (!string.IsNullOrWhiteSpace(hiddenJson))
+        {
+            try { ownerHiddenMenuIds = System.Text.Json.JsonSerializer.Deserialize<List<string>>(hiddenJson); }
+            catch { /* malformed — skip */ }
+        }
+
         if (isOwnerOrAdmin)
         {
             return new MyPermissionsResponse(
                 cu.Role.ToString(),
                 true,
-                new List<string>());
+                new List<string>(),
+                ownerHiddenMenuIds);
         }
 
         if (cu.CompanyRoleId == null)
@@ -207,7 +222,8 @@ public class RolePermissionService : IRolePermissionService
             return new MyPermissionsResponse(
                 cu.Role.ToString(),
                 false,
-                new List<string>());
+                new List<string>(),
+                ownerHiddenMenuIds);
         }
 
         var perms = await _db.CompanyRolePermissions
@@ -220,7 +236,7 @@ public class RolePermissionService : IRolePermissionService
             .Select(r => r.Name)
             .FirstOrDefaultAsync() ?? cu.Role.ToString();
 
-        return new MyPermissionsResponse(roleName, false, perms);
+        return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds);
     }
 
     public async Task SeedDefaultRolesAsync(Guid companyId)

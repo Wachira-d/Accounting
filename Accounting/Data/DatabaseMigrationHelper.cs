@@ -3237,6 +3237,13 @@ public static class DatabaseMigrationHelper
             // EmployeeLeave — half-day support added 2026.
             """ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "HalfDayMarker" integer NOT NULL DEFAULT 0;""",
 
+            // CompanySettings — owner-level feature + menu overrides
+            // (subtractive only; Subscription.EnabledFeatures is the
+            // upper bound, this lets the Owner opt-out features they
+            // don't use / hide menus they find noisy).
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "OwnerDisabledFeatures" bigint NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "OwnerHiddenMenuIdsJson" text NULL;""",
+
             // LeaveType — HR-configurable catalog (replaces hardcoded
             // string keys in CompanySettings.LeaveQuotasJson).
             """

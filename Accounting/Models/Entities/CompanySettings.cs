@@ -162,4 +162,24 @@ public class CompanySettings : TenantEntity
     public string? LandingContactLine { get; set; }            // LINE ID
     public string? LandingContactEmail { get; set; }           // อีเมลติดต่อ
     public string? LandingServicesJson { get; set; }           // JSON array of accounting service packages
+
+    // ───── Owner-level feature & menu overrides ─────
+    // Subscription.EnabledFeatures says "what the PLAN allows"; the two
+    // columns below let the OWNER opt out of features / hide menu items
+    // they don't use, on top of the plan. SystemAdmin still has the
+    // final say via Subscription — these are subtractive only.
+    //
+    // OwnerDisabledFeatures: a FeatureFlags bitmask of features the
+    // owner has switched off. Effective features =
+    //     Subscription.EnabledFeatures & ~OwnerDisabledFeatures
+    // Default 0 = nothing disabled (every paid feature behaves as today).
+    public FeatureFlags OwnerDisabledFeatures { get; set; } = FeatureFlags.None;
+
+    /// <summary>JSON array of menu nav ids the owner has hidden from
+    /// the sidebar. Independent of feature flags — even when the
+    /// underlying feature is on, the menu disappears for everyone in
+    /// this company. Used when the owner doesn't want a specific
+    /// nav entry visible (e.g. "ปฏิทินการลา" for a small team that
+    /// doesn't need it). NULL or "[]" = nothing hidden.</summary>
+    public string? OwnerHiddenMenuIdsJson { get; set; }
 }
