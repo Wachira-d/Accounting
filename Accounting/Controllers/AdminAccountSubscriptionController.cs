@@ -202,6 +202,30 @@ public class AdminAccountSubscriptionController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "บันทึก limits ใหม่แล้ว"));
     }
 
+    /// <summary>History feed for an Account Plan — pulls SubscriptionHistory
+    /// rows where AccountSubscriptionId matches, plus the cross-cascade ones
+    /// where the row's company-level Subscription belongs to this account.
+    /// Surfaces "slip-approved → cascaded" + "reminder sent" + status flips so
+    /// support can answer "why did this account auto-extend".</summary>
+    [HttpGet("{id:guid}/history")]
+    public async Task<ActionResult<ApiResponse<object>>> History(Guid id, [FromQuery] int take = 100)
+    {
+        if (!await IsSystemAdminAsync()) return Forbid();
+
+        var rows = await _db.SubscriptionHistories.AsNoTracking()
+            .Where(h => h.AccountSubscriptionId == id)
+            .OrderByDescending(h => h.CreatedAt)
+            .Take(Math.Clamp(take, 10, 500))
+            .Select(h => new
+            {
+                h.Id, h.SubscriptionId, h.AccountSubscriptionId,
+                h.Action, fromStatus = h.FromStatus, toStatus = h.ToStatus,
+                h.Notes, h.PerformedBy, h.CreatedAt
+            })
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, new { items = rows }));
+    }
+
     public record CreateAccountSubRequest(Guid OwnerUserId, Guid PlanTemplateId, int? OverrideMaxCompanies, DateTime? CustomEndDate);
     /// <summary>Provision a plan for a user — used when sales closes an
     /// enterprise deal outside the self-serve trial flow.</summary>

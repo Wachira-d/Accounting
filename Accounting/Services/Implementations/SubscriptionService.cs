@@ -1343,6 +1343,24 @@ public class SubscriptionService : ISubscriptionService
                             acct.Status = SubscriptionStatus.Active;
                         acct.UpdatedBy = performedBy;
                         acct.UpdatedAt = DateTime.UtcNow;
+                        // Reset reminder mask now that EndDate moved forward —
+                        // next expiry cycle starts fresh, otherwise we'd skip
+                        // the 7-day warning the second time around.
+                        acct.ExpiryRemindersSentMask = 0;
+                        acct.LastExpiryReminderAt = null;
+
+                        // History row scoped to the account-level extension —
+                        // SubscriptionId still points at the company subscription
+                        // that triggered the cascade so admin can trace cause.
+                        _db.SubscriptionHistories.Add(new SubscriptionHistory
+                        {
+                            SubscriptionId = sub.Id,
+                            AccountSubscriptionId = acct.Id,
+                            Action = "AccountPlanExtendedViaSlip",
+                            ToStatus = acct.Status,
+                            Notes = $"Account Plan EndDate extended to {acctNewEnd:yyyy-MM-dd} via slip {payment.PaymentNumber} (company {sub.CompanyId})",
+                            PerformedBy = performedBy
+                        });
                     }
                 }
             }

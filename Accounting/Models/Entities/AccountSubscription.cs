@@ -70,5 +70,18 @@ public class AccountSubscription : BaseEntity
     /// without losing day-to-day ops.</summary>
     public int GracePeriodDays { get; set; } = 7;
 
+    /// <summary>Last "expiring soon" reminder we sent. Used by
+    /// AccountPlanExpiryReminderJob to skip rows it already nudged this cycle —
+    /// without it the daily loop would spam the owner every run.</summary>
+    public DateTime? LastExpiryReminderAt { get; set; }
+    /// <summary>Bitmask of the reminder buckets we've already fired against
+    /// this account in the current expiry window:
+    ///   1 = 7-day  reminder sent
+    ///   2 = 3-day  reminder sent
+    ///   4 = 1-day  reminder sent
+    ///   8 = expired notification sent
+    /// Reset when EndDate moves forward (renewal flow).</summary>
+    public int ExpiryRemindersSentMask { get; set; } = 0;
+
     public ICollection<Subscription> CompanySubscriptions { get; set; } = new List<Subscription>();
 }
