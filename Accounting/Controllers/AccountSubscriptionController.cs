@@ -54,7 +54,7 @@ public class AccountSubscriptionController : ControllerBase
             // Surface the companies the user owns so the UI can prompt
             // "start an Account Plan to cover these in one bill".
             var owned = await _db.CompanyUsers
-                .Where(cu => cu.UserId == userId && cu.Role == UserRole.Owner && !cu.IsDeleted)
+                .Where(cu => cu.UserId == userId && cu.Role == UserRole.Owner)
                 .Include(cu => cu.Company)
                 .Select(cu => new { cu.Company.Id, cu.Company.Name })
                 .ToListAsync();
@@ -82,8 +82,7 @@ public class AccountSubscriptionController : ControllerBase
         // Owner-of-but-not-yet-attached so the UI can prompt "ผูกบริษัท X ?"
         var ownedNotAttached = await (from cu in _db.CompanyUsers
                                       join s in _db.Subscriptions on cu.CompanyId equals s.CompanyId
-                                      where cu.UserId == userId && cu.Role == UserRole.Owner && !cu.IsDeleted
-                                          && s.AccountSubscriptionId == null
+                                      where cu.UserId == userId && cu.Role == UserRole.Owner && s.AccountSubscriptionId == null
                                       select new { Id = cu.Company.Id, Name = cu.Company.Name })
                                      .ToListAsync();
 
@@ -173,7 +172,7 @@ public class AccountSubscriptionController : ControllerBase
 
         // Ownership check — only Owner of the Company can attach it.
         var isOwner = await _db.CompanyUsers.AnyAsync(cu => cu.UserId == userId && cu.CompanyId == req.CompanyId
-            && cu.Role == UserRole.Owner && !cu.IsDeleted);
+            && cu.Role == UserRole.Owner);
         if (!isOwner) return Forbid();
 
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == req.CompanyId && !s.IsDeleted);
@@ -205,7 +204,7 @@ public class AccountSubscriptionController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var isOwner = await _db.CompanyUsers.AnyAsync(cu => cu.UserId == userId && cu.CompanyId == req.CompanyId
-            && cu.Role == UserRole.Owner && !cu.IsDeleted);
+            && cu.Role == UserRole.Owner);
         if (!isOwner) return Forbid();
 
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == req.CompanyId && !s.IsDeleted);

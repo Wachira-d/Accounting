@@ -38,7 +38,7 @@ public class SensitivityService : ISensitivityService
 
         // Resolve the user's role in this company.
         var membership = await _db.CompanyUsers.AsNoTracking()
-            .FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == userId && !cu.IsDeleted);
+            .FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
         if (membership == null) return false;
         if (membership.Role == UserRole.Owner) return true;
 

@@ -37,6 +37,11 @@ public class PublicReservationController : ControllerBase
     {
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
         if (company == null) return NotFound();
+        // Logo / display branding lives on CompanySettings, not Company itself.
+        // Best-effort lookup so an unconfigured company still gets a valid response.
+        var settings = await _db.CompanySettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var logoUrl = settings?.LogoUrl;
 
         // Compute "free tables at slot" for the next 6 hours every 30 minutes.
         // For tonight's planning, customers want to see "7pm = 2 tables left".
@@ -70,7 +75,7 @@ public class PublicReservationController : ControllerBase
         }
 
         return Ok(new ApiResponse<CompanyInfoDto>(true,
-            new CompanyInfoDto(company.Id, company.Name, company.Phone, company.LogoUrl, slots)));
+            new CompanyInfoDto(company.Id, company.Name, company.Phone, logoUrl, slots)));
     }
 
     private static DateTime RoundToHalfHour(DateTime t)
