@@ -83,14 +83,42 @@ public record PayslipResponse(
 public record CreateLeaveRequest(
     Guid EmployeeId, string LeaveType,
     DateTime StartDate, DateTime EndDate,
-    decimal TotalDays, string? Reason);
+    decimal TotalDays, string? Reason,
+    // Half-day support — 0=full, 1=morning, 2=afternoon. TotalDays
+    // should be 0.5 when marker > 0; server validates.
+    int HalfDayMarker = 0);
 
 public record LeaveResponse(
     Guid Id, Guid EmployeeId, string EmployeeName,
     string LeaveType, DateTime StartDate, DateTime EndDate,
     decimal TotalDays, string Status, string? Reason,
     string? ApprovedBy = null,
-    string? RejectionReason = null);
+    string? RejectionReason = null,
+    int HalfDayMarker = 0,
+    DateTime? CreatedAt = null);
+
+// HR config — leave-type catalog CRUD.
+public record LeaveTypeRequest(
+    string Code, string NameTh, string? NameEn,
+    decimal AnnualQuota, bool IsPaid, bool AllowHalfDay,
+    bool CarryForward, decimal? CarryForwardCap,
+    int AdvanceNoticeDays, bool RequiresAttachment,
+    int SortOrder, bool IsActive, string Color, string? Icon);
+
+public record LeaveTypeResponse(
+    Guid Id, string Code, string NameTh, string? NameEn,
+    decimal AnnualQuota, bool IsPaid, bool AllowHalfDay,
+    bool CarryForward, decimal? CarryForwardCap,
+    int AdvanceNoticeDays, bool RequiresAttachment,
+    int SortOrder, bool IsActive, string Color, string? Icon);
+
+public record PublicHolidayRequest(
+    DateTime Date, string NameTh, string? NameEn,
+    string Category, bool IsSubstitute);
+
+public record PublicHolidayResponse(
+    Guid Id, DateTime Date, string NameTh, string? NameEn,
+    string Category, bool IsSubstitute);
 
 public record RejectLeaveRequest(string Reason);
 

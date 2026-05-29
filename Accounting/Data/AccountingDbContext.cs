@@ -212,6 +212,8 @@ public class AccountingDbContext : DbContext
     public DbSet<PayrollRun> PayrollRuns => Set<PayrollRun>();
     public DbSet<PayrollDetail> PayrollDetails => Set<PayrollDetail>();
     public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
+    public DbSet<LeaveType> LeaveTypes => Set<LeaveType>();
+    public DbSet<PublicHoliday> PublicHolidays => Set<PublicHoliday>();
     public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
     public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
     public DbSet<Department> Departments => Set<Department>();

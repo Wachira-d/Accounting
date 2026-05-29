@@ -188,6 +188,84 @@ public class EmployeeLeave : TenantEntity
     public string Status { get; set; } = "Pending";      // Pending, Approved, Rejected, Cancelled
     public string? ApprovedBy { get; set; }
     public string? RejectionReason { get; set; }         // Filled when Status = Rejected
+
+    /// <summary>0 = full day(s) only, 1 = half-day morning, 2 = half-day
+    /// afternoon. When set to 1/2, TotalDays should be 0.5. The quota
+    /// deducts the fractional value.</summary>
+    public int HalfDayMarker { get; set; } = 0;
+}
+
+/// <summary>
+/// HR-configurable leave-type catalog. Replaces the hardcoded string-key
+/// LeaveQuotasJson in CompanySettings (kept as fallback for legacy
+/// tenants). Each row = one leave type per company. The defaults
+/// auto-seeded on first read mirror Thai labor-law (Annual 6d, Sick 30d,
+/// Personal 3d, Maternity 98d) — HR adjusts via /pages/leave-types.html.
+/// </summary>
+public class LeaveType : TenantEntity
+{
+    /// <summary>Stable key referenced by EmployeeLeave.LeaveType — "Annual",
+    /// "Sick", "Personal", "Maternity", "Other" plus any custom keys the
+    /// company defines (e.g. "Bereavement").</summary>
+    public string Code { get; set; } = "";
+
+    /// <summary>Thai display name shown on the request form.</summary>
+    public string NameTh { get; set; } = "";
+    public string? NameEn { get; set; }
+
+    /// <summary>Days allowed per calendar year. Decimal so half-days +
+    /// hourly conversions stay clean.</summary>
+    public decimal AnnualQuota { get; set; }
+
+    /// <summary>Paid leave deducts from quota but pays salary. Unpaid
+    /// (= false) flows to payroll's UnpaidLeave deduction line.</summary>
+    public bool IsPaid { get; set; } = true;
+
+    /// <summary>Allow half-day requests (TotalDays = 0.5).</summary>
+    public bool AllowHalfDay { get; set; } = true;
+
+    /// <summary>Allow unused days to roll to next year. Standard Thai
+    /// practice: Annual allows ≤5d roll-over; Sick resets every year.</summary>
+    public bool CarryForward { get; set; } = false;
+
+    /// <summary>Max days that can carry forward when CarryForward = true.
+    /// Null = unlimited (rare).</summary>
+    public decimal? CarryForwardCap { get; set; }
+
+    /// <summary>Required advance-notice days. 0 = same-day allowed
+    /// (Sick / emergency). UI warns when violated; not server-enforced.</summary>
+    public int AdvanceNoticeDays { get; set; } = 0;
+
+    /// <summary>Require photo / cert attachment. Thai labor law §32:
+    /// Sick > 3 days needs doctor's certificate. Server gates Submit.</summary>
+    public bool RequiresAttachment { get; set; } = false;
+
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>Hex colour for calendar pills + dashboard charts.</summary>
+    public string Color { get; set; } = "#6366f1";
+    public string? Icon { get; set; }
+}
+
+/// <summary>
+/// Public-holiday calendar — company-configurable list. Used by the
+/// leave engine to skip non-working days when computing TotalDays + by
+/// payroll for §29 holiday-pay multipliers.
+/// </summary>
+public class PublicHoliday : TenantEntity
+{
+    public DateTime Date { get; set; }
+    public string NameTh { get; set; } = "";
+    public string? NameEn { get; set; }
+
+    /// <summary>"Public" (ราชการ), "Religious" (ทางศาสนา), "Substitute"
+    /// (วันหยุดชดเชย), "Company" (วันหยุดบริษัทเอง).</summary>
+    public string Category { get; set; } = "Public";
+
+    /// <summary>Flag when this is a labor-law substitute day for a
+    /// weekend-overlapping holiday.</summary>
+    public bool IsSubstitute { get; set; } = false;
 }
 
 /// <summary>

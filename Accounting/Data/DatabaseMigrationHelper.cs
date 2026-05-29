@@ -3234,6 +3234,61 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
 
+            // EmployeeLeave — half-day support added 2026.
+            """ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "HalfDayMarker" integer NOT NULL DEFAULT 0;""",
+
+            // LeaveType — HR-configurable catalog (replaces hardcoded
+            // string keys in CompanySettings.LeaveQuotasJson).
+            """
+            CREATE TABLE IF NOT EXISTS "LeaveTypes" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Code" varchar(50) NOT NULL,
+                "NameTh" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "AnnualQuota" decimal(10,2) NOT NULL DEFAULT 0,
+                "IsPaid" boolean NOT NULL DEFAULT true,
+                "AllowHalfDay" boolean NOT NULL DEFAULT true,
+                "CarryForward" boolean NOT NULL DEFAULT false,
+                "CarryForwardCap" decimal(10,2) NULL,
+                "AdvanceNoticeDays" integer NOT NULL DEFAULT 0,
+                "RequiresAttachment" boolean NOT NULL DEFAULT false,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "Color" varchar(20) NOT NULL DEFAULT '#6366f1',
+                "Icon" varchar(20) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_LeaveTypes" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_LeaveTypes_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LeaveTypes_Company_Code" ON "LeaveTypes" ("CompanyId", "Code") WHERE "IsDeleted" = false;""",
+
+            // PublicHoliday — calendar.
+            """
+            CREATE TABLE IF NOT EXISTS "PublicHolidays" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Date" timestamp NOT NULL,
+                "NameTh" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "Category" varchar(50) NOT NULL DEFAULT 'Public',
+                "IsSubstitute" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PublicHolidays" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PublicHolidays_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PublicHolidays_Company_Date" ON "PublicHolidays" ("CompanyId", "Date") WHERE "IsDeleted" = false;""",
+
             // Contact — per-contact GL account overrides. Default AR =
             // "113" prefix in FindAccountAsync; specific contacts can pin
             // their own (e.g. ลูกหนี้พนักงาน vs ลูกหนี้การค้า).
