@@ -735,9 +735,11 @@ const Layout = {
     { id: 'webhooks', label: 'Webhooks', icon: '🔌', href: '/pages/webhooks.html', feature: 'Webhook', _i18nKey: 'nav.webhooks',
       description: 'ส่ง event ออกไประบบอื่นเมื่อมีการเปลี่ยนแปลง · subscribe/unsubscribe' },
 
-    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'แพ็กเกจ · การใช้งาน · audit log' },
-    { id: 'subscription', label: 'แพ็กเกจของฉัน', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
-      description: 'จัดการแพ็กเกจ · เปรียบเทียบฟีเจอร์ · เปลี่ยน plan · ใบเสร็จ' },
+    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'License · แพ็กเกจ · การใช้งาน · audit log' },
+    { id: 'account-subscription', label: 'License ของฉัน', icon: '🎫', href: '/pages/account-subscription.html',
+      description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
+    { id: 'subscription', label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
+      description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
       description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
     { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',
@@ -799,6 +801,7 @@ const Layout = {
             <span class="text-sm font-medium">${this.esc(this.user?.fullName || tUser)}</span>
           </div>
           <div class="dropdown-menu" id="userDropdown">
+            <a class="dropdown-item" href="/pages/account-subscription.html">🎫 License ของฉัน</a>
             <a class="dropdown-item" href="/pages/settings.html">⚙️ ${this.esc(tSettings)}</a>
             <div class="dropdown-divider"></div>
             <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ${this.esc(tLogout)}</a>
@@ -1047,7 +1050,17 @@ const Layout = {
 
     let formContent = '';
     if (this.setupStep === 1) {
+      // For users creating their 2nd+ company, hint that the new company will
+      // automatically use their existing License (Account Plan) so they don't
+      // worry about paying twice. First-time users see the normal hint only.
+      const licenseHint = this._setupForNewCompany
+        ? `<div style="padding:10px 14px;background:#ecfeff;border-radius:8px;border:1px solid #67e8f9;margin-bottom:12px;font-size:13px;color:#0c4a6e">
+            🎫 <strong>License ของคุณจะคุ้มครองบริษัทใหม่อัตโนมัติ</strong> — ถ้ายังเหลือ slot จะถูกผูกเข้า Plan ส่วนตัวให้ทันที (ไม่ต้องจ่ายเพิ่ม) ·
+            <a href="/pages/account-subscription.html" target="_blank" style="color:#0ea5e9;text-decoration:underline">ดูสิทธิ์ของฉัน</a>
+          </div>`
+        : '';
       formContent = `
+        ${licenseHint}
         <div style="padding:10px 14px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe;margin-bottom:16px;font-size:13px;color:#1e40af">
           พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD หรือใส่เลขผู้เสียภาษี 13 หลักเพื่อดึงข้อมูลอัตโนมัติ
         </div>

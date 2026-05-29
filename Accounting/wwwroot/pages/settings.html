@@ -34,6 +34,7 @@
 
     <div class="tabs">
       <div class="tab active" onclick="Page.showTab('company',this)">ข้อมูลบริษัท</div>
+      <div class="tab" onclick="Page.showTab('license',this)">🎫 License</div>
       <div class="tab" onclick="Page.showTab('general',this)">ทั่วไป</div>
       <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
@@ -55,6 +56,13 @@
     </div>
 
     <!-- ===== Company Info Tab ===== -->
+    <div id="tabLicense" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">🎫 License ของบริษัทนี้</h3>
+      <div id="licenseContent">
+        <div style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</div>
+      </div>
+    </div>
+
     <div id="tabCompany" class="card">
       <h3 class="card-title" style="margin-bottom:16px">ข้อมูลบริษัท</h3>
 
@@ -607,7 +615,7 @@
         }, document.getElementById('cDbdBtn'));
       },
       showTab(tab, el) {
-        ['tabCompany','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -616,10 +624,62 @@
         if (tab === 'email') this.loadEmailConfig();
         if (tab === 'etax') this.loadEtaxConfig();
         if (tab === 'signature') this.loadSignature();
+        if (tab === 'license') this.loadLicenseTab();
       },
 
       // ===== Signature Settings =====
       _signatureBase64: null,
+      async loadLicenseTab() {
+        const cid = Layout.getCompanyId();
+        const el = document.getElementById('licenseContent');
+        try {
+          const r = await fetch(`/api/account-subscription/effective/${cid}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success || !j.data?.hasPlan) {
+            el.innerHTML = `
+              <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px 18px;color:#78350f;font-size:13px">
+                ⚠️ บริษัทนี้ยังไม่มี Plan — ระบบจะใช้ <strong>FreeTrial</strong> ค่าเริ่มต้น
+              </div>
+              <a href="/pages/account-subscription.html" class="btn btn-primary" style="margin-top:14px;display:inline-block">🎫 เปิด License ของฉัน</a>`;
+            return;
+          }
+          const d = j.data;
+          const _fmt = (b) => { if(!b)return '0';const u=['B','KB','MB','GB'];let i=0,v=b;while(v>=1024&&i<3){v/=1024;i++;}return v.toFixed(v<10?1:0)+' '+u[i]; };
+          const sourceLabel = d.source === 'Account' ? '🎫 ใต้ License ส่วนตัวของคุณ (User Plan)' : '💼 บริษัทนี้จ่ายเองแยก (Company Plan)';
+          const sourceColor = d.source === 'Account' ? '#0c4a6e' : '#9a3412';
+          const sourceBg = d.source === 'Account' ? '#ecfeff' : '#fff7ed';
+          const sourceBorder = d.source === 'Account' ? '#67e8f9' : '#fdba74';
+          const inGraceBadge = d.inGrace
+            ? '<span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;margin-left:8px">⚠️ Grace Period</span>' : '';
+          const activeBadge = d.isActive
+            ? '<span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">✓ Active</span>'
+            : '<span style="background:#fee2e2;color:#991b1b;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">⏸ Inactive</span>';
+          el.innerHTML = `
+            <div style="background:${sourceBg};border:1px solid ${sourceBorder};border-radius:10px;padding:14px 18px;margin-bottom:18px;color:${sourceColor}">
+              <div style="font-weight:700;font-size:15px">${sourceLabel}</div>
+              <div style="font-size:12px;margin-top:4px;color:#475569">
+                ${activeBadge} ${inGraceBadge} · สถานะ ${d.status} · หมดอายุ ${new Date(d.endDate).toLocaleDateString('th-TH')}
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:18px">
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxUsers}</div><div style="font-size:11px;color:#64748b">MAX USERS / บริษัท</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxDocumentsPerMonth}</div><div style="font-size:11px;color:#64748b">DOCS / เดือน</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxJournalEntriesPerMonth}</div><div style="font-size:11px;color:#64748b">JE / เดือน</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${_fmt(d.maxStorageBytes)}</div><div style="font-size:11px;color:#64748b">STORAGE</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxOcrPagesPerMonth}</div><div style="font-size:11px;color:#64748b">OCR PAGES / เดือน</div></div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <a href="/pages/account-subscription.html" class="btn btn-primary">🎫 จัดการ License ส่วนตัว</a>
+              <a href="/pages/subscription.html" class="btn btn-secondary">💼 จัดการแพ็กเกจของบริษัทนี้</a>
+              <a href="/pages/usage.html" class="btn btn-ghost">📊 ดูสถิติการใช้งาน</a>
+            </div>`;
+        } catch(e) {
+          el.innerHTML = `<div style="color:#dc2626;padding:20px">⚠️ ${e.message}</div>`;
+        }
+      },
+
       async loadSignature() {
         try {
           const j = await API.getProfile();
