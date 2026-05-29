@@ -154,6 +154,36 @@
             <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
+          <!-- Cash-sale shortcut: ขายเงินสด + บริการ ตามประมวลรัษฎากร §78/1
+               ต้องออกใบกำกับภาษีตอนได้รับเงิน — flow default ของระบบ
+               (issue → wait → record payment) บังคับให้กด 2 ครั้งซึ่งผิด
+               กฎหมายสำหรับบริการและไม่จำเป็นสำหรับเงินสด ติ๊กช่องนี้แล้ว
+               ระบบจะสร้างใบเสร็จ + บันทึกรับเงินอัตโนมัติในคลิกเดียว -->
+          <div id="paidOnIssueSection" style="margin-bottom:12px;background:#ecfdf5;border:1px solid #10b981;border-radius:8px;padding:10px 14px;display:none">
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
+              <input type="checkbox" id="fPaidOnIssue" style="margin-top:3px">
+              <div>
+                <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — สร้างใบเสร็จพร้อมกัน</div>
+                <div style="color:#047857;font-size:12px;margin-top:2px">
+                  ติ๊กถ้าเป็นขายเงินสด / บริการที่ได้รับเงินแล้ว — ระบบจะ
+                  อนุมัติเอกสาร + บันทึกชำระ + ออกใบเสร็จในคลิกเดียว
+                  (ตามประมวลรัษฎากร §78/1 บริการต้องออกใบกำกับตอนรับเงิน)
+                </div>
+                <div id="fPaidOnIssueMethodRow" style="display:none;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <span style="font-size:12px;color:#065f46">วิธีรับเงิน:</span>
+                  <select id="fPaidOnIssueMethod" style="padding:4px 8px;font-size:12px;border:1px solid #6ee7b7;border-radius:6px;background:#fff">
+                    <option value="Cash">เงินสด</option>
+                    <option value="BankTransfer" selected>โอนเงิน</option>
+                    <option value="PromptPay">PromptPay</option>
+                    <option value="CreditCard">บัตรเครดิต</option>
+                    <option value="Cheque">เช็ค</option>
+                    <option value="Other">อื่นๆ</option>
+                  </select>
+                </div>
+              </div>
+            </label>
+          </div>
+
           <!-- CertificateInLieu-specific fields -->
           <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
@@ -459,6 +489,18 @@
         if (sideParam) this.setSide(sideParam);
         else await this.load();
 
+        // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide method picker when
+        // the checkbox toggles. The visibility of the whole block is
+        // managed by onDocTypeChange so it only appears for AR types
+        // that actually recognize revenue.
+        const paidCb = document.getElementById('fPaidOnIssue');
+        const paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        if (paidCb && paidRow) {
+          paidCb.addEventListener('change', () => {
+            paidRow.style.display = paidCb.checked ? 'flex' : 'none';
+          });
+        }
+
         // Restore strict-products preference + wire the hint to track it.
         // Default is ON ("เฉพาะสินค้าในระบบ") — most operators want clean
         // product attribution for inventory + reporting. The user can flip
@@ -617,6 +659,21 @@
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
+        // Show/hide "ลูกค้าจ่ายเงินแล้ว" shortcut — only relevant for AR types
+        // that recognize VAT / revenue (Invoice, TaxInvoice). Quotation +
+        // BillingNote are pre-revenue, Receipt already IS the receipt, the
+        // expense side has its own flow.
+        const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
+        const paidSection = document.getElementById('paidOnIssueSection');
+        if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // Reset checkbox when the section hides so a stale "paid" state
+        // doesn't fire on the next save of a non-applicable type.
+        if (paidSection && paidSection.style.display === 'none') {
+          const cb = document.getElementById('fPaidOnIssue');
+          if (cb) cb.checked = false;
+          const row = document.getElementById('fPaidOnIssueMethodRow');
+          if (row) row.style.display = 'none';
+        }
       },
       /**
        * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
@@ -984,6 +1041,12 @@
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
+        // Reset "ลูกค้าจ่ายเงินแล้ว" shortcut — a stale checked state from
+        // a previous create would silently auto-pay the next document.
+        const _paidCb = document.getElementById('fPaidOnIssue');
+        if (_paidCb) _paidCb.checked = false;
+        const _paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        if (_paidRow) _paidRow.style.display = 'none';
         document.getElementById('fCustomAppendix').value = '';
         document.getElementById('fCustomFooterNotes').value = '';
         document.getElementById('fCustomTerms').value = '';
@@ -1201,6 +1264,38 @@
               } catch (e) {
                 Layout.toast('เอกสารบันทึกแล้ว แต่ส่งอีเมลไม่สำเร็จ: ' + e.message, 'error');
               }
+            }
+          }
+
+          // "ลูกค้าจ่ายเงินแล้ว" chain — only fires on CREATE (not edit) of
+          // an Invoice / TaxInvoice where the operator ticked the shortcut.
+          // Approves the document, then records a payment for the full
+          // total, in two API calls. Failures don't roll back the document
+          // (audit-friendly + operator can finish the chain manually) but
+          // surface as a warning toast so the operator knows.
+          const paidNow = document.getElementById('fPaidOnIssue')?.checked;
+          if (paidNow && !this.editingId && savedDocId) {
+            const method = document.getElementById('fPaidOnIssueMethod')?.value || 'BankTransfer';
+            try {
+              await api.approveDocument(savedDocId);
+              // Re-fetch to get authoritative totals + balanceDue (server
+              // rounding / VAT calc can drift from client-side sum).
+              const detail = await api.getDocument(savedDocId);
+              const balance = Number(detail?.data?.balanceDue ?? detail?.data?.totalAmount ?? 0);
+              if (balance > 0.01) {
+                await api.createPayment({
+                  documentId: savedDocId,
+                  paymentDate: document.getElementById('fDate').value,
+                  amount: balance,
+                  paymentMethod: method,
+                  notes: 'รับเงินพร้อมออกใบกำกับ (cash sale)',
+                });
+                Layout.toast('สร้างเอกสาร + บันทึกชำระ + ออกใบเสร็จสำเร็จ', 'success');
+              } else {
+                Layout.toast('เอกสารอนุมัติแล้ว (ไม่มียอดต้องชำระ)', 'success');
+              }
+            } catch (e) {
+              Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
             }
           }
 
