@@ -716,6 +716,8 @@ const Layout = {
       description: 'พนักงาน · รอบจ่าย · ภงด.1 · ประกันสังคม · กองทุน · ลาหยุด' },
     { id: 'leave-types', label: 'ตั้งค่าประเภทลา + วันหยุด', icon: '📅', href: '/pages/leave-types.html', feature: 'Payroll',
       description: 'HR Admin · กำหนดประเภทการลา · โควต้า · ปฏิทินวันหยุดประจำปี' },
+    { id: 'leave-calendar', label: 'ปฏิทินการลา (HR view)', icon: '🗓️', href: '/pages/leave-calendar.html', feature: 'Payroll',
+      description: 'ดูทุกคนลาช่วงไหน + วันหยุดประจำปี · วางแผนกำลังคน' },
     { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance',
       description: 'เงินยืม-เคลียร์ · workflow อนุมัติ · หักจากเงินเดือนอัตโนมัติ' },
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission',

@@ -136,13 +136,20 @@ public class ExpenseClaimService : IExpenseClaimService
         return MapToResponse(claim);
     }
 
-    public async Task<PagedResponse<ExpenseClaimResponse>> GetAllAsync(Guid companyId, ExpenseClaimStatus? status, PagedRequest request)
+    public async Task<PagedResponse<ExpenseClaimResponse>> GetAllAsync(Guid companyId, ExpenseClaimStatus? status, PagedRequest request, Guid? restrictToUserId = null)
     {
         var query = _db.ExpenseClaims
             .Include(e => e.Lines).ThenInclude(l => l.Account)
             .Include(e => e.SubmittedByUser)
             .Include(e => e.ApprovedByUser)
             .Where(e => e.CompanyId == companyId);
+
+        // Row-level scope — controller passes the JWT user when role
+        // lacks perm:HR.Admin / perm:Expense.Approve. Service ALWAYS
+        // honours the parameter; never bypassed even for "List view"
+        // since the controller is the boundary that knows the policy.
+        if (restrictToUserId.HasValue)
+            query = query.Where(e => e.SubmittedByUserId == restrictToUserId.Value);
 
         if (status.HasValue)
             query = query.Where(e => e.Status == status.Value);

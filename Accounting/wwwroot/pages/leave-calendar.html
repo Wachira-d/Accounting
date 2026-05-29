@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ปฏิทินการลา - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+    .cal-cell { background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:6px; min-height:90px; display:flex; flex-direction:column; gap:3px; }
+    .cal-cell.outside { background:#f8fafc; opacity:.5; }
+    .cal-cell.weekend { background:#fef2f2; }
+    .cal-cell.holiday { background:#fef3c7; border-color:#fcd34d; }
+    .cal-day { font-size:11px; font-weight:600; color:#475569; }
+    .cal-holiday-name { font-size:10px; color:#92400e; font-weight:600; }
+    .cal-leave-pill { padding:2px 6px; border-radius:4px; font-size:10px; color:#fff; cursor:pointer; }
+    .dow-head { text-align:center; font-size:12px; font-weight:600; color:#64748b; padding:6px 0; }
+    .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#64748b; margin-top:14px; }
+    .legend > span { display:flex; align-items:center; gap:5px; }
+    .legend .dot { width:12px; height:12px; border-radius:3px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">📅 ปฏิทินการลา (HR view)</h2>
+        <p class="page-subtitle">ดูทุกคนลาช่วงไหน · พร้อมวันหยุดประจำปี · เพื่อวางแผนกำลังคน</p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-secondary" onclick="Page.shift(-1)">‹</button>
+        <span id="monthLabel" style="font-weight:600;font-size:15px;min-width:140px;text-align:center">—</span>
+        <button class="btn btn-secondary" onclick="Page.shift(1)">›</button>
+        <button class="btn btn-ghost" onclick="Page.gotoToday()">วันนี้</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px">
+      <div class="dow-head">จ</div><div class="dow-head">อ</div><div class="dow-head">พ</div>
+      <div class="dow-head">พฤ</div><div class="dow-head">ศ</div>
+      <div class="dow-head" style="color:#dc2626">ส</div><div class="dow-head" style="color:#dc2626">อา</div>
+    </div>
+    <div id="calGrid" class="cal-grid"></div>
+
+    <div class="legend">
+      <span><span class="dot" style="background:#fef2f2;border:1px solid #fca5a5"></span> เสาร์-อาทิตย์</span>
+      <span><span class="dot" style="background:#fef3c7;border:1px solid #fcd34d"></span> วันหยุดประจำปี</span>
+      <span id="typeLegend" style="display:contents"></span>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _cur: new Date(),
+
+      async init() {
+        if (!Layout.init('leave-calendar')) return;
+        Layout.setTitle('ปฏิทินการลา');
+        await this._loadTypes();
+        await this.render();
+      },
+
+      async _loadTypes() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await API.get(`/api/companies/${cid}/leaves/admin/types`);
+          this._types = r?.data || [];
+        } catch { this._types = []; }
+      },
+
+      shift(n) {
+        this._cur = new Date(this._cur.getFullYear(), this._cur.getMonth() + n, 1);
+        this.render();
+      },
+
+      gotoToday() {
+        this._cur = new Date();
+        this.render();
+      },
+
+      async render() {
+        const y = this._cur.getFullYear();
+        const m = this._cur.getMonth();
+        document.getElementById('monthLabel').textContent =
+          ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][m] + ' ' + (y + 543);
+
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        // Pull leaves overlapping this month + holidays.
+        const [leavesR, holidaysR] = await Promise.all([
+          API.get(`/api/companies/${cid}/leaves/list?year=${y}`).catch(() => ({ data: [] })),
+          API.get(`/api/companies/${cid}/leaves/admin/holidays?year=${y}`).catch(() => ({ data: [] }))
+        ]);
+        const leaves = (leavesR?.data || []).filter(l => l.status === 'Approved' || l.status === 'Pending');
+        const holidays = (holidaysR?.data || []);
+
+        // First Monday-aligned cell: getDay returns 0=Sun, our grid
+        // starts Monday so cell offset = ((day+6)%7).
+        const first = new Date(y, m, 1);
+        const offset = (first.getDay() + 6) % 7;
+        const daysInMonth = new Date(y, m+1, 0).getDate();
+        const cells = [];
+
+        // Previous-month tail
+        const prevDays = new Date(y, m, 0).getDate();
+        for (let i = offset - 1; i >= 0; i--)
+          cells.push({ d: prevDays - i, mo: m - 1, yr: y, outside: true });
+        // Current month
+        for (let d = 1; d <= daysInMonth; d++)
+          cells.push({ d, mo: m, yr: y, outside: false });
+        // Next-month head
+        while (cells.length % 7 !== 0 || cells.length < 42)
+          cells.push({ d: cells.length - daysInMonth - offset + 1, mo: m+1, yr: y, outside: true });
+
+        const typeMap = Object.fromEntries((this._types || []).map(t => [t.code, t]));
+        const grid = document.getElementById('calGrid');
+        grid.innerHTML = cells.map(c => {
+          const date = new Date(c.yr, c.mo, c.d);
+          const isoDate = date.toISOString().split('T')[0];
+          const dow = date.getDay();
+          const isWeekend = dow === 0 || dow === 6;
+          const holiday = holidays.find(h => h.date.startsWith(isoDate));
+          const dayLeaves = leaves.filter(l => {
+            const s = new Date(l.startDate), e = new Date(l.endDate);
+            return date >= s && date <= e;
+          });
+          const cls = ['cal-cell'];
+          if (c.outside) cls.push('outside');
+          if (isWeekend && !c.outside) cls.push('weekend');
+          if (holiday && !c.outside) cls.push('holiday');
+          const pills = dayLeaves.slice(0, 4).map(l => {
+            const t = typeMap[l.leaveType];
+            const color = t?.color || '#64748b';
+            const icon = t?.icon || '';
+            const status = l.status === 'Pending' ? '⏳' : '';
+            return `<div class="cal-leave-pill" style="background:${color}" title="${Layout.esc(l.employeeName)} - ${Layout.esc(t?.nameTh||l.leaveType)} ${l.status}">${status}${icon} ${Layout.esc(l.employeeName.substring(0,8))}</div>`;
+          }).join('');
+          const overflow = dayLeaves.length > 4 ? `<div style="font-size:10px;color:#64748b">+${dayLeaves.length-4} อีก</div>` : '';
+          return `<div class="${cls.join(' ')}">
+            <div class="cal-day">${c.d}</div>
+            ${holiday ? `<div class="cal-holiday-name">${Layout.esc(holiday.nameTh)}</div>` : ''}
+            ${pills}${overflow}
+          </div>`;
+        }).join('');
+
+        // Type legend
+        document.getElementById('typeLegend').innerHTML = (this._types || []).filter(t => t.isActive).map(t =>
+          `<span><span class="dot" style="background:${t.color}"></span>${t.icon || ''} ${Layout.esc(t.nameTh)}</span>`
+        ).join('');
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
