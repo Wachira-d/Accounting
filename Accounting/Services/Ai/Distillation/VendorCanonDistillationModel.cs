@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.Enums;
+using Accounting.Services.Ai.Embedding;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Ai.Distillation;
@@ -30,17 +31,32 @@ public class VendorCanonDistillationModel : ILocalDistillationModel
     public bool IsReady => _entries.Count > 0;
 
     private readonly IServiceProvider _services;
+    private readonly IEmbeddingService _embedding;
     private readonly ILogger<VendorCanonDistillationModel> _logger;
 
     // Keyed by (CompanyId, normalised vendor name). Each entry tracks
     // every contact id that was chosen for this vendor across history,
     // with a Wilson-score-smoothed confidence.
     private readonly Dictionary<(Guid CompanyId, string Key), List<CandidateScore>> _entries = new();
+
+    // Embedding index keyed by (CompanyId). Built alongside _entries so
+    // that an OCR string with no exact key match can still find a
+    // near-neighbour candidate above a cosine threshold. The "raw name"
+    // an embedding was computed from is preserved so PredictAsync can
+    // reuse the same (CompanyId, vendorKey) lookup once found.
+    private readonly Dictionary<Guid, List<(string Key, float[] Vector)>> _vectorIndex = new();
     private readonly object _lock = new();
 
+    /// <summary>Cosine threshold for the fuzzy-fallback path. 0.75 with
+    /// the hashing baseline is "looks substantially similar" — high
+    /// enough to avoid spurious matches but low enough to catch OCR
+    /// variants ("กรุงเทพมหานคร" vs "กรุงเทพมหานคร จำกัด").</summary>
+    private const float FuzzyMatchThreshold = 0.75f;
+
     public VendorCanonDistillationModel(IServiceProvider services,
+        IEmbeddingService embedding,
         ILogger<VendorCanonDistillationModel> logger)
-    { _services = services; _logger = logger; }
+    { _services = services; _embedding = embedding; _logger = logger; }
 
     public async Task LoadFromFeedbackAsync(Guid companyId, CancellationToken ct)
     {
@@ -83,6 +99,14 @@ public class VendorCanonDistillationModel : ILocalDistillationModel
                 : (slot.Item1, slot.Item2 + 1);
         }
 
+        // Build embedding index — one vector per known vendor key. Only
+        // the "name:" prefix keys are embeddable; "tid:" keys are exact
+        // tax-id lookups and don't benefit from semantic similarity.
+        var vectors = local.Keys
+            .Where(k => k.StartsWith("name:"))
+            .Select(k => (Key: k, Vector: _embedding.Embed(k[5..])))
+            .ToList();
+
         lock (_lock)
         {
             // Drop this company's old entries; rewrite with the new pass.
@@ -100,6 +124,7 @@ public class VendorCanonDistillationModel : ILocalDistillationModel
                     .ToList();
                 _entries[(companyId, vendorKey)] = scored;
             }
+            _vectorIndex[companyId] = vectors;
         }
         Version = "v" + DateTime.UtcNow.ToString("yyyyMMddHHmm");
         _logger.LogInformation(
@@ -112,20 +137,48 @@ public class VendorCanonDistillationModel : ILocalDistillationModel
         var key = ExtractVendorKey(inputJson);
         if (string.IsNullOrEmpty(key)) return Task.FromResult<LocalPrediction?>(null);
         List<CandidateScore>? candidates;
-        lock (_lock) candidates = _entries.GetValueOrDefault((companyId, key));
+        string matchedKey = key;
+        decimal confidenceMultiplier = 1m;
+        lock (_lock)
+        {
+            candidates = _entries.GetValueOrDefault((companyId, key));
+            // Exact miss → embedding fallback. Only for "name:" keys —
+            // tax-id keys are exact-or-nothing. Discount the resulting
+            // confidence by the cosine similarity so a 0.78-match doesn't
+            // claim the same certainty as a 1.0-match.
+            if ((candidates == null || candidates.Count == 0) && key.StartsWith("name:"))
+            {
+                var vectors = _vectorIndex.GetValueOrDefault(companyId);
+                if (vectors != null && vectors.Count > 0)
+                {
+                    var query = _embedding.Embed(key[5..]);
+                    string? bestKey = null;
+                    float bestSim = FuzzyMatchThreshold;
+                    foreach (var (vk, vv) in vectors)
+                    {
+                        var sim = IEmbeddingService.Cosine(query, vv);
+                        if (sim > bestSim) { bestSim = sim; bestKey = vk; }
+                    }
+                    if (bestKey != null)
+                    {
+                        candidates = _entries.GetValueOrDefault((companyId, bestKey));
+                        matchedKey = bestKey;
+                        confidenceMultiplier = (decimal)bestSim;
+                    }
+                }
+            }
+        }
         if (candidates == null || candidates.Count == 0)
             return Task.FromResult<LocalPrediction?>(null);
 
         var top = candidates[0];
-        // Floor confidence at 0.50 to mirror an "uncertain prediction" so
-        // the orchestrator still consults DeepSeek for borderline cases.
         var alts = candidates.Skip(1).Take(3).Select(c => c.ContactId).ToList();
         return Task.FromResult<LocalPrediction?>(new LocalPrediction(
             PrimaryAnswer: top.ContactId,
-            Confidence: top.WilsonScore,
+            Confidence: top.WilsonScore * confidenceMultiplier,
             Alternatives: alts,
             SupportingSamples: top.Confirmed + top.Overridden,
-            ModelVersion: Version));
+            ModelVersion: Version + (matchedKey == key ? "" : "+fuzzy")));
     }
 
     /// <summary>Wilson score lower bound at 95% — robust for small n.

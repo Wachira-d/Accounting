@@ -10,7 +10,7 @@ namespace Accounting.Services.Implementations.Ocr;
 /// powers a system-wide knowledge base that bootstraps new tenants AND
 /// catches patterns that single-vendor history alone would miss.
 ///
-/// Why basket analysis (Apriori-style frequent-itemset mining):
+/// Why basket analysis (FP-Growth frequent-itemset mining):
 ///   • Per-vendor learning (OcrVendorIntelligence + OcrCategoryMapping)
 ///     captures "this vendor → this account" — but it can't generalize.
 ///   • A new tenant scanning their first PTT receipt would have zero
@@ -21,14 +21,14 @@ namespace Accounting.Services.Implementations.Ocr;
 ///       {keyword:น้ำมัน} → account:5402   (sup 8%, conf 96%)
 ///       {brand:HomePro,keyword:วัสดุ} → account:5305 (sup 1%, conf 92%)
 ///
-/// Algorithm: simplified Apriori. We mine 2-itemsets and 3-itemsets only —
-/// going higher inflates the candidate count exponentially and the
-/// marginal accuracy gain is small for accounting data.
+/// Algorithm: FP-Growth (Han 2000) mines all itemsets at or above the
+/// support threshold — O(n log n) on the candidate space vs Apriori's
+/// O(n²). We cap itemset size at 2 since marginal accuracy from 3+
+/// items is small on accounting baskets but candidate count explodes.
 ///
 /// Computational profile:
-///   • O(N) pass to build per-item counts (1-itemsets)
-///   • O(N × |frequent_1|²) pass for 2-itemsets
-///   • Pruning: drop items below min_support before going to 2-itemsets
+///   • O(N) pass to build per-item counts
+///   • Single FP-tree build + recursive pattern growth
 ///   • Designed to run as a background job (admin-triggered), not at
 ///     scan time. Mining 100k documents finishes in a few seconds.
 /// </summary>
@@ -113,75 +113,60 @@ public class AssociationRuleMiner
             .GroupBy(t => t.Consequent)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        // 1-itemset support
-        var itemCount = new Dictionary<string, int>();
-        foreach (var (items, _) in transactions)
-            foreach (var item in items)
-                itemCount[item] = itemCount.GetValueOrDefault(item) + 1;
-
         var minSupportCount = (int)Math.Ceiling(minSupport * totalTxn);
-        var frequentItems = itemCount.Where(kv => kv.Value >= minSupportCount)
-            .Select(kv => kv.Key).ToHashSet();
 
-        // Generate single-item → consequent rules + 2-itemset → consequent rules
+        // FP-Growth mines every frequent itemset up to size 2 in a
+        // single tree-walk. Replaces the previous O(F²) candidate
+        // double-loop. The Count field is the itemset's marginal
+        // support — we still need to scan transactions to break it
+        // down per consequent (FP-Growth doesn't track that axis).
+        var itemsets = FpGrowth.Mine(
+            transactions.Select(t => t.Items).ToList(),
+            minSupportCount,
+            maxItemsetSize: 2);
+
         var rules = new List<AssociationRuleDto>();
+        // Index 1-itemset confidences so we can dedup redundant 2-itemset
+        // rules (a 2-itemset rule must beat the BETTER of its 1-itemset
+        // siblings — otherwise it's noise on top of the simpler rule).
+        var oneItemConf = new Dictionary<(string Item, string Cons), decimal>();
 
-        // 1-itemset → consequent
-        foreach (var item in frequentItems)
+        foreach (var (itemset, _) in itemsets.OrderBy(x => x.Itemset.Count))
         {
-            var groupedByConsequent = transactions
-                .Where(t => t.Items.Contains(item))
-                .GroupBy(t => t.Consequent)
+            if (itemset.Count > 2) continue;   // enforce cap defensively
+            // Walk transactions matching ALL items in the itemset; group
+            // by their consequent (account code) to compute per-rule stats.
+            var matched = transactions.Where(t => itemset.All(i => t.Items.Contains(i))).ToList();
+            if (matched.Count < minSupportCount) continue;
+
+            var byConsequent = matched.GroupBy(t => t.Consequent)
                 .Select(g => (Consequent: g.Key, Count: g.Count()))
                 .ToList();
-            var totalWithItem = groupedByConsequent.Sum(x => x.Count);
-            foreach (var (cons, cnt) in groupedByConsequent)
+            foreach (var (cons, cnt) in byConsequent)
             {
                 var support = (decimal)cnt / totalTxn;
-                var confidence = (decimal)cnt / totalWithItem;
+                var confidence = (decimal)cnt / matched.Count;
                 if (support < minSupport || confidence < minConfidence) continue;
+
+                if (itemset.Count == 2)
+                {
+                    // Dedup: skip if a 1-itemset child already explains
+                    // this consequent at within-5pp confidence.
+                    var skip = itemset.Any(item =>
+                        oneItemConf.TryGetValue((item, cons), out var single)
+                        && single >= confidence - 0.05m);
+                    if (skip) continue;
+                }
+
                 var pCons = (decimal)consequentCount.GetValueOrDefault(cons) / totalTxn;
                 var lift = pCons > 0 ? confidence / pCons : 0m;
-                rules.Add(new AssociationRuleDto(
-                    new[] { item }, cons, support, confidence, lift, cnt));
+                var ante = itemset.OrderBy(x => x).ToArray();
+                rules.Add(new AssociationRuleDto(ante, cons, support, confidence, lift, cnt));
+
+                if (itemset.Count == 1)
+                    oneItemConf[(ante[0], cons)] = confidence;
             }
-        }
-
-        // 2-itemset → consequent (only when 1-itemset alone wasn't already
-        // very high confidence — keeps the rule store from bloating with
-        // redundant longer rules).
-        var frequentList = frequentItems.OrderBy(x => x).ToList();
-        for (int i = 0; i < frequentList.Count && !ct.IsCancellationRequested; i++)
-        {
-            for (int j = i + 1; j < frequentList.Count; j++)
-            {
-                var a = frequentList[i];
-                var b = frequentList[j];
-                var matched = transactions.Where(t => t.Items.Contains(a) && t.Items.Contains(b)).ToList();
-                if (matched.Count < minSupportCount) continue;
-
-                var byConsequent = matched.GroupBy(t => t.Consequent)
-                    .Select(g => (Consequent: g.Key, Count: g.Count()))
-                    .ToList();
-                foreach (var (cons, cnt) in byConsequent)
-                {
-                    var support = (decimal)cnt / totalTxn;
-                    var confidence = (decimal)cnt / matched.Count;
-                    if (support < minSupport || confidence < minConfidence) continue;
-                    // Only persist if the 2-itemset rule beats EITHER of its
-                    // 1-itemset siblings — otherwise it's redundant.
-                    var betterThanA = !rules.Any(r => r.Antecedent.Length == 1 && r.Antecedent[0] == a
-                        && r.Consequent == cons && r.Confidence >= confidence - 0.05m);
-                    var betterThanB = !rules.Any(r => r.Antecedent.Length == 1 && r.Antecedent[0] == b
-                        && r.Consequent == cons && r.Confidence >= confidence - 0.05m);
-                    if (!betterThanA && !betterThanB) continue;
-
-                    var pCons = (decimal)consequentCount.GetValueOrDefault(cons) / totalTxn;
-                    var lift = pCons > 0 ? confidence / pCons : 0m;
-                    rules.Add(new AssociationRuleDto(
-                        new[] { a, b }, cons, support, confidence, lift, cnt));
-                }
-            }
+            if (ct.IsCancellationRequested) break;
         }
 
         // Persist — wipe + replace (we re-mined from scratch)
