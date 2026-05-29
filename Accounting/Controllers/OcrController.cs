@@ -23,10 +23,32 @@ public class OcrController : ControllerBase
 
     [HttpPost("upload")]
     [RequestSizeLimit(10 * 1024 * 1024)]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UploadAndScan(Guid companyId, IFormFile file)
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UploadAndScan(
+        Guid companyId, IFormFile file,
+        // Optional per-scan engine override: "auto" | "azure" | "local".
+        // Null/empty/anything-else = "auto" (full cascade, current behavior).
+        // UI feeds this from the selector populated by GET /ocr/engines so
+        // exhausted engines can't be chosen client-side; the server still
+        // re-validates azure quota and returns 429 if the user beat the
+        // quota refresh.
+        [FromQuery] string? preferredEngine = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
+
+        // Server-side guard: "azure" pick must still have Azure budget at
+        // scan time. Prevents the case where the user opened the page when
+        // azure had 1 page left, another scan consumed it, then they
+        // clicked upload — without this check the scan would silently fall
+        // through to local even though they explicitly picked Azure.
+        var normalizedEngine = (preferredEngine ?? "").Trim().ToLowerInvariant();
+        if (normalizedEngine == "azure")
+        {
+            var (azureAllowed, azureReason) = await _quota.CheckAzureQuotaAsync(companyId);
+            if (!azureAllowed)
+                return StatusCode(429, new ApiResponse<object>(false, null,
+                    azureReason ?? "Azure DI ใช้ไม่ได้ — กรุณาเลือก Engine อื่น"));
+        }
 
         // === Read bytes once, then run quality preflight BEFORE consuming quota ===
         // Rejecting low-resolution / corrupt files here means the user doesn't get
@@ -95,7 +117,7 @@ public class OcrController : ControllerBase
         OcrResultResponse result;
         try
         {
-            result = await _service.ScanAsync(companyId, attachment.Id);
+            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine);
         }
         catch
         {
@@ -745,6 +767,108 @@ public class OcrController : ControllerBase
     [HttpGet("quota")]
     public async Task<ActionResult<ApiResponse<OcrQuotaStatus>>> GetQuota(Guid companyId)
         => Ok(new ApiResponse<OcrQuotaStatus>(true, await _quota.GetQuotaStatusAsync(companyId)));
+
+    /// <summary>
+    /// Feeds the per-scan engine selector on the upload page. Returns the
+    /// three user-selectable choices (Auto / Azure / Local) with an
+    /// `available` flag and (when unavailable) a Thai-language reason —
+    /// the UI greys out unavailable options and pre-selects the best
+    /// available default.
+    ///
+    /// "Best available" priority:
+    ///   1. Azure DI when configured + has quota — highest accuracy
+    ///   2. Local otherwise — Tesseract always works as last resort
+    ///   3. Auto is always shown + always recommended when both are up;
+    ///      it picks at scan time from the same cascade as before.
+    /// </summary>
+    [HttpGet("engines")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAvailableEngines(Guid companyId)
+    {
+        var siteSettings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+        var azureConfigured = siteSettings?.AzureDiEnabled == true
+            && !string.IsNullOrEmpty(siteSettings.AzureDiEndpoint)
+            && !string.IsNullOrEmpty(siteSettings.AzureDiApiKey);
+        var (azureQuotaAllowed, azureQuotaReason) = await _quota.CheckAzureQuotaAsync(companyId);
+        var quota = await _quota.GetQuotaStatusAsync(companyId);
+
+        // Local availability: Tesseract is in-process and always works,
+        // but if the plan caps Local pages and the cap is hit, the next
+        // scan would over-shoot. We mirror Azure's gate so the UI is
+        // consistent — if Local has a cap and it's full, disable.
+        var localExhausted = quota.LocalMaxPagesPerMonth.HasValue
+            && (quota.LocalUsedThisMonth ?? 0) >= quota.LocalMaxPagesPerMonth.Value;
+        var totalExhausted = quota.TotalAvailable <= 0;
+
+        string? azureDisabledReason =
+            !azureConfigured ? "ระบบยังไม่ได้ตั้งค่า Azure DI (admin ต้องเปิดใช้)"
+            : !azureQuotaAllowed ? (azureQuotaReason ?? "Azure DI โควต้าหมด")
+            : null;
+        string? localDisabledReason =
+            totalExhausted ? "โควต้า OCR เดือนนี้หมดทั้งหมด — กรุณาซื้อเครดิตเพิ่ม"
+            : localExhausted ? "โควต้า Local OCR เดือนนี้เต็มแล้ว"
+            : null;
+        string? autoDisabledReason = totalExhausted
+            ? "โควต้า OCR เดือนนี้หมดทั้งหมด — กรุณาซื้อเครดิตเพิ่ม"
+            : null;
+
+        var azureAvailable = azureDisabledReason == null;
+        var localAvailable = localDisabledReason == null;
+        var autoAvailable = autoDisabledReason == null;
+
+        // Pre-select: prefer Auto when anything works (it picks best at
+        // scan time); fall back to whichever single engine is up; finally
+        // fall back to "auto" even when disabled so the dropdown has
+        // a default value (the button will still be disabled).
+        var recommendedDefault = autoAvailable ? "auto"
+            : azureAvailable ? "azure"
+            : localAvailable ? "local"
+            : "auto";
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            recommendedDefault,
+            engines = new[]
+            {
+                new
+                {
+                    key = "auto",
+                    label = "อัตโนมัติ (แนะนำ)",
+                    description = "ระบบเลือก Engine ที่ดีที่สุดให้อัตโนมัติ — ลองตามลำดับ Azure DI ➜ Local",
+                    available = autoAvailable,
+                    disabledReason = autoDisabledReason,
+                    isRecommended = autoAvailable,
+                    tierBadge = "★★★",
+                },
+                new
+                {
+                    key = "azure",
+                    label = "Azure DI (แม่นยำสูงสุด)",
+                    description = "Cloud OCR คุณภาพสูง เหมาะกับใบกำกับภาษีที่มี layout ซับซ้อน — มีค่าใช้จ่ายต่อหน้า",
+                    available = azureAvailable,
+                    disabledReason = azureDisabledReason,
+                    isRecommended = false,
+                    tierBadge = "★★★",
+                },
+                new
+                {
+                    key = "local",
+                    label = "Local (ฟรี)",
+                    description = "ใช้ Engine ในเครื่อง (PaddleOCR / Tesseract) ไม่เสีย credit Azure — ความแม่นยำต่ำกว่า",
+                    available = localAvailable,
+                    disabledReason = localDisabledReason,
+                    isRecommended = false,
+                    tierBadge = "★★",
+                },
+            },
+            quota = new
+            {
+                azureUsed = quota.AzureUsedThisMonth,
+                azureMax = quota.AzureMaxPagesPerMonth,
+                localUsed = quota.LocalUsedThisMonth,
+                localMax = quota.LocalMaxPagesPerMonth,
+            },
+        }));
+    }
 
     [HttpPost("credits/purchase")]
     public async Task<ActionResult<ApiResponse<OcrCreditPurchaseResponse>>> PurchaseCredits(

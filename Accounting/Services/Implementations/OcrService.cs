@@ -84,8 +84,15 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null)
     {
+        // Normalize the user's engine preference into one of three modes.
+        // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
+        // when user explicitly wants Azure accuracy); "local" = skip Tier 1
+        // entirely. Tier 0 e-Tax XML always runs regardless.
+        var enginePref = (preferredEngine ?? "auto").Trim().ToLowerInvariant();
+        if (enginePref != "azure" && enginePref != "local") enginePref = "auto";
+
         var file = await _db.FileAttachments
             .FirstOrDefaultAsync(f => f.Id == fileAttachmentId && f.CompanyId == companyId)
             ?? throw new InvalidOperationException("File attachment not found.");
@@ -276,7 +283,15 @@ public class OcrService : IOcrService
                 _logger.LogInformation("Azure DI skipped for {Cid}: {Reason}", companyId, azureSkipReason);
             }
 
-            if (extractedData == null && azureEnabled && azureQuotaAllowed)
+            // Per-scan user preference: when the caller picked "local",
+            // bypass Tier 1 entirely so no Azure cost is incurred — even
+            // if Azure is enabled and has quota.
+            if (enginePref == "local")
+            {
+                azureSkipReason = "ผู้ใช้เลือก Local OCR — ข้าม Azure DI ตามคำสั่ง";
+            }
+
+            if (extractedData == null && azureEnabled && azureQuotaAllowed && enginePref != "local")
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)
@@ -329,9 +344,13 @@ public class OcrService : IOcrService
             }
             tierTrace.Add($"[Tier 1 Azure DI] {azureOutcome ?? "(not attempted)"}");
 
-            // Tier 2: Python local service (PaddleOCR+EasyOCR)
+            // Tier 2: Python local service (PaddleOCR+EasyOCR).
+            // When the user explicitly chose "azure", do NOT silently fall
+            // back to local — they wanted Azure-grade accuracy. The scan
+            // surfaces failure (Tier 3 still runs as a last-resort below
+            // only when azure isn't the explicit choice).
             string? pythonOutcome = null;
-            if (extractedData == null)
+            if (extractedData == null && enginePref != "azure")
             {
                 try
                 {
@@ -378,7 +397,11 @@ public class OcrService : IOcrService
             // ParseThaiDocument so both signals contribute to extraction.
             // Tesseract-alone still runs for images and PDFs without a
             // text layer.
-            if (extractedData == null)
+            //
+            // Skipped when user explicitly chose "azure" — they wanted
+            // Azure-grade accuracy, not noisy Tesseract output. Failure
+            // surfaces below as scan-status Failed so they know to retry.
+            if (extractedData == null && enginePref != "azure")
             {
                 var embeddedResult = await ExtractWithEmbeddedTesseractAsync(file);
 
@@ -453,7 +476,23 @@ public class OcrService : IOcrService
                         + $"\n[Azure DI ข้าม] {azureSkipReason}";
                 }
             }
-            tierTrace.Add($"[Tier 3 Local hybrid] {(ocrEngineUsed == "PdfTextLayer+Tesseract" ? "PDF text-layer + Tesseract" : ocrEngineUsed == "EmbeddedTesseract" ? "Tesseract only" : "not attempted")}");
+            tierTrace.Add($"[Tier 3 Local hybrid] {(ocrEngineUsed == "PdfTextLayer+Tesseract" ? "PDF text-layer + Tesseract" : ocrEngineUsed == "EmbeddedTesseract" ? "Tesseract only" : enginePref == "azure" ? "skipped (user เลือก Azure-only)" : "not attempted")}");
+
+            // Azure-only path that failed: no engine produced data. Surface
+            // an empty result with a Failed status so the user knows to
+            // either retry or switch engines. We refund quota in the
+            // controller via the OcrEngine == null / status != Completed gate.
+            if (extractedData == null)
+            {
+                extractedData = new OcrExtractedData { Confidence = 0m };
+                ocrEngineUsed = ocrEngineUsed ?? "None";
+                extractedData.ReasoningTrace.Add(
+                    enginePref == "azure"
+                        ? $"[Azure-only] ผู้ใช้เลือก Azure DI แต่สแกนไม่สำเร็จ — {lastError ?? azureSkipReason ?? "ไม่ทราบสาเหตุ"}. กรุณาลองอีกครั้งหรือเลือก Engine อื่น."
+                        : $"[ทุก Tier ล้มเหลว] {lastError ?? "ไม่มี engine ที่ทำงานได้"}");
+                scanResult.ScanStatus = "Failed";
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + extractedData.ReasoningTrace[^1];
+            }
 
             // Prepend the tier-outcome ledger to the reasoning trace so the
             // debug panel shows EVERY tier's status — no more silent

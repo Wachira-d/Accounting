@@ -344,6 +344,23 @@
       </button>
     </div>
 
+    <!-- Engine selector — populated from GET /ocr/engines at page load.
+         Best-available engine pre-selected; engines that are exhausted or
+         not configured are disabled so they can't be picked client-side.
+         Persisted to localStorage so the user's preference sticks. -->
+    <div id="engineChooser" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:none">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label for="engineSelect" style="font-weight:600;color:#334155;font-size:13px;margin:0">
+          &#x2699;&#xFE0F; OCR Engine:
+        </label>
+        <select id="engineSelect" onchange="Page.onEngineChanged()"
+                style="flex:0 0 auto;min-width:240px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;background:white;font-size:13px;font-weight:500;cursor:pointer">
+          <option value="auto">กำลังโหลด...</option>
+        </select>
+        <span id="engineHint" style="color:#64748b;font-size:12px;flex:1"></span>
+      </div>
+    </div>
+
     <!-- Upload Zone — <label for="fileInput"> means clicking anywhere inside the
          zone opens the file picker via the browser's native label-input link.
          No JS click handler needed → no "must click twice" bug. -->
@@ -497,6 +514,7 @@
         this.bindUpload();
         this.loadScans();
         this.loadQuota();
+        this.loadEngines();
         // Deep-link from /review-queue or /pages/documents.html →
         // ?reviewScan=<id> opens that scan's review modal once the list
         // loads. ?stockImport=1 (paired with reviewScan) jumps the user
@@ -508,6 +526,60 @@
         if (reviewScanId) {
           setTimeout(() => this.openReview(reviewScanId, { stockImport: wantStockImport }), 400);
         }
+      },
+
+      // ==================== Engine Selector ====================
+      // Three modes user can pick per scan:
+      //   • auto  → server cascade (Azure ➜ Local). Default when both up.
+      //   • azure → Tier-1 only; surfaces failure instead of silent fallback
+      //             so the user knows when their explicit choice didn't work.
+      //   • local → skip Tier 1 entirely; doesn't consume Azure credit.
+      // Disabled engines come back from the server with `available:false`
+      // + a Thai reason; we render them dimmed in the <option> so the user
+      // can SEE the reason rather than just "why isn't this clickable?".
+      async loadEngines() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const res = await API.get(`/api/companies/${cid}/ocr/engines`);
+          if (!res?.success || !res.data) return;
+          const data = res.data;
+          const sel = document.getElementById('engineSelect');
+          if (!sel) return;
+          // Honor the user's last choice if it's still available; otherwise
+          // fall back to the server-recommended default.
+          const saved = localStorage.getItem('ocrPreferredEngine');
+          const savedStillOk = saved && data.engines.some(e => e.key === saved && e.available);
+          const initial = savedStillOk ? saved : data.recommendedDefault;
+          sel.innerHTML = data.engines.map(e => {
+            const star = e.tierBadge || '';
+            const tail = e.available ? '' : ` — ${e.disabledReason || 'ใช้งานไม่ได้'}`;
+            return `<option value="${e.key}" ${e.available ? '' : 'disabled'} data-desc="${(e.description || '').replace(/"/g,'&quot;')}">${star} ${e.label}${tail}</option>`;
+          }).join('');
+          sel.value = initial || 'auto';
+          document.getElementById('engineChooser').style.display = '';
+          this.onEngineChanged();
+        } catch (e) {
+          // Selector is optional — if it fails to load we keep the prior
+          // "auto" behavior. Don't pop an alert; the upload still works.
+          console.warn('loadEngines failed', e);
+        }
+      },
+
+      onEngineChanged() {
+        const sel = document.getElementById('engineSelect');
+        if (!sel) return;
+        const val = sel.value || 'auto';
+        localStorage.setItem('ocrPreferredEngine', val);
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById('engineHint').textContent = opt?.dataset?.desc || '';
+      },
+
+      _currentEngine() {
+        const sel = document.getElementById('engineSelect');
+        // null skips the query param entirely → server treats as "auto"
+        // (same as the legacy behavior pre-selector).
+        return sel && sel.value && sel.value !== 'auto' ? sel.value : null;
       },
 
       async loadQuota() {
@@ -722,7 +794,7 @@
           if (!api) return;
 
           progressEl.style.width = '60%';
-          const res = await api.ocrUploadAndScan(formData);
+          const res = await api.ocrUploadAndScan(formData, this._currentEngine());
           progressEl.style.width = '100%';
 
           if (res.success === false) {
