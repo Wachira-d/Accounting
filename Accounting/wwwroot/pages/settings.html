@@ -173,7 +173,10 @@
           <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="cBuildingNumber" placeholder="123/45"></div>
           <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="cBuildingName"></div>
         </div>
-        <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="cStreetName" placeholder="สุขุมวิท"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="cMoo" placeholder="3" maxlength="5"></div>
+          <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="cStreetName" placeholder="สุขุมวิท"></div>
+        </div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">แขวง/ตำบล *</label><input type="text" id="cSubDistrict" class="form-input"></div>
           <div class="form-group"><label class="form-label">เขต/อำเภอ *</label><input type="text" id="cDistrict" class="form-input"></div>
@@ -549,6 +552,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/dbd-lookup.js"></script>
+  <script src="/js/thai-address.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
@@ -575,11 +579,20 @@
           const raw = document.getElementById('cAddress').value;
           if (!raw) return;
           const api = Layout.api();
-          if (api) api.parseAddress(raw).then(j => {
+          if (api) api.parseAddress(raw).then(async j => {
             const p = (j && j.data) || {};
             if (p.buildingNumber && !document.getElementById('cBuildingNumber').value) document.getElementById('cBuildingNumber').value = p.buildingNumber;
             if (p.buildingName && !document.getElementById('cBuildingName').value) document.getElementById('cBuildingName').value = p.buildingName;
+            if (p.moo && !document.getElementById('cMoo').value) document.getElementById('cMoo').value = p.moo;
             if (p.streetName && !document.getElementById('cStreetName').value) document.getElementById('cStreetName').value = p.streetName;
+            if (typeof ThaiAddress !== 'undefined') {
+              const provEl = document.getElementById('cProvince');
+              if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+              await ThaiAddress.refresh({
+                subDistrict: 'cSubDistrict', district: 'cDistrict',
+                province: 'cProvince', postalCode: 'cPostalCode',
+              });
+            }
           }).catch(() => {});
         };
         DbdLookup.attachNameSearch(document.getElementById('cName'), (result) => {
@@ -951,11 +964,21 @@
           document.getElementById('cAddress').value = c.address || '';
           document.getElementById('cBuildingNumber').value = c.buildingNumber || '';
           document.getElementById('cBuildingName').value = c.buildingName || '';
+          document.getElementById('cMoo').value = c.moo || '';
           document.getElementById('cStreetName').value = c.streetName || '';
           document.getElementById('cSubDistrict').value = c.subDistrict || '';
           document.getElementById('cDistrict').value = c.district || '';
           document.getElementById('cProvince').value = c.province || '';
           document.getElementById('cPostalCode').value = c.postalCode || '';
+          // Wire the cascading datalist + postal autocomplete on the company
+          // address fields, matching the contact form. Idempotent — safe to
+          // run on every reload of the company profile.
+          if (typeof ThaiAddress !== 'undefined') {
+            ThaiAddress.enhance({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+          }
           document.getElementById('cPhone').value = c.phone || '';
           document.getElementById('cFax').value = c.fax || '';
           document.getElementById('cEmail').value = c.email || '';
@@ -1101,9 +1124,11 @@
       _origIndustryType: 'General',
 
       composeAddress() {
+        const moo = document.getElementById('cMoo').value;
         const parts = [
           document.getElementById('cBuildingNumber').value,
           document.getElementById('cBuildingName').value,
+          moo ? 'หมู่ ' + moo : '',
           document.getElementById('cStreetName').value ? 'ถ.' + document.getElementById('cStreetName').value : '',
           document.getElementById('cSubDistrict').value,
           document.getElementById('cDistrict').value,
@@ -1122,12 +1147,25 @@
           const p = j.data || {};
           if (p.buildingNumber) document.getElementById('cBuildingNumber').value = p.buildingNumber;
           if (p.buildingName) document.getElementById('cBuildingName').value = p.buildingName;
+          if (p.moo) document.getElementById('cMoo').value = p.moo;
           if (p.streetName) document.getElementById('cStreetName').value = p.streetName;
           if (p.subDistrict) document.getElementById('cSubDistrict').value = p.subDistrict;
           if (p.district) document.getElementById('cDistrict').value = p.district;
           if (p.province) document.getElementById('cProvince').value = p.province;
           if (p.postalCode) document.getElementById('cPostalCode').value = p.postalCode;
           document.getElementById('cAddressPaste').value = '';
+          if (typeof ThaiAddress !== 'undefined') {
+            const provEl = document.getElementById('cProvince');
+            if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+            ThaiAddress.enhance({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+            await ThaiAddress.refresh({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+          }
           Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
         } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
       },
@@ -1153,6 +1191,7 @@
             address: Page.composeAddress(),
             buildingNumber: document.getElementById('cBuildingNumber').value || null,
             buildingName: document.getElementById('cBuildingName').value || null,
+            moo: document.getElementById('cMoo').value || null,
             streetName: document.getElementById('cStreetName').value || null,
             subDistrict: document.getElementById('cSubDistrict').value || null,
             district: document.getElementById('cDistrict').value || null,

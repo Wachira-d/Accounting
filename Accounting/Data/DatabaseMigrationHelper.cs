@@ -2293,6 +2293,9 @@ public static class DatabaseMigrationHelper
             // ETDA e-Tax schema doesn't have a dedicated element so it gets
             // folded into the composed free-text Address by ComposeAddress.
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "Moo" text NULL;""",
+            // Mirror on Company so seller addresses on e-Tax XML don't drop
+            // Moo when the tenant's own office is provincial / rural.
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "Moo" text NULL;""",
 
             // EF Core convention auto-created a shadow "OwnerId" FK column +
             // FK constraint because AccountSubscription.Owner nav wasn't bound
