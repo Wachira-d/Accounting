@@ -78,7 +78,7 @@
 
                 <div style="border-top:1px solid #e2e8f0;padding-top:12px;font-size:13px">
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
-                    <span>ผู้ใช้สูงสุด</span><strong>${p.maxUsers}</strong>
+                    <span title="MaxUsers = ผู้ใช้ใน 1 บริษัท · Account Plan ใช้เป็น MaxUsersPerCompany (ต่อบริษัทใต้ Plan)">ผู้ใช้/บริษัท</span><strong>${p.maxUsers}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
                     <span title="จำนวน Company slots เมื่อใช้เป็น Account Plan (User-level License). บน Subscription ระดับบริษัท ค่านี้ถูกเก็บเป็น 1 เสมอ">บริษัทสูงสุด <span style="color:#94a3b8;font-size:11px">(slots)</span></span><strong>${p.maxCompanies}</strong>
@@ -278,8 +278,9 @@
               <div style="font-weight:600;margin:16px 0 8px">ลิมิตการใช้งาน (แผนแบบเสียเงิน)</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
-                  <label class="admin-label">ผู้ใช้สูงสุด</label>
+                  <label class="admin-label">ผู้ใช้สูงสุด / บริษัท <span style="font-weight:400;color:#94a3b8;font-size:11px">— ต่อบริษัท · บน Account Plan map → MaxUsersPerCompany</span></label>
                   <input type="number" min="1" class="admin-input" id="ep_users" value="${p.maxUsers}">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">หากใช้เป็น Account Plan: บริษัทแต่ละแห่งใต้ Plan รับผู้ใช้ได้ตามนี้ (ไม่ใช่รวมทุกบริษัท)</div>
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">บริษัทสูงสุด <span style="font-weight:400;color:#94a3b8;font-size:11px">— ใช้เป็น "slots" บน Account Plan / ระดับบริษัท = 1</span></label>

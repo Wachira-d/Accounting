@@ -168,7 +168,13 @@ public class SubscriptionHistory : BaseEntity
     public Guid SubscriptionId { get; set; }
     public Subscription Subscription { get; set; } = null!;
 
-    public string Action { get; set; } = null!;  // e.g. "Created", "Upgraded", "TrialExtended", "Expired"
+    /// <summary>When the history row was created by an action against an
+    /// AccountSubscription (User-level License), this points at it. Both FKs
+    /// can be populated when the slip-approval cascade extended both layers.</summary>
+    public Guid? AccountSubscriptionId { get; set; }
+    public AccountSubscription? AccountSubscription { get; set; }
+
+    public string Action { get; set; } = null!;  // e.g. "Created", "Upgraded", "TrialExtended", "Expired", "AccountPlanExtended"
     public SubscriptionPlan? FromPlan { get; set; }
     public SubscriptionPlan? ToPlan { get; set; }
     public SubscriptionStatus? FromStatus { get; set; }

@@ -202,6 +202,63 @@ public class AdminAccountSubscriptionController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "บันทึก limits ใหม่แล้ว"));
     }
 
+    /// <summary>Admin-side detach — sets a Company's Subscription.AccountSubscriptionId
+    /// back to null so the company stops riding the parent License. Used when
+    /// support handles "we're selling Company X to a different owner" or
+    /// "Holding wants separate billing for B5". Different from the user-side
+    /// /api/account-subscription/detach which requires Owner role of the
+    /// company — admin can detach any company.</summary>
+    [HttpPost("/api/admin/companies/{companyId:guid}/detach-from-account-plan")]
+    public async Task<ActionResult<ApiResponse<string>>> AdminDetach(Guid companyId)
+    {
+        if (!await IsSystemAdminAsync()) return Forbid();
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบ Subscription ของบริษัท"));
+        if (sub.AccountSubscriptionId == null)
+            return Ok(new ApiResponse<string>(true, null, "บริษัทนี้ไม่ได้ผูกกับ License อยู่แล้ว"));
+        var oldId = sub.AccountSubscriptionId.Value;
+        sub.AccountSubscriptionId = null;
+        sub.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        sub.UpdatedAt = DateTime.UtcNow;
+
+        // Audit row at both layers — easier to spot in /admin/account-subscriptions
+        // history when support is investigating "where did this company go".
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            AccountSubscriptionId = oldId,
+            Action = "DetachedFromAccountPlan",
+            Notes = $"Admin detached company {companyId} from Account Plan {oldId}",
+            PerformedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
+        });
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<string>(true, null, "ถอดออกจาก License สำเร็จ"));
+    }
+
+    /// <summary>History feed for an Account Plan — pulls SubscriptionHistory
+    /// rows where AccountSubscriptionId matches, plus the cross-cascade ones
+    /// where the row's company-level Subscription belongs to this account.
+    /// Surfaces "slip-approved → cascaded" + "reminder sent" + status flips so
+    /// support can answer "why did this account auto-extend".</summary>
+    [HttpGet("{id:guid}/history")]
+    public async Task<ActionResult<ApiResponse<object>>> History(Guid id, [FromQuery] int take = 100)
+    {
+        if (!await IsSystemAdminAsync()) return Forbid();
+
+        var rows = await _db.SubscriptionHistories.AsNoTracking()
+            .Where(h => h.AccountSubscriptionId == id)
+            .OrderByDescending(h => h.CreatedAt)
+            .Take(Math.Clamp(take, 10, 500))
+            .Select(h => new
+            {
+                h.Id, h.SubscriptionId, h.AccountSubscriptionId,
+                h.Action, fromStatus = h.FromStatus, toStatus = h.ToStatus,
+                h.Notes, h.PerformedBy, h.CreatedAt
+            })
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, new { items = rows }));
+    }
+
     public record CreateAccountSubRequest(Guid OwnerUserId, Guid PlanTemplateId, int? OverrideMaxCompanies, DateTime? CustomEndDate);
     /// <summary>Provision a plan for a user — used when sales closes an
     /// enterprise deal outside the self-serve trial flow.</summary>

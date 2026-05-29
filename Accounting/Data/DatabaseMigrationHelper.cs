@@ -2281,6 +2281,13 @@ public static class DatabaseMigrationHelper
             // Subscription gets the AccountSubscriptionId opt-in column.
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "AccountSubscriptionId" uuid NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Subscriptions_AccountSub" ON "Subscriptions" ("AccountSubscriptionId") WHERE "AccountSubscriptionId" IS NOT NULL AND "IsDeleted" = false;""",
+            // History rows from cascaded actions point at both layers.
+            """ALTER TABLE "SubscriptionHistories" ADD COLUMN IF NOT EXISTS "AccountSubscriptionId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_SubscriptionHistories_AccountSub" ON "SubscriptionHistories" ("AccountSubscriptionId") WHERE "AccountSubscriptionId" IS NOT NULL;""",
+            // Reminder bookkeeping on AccountSubscription so the daily job
+            // doesn't double-send.
+            """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "LastExpiryReminderAt" timestamp NULL;""",
+            """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "ExpiryRemindersSentMask" integer NOT NULL DEFAULT 0;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).

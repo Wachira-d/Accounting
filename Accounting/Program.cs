@@ -254,6 +254,7 @@ builder.Services.AddHostedService<BackgroundJobService>();
 builder.Services.AddHostedService<AbandonedCartService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
+builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

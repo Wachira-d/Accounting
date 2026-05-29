@@ -142,6 +142,7 @@
     }
 
     async function showDetail(companyId) {
+      window.currentCompanyId = companyId;
       try {
         const res = await AdminAPI.customer(companyId);
         currentDetail = res.data;
@@ -277,10 +278,33 @@
 
             <!-- Actions -->
             <div class="detail-panel" id="panel-actions">
+              ${ap ? `
+              <!-- 🎫 Account Plan controls — when this company is under a
+                   User-level License, these are the actions that actually
+                   matter. The per-company section below is shown for the
+                   "detached / separate billing" case only. -->
+              <div class="action-card" style="border:2px solid #0ea5e9;background:#ecfeff">
+                <h4 style="color:#0c4a6e">🎫 จัดการ License ที่ครอบบริษัทนี้ <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px">${ap.planName}</span></h4>
+                <div style="font-size:12px;color:#475569;margin-bottom:10px;line-height:1.6">
+                  เจ้าของ License: <strong>${ap.ownerName}</strong> · สถานะ <strong>${ap.status}</strong> · หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}<br>
+                  <span style="color:#dc2626">⚠️ การเปลี่ยนที่นี่ส่งผลทุกบริษัทใต้ License เดียวกัน</span>
+                </div>
+                <div class="action-row" style="flex-wrap:wrap;gap:8px">
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="apExtend('${ap.id}','${ap.endDate}')">⏰ ขยายอายุ</button>
+                  <button class="admin-btn admin-btn-warning admin-btn-sm" onclick="apStatus('${ap.id}','${ap.status}')">🔄 เปลี่ยนสถานะ</button>
+                  <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="apLimits('${ap.id}')">⚙️ ปรับ Limits</button>
+                  <button class="admin-btn admin-btn-danger admin-btn-sm" onclick="apDetach('${c.id}','${c.name.replace(/'/g,'&apos;')}')">🔓 ถอดบริษัทออกจาก License</button>
+                  <a href="/admin/account-subscriptions.html" class="admin-btn admin-btn-ghost admin-btn-sm" style="text-decoration:none">ดู License เต็ม →</a>
+                </div>
+              </div>
+              <details style="background:#fafafa;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px">
+                <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">💼 จัดการ Subscription ระดับบริษัทนี้ <span style="font-weight:400;color:#94a3b8;font-size:11px">— ใช้เมื่อแยกบิลออกจาก License</span></summary>
+                <div style="margin-top:10px">
+              ` : ''}
               ${s ? `
               <!-- Change Plan -->
               <div class="action-card">
-                <h4>เปลี่ยนแพ็กเกจ</h4>
+                <h4>เปลี่ยนแพ็กเกจ${ap ? ' <span style="font-weight:400;color:#94a3b8;font-size:11px">(บริษัทนี้แยกบิล)</span>' : ''}</h4>
                 <div class="action-row">
                   <div class="field">
                     <label>แพ็กเกจใหม่</label>
@@ -379,6 +403,7 @@
               </div>
               ` : ''}
               ` : '<p style="color:#94a3b8;text-align:center;padding:20px">ยังไม่มี Subscription ไม่สามารถจัดการได้</p>'}
+              ${ap ? `</div></details>` : ''}
             </div>
 
             <!-- Users -->
@@ -538,6 +563,70 @@
         AdminLayout.toast('Trial หมดอายุแล้ว');
         await refreshDetail(companyId);
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // ===== Account Plan (User License) actions =====
+    // These delegate to /api/admin/account-subscriptions/{id}/... — the same
+    // endpoints the dedicated /admin/account-subscriptions.html page calls.
+    // Action affects ALL companies under the same License, hence the explicit
+    // confirms.
+    async function apExtend(apId, currentEnd) {
+      const cur = new Date(currentEnd);
+      cur.setDate(cur.getDate() + 30);
+      const def = cur.toISOString().slice(0,10);
+      const v = prompt('🎫 ขยายอายุ License — วันสิ้นสุดใหม่ (YYYY-MM-DD)\n\n⚠️ จะมีผลกับทุกบริษัทใต้ License เดียวกัน', def);
+      if (!v) return;
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/extend', { endDate: v + 'T00:00:00Z' });
+        alert('✓ ขยายอายุ License สำเร็จ');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+    async function apStatus(apId, current) {
+      const next = prompt('🎫 สถานะใหม่ของ License (Trial / Active / PastDue / Suspended / Cancelled / Expired)\n\n⚠️ จะมีผลกับทุกบริษัทใต้ License', current);
+      if (!next) return;
+      const reason = prompt('เหตุผล (เก็บใน audit)', '') || '';
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/status', { status: next, reason });
+        alert('✓ เปลี่ยนสถานะ License สำเร็จ');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+    async function apLimits(apId) {
+      // Fetch the current values so prompts default sensibly.
+      try {
+        const r = await AdminAPI.get('/account-subscriptions/' + apId);
+        const d = r.data;
+        const mc = parseInt(prompt('MaxCompanies (slots)', d.maxCompanies));
+        if (isNaN(mc)) return;
+        const mu = parseInt(prompt('MaxUsersPerCompany', d.maxUsersPerCompany));
+        if (isNaN(mu)) return;
+        const md = parseInt(prompt('MaxDocumentsPerMonth (aggregate)', d.maxDocumentsPerMonth));
+        if (isNaN(md)) return;
+        const mj = parseInt(prompt('MaxJournalEntriesPerMonth (aggregate)', d.maxJournalEntriesPerMonth));
+        if (isNaN(mj)) return;
+        const mo = parseInt(prompt('MaxOcrPagesPerMonth (aggregate)', d.maxOcrPagesPerMonth));
+        if (isNaN(mo)) return;
+        await AdminAPI.put('/account-subscriptions/' + apId + '/limits', {
+          maxCompanies: mc, maxUsersPerCompany: mu,
+          maxDocumentsPerMonth: md, maxJournalEntriesPerMonth: mj,
+          maxOcrPagesPerMonth: mo,
+        });
+        alert('✓ บันทึก limits ใหม่แล้ว');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+    async function apDetach(companyId, name) {
+      if (!confirm(`🔓 ถอด "${name}" ออกจาก License ของผู้ใช้?\n\nบริษัทจะกลับไปใช้ Subscription แยกของตัวเอง (FreeTrial ถ้าไม่มี)\nเหมาะกับเคสขายบริษัท / แยกบิล holding`)) return;
+      try {
+        // Detach lives on the user-side API; admin can call it on behalf via
+        // the same path — server checks ownership at the user layer. For
+        // admin-level detach we route through limits change setting
+        // AccountSubscriptionId to null on the company subscription.
+        await AdminAPI.post('/companies/' + companyId + '/detach-from-account-plan', {});
+        alert('✓ ถอดออกแล้ว — บริษัทกลับไปใช้ Subscription ของตัวเอง');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
     }
 
     async function changeUserRole(companyId, userId, role) {
