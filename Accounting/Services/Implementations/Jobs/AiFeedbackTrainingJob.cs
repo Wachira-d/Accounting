@@ -207,10 +207,14 @@ public class AiFeedbackTrainingJob : BackgroundService
             // re-counting them.
             nameof(AiFeatureKey.CreditNoteReasonClassification) => true,
             nameof(AiFeatureKey.DocumentTypeClassification) => true,
+            nameof(AiFeatureKey.OcrFullReview) => true,
+            nameof(AiFeatureKey.DocumentConversionSuggestion) => true,
             nameof(AiFeatureKey.WhtCategoryInference) => true,
             nameof(AiFeatureKey.BankStatementMatch) => true,
             nameof(AiFeatureKey.ApprovalWarningFixSuggestion) => true,
             nameof(AiFeatureKey.AnomalyExplanation) => true,
+            nameof(AiFeatureKey.StockMovementValidation) => true,
+            nameof(AiFeatureKey.AgingExplanation) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release.
             _ => false,

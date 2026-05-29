@@ -1133,6 +1133,20 @@ public enum AiFeatureKey
     /// freeform manual JE.</summary>
     ManualJournalSuggestion = 21,
 
+    /// <summary>OCR Tier-4 comprehensive review — distinct from the
+    /// simpler DocumentTypeClassification because this returns
+    /// corrections for every field, not just the doc-type label.
+    /// Tracked separately in LocalModelHealth so accuracy of the
+    /// review can be measured independently.</summary>
+    OcrFullReview = 22,
+
+    /// <summary>"What target doc should I create from this scanned
+    /// source?" — outputs a list of viable targets + prefill strategy.
+    /// Separate from DocumentTypeClassification (which just labels the
+    /// scanned paper) so the conversion-suggestion accuracy can be
+    /// tracked separately.</summary>
+    DocumentConversionSuggestion = 23,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

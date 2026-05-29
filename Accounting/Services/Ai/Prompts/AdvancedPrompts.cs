@@ -91,7 +91,7 @@ Respond ONLY as JSON:
         };
         return new AiRequest
         {
-            FeatureKey = AiFeatureKey.DocumentTypeClassification,
+            FeatureKey = AiFeatureKey.OcrFullReview,
             CompanyId = companyId,
             SystemPrompt = SystemPrompt,
             UserPromptJson = JsonSerializer.Serialize(payload),
@@ -377,7 +377,7 @@ Respond ONLY as JSON:
         };
         return new AiRequest
         {
-            FeatureKey = AiFeatureKey.DocumentTypeClassification,
+            FeatureKey = AiFeatureKey.DocumentConversionSuggestion,
             CompanyId = companyId,
             SystemPrompt = SystemPrompt,
             UserPromptJson = JsonSerializer.Serialize(payload),
