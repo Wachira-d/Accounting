@@ -14,6 +14,7 @@
       <button class="tab" onclick="Page.switchTab('anomaly')">ตรวจจับผิดปกติ</button>
       <button class="tab" onclick="Page.switchTab('ocr')">OCR สแกนเอกสาร</button>
       <button class="tab" onclick="Page.switchTab('forecast')">พยากรณ์กระแสเงินสด</button>
+      <button class="tab" onclick="Page.switchTab('arap')">🤖 วิเคราะห์ลูกหนี้/เจ้าหนี้</button>
     </div>
 
     <!-- Auto-Categorize -->
@@ -88,6 +89,19 @@
       </div>
       <div id="forecastContent"><p class="text-gray-400 text-center" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</p></div>
     </div>
+
+    <!-- AR/AP analysis — AI looks at aging, customer/vendor payment
+         history and produces risk buckets + cash gap forecast. -->
+    <div id="tab-arap" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">🤖 วิเคราะห์ลูกหนี้/เจ้าหนี้ด้วย AI</h2>
+          <p class="page-subtitle">ส่งข้อมูล aging + ประวัติการชำระไปให้ AI วิเคราะห์ — ระบุลูกค้าเสี่ยงสูง, ลูกค้าจ่ายช้าแต่จ่ายแน่, พยากรณ์ช่องว่างเงินสด</p>
+        </div>
+        <button class="btn btn-primary" onclick="Page.runArApAnalysis()">เริ่มวิเคราะห์</button>
+      </div>
+      <div id="arapContent" style="padding:20px;color:#94a3b8">กดปุ่ม "เริ่มวิเคราะห์" เพื่อให้ AI วิเคราะห์ AR/AP ของคุณ</div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -103,8 +117,8 @@ const Page = {
   },
 
   switchTab(tab) {
-    ['categorize','anomaly','ocr','forecast'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
-    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['categorize','anomaly','ocr','forecast'][i] === tab));
+    ['categorize','anomaly','ocr','forecast','arap'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['categorize','anomaly','ocr','forecast','arap'][i] === tab));
     if (tab === 'anomaly') this.loadAnomalies();
     if (tab === 'ocr') this.loadOcrResults();
     if (tab === 'forecast') this.loadForecasts();
@@ -292,6 +306,49 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     Layout.toast('กำลังสร้างการพยากรณ์...', 'info');
     try { await api.createForecast({ periods: 6, method: 'AI' }); Layout.toast('สร้างการพยากรณ์สำเร็จ'); this.loadForecasts(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== AR/AP analysis =====
+  async runArApAnalysis() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const el = document.getElementById('arapContent');
+    el.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:40px">🤖 กำลังถาม AI...</p>';
+    try {
+      const r = await API.post(`/api/companies/${cid}/ai/ar-ap/analyze`);
+      const d = r?.data;
+      if (!d) { el.innerHTML = '<p style="color:#dc2626">AI ไม่ตอบ</p>'; return; }
+      let buckets = null;
+      let cashGap = null;
+      if (d.structured) {
+        try {
+          const parsed = JSON.parse(d.structured);
+          buckets = parsed.risk_buckets;
+          cashGap = parsed.cash_gap_forecast;
+        } catch (e) { /* tolerate */ }
+      }
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr;gap:16px;max-width:900px">
+          ${!d.usedAi ? '<div style="background:#fef3c7;border-left:4px solid #d97706;padding:12px 16px;border-radius:6px;color:#92400e">🤖 AI ไม่พร้อม — แสดงคำตอบ local model</div>' : ''}
+          ${d.primary ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px"><strong style="font-size:15px;color:#16a34a">${Layout.esc(d.primary)}</strong></div>` : ''}
+          ${d.reasoning ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;line-height:1.6">${Layout.esc(d.reasoning)}</div>` : ''}
+          ${buckets ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px">
+            <h4 style="margin:0 0 10px;color:#1e293b">📊 กลุ่มเสี่ยง</h4>
+            ${buckets.high_risk_customers?.length ? '<div style="margin-bottom:10px"><b style="color:#dc2626">ลูกค้าเสี่ยงสูง</b><ul style="margin:4px 0 0 20px">' + buckets.high_risk_customers.map(c => `<li>${Layout.esc(c)}</li>`).join('') + '</ul></div>' : ''}
+            ${buckets.late_but_reliable?.length ? '<div style="margin-bottom:10px"><b style="color:#d97706">จ่ายช้าแต่จ่ายแน่</b><ul style="margin:4px 0 0 20px">' + buckets.late_but_reliable.map(c => `<li>${Layout.esc(c)}</li>`).join('') + '</ul></div>' : ''}
+            ${buckets.high_risk_vendors?.length ? '<div><b style="color:#7c3aed">เจ้าหนี้เสี่ยงสูง</b><ul style="margin:4px 0 0 20px">' + buckets.high_risk_vendors.map(c => `<li>${Layout.esc(c)}</li>`).join('') + '</ul></div>' : ''}
+          </div>` : ''}
+          ${cashGap ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px">
+            <h4 style="margin:0 0 8px;color:#1e40af">💰 พยากรณ์ช่องว่างเงินสด</h4>
+            <p style="margin:0;line-height:1.6">${Layout.esc(cashGap)}</p>
+          </div>` : ''}
+          ${(d.suggestedActions || []).length ? `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:16px">
+            <h4 style="margin:0 0 8px;color:#9a3412">📝 แนะนำให้ทำ</h4>
+            <ul style="margin:0 0 0 20px">${d.suggestedActions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul>
+          </div>` : ''}
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<p style="color:#dc2626">เรียกไม่สำเร็จ: ${e.message}</p>`;
+    }
   },
 };
 Page.init();
