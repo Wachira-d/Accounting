@@ -33,11 +33,13 @@ public class AiSuggestionController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly IDocumentAiAugmenter _docAi;
     private readonly IBankAiAugmenter _bankAi;
+    private readonly IAdvancedAiAugmenter _advAi;
     private readonly IAiOrchestrator _orchestrator;
 
     public AiSuggestionController(AccountingDbContext db,
-        IDocumentAiAugmenter docAi, IBankAiAugmenter bankAi, IAiOrchestrator orchestrator)
-    { _db = db; _docAi = docAi; _bankAi = bankAi; _orchestrator = orchestrator; }
+        IDocumentAiAugmenter docAi, IBankAiAugmenter bankAi,
+        IAdvancedAiAugmenter advAi, IAiOrchestrator orchestrator)
+    { _db = db; _docAi = docAi; _bankAi = bankAi; _advAi = advAi; _orchestrator = orchestrator; }
 
     // ────────────────────────────────────────────────────────────────
     //  GL account suggestion when composing a Payment Voucher line
@@ -353,6 +355,92 @@ public class AiSuggestionController : ControllerBase
         var results = await Task.WhenAll(tasks);
         return Ok(new ApiResponse<object>(true, new { lines = results }));
     }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Advanced AI: Tier-4 OCR review, stock decisions, AR/AP
+    //  analysis, doc conversion, comprehensive bank match.
+    //  All driven by IAdvancedAiAugmenter which sees the entire
+    //  scan + company + relevant history in one shot.
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Tier-4 review: AI re-reads everything the OCR pipeline extracted
+    /// + raw text + company context + vendor history, returns
+    /// corrections / corrections-confirmed + Thai compliance flags
+    /// (e.g. "vendor has no Tax ID — VAT line is invalid per §86").
+    /// Used by the OCR review modal "🤖 ตรวจสอบกับ AI" button.
+    /// </summary>
+    [HttpPost("ocr/{scanResultId:guid}/ai-review")]
+    public async Task<ActionResult<ApiResponse<object>>> ReviewScanWithAi(
+        Guid companyId, Guid scanResultId, CancellationToken ct)
+    {
+        var r = await _advAi.ReviewOcrAsync(companyId, scanResultId, ct);
+        return Ok(new ApiResponse<object>(true, ToAdvancedDto(r)));
+    }
+
+    /// <summary>
+    /// For each line of an OCR'd document, decide CreateNew/Update/Match
+    /// + Inventory/Supply/FixedAsset/Service + semantic match for
+    /// equivalent-but-differently-named items.
+    /// </summary>
+    [HttpPost("ocr/{scanResultId:guid}/stock-decisions")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestStockDecisions(
+        Guid companyId, Guid scanResultId, CancellationToken ct)
+    {
+        var r = await _advAi.SuggestStockDecisionsAsync(companyId, scanResultId, ct);
+        return Ok(new ApiResponse<object>(true, ToAdvancedDto(r)));
+    }
+
+    /// <summary>Whole-company AR/AP analysis with risk buckets +
+    /// cash gap forecast. Used by reports / dashboard.</summary>
+    [HttpPost("ar-ap/analyze")]
+    public async Task<ActionResult<ApiResponse<object>>> AnalyzeArAp(
+        Guid companyId, CancellationToken ct)
+    {
+        var r = await _advAi.AnalyzeArApAsync(companyId, ct);
+        return Ok(new ApiResponse<object>(true, ToAdvancedDto(r)));
+    }
+
+    /// <summary>
+    /// "What can I create from this scanned doc?" AI proposes the
+    /// target doc type list (Invoice→Receipt+TaxInvoice+DeliveryNote
+    /// etc.) + prefill strategy per target.
+    /// </summary>
+    [HttpPost("ocr/{scanResultId:guid}/conversion-suggestions")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestConversion(
+        Guid companyId, Guid scanResultId, CancellationToken ct)
+    {
+        var r = await _advAi.SuggestDocumentConversionAsync(companyId, scanResultId, ct);
+        return Ok(new ApiResponse<object>(true, ToAdvancedDto(r)));
+    }
+
+    /// <summary>
+    /// Comprehensive bank-statement matching — 1to1, 1toMany, Manyto1,
+    /// Offset, WithDeductions, Incomplete patterns. Identifies missing
+    /// pieces when no complete match exists.
+    /// </summary>
+    [HttpPost("bank/{bankTransactionId:guid}/comprehensive-match")]
+    public async Task<ActionResult<ApiResponse<object>>> ComprehensiveBankMatch(
+        Guid companyId, Guid bankTransactionId, CancellationToken ct)
+    {
+        var r = await _advAi.ComprehensiveBankMatchAsync(companyId, bankTransactionId, ct);
+        return Ok(new ApiResponse<object>(true, ToAdvancedDto(r)));
+    }
+
+    private static object ToAdvancedDto(AdvancedAiResult r) => new
+    {
+        primary = r.Primary,
+        confidence = r.Confidence,
+        // Raw JSON the AI returned. UI parses per-feature fields
+        // (corrections, lines, targets, etc.) from this directly.
+        structured = r.StructuredJson,
+        risks = r.Risks,
+        complianceFlags = r.ComplianceFlags,
+        reasoning = r.Reasoning,
+        suggestedActions = r.SuggestedActions,
+        feedbackId = r.FeedbackId,
+        usedAi = r.UsedAi,
+    };
 
     private static IReadOnlyList<string> DeserializeList(string? json)
     {

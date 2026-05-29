@@ -219,6 +219,7 @@ builder.Services.AddScoped<Accounting.Services.Ai.IAiOrchestrator, Accounting.Se
 builder.Services.AddScoped<Accounting.Services.Ai.IOcrAiAugmenter, Accounting.Services.Ai.OcrAiAugmenter>();
 builder.Services.AddScoped<Accounting.Services.Ai.IDocumentAiAugmenter, Accounting.Services.Ai.DocumentAiAugmenter>();
 builder.Services.AddScoped<Accounting.Services.Ai.IBankAiAugmenter, Accounting.Services.Ai.BankAiAugmenter>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAdvancedAiAugmenter, Accounting.Services.Ai.AdvancedAiAugmenter>();
 
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();
