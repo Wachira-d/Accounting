@@ -45,7 +45,12 @@ const ThaiAddress = (() => {
 
   async function _fetch(path) {
     const res = await fetch(BASE + path);
-    if (!res.ok) throw new Error('address api ' + res.status);
+    if (!res.ok) {
+      // Log so missing-data symptoms ("ไม่ขึ้นอะไรเลย") are debuggable from
+      // the browser console instead of failing silently.
+      console.warn('[ThaiAddress] ' + BASE + path + ' → HTTP ' + res.status);
+      throw new Error('address api ' + res.status);
+    }
     const j = await res.json();
     return j.data || j;
   }
@@ -89,7 +94,10 @@ const ThaiAddress = (() => {
       document.body.appendChild(dl);
     }
     input.setAttribute('list', listId);
-    input.setAttribute('autocomplete', 'off');
+    // NOT setting autocomplete="off" — Chrome can suppress datalist
+    // suggestions on inputs with that attribute. The browser's own address
+    // autocomplete is harmless on a datalist-backed field; it just doesn't
+    // fight for the same dropdown space.
   }
 
   function _fillList(listId, names) {
@@ -217,6 +225,43 @@ const ThaiAddress = (() => {
     await _refreshSubs(prov, dist, sub);
   }
 
+  // Public: when the postal box is filled (DBD lookup, paste-parse, manual
+  // type) but subDistrict / district / province aren't, look up the postal
+  // and autofill. Single match → fill silently; multi → picker. Use this
+  // after any programmatic fill that bypasses the user's `input` event
+  // (assigning `el.value = ...` doesn't fire input listeners). Returns the
+  // results so callers can know if a picker was shown.
+  async function autoFillFromPostal(ids) {
+    const sub  = document.getElementById(ids.subDistrict);
+    const dist = document.getElementById(ids.district);
+    const prov = document.getElementById(ids.province);
+    const zip  = document.getElementById(ids.postalCode);
+    if (!sub || !dist || !prov || !zip) return null;
+    const code = (zip.value || '').replace(/\D/g, '').slice(0, 5);
+    if (code.length !== 5) return null;
+    // Skip if everything is already filled — don't fight the user.
+    if (sub.value && dist.value && prov.value) return null;
+    try {
+      const results = await getByPostal(code);
+      if (!results || !results.length) return null;
+      if (results.length === 1) {
+        const r = results[0];
+        if (!sub.value)  sub.value  = r.subDistrictNameTh;
+        if (!dist.value) dist.value = r.districtNameTh;
+        if (!prov.value) prov.value = r.provinceNameTh;
+        await _refreshSubs(prov, dist, sub);
+        return results;
+      }
+      // Multi-match — let the picker do the work. Reuses the same modal the
+      // input listener uses. Pre-fills province if it's the only common one
+      // (saves a click when all matches share a province).
+      const uniqueProvs = [...new Set(results.map(r => r.provinceNameTh))];
+      if (uniqueProvs.length === 1 && !prov.value) prov.value = uniqueProvs[0];
+      _showPostalPicker(code, results, { sub, dist, prov });
+      return results;
+    } catch { return null; }
+  }
+
   function enhance(ids) {
     const sub  = document.getElementById(ids.subDistrict);
     const dist = document.getElementById(ids.district);
@@ -230,12 +275,12 @@ const ThaiAddress = (() => {
     _ensureList(dist, 'thAddrDistList');
     _ensureList(sub,  'thAddrSubList');
 
-    // Province list is small (~77) — load once and keep.
+    // Province list is small (~77) — load once and keep. Log failures so
+    // empty-dropdown symptoms are diagnosable from DevTools.
     getProvinces().then(provs => {
       _fillList('thAddrProvList', provs.map(p => p.nameTh));
-      // Warm the cascade against any pre-filled values (edit mode).
       if (prov.value) _refreshSubs(prov, dist, sub).catch(() => {});
-    }).catch(() => {});
+    }).catch(err => console.warn('[ThaiAddress] province load failed', err));
 
     // Province handlers — normalize aliases on blur, refresh cascade on
     // commit. We don't auto-clear district when province is wiped completely
@@ -321,5 +366,5 @@ const ThaiAddress = (() => {
     });
   }
 
-  return { enhance, refresh, normalize, getProvinces, getDistricts, getSubDistricts, getByPostal };
+  return { enhance, refresh, normalize, autoFillFromPostal, getProvinces, getDistricts, getSubDistricts, getByPostal };
 })();

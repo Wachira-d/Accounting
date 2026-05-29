@@ -248,25 +248,46 @@
           // Default branch to 00000 (head office) for juristic
           if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
           if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
-          // Auto-parse the DBD address to extract building number + moo +
-          // street into structured fields. DBD address sometimes hides Moo
-          // inside the free-text line so the parser is our best shot at
-          // surfacing it.
+          // Auto-parse the DBD address to extract every structured field that
+          // DbdLookup._parseThaiAddress missed (and Moo, which it doesn't
+          // surface even on a good match). The backend ThaiAddressParser is
+          // more forgiving than the JS regex, and even when it fails the
+          // postal-code reverse-lookup below is the bulletproof fallback.
           const rawAddr = document.getElementById('fAddress').value;
           if (rawAddr) {
             const api = Layout.api();
             if (api) api.parseAddress(rawAddr).then(async j => {
               const p = (j && j.data) || {};
-              if (p.buildingNumber && !document.getElementById('fBuildingNumber').value) document.getElementById('fBuildingNumber').value = p.buildingNumber;
-              if (p.buildingName && !document.getElementById('fBuildingName').value) document.getElementById('fBuildingName').value = p.buildingName;
-              if (p.moo && !document.getElementById('fMoo').value) document.getElementById('fMoo').value = p.moo;
-              if (p.streetName && !document.getElementById('fStreetName').value) document.getElementById('fStreetName').value = p.streetName;
-              // Normalize the DBD province (often "กรุงเทพมหานคร" already, but
-              // sometimes "กทม") and refresh the cascading datalists so the
-              // user gets autocomplete on the fields DBD already filled.
+              const setIfEmpty = (id, val) => {
+                if (!val) return;
+                const el = document.getElementById(id);
+                if (el && !el.value) el.value = val;
+              };
+              setIfEmpty('fBuildingNumber', p.buildingNumber);
+              setIfEmpty('fBuildingName',   p.buildingName);
+              setIfEmpty('fMoo',            p.moo);
+              setIfEmpty('fStreetName',     p.streetName);
+              setIfEmpty('fSubDistrict',    p.subDistrict);
+              setIfEmpty('fDistrict',       p.district);
+              setIfEmpty('fProvince',       p.province);
+              setIfEmpty('fPostalCode',     p.postalCode);
+
               if (typeof ThaiAddress !== 'undefined') {
+                // Normalize the DBD province alias (กทม → กรุงเทพมหานคร) so
+                // the cascade can find district matches.
                 const provEl = document.getElementById('fProvince');
                 if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+                // Postal-driven autofill: when the postal box has 5 digits
+                // but tambon/amphur/province are still blank, fetch the
+                // postal and fill them. Programmatic `el.value = ...` doesn't
+                // fire the `input` event the widget listens for, so this
+                // explicit call is required after every DBD / paste fill.
+                await ThaiAddress.autoFillFromPostal({
+                  subDistrict: 'fSubDistrict', district: 'fDistrict',
+                  province: 'fProvince', postalCode: 'fPostalCode',
+                });
+                // Warm the cascading datalists with whatever values we
+                // ended up with so manual edits get autocomplete suggestions.
                 await ThaiAddress.refresh({
                   subDistrict: 'fSubDistrict', district: 'fDistrict',
                   province: 'fProvince', postalCode: 'fPostalCode',
@@ -383,6 +404,12 @@
           if (typeof ThaiAddress !== 'undefined') {
             const provEl = document.getElementById('fProvince');
             if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+            // Postal-driven fallback for any field the parser couldn't
+            // extract — the gov postal endpoint is the canonical source.
+            await ThaiAddress.autoFillFromPostal({
+              subDistrict: 'fSubDistrict', district: 'fDistrict',
+              province: 'fProvince', postalCode: 'fPostalCode',
+            });
             await ThaiAddress.refresh({
               subDistrict: 'fSubDistrict', district: 'fDistrict',
               province: 'fProvince', postalCode: 'fPostalCode',

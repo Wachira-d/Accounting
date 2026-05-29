@@ -112,7 +112,7 @@
                     <div style="font-size:12px;color:#94a3b8">${c.taxId || '-'}</div>
                   </td>
                   <td>${c.owner ? `<div>${c.owner.fullName}</div><div style="font-size:12px;color:#94a3b8">${c.owner.email}</div>` : '-'}</td>
-                  <td>${c.subscription ? AdminLayout.planBadge(c.subscription.plan) : '<span style="color:#94a3b8">-</span>'}</td>
+                  <td>${c.subscription ? AdminLayout.planBadge(c.subscription.plan) + (c.subscription.viaLicense ? ` <span title="ผ่าน License ของ ${c.subscription.licenseOwnerEmail || '-'}" style="background:#ecfeff;color:#0c4a6e;border:1px solid #67e8f9;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🎫</span>` : '') : '<span style="color:#94a3b8">-</span>'}</td>
                   <td>${c.subscription ? AdminLayout.statusBadge(c.subscription.status) : '<span style="color:#94a3b8">ไม่มี</span>'}</td>
                   <td>${c.userCount}</td>
                   <td>${AdminLayout.date(c.createdAt)}</td>

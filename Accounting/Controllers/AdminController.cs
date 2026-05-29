@@ -191,6 +191,11 @@ public class AdminController : ControllerBase
         var query = _db.Companies
             .Include(c => c.CompanyUsers).ThenInclude(cu => cu.User)
             .Include(c => c.Subscription)
+                .ThenInclude(s => s!.AccountSubscription)
+                    .ThenInclude(a => a!.PlanTemplate)
+            .Include(c => c.Subscription)
+                .ThenInclude(s => s!.AccountSubscription)
+                    .ThenInclude(a => a!.Owner)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -199,14 +204,26 @@ public class AdminController : ControllerBase
                 c.CompanyUsers.Any(cu => cu.User.Email.Contains(search)));
         }
 
+        // Filter by plan: match the EFFECTIVE plan. A company attached to an
+        // Enterprise License should appear under the "Enterprise" filter even
+        // though its per-company sub.Plan is still FreeTrial — that was the
+        // original bug ("เน็ก แอค" attached to Enterprise still showed
+        // ทดลองใช้" in the list).
         if (Enum.TryParse<SubscriptionPlan>(plan, true, out var planEnum))
         {
-            query = query.Where(c => c.Subscription != null && c.Subscription.Plan == planEnum);
+            query = query.Where(c => c.Subscription != null && (
+                (c.Subscription.AccountSubscriptionId == null && c.Subscription.Plan == planEnum) ||
+                (c.Subscription.AccountSubscription != null && c.Subscription.AccountSubscription.PlanTemplate.Plan == planEnum)
+            ));
         }
 
+        // Same overlay logic for status.
         if (Enum.TryParse<SubscriptionStatus>(status, true, out var statusEnum))
         {
-            query = query.Where(c => c.Subscription != null && c.Subscription.Status == statusEnum);
+            query = query.Where(c => c.Subscription != null && (
+                (c.Subscription.AccountSubscriptionId == null && c.Subscription.Status == statusEnum) ||
+                (c.Subscription.AccountSubscription != null && c.Subscription.AccountSubscription.Status == statusEnum)
+            ));
         }
 
         var total = await query.CountAsync();
@@ -228,12 +245,31 @@ public class AdminController : ControllerBase
                 userCount = c.CompanyUsers.Count,
                 subscription = c.Subscription == null ? null : new
                 {
-                    c.Subscription.Plan,
-                    c.Subscription.Status,
+                    // Effective plan + status + end-date come from the License
+                    // when attached. Without this overlay the list view kept
+                    // showing the stale per-company FreeTrial labels even after
+                    // admin attached the company to an Enterprise License.
+                    Plan = c.Subscription.AccountSubscription != null
+                        ? c.Subscription.AccountSubscription.PlanTemplate.Plan
+                        : c.Subscription.Plan,
+                    Status = c.Subscription.AccountSubscription != null
+                        ? c.Subscription.AccountSubscription.Status
+                        : c.Subscription.Status,
+                    // Billing fields stay per-company — they describe how
+                    // THIS company is billed, which is independent of the
+                    // License's pricing.
                     c.Subscription.BillingCycle,
                     c.Subscription.PricePerCycle,
                     c.Subscription.StartDate,
-                    c.Subscription.EndDate
+                    EndDate = c.Subscription.AccountSubscription != null
+                        ? c.Subscription.AccountSubscription.EndDate
+                        : c.Subscription.EndDate,
+                    // Surface the License attachment so the UI can show a
+                    // "via License: <ownerName>" badge if it wants to.
+                    ViaLicense = c.Subscription.AccountSubscriptionId != null,
+                    LicenseOwnerEmail = c.Subscription.AccountSubscription != null
+                        ? c.Subscription.AccountSubscription.Owner.Email
+                        : null,
                 }
             })
             .ToListAsync();
