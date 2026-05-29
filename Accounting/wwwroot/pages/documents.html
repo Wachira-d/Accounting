@@ -158,27 +158,26 @@
                ต้องออกใบกำกับภาษีตอนได้รับเงิน — flow default ของระบบ
                (issue → wait → record payment) บังคับให้กด 2 ครั้งซึ่งผิด
                กฎหมายสำหรับบริการและไม่จำเป็นสำหรับเงินสด ติ๊กช่องนี้แล้ว
-               ระบบจะสร้างใบเสร็จ + บันทึกรับเงินอัตโนมัติในคลิกเดียว -->
+               ระบบจะสร้างใบเสร็จ + บันทึกรับเงินอัตโนมัติในคลิกเดียว.
+               วิธีรับเงิน derive จาก "แหล่งเงิน / ช่องทางชำระ" ด้านบน —
+               ป้องกัน UX trap ที่ user เลือกช่องทางเป็นเงินสด แต่กดวิธี
+               เป็นโอน (channel drives GL, method ไม่ — ก่อนหน้านี้ผู้ใช้
+               สามารถสร้าง mismatch ได้ ทำให้ report กับ GL ไม่ตรงกัน). -->
           <div id="paidOnIssueSection" style="margin-bottom:12px;background:#ecfdf5;border:1px solid #10b981;border-radius:8px;padding:10px 14px;display:none">
             <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
               <input type="checkbox" id="fPaidOnIssue" style="margin-top:3px">
-              <div>
+              <div style="flex:1">
                 <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — สร้างใบเสร็จพร้อมกัน</div>
                 <div style="color:#047857;font-size:12px;margin-top:2px">
                   ติ๊กถ้าเป็นขายเงินสด / บริการที่ได้รับเงินแล้ว — ระบบจะ
                   อนุมัติเอกสาร + บันทึกชำระ + ออกใบเสร็จในคลิกเดียว
                   (ตามประมวลรัษฎากร §78/1 บริการต้องออกใบกำกับตอนรับเงิน)
                 </div>
-                <div id="fPaidOnIssueMethodRow" style="display:none;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                  <span style="font-size:12px;color:#065f46">วิธีรับเงิน:</span>
-                  <select id="fPaidOnIssueMethod" style="padding:4px 8px;font-size:12px;border:1px solid #6ee7b7;border-radius:6px;background:#fff">
-                    <option value="Cash">เงินสด</option>
-                    <option value="BankTransfer" selected>โอนเงิน</option>
-                    <option value="PromptPay">PromptPay</option>
-                    <option value="CreditCard">บัตรเครดิต</option>
-                    <option value="Cheque">เช็ค</option>
-                    <option value="Other">อื่นๆ</option>
-                  </select>
+                <div id="fPaidOnIssueDerivedRow" style="display:none;margin-top:10px;background:#fff;border:1px dashed #6ee7b7;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.7">
+                  <div style="color:#065f46;font-weight:600;margin-bottom:2px">📌 ใช้ช่องทางเดียวกับ "แหล่งเงิน / ช่องทางชำระ" ด้านบน</div>
+                  <div>เงินเข้าบัญชี: <span id="fPaidOnIssueChannelLabel" style="font-weight:600;color:#0f172a">เงินสด (ค่าเริ่มต้น)</span></div>
+                  <div>วิธีรับเงิน (metadata): <span id="fPaidOnIssueDerivedMethod" style="font-weight:600;color:#0f172a">Cash</span></div>
+                  <div style="color:#64748b;font-size:11px;margin-top:4px">ถ้าต้องการเปลี่ยน — แก้ "แหล่งเงิน" ด้านบน ระบบจะ sync ให้ตรงกันอัตโนมัติ (ลงบัญชีจะใช้ช่องทางนี้ — กันลงผังผิดที่ป้องกันด้วย)</div>
                 </div>
               </div>
             </label>
@@ -489,17 +488,24 @@
         if (sideParam) this.setSide(sideParam);
         else await this.load();
 
-        // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide method picker when
-        // the checkbox toggles. The visibility of the whole block is
+        // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide the derived-method
+        // hint when the checkbox toggles. Whole block visibility is
         // managed by onDocTypeChange so it only appears for AR types
-        // that actually recognize revenue.
+        // that actually recognize revenue. The method itself is derived
+        // from the payment-channel dropdown to prevent the channel/method
+        // mismatch UX trap (channel drives GL — method is metadata only).
         const paidCb = document.getElementById('fPaidOnIssue');
-        const paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        const paidRow = document.getElementById('fPaidOnIssueDerivedRow');
         if (paidCb && paidRow) {
           paidCb.addEventListener('change', () => {
-            paidRow.style.display = paidCb.checked ? 'flex' : 'none';
+            paidRow.style.display = paidCb.checked ? 'block' : 'none';
+            if (paidCb.checked) this._syncPaidOnIssueMethod();
           });
         }
+        // Whenever the user changes "แหล่งเงิน / ช่องทางชำระ", refresh
+        // the derived method so the green hint stays in lockstep.
+        const pcEl = document.getElementById('fPaymentChannel');
+        if (pcEl) pcEl.addEventListener('change', () => this._syncPaidOnIssueMethod());
 
         // Restore strict-products preference + wire the hint to track it.
         // Default is ON ("เฉพาะสินค้าในระบบ") — most operators want clean
@@ -648,6 +654,57 @@
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
       },
+      /**
+       * Derive a PaymentMethod enum value from the selected paymentChannel.
+       * fPaymentChannel encodes:
+       *   "bank:<bankAccountId>"    → most commonly BankTransfer (could also
+       *                                be Cheque/PromptPay — that's why the
+       *                                detail-modal recordPayment keeps the
+       *                                explicit picker. For the cash-sale
+       *                                checkbox we default to BankTransfer
+       *                                so it stays consistent with the GL
+       *                                hitting a bank account.)
+       *   "account:<chartId>"       → look up the account code:
+       *                                 1111 / 111x  → Cash
+       *                                 113x / 114x  → EWallet
+       *                                 anything else → Other
+       *   "" (empty / cash default) → Cash
+       * Returns {method, label} so the UI can show what the user sees.
+       */
+      _deriveMethodFromChannel() {
+        const pcEl = document.getElementById('fPaymentChannel');
+        const val = pcEl?.value || '';
+        if (val.startsWith('bank:')) {
+          const id = val.substring(5);
+          const ba = (this.bankAccounts || []).find(a => a.id === id);
+          const lbl = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})` : 'บัญชีธนาคาร';
+          return { method: 'BankTransfer', label: lbl };
+        }
+        if (val.startsWith('account:')) {
+          const id = val.substring(8);
+          const acc = (this.paymentChannels || []).find(a => a.id === id);
+          const code = acc?.accountCode || '';
+          const name = acc?.accountName || 'บัญชี';
+          let method = 'Other';
+          // Cash group (TFRS chart of accounts: 1111 cash on hand, 1112 cash
+          // in bank — bank lives in the bank: branch; 1113-1119 typically
+          // petty cash / change fund variants).
+          if (code.startsWith('111')) method = 'Cash';
+          else if (code.startsWith('1131') || code.startsWith('1132')) method = 'EWallet';
+          return { method, label: `${code} - ${name}` };
+        }
+        return { method: 'Cash', label: 'เงินสด (ค่าเริ่มต้น)' };
+      },
+      _syncPaidOnIssueMethod() {
+        const cb = document.getElementById('fPaidOnIssue');
+        if (!cb || !cb.checked) return;
+        const { method, label } = this._deriveMethodFromChannel();
+        const mEl = document.getElementById('fPaidOnIssueDerivedMethod');
+        const lEl = document.getElementById('fPaidOnIssueChannelLabel');
+        if (mEl) mEl.textContent = method;
+        if (lEl) lEl.textContent = label;
+      },
+
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
@@ -671,7 +728,7 @@
         if (paidSection && paidSection.style.display === 'none') {
           const cb = document.getElementById('fPaidOnIssue');
           if (cb) cb.checked = false;
-          const row = document.getElementById('fPaidOnIssueMethodRow');
+          const row = document.getElementById('fPaidOnIssueDerivedRow');
           if (row) row.style.display = 'none';
         }
       },
@@ -1054,7 +1111,7 @@
         // a previous create would silently auto-pay the next document.
         const _paidCb = document.getElementById('fPaidOnIssue');
         if (_paidCb) _paidCb.checked = false;
-        const _paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        const _paidRow = document.getElementById('fPaidOnIssueDerivedRow');
         if (_paidRow) _paidRow.style.display = 'none';
         document.getElementById('fCustomAppendix').value = '';
         document.getElementById('fCustomFooterNotes').value = '';
@@ -1284,7 +1341,9 @@
           // surface as a warning toast so the operator knows.
           const paidNow = document.getElementById('fPaidOnIssue')?.checked;
           if (paidNow && !this.editingId && savedDocId) {
-            const method = document.getElementById('fPaidOnIssueMethod')?.value || 'BankTransfer';
+            // Derive method from the chosen payment channel — single source
+            // of truth so the Payment metadata can't drift from the GL.
+            const method = this._deriveMethodFromChannel().method;
             try {
               await api.approveDocument(savedDocId);
               // Re-fetch to get authoritative totals + balanceDue (server
