@@ -122,6 +122,13 @@
       async loadBalance() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         const yr = document.getElementById('yearFilter').value || new Date().getFullYear();
+        // Pre-load holidays so the day-count function can exclude
+        // company holidays from TotalDays calculations. Fail soft —
+        // when not available the picker uses the raw day diff.
+        try {
+          const hr = await API.get(`/api/companies/${cid}/leaves/admin/holidays?year=${yr}`).catch(() => null);
+          this._holidays = (hr?.data || []).map(h => h.date.split('T')[0]);
+        } catch { this._holidays = []; }
         try {
           const r = await API.get(`/api/companies/${cid}/leaves/me/balance?year=${yr}`);
           const d = r?.data;
@@ -226,11 +233,35 @@
         if (!s || !e) return;
         const half = parseInt(document.querySelector('input[name="fHalfDay"]:checked')?.value || '0');
         const start = new Date(s), end = new Date(e);
-        let days = Math.floor((end - start) / (1000*60*60*24)) + 1;
-        if (days < 0) days = 0;
-        // Half-day only meaningful for single-day requests.
+        if (end < start) { document.getElementById('fDays').value = 0; return; }
+        // Holiday-aware count — iterate each calendar day in the range,
+        // skip Sat/Sun + public holidays. Matches what payroll counts as
+        // "working days" so quota deduction is fair to the employee.
+        // (Thai practice: weekend leave doesn't burn quota.)
+        const holidays = new Set(this._holidays || []);
+        let days = 0;
+        const cur = new Date(start);
+        while (cur <= end) {
+          const iso = cur.toISOString().split('T')[0];
+          const dow = cur.getDay();
+          const isWeekend = dow === 0 || dow === 6;
+          const isHoliday = holidays.has(iso);
+          if (!isWeekend && !isHoliday) days++;
+          cur.setDate(cur.getDate() + 1);
+        }
+        // Half-day only meaningful when range is a single working day.
         if (half > 0 && days === 1) days = 0.5;
         document.getElementById('fDays').value = days;
+        // Show what got skipped — soft hint so employee understands why
+        // count differs from raw date diff.
+        const rawDays = Math.floor((end - start) / (1000*60*60*24)) + 1;
+        const skipped = rawDays - days - (half > 0 && days === 0.5 ? 0.5 : 0);
+        const hint = document.getElementById('fDaysHint');
+        if (hint) {
+          hint.textContent = skipped > 0
+            ? `(หัก ${skipped} วันที่เป็นเสาร์-อาทิตย์ / วันหยุดประจำปี)`
+            : '(คำนวณอัตโนมัติ)';
+        }
       },
 
       async submit() {
