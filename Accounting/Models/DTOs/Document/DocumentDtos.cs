@@ -219,7 +219,14 @@ public record DocumentLineFulfillmentResponse(
 
 public record ContactBrief(Guid Id, string Name, string? TaxId);
 
-public record ApproveDocumentRequest(string? Notes);
+public record ApproveDocumentRequest(string? Notes, bool AcknowledgeWarnings = false);
+
+/// <summary>Returned on the first approve attempt when pre-approval checks
+/// produced soft warnings (legal/correct but unusual). Operator reviews the
+/// list and retries with AcknowledgeWarnings=true to proceed. Hard errors
+/// (data corruption / illegal state) still throw inline — they're never
+/// surfaced as warnings.</summary>
+public record ApprovalWarningsResponse(IReadOnlyList<string> Warnings);
 
 // ===== Contact =====
 public record CreateContactRequest(

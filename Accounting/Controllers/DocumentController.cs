@@ -132,11 +132,24 @@ public class DocumentController : ControllerBase
     }
 
     [HttpPost("{documentId:guid}/approve")]
-    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ApproveDocument(Guid companyId, Guid documentId)
+    public async Task<ActionResult<ApiResponse<object>>> ApproveDocument(Guid companyId, Guid documentId, [FromBody] ApproveDocumentRequest? request = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _documentService.ApproveDocumentAsync(companyId, documentId, userId);
-        return Ok(new ApiResponse<DocumentResponse>(true, result, "อนุมัติเอกสารสำเร็จ"));
+        try
+        {
+            var result = await _documentService.ApproveDocumentAsync(companyId, documentId, userId, request?.AcknowledgeWarnings ?? false);
+            return Ok(new ApiResponse<object>(true, result, "อนุมัติเอกสารสำเร็จ"));
+        }
+        catch (DocumentApprovalWarningsException ex)
+        {
+            // 422 Unprocessable Entity — semantically "request is well-
+            // formed but content violates a pre-condition". Frontend
+            // recognises the shape, prompts the operator with the warning
+            // list, and re-submits with AcknowledgeWarnings=true.
+            return StatusCode(422, new ApiResponse<object>(false,
+                new ApprovalWarningsResponse(ex.Warnings),
+                ex.Message));
+        }
     }
 
     [HttpPost("{documentId:guid}/void")]
