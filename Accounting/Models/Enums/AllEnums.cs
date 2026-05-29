@@ -311,7 +311,11 @@ public enum ReconciliationStatus
 {
     Unmatched = 0,
     Matched = 1,
-    Excluded = 2
+    Excluded = 2,
+    /// <summary>AI-suggested match — user must confirm in the bank
+    /// reconciliation UI before it counts as Matched. Used when local
+    /// strict-match misses but AI re-ranking finds a likely candidate.</summary>
+    Suggested = 3,
 }
 
 // ==================== Recurring ====================
