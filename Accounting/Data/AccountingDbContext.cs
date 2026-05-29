@@ -434,6 +434,21 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(s => !s.IsDeleted);
         });
 
+        // ===== AccountSubscription =====
+        // Without explicit FK binding, EF's convention names the FK for the
+        // `Owner` nav `OwnerId` (NavName + "Id") and creates a SHADOW column
+        // of that name. The schema migration adds an `OwnerUserId` column but
+        // EF inserts use the shadow `OwnerId` set to Guid.Empty, which fails
+        // FK_AccountSubscriptions_Users_OwnerId. Force EF to use OwnerUserId.
+        modelBuilder.Entity<AccountSubscription>(e =>
+        {
+            e.HasOne(a => a.Owner).WithMany().HasForeignKey(a => a.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(a => a.PlanTemplate).WithMany().HasForeignKey(a => a.PlanTemplateId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(a => a.MonthlyPrice).HasPrecision(18, 2);
+            e.Property(a => a.AnnualPrice).HasPrecision(18, 2);
+            e.HasQueryFilter(a => !a.IsDeleted);
+        });
+
         // ===== TrialConfig =====
         modelBuilder.Entity<TrialConfig>(e =>
         {

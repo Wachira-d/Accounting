@@ -2288,6 +2288,15 @@ public static class DatabaseMigrationHelper
             // doesn't double-send.
             """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "LastExpiryReminderAt" timestamp NULL;""",
             """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "ExpiryRemindersSentMask" integer NOT NULL DEFAULT 0;""",
+            // EF Core convention auto-created a shadow "OwnerId" FK column +
+            // FK constraint because AccountSubscription.Owner nav wasn't bound
+            // to OwnerUserId in OnModelCreating. The shadow column defaults to
+            // Guid.Empty on insert and trips the FK — every "create License"
+            // call blew up with FK_AccountSubscriptions_Users_OwnerId. We've
+            // since added explicit fluent config; this cleans up the orphan
+            // on existing databases.
+            """ALTER TABLE "AccountSubscriptions" DROP CONSTRAINT IF EXISTS "FK_AccountSubscriptions_Users_OwnerId";""",
+            """ALTER TABLE "AccountSubscriptions" DROP COLUMN IF EXISTS "OwnerId";""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).
