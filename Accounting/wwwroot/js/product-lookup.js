@@ -13,13 +13,15 @@ const ProductLookup = {
     if (!inputEl || inputEl.dataset.productLookupAttached === '1') return;
     inputEl.dataset.productLookupAttached = '1';
 
-    // Dropdown lives on document.body so the form modal's overflow:auto
-    // can't clip it. Position is computed from inputEl.getBoundingClientRect()
-    // — same as a tooltip / picker. Without this the dropdown rendered
-    // correctly but was clipped by the modal, so the user saw nothing.
+    // Position:fixed (vs. position:absolute) + viewport coords from
+    // getBoundingClientRect. position:absolute is relative to the nearest
+    // positioned ancestor — body has no transform but the form modal's
+    // ancestor stacking context can still suppress visibility in edge
+    // cases. position:fixed renders relative to the viewport with no
+    // ancestor influence, the safest bet across browsers.
     const dropdown = document.createElement('div');
     dropdown.className = 'product-dropdown';
-    dropdown.style.cssText = 'display:none;position:absolute;z-index:99999;' +
+    dropdown.style.cssText = 'display:none;position:fixed;z-index:99999;' +
       'min-width:380px;max-width:520px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;' +
       'box-shadow:0 8px 24px rgba(0,0,0,0.18);max-height:320px;overflow-y:auto';
     document.body.appendChild(dropdown);
@@ -27,30 +29,34 @@ const ProductLookup = {
 
     const positionDropdown = () => {
       const r = inputEl.getBoundingClientRect();
-      dropdown.style.left = (window.scrollX + r.left) + 'px';
-      dropdown.style.top  = (window.scrollY + r.bottom + 2) + 'px';
+      dropdown.style.left = r.left + 'px';
+      dropdown.style.top  = (r.bottom + 2) + 'px';
       dropdown.style.width = Math.max(r.width, 380) + 'px';
     };
 
-    inputEl.addEventListener('input', () => {
+    const triggerSearch = () => {
       clearTimeout(this._debounceTimer);
       const q = inputEl.value.trim();
       if (q.length < 2) { dropdown.style.display = 'none'; return; }
+      // Render the "loading" frame immediately so the user knows the
+      // lookup fired even if the API takes a moment to respond.
+      positionDropdown();
+      dropdown.innerHTML = '<div style="padding:12px;text-align:center;color:#94a3b8;font-size:13px">กำลังค้นหาสินค้า…</div>';
+      dropdown.style.display = 'block';
       this._debounceTimer = setTimeout(() => {
-        positionDropdown();
         this._search(q, inputEl, dropdown, onSelect);
       }, 250);
-    });
+    };
 
-    inputEl.addEventListener('focus', () => {
-      if (inputEl.value.trim().length >= 2 && dropdown.children.length > 0) {
-        positionDropdown();
-        dropdown.style.display = 'block';
-      }
-    });
+    inputEl.addEventListener('input', triggerSearch);
+    // Focus-time re-trigger: when the user clicks back into a line that
+    // already has 2+ chars typed (or a chip-detached product code), show
+    // the dropdown again without making them re-type.
+    inputEl.addEventListener('focus', triggerSearch);
 
-    // Reposition when the user scrolls the modal or resizes the window —
-    // otherwise a long ingredient list could leave the dropdown stranded.
+    // Reposition while the dropdown is open. `scroll` with capture so we
+    // catch scrolls on any ancestor (including the form modal itself
+    // when it has overflow:auto), not just the window.
     const reposition = () => { if (dropdown.style.display === 'block') positionDropdown(); };
     window.addEventListener('scroll', reposition, true);
     window.addEventListener('resize', reposition);
@@ -82,10 +88,17 @@ const ProductLookup = {
     if (cached && (now - cached.t) < this._cacheMaxAge) {
       items = cached.items;
     } else {
-      dropdown.innerHTML = '<div style="padding:12px;text-align:center;color:#94a3b8;font-size:13px">กำลังค้นหาสินค้า…</div>';
-      dropdown.style.display = 'block';
+      // The triggerSearch path already painted "กำลังค้นหา..." so we don't
+      // re-set it here. That keeps the dropdown from flickering when the
+      // cached path returns sub-millisecond.
       try {
-        const api = Layout.api(); if (!api) return;
+        const api = Layout.api();
+        if (!api) {
+          dropdown.innerHTML = '<div style="padding:12px;text-align:center;color:#ef4444;font-size:13px">ยังไม่ได้เลือกบริษัท — โปรดเลือกบริษัทก่อน</div>';
+          dropdown.style.display = 'block';
+          console.warn('[ProductLookup] Layout.api() returned null (no current company)');
+          return;
+        }
         const res = await api.getProducts(`?search=${encodeURIComponent(q)}&pageSize=10`);
         items = (res.data?.items) || res.data || [];
         // Cap cache — drop the oldest entry once we exceed the budget.
@@ -94,7 +107,9 @@ const ProductLookup = {
         }
         this._cache.set(q, { t: now, items });
       } catch (e) {
-        dropdown.innerHTML = '<div style="padding:12px;text-align:center;color:#ef4444;font-size:13px">ค้นหาสินค้าไม่สำเร็จ</div>';
+        console.warn('[ProductLookup] search failed for', q, e);
+        dropdown.innerHTML = '<div style="padding:12px;text-align:center;color:#ef4444;font-size:13px">ค้นหาสินค้าไม่สำเร็จ — ' + (e.message || 'โปรดลองอีกครั้ง') + '</div>';
+        dropdown.style.display = 'block';
         return;
       }
     }

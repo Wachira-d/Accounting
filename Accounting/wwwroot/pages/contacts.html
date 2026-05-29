@@ -331,7 +331,7 @@
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = 'none';
         this.onContactTypeChange();
         Layout.openModal('formModal');
-        setTimeout(() => { this._attachDbd(); this._enhanceAddress(); }, 100);
+        setTimeout(() => { this._enhanceAddress(); this._attachDbd(); }, 100);
       },
       _enhanceAddress() {
         if (typeof ThaiAddress === 'undefined') return;
@@ -378,7 +378,7 @@
         document.getElementById('fDbdStatus').value = '';
         this.onContactTypeChange();
         Layout.openModal('formModal');
-        setTimeout(() => { this._attachDbd(); this._enhanceAddress(); }, 100);
+        setTimeout(() => { this._enhanceAddress(); this._attachDbd(); }, 100);
       },
       async parseFromPaste() {
         const text = document.getElementById('fAddressPaste').value;

@@ -147,6 +147,12 @@ const ThaiAddress = (() => {
 
     let cached = null;
     let lastFetchAt = 0;
+    // Track WHY we last opened — focus = show all options (user is browsing),
+    // input = show filtered (user is searching). Without this, focusing a
+    // field that already has "เมืองชลบุรี" auto-filled would show only that
+    // one match in the dropdown, blocking the user from picking a different
+    // district like "ศรีราชา" without first clearing the field.
+    let openMode = 'focus';
 
     function positionPopover() {
       const r = input.getBoundingClientRect();
@@ -157,7 +163,7 @@ const ThaiAddress = (() => {
 
     function render(items) {
       if (!items || !items.length) { pop.style.display = 'none'; return; }
-      pop.innerHTML = items.slice(0, 80).map(o =>
+      pop.innerHTML = items.slice(0, 200).map(o =>
         `<div class="thAddrOpt" data-v="${String(o).replace(/"/g, '&quot;')}" style="padding:8px 12px;cursor:pointer;color:#0f172a">${o}</div>`
       ).join('');
       pop.querySelectorAll('.thAddrOpt').forEach(el => {
@@ -188,14 +194,25 @@ const ThaiAddress = (() => {
         catch { cached = []; }
       }
       const q = (input.value || '').trim().toLowerCase();
-      const filtered = q
+      // On `focus` we always show every option — the user just clicked into
+      // the field, presumably to pick something. On `input` we filter so
+      // typing narrows the list. Without the openMode split, focusing a
+      // field that already had a value would filter the dropdown to ~1 row
+      // and trap the user.
+      const filtered = (openMode === 'input' && q)
         ? cached.filter(o => String(o).toLowerCase().includes(q))
         : cached;
       render(filtered);
     }
 
-    input.addEventListener('focus', showFiltered);
-    input.addEventListener('input', showFiltered);
+    // Public so the enhance() cascade can invalidate this popover's cache
+    // when its upstream input changes (e.g. province change → district
+    // cache stale). Stored on the input element via dataset so we can
+    // find it from outside the closure.
+    input.__thAddrInvalidate = () => { cached = null; lastFetchAt = 0; };
+
+    input.addEventListener('focus', () => { openMode = 'focus'; showFiltered(); });
+    input.addEventListener('input', () => { openMode = 'input'; showFiltered(); });
     input.addEventListener('blur', () => {
       // Slight delay so the option's click handler runs first.
       setTimeout(() => { pop.style.display = 'none'; }, 180);
@@ -270,6 +287,11 @@ const ThaiAddress = (() => {
 
   // Update the district + subdistrict datalists to match the currently-typed
   // province. Returns the resolved province object (or null if no match).
+  //
+  // Does NOT clear dist.value when the typed value doesn't match — the user
+  // may still be mid-typing and the partial doesn't have to match a list
+  // entry yet. Cascade clearing (when province genuinely changes to a new
+  // province) is handled by _onProvinceChanged below.
   async function _refreshDistricts(prov, dist, sub) {
     try {
       const provs = await getProvinces();
@@ -277,14 +299,6 @@ const ThaiAddress = (() => {
       if (!p) { _fillList('thAddrDistList', []); _fillList('thAddrSubList', []); return null; }
       const dists = await getDistricts(p.code);
       _fillList('thAddrDistList', dists.map(d => d.nameTh));
-      // If the typed district no longer belongs to this province, drop it +
-      // subdistrict + reset the subdistrict datalist. Without this users can
-      // end up with a Phuket province + Bangkok district saved.
-      if (dist.value && !_findByThai(dists, dist.value)) {
-        dist.value = '';
-        sub.value = '';
-        _fillList('thAddrSubList', []);
-      }
       return { p, dists };
     } catch { return null; }
   }
@@ -297,10 +311,57 @@ const ThaiAddress = (() => {
       if (!d) { _fillList('thAddrSubList', []); return null; }
       const subs = await getSubDistricts(d.code);
       _fillList('thAddrSubList', subs.map(s => s.nameTh));
-      // Same containment check at the subdistrict level.
-      if (sub.value && !_findByThai(subs, sub.value)) sub.value = '';
       return { d, subs };
     } catch { return null; }
+  }
+
+  // Cascade-clear runs ONLY when the parent field commits a new value. Drops
+  // child values that no longer belong to the new parent + invalidates the
+  // child popover caches so the next focus refetches with the right scope.
+  // Without the cache invalidation a user who:
+  //   1) picked ชลบุรี → focused district → cache fetched 11 districts
+  //   2) changed province to กรุงเทพมหานคร
+  //   3) focused district again
+  // ...would still see the stale ชลบุรี district list for up to 60s.
+  async function _onProvinceChanged(prov, dist, sub) {
+    if (dist.__thAddrInvalidate) dist.__thAddrInvalidate();
+    if (sub.__thAddrInvalidate) sub.__thAddrInvalidate();
+    if (!prov.value) {
+      _fillList('thAddrDistList', []);
+      _fillList('thAddrSubList', []);
+      return;
+    }
+    try {
+      const provs = await getProvinces();
+      const p = _findByThai(provs, prov.value);
+      if (!p) return;
+      const dists = await getDistricts(p.code);
+      _fillList('thAddrDistList', dists.map(d => d.nameTh));
+      // Drop district / subdistrict only when the existing value would now
+      // be cross-province nonsense. Free-text values that have no exact
+      // match are preserved (the user knows what they typed).
+      if (dist.value && _findByThai(provs, prov.value) && !_findByThai(dists, dist.value)) {
+        dist.value = '';
+        sub.value = '';
+        _fillList('thAddrSubList', []);
+      }
+    } catch {}
+  }
+
+  async function _onDistrictChanged(prov, dist, sub) {
+    if (sub.__thAddrInvalidate) sub.__thAddrInvalidate();
+    if (!prov.value || !dist.value) { _fillList('thAddrSubList', []); return; }
+    try {
+      const provs = await getProvinces();
+      const p = _findByThai(provs, prov.value);
+      if (!p) return;
+      const dists = await getDistricts(p.code);
+      const d = _findByThai(dists, dist.value);
+      if (!d) { _fillList('thAddrSubList', []); return; }
+      const subs = await getSubDistricts(d.code);
+      _fillList('thAddrSubList', subs.map(s => s.nameTh));
+      if (sub.value && !_findByThai(subs, sub.value)) sub.value = '';
+    } catch {}
   }
 
   // Public: re-run the cascade against current input values. Use after a
@@ -453,9 +514,16 @@ const ThaiAddress = (() => {
     });
 
     // Province handlers — normalize aliases on blur, refresh cascade on
-    // commit. We don't auto-clear district when province is wiped completely
-    // because the user might just be retyping; the cascade re-check on the
-    // next blur catches mismatches.
+    // commit. _onProvinceChanged invalidates the district + subdistrict
+    // popover caches so the next focus on those fields refetches with the
+    // new province scope; without that invalidation the user would see
+    // the previous province's districts for up to 60s.
+    //
+    // We only run the cascade clear on `change` (an explicit commit from
+    // the popover click or datalist pick) — NOT on `blur`, because losing
+    // focus mid-typing-a-real-name would erase a partial that should be
+    // preserved.
+    let lastProvCommitted = prov.value;
     const onProvCommit = async () => {
       const before = prov.value;
       const after = normalize(before, 'province');
@@ -466,14 +534,26 @@ const ThaiAddress = (() => {
       } else {
         _setNote(prov, '', '');
       }
-      await _refreshSubs(prov, dist, sub);
+      if (prov.value !== lastProvCommitted) {
+        lastProvCommitted = prov.value;
+        await _onProvinceChanged(prov, dist, sub);
+      } else {
+        await _refreshDistricts(prov, dist, sub);
+      }
     };
     prov.addEventListener('change', onProvCommit);
     prov.addEventListener('blur', onProvCommit);
 
-    // District handlers.
+    // District handlers — same pattern. Cascade-clear sub only on actual
+    // commit changes, refresh datalist on blur.
+    let lastDistCommitted = dist.value;
     const onDistCommit = async () => {
-      await _refreshSubs(prov, dist, sub);
+      if (dist.value !== lastDistCommitted) {
+        lastDistCommitted = dist.value;
+        await _onDistrictChanged(prov, dist, sub);
+      } else {
+        await _refreshSubs(prov, dist, sub);
+      }
     };
     dist.addEventListener('change', onDistCommit);
     dist.addEventListener('blur', onDistCommit);
