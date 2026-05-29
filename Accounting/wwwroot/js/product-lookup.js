@@ -13,31 +13,47 @@ const ProductLookup = {
     if (!inputEl || inputEl.dataset.productLookupAttached === '1') return;
     inputEl.dataset.productLookupAttached = '1';
 
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position:relative';
-    inputEl.parentNode.insertBefore(wrapper, inputEl);
-    wrapper.appendChild(inputEl);
-
+    // Dropdown lives on document.body so the form modal's overflow:auto
+    // can't clip it. Position is computed from inputEl.getBoundingClientRect()
+    // — same as a tooltip / picker. Without this the dropdown rendered
+    // correctly but was clipped by the modal, so the user saw nothing.
     const dropdown = document.createElement('div');
     dropdown.className = 'product-dropdown';
-    dropdown.style.cssText = 'display:none;position:absolute;top:100%;left:0;z-index:1100;' +
+    dropdown.style.cssText = 'display:none;position:absolute;z-index:99999;' +
       'min-width:380px;max-width:520px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;' +
-      'box-shadow:0 6px 16px rgba(0,0,0,0.12);max-height:320px;overflow-y:auto;margin-top:2px';
-    wrapper.appendChild(dropdown);
-    this._wrappers.add({ wrapper, dropdown });
+      'box-shadow:0 8px 24px rgba(0,0,0,0.18);max-height:320px;overflow-y:auto';
+    document.body.appendChild(dropdown);
+    this._wrappers.add({ wrapper: inputEl, dropdown });
+
+    const positionDropdown = () => {
+      const r = inputEl.getBoundingClientRect();
+      dropdown.style.left = (window.scrollX + r.left) + 'px';
+      dropdown.style.top  = (window.scrollY + r.bottom + 2) + 'px';
+      dropdown.style.width = Math.max(r.width, 380) + 'px';
+    };
 
     inputEl.addEventListener('input', () => {
       clearTimeout(this._debounceTimer);
       const q = inputEl.value.trim();
       if (q.length < 2) { dropdown.style.display = 'none'; return; }
-      this._debounceTimer = setTimeout(() => this._search(q, inputEl, dropdown, onSelect), 250);
+      this._debounceTimer = setTimeout(() => {
+        positionDropdown();
+        this._search(q, inputEl, dropdown, onSelect);
+      }, 250);
     });
 
     inputEl.addEventListener('focus', () => {
       if (inputEl.value.trim().length >= 2 && dropdown.children.length > 0) {
+        positionDropdown();
         dropdown.style.display = 'block';
       }
     });
+
+    // Reposition when the user scrolls the modal or resizes the window —
+    // otherwise a long ingredient list could leave the dropdown stranded.
+    const reposition = () => { if (dropdown.style.display === 'block') positionDropdown(); };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
 
     inputEl.addEventListener('keydown', (e) => {
       if (dropdown.style.display === 'none') return;
@@ -180,11 +196,14 @@ const ProductLookup = {
 };
 
 // Single document-level click listener — hides any open ProductLookup
-// dropdown when the user clicks outside its wrapper. Registered once at
-// module load so re-attaching to new rows doesn't accumulate listeners.
+// dropdown when the user clicks outside its input or dropdown. Registered
+// once at module load so re-attaching to new rows doesn't accumulate
+// listeners.
 document.addEventListener('click', (e) => {
   for (const entry of [...ProductLookup._wrappers]) {
     if (!entry.wrapper.isConnected) { ProductLookup._wrappers.delete(entry); continue; }
-    if (!entry.wrapper.contains(e.target)) entry.dropdown.style.display = 'none';
+    const insideInput = entry.wrapper.contains(e.target);
+    const insideDropdown = entry.dropdown.contains(e.target);
+    if (!insideInput && !insideDropdown) entry.dropdown.style.display = 'none';
   }
 });
