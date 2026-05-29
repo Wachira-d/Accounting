@@ -154,6 +154,36 @@
             <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
+          <!-- Cash-sale shortcut: ขายเงินสด + บริการ ตามประมวลรัษฎากร §78/1
+               ต้องออกใบกำกับภาษีตอนได้รับเงิน — flow default ของระบบ
+               (issue → wait → record payment) บังคับให้กด 2 ครั้งซึ่งผิด
+               กฎหมายสำหรับบริการและไม่จำเป็นสำหรับเงินสด ติ๊กช่องนี้แล้ว
+               ระบบจะสร้างใบเสร็จ + บันทึกรับเงินอัตโนมัติในคลิกเดียว -->
+          <div id="paidOnIssueSection" style="margin-bottom:12px;background:#ecfdf5;border:1px solid #10b981;border-radius:8px;padding:10px 14px;display:none">
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
+              <input type="checkbox" id="fPaidOnIssue" style="margin-top:3px">
+              <div>
+                <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — สร้างใบเสร็จพร้อมกัน</div>
+                <div style="color:#047857;font-size:12px;margin-top:2px">
+                  ติ๊กถ้าเป็นขายเงินสด / บริการที่ได้รับเงินแล้ว — ระบบจะ
+                  อนุมัติเอกสาร + บันทึกชำระ + ออกใบเสร็จในคลิกเดียว
+                  (ตามประมวลรัษฎากร §78/1 บริการต้องออกใบกำกับตอนรับเงิน)
+                </div>
+                <div id="fPaidOnIssueMethodRow" style="display:none;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <span style="font-size:12px;color:#065f46">วิธีรับเงิน:</span>
+                  <select id="fPaidOnIssueMethod" style="padding:4px 8px;font-size:12px;border:1px solid #6ee7b7;border-radius:6px;background:#fff">
+                    <option value="Cash">เงินสด</option>
+                    <option value="BankTransfer" selected>โอนเงิน</option>
+                    <option value="PromptPay">PromptPay</option>
+                    <option value="CreditCard">บัตรเครดิต</option>
+                    <option value="Cheque">เช็ค</option>
+                    <option value="Other">อื่นๆ</option>
+                  </select>
+                </div>
+              </div>
+            </label>
+          </div>
+
           <!-- CertificateInLieu-specific fields -->
           <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
@@ -459,6 +489,18 @@
         if (sideParam) this.setSide(sideParam);
         else await this.load();
 
+        // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide method picker when
+        // the checkbox toggles. The visibility of the whole block is
+        // managed by onDocTypeChange so it only appears for AR types
+        // that actually recognize revenue.
+        const paidCb = document.getElementById('fPaidOnIssue');
+        const paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        if (paidCb && paidRow) {
+          paidCb.addEventListener('change', () => {
+            paidRow.style.display = paidCb.checked ? 'flex' : 'none';
+          });
+        }
+
         // Restore strict-products preference + wire the hint to track it.
         // Default is ON ("เฉพาะสินค้าในระบบ") — most operators want clean
         // product attribution for inventory + reporting. The user can flip
@@ -617,6 +659,21 @@
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
+        // Show/hide "ลูกค้าจ่ายเงินแล้ว" shortcut — only relevant for AR types
+        // that recognize VAT / revenue (Invoice, TaxInvoice). Quotation +
+        // BillingNote are pre-revenue, Receipt already IS the receipt, the
+        // expense side has its own flow.
+        const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
+        const paidSection = document.getElementById('paidOnIssueSection');
+        if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // Reset checkbox when the section hides so a stale "paid" state
+        // doesn't fire on the next save of a non-applicable type.
+        if (paidSection && paidSection.style.display === 'none') {
+          const cb = document.getElementById('fPaidOnIssue');
+          if (cb) cb.checked = false;
+          const row = document.getElementById('fPaidOnIssueMethodRow');
+          if (row) row.style.display = 'none';
+        }
       },
       /**
        * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
@@ -984,6 +1041,12 @@
         document.getElementById('fDueDate').value = '';
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
+        // Reset "ลูกค้าจ่ายเงินแล้ว" shortcut — a stale checked state from
+        // a previous create would silently auto-pay the next document.
+        const _paidCb = document.getElementById('fPaidOnIssue');
+        if (_paidCb) _paidCb.checked = false;
+        const _paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        if (_paidRow) _paidRow.style.display = 'none';
         document.getElementById('fCustomAppendix').value = '';
         document.getElementById('fCustomFooterNotes').value = '';
         document.getElementById('fCustomTerms').value = '';
@@ -1204,11 +1267,102 @@
             }
           }
 
+          // "ลูกค้าจ่ายเงินแล้ว" chain — only fires on CREATE (not edit) of
+          // an Invoice / TaxInvoice where the operator ticked the shortcut.
+          // Approves the document, then records a payment for the full
+          // total, in two API calls. Failures don't roll back the document
+          // (audit-friendly + operator can finish the chain manually) but
+          // surface as a warning toast so the operator knows.
+          const paidNow = document.getElementById('fPaidOnIssue')?.checked;
+          if (paidNow && !this.editingId && savedDocId) {
+            const method = document.getElementById('fPaidOnIssueMethod')?.value || 'BankTransfer';
+            try {
+              await api.approveDocument(savedDocId);
+              // Re-fetch to get authoritative totals + balanceDue (server
+              // rounding / VAT calc can drift from client-side sum).
+              const detail = await api.getDocument(savedDocId);
+              const balance = Number(detail?.data?.balanceDue ?? detail?.data?.totalAmount ?? 0);
+              if (balance > 0.01) {
+                await api.createPayment({
+                  documentId: savedDocId,
+                  paymentDate: document.getElementById('fDate').value,
+                  amount: balance,
+                  paymentMethod: method,
+                  notes: 'รับเงินพร้อมออกใบกำกับ (cash sale)',
+                });
+                Layout.toast('สร้างเอกสาร + บันทึกชำระ + ออกใบเสร็จสำเร็จ', 'success');
+              } else {
+                Layout.toast('เอกสารอนุมัติแล้ว (ไม่มียอดต้องชำระ)', 'success');
+              }
+            } catch (e) {
+              Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
+            }
+          }
+
           Layout.closeModal('formModal');
           this.editingId = null;
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+
+      /**
+       * Render a coloured banner explaining the next step in the accounting
+       * cycle. Returns an HTML string (possibly empty when no guidance is
+       * needed, e.g. document is Paid or Voided).
+       *
+       * The cycle in our model:
+       *   Quotation → Invoice/TaxInvoice → (customer pays) → Receipt → done
+       *   PurchaseRequisition → PurchaseOrder → PurchaseInvoice → (we pay) → PaymentVoucher → done
+       *
+       * The Receipt / PaymentVoucher legs are auto-created by the
+       * "บันทึกชำระเงิน" button — operators don't have to know that they
+       * could also create a ReceiptVoucher manually.
+       */
+      _nextStepBanner(d) {
+        if (!d || d.status === 'Voided') return '';
+        if (d.status === 'Draft') {
+          return `<div style="background:#fef3c7;border:1px solid #f59e0b40;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
+            📝 <strong>ขั้นต่อไป:</strong> ตรวจรายการแล้วกด <strong>"อนุมัติ"</strong> เพื่อบันทึกเข้าบัญชี
+            (เอกสารที่อนุมัติแล้วยกเลิกได้ แต่แก้ไขไม่ได้ — ถ้าแก้ไม่ทันค่อย Void แล้วออกใหม่)
+          </div>`;
+        }
+        const balance = Number(d.balanceDue || 0);
+        const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
+        const apTypes = ['PurchaseInvoice', 'Expense'];
+        const isPaid = d.status === 'Paid' || balance <= 0.01;
+        if (isPaid) {
+          return `<div style="background:#ecfdf5;border:1px solid #10b98140;color:#065f46;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
+            ✅ <strong>เอกสารชำระครบแล้ว</strong> — ระบบสร้างใบเสร็จ/บันทึกการรับ-จ่ายให้แล้ว ไม่มีอะไรต้องทำต่อ
+          </div>`;
+        }
+        if (arTypes.includes(d.documentType)) {
+          // Sale side awaiting customer payment.
+          return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
+            💡 <strong>ขั้นต่อไป:</strong> รอลูกค้าจ่ายเงิน — พอได้รับเงินจริงให้กด
+            <strong>"💰 บันทึกชำระเงิน"</strong> ด้านล่าง ระบบจะออกใบเสร็จรับเงินและล้างยอดลูกหนี้ให้อัตโนมัติ
+            <span style="color:#64748b;font-size:12px">(ไม่ต้องไปสร้าง "ใบสำคัญรับ" แยก — ปุ่มนั้นทำให้แล้ว)</span>
+          </div>`;
+        }
+        if (apTypes.includes(d.documentType)) {
+          // Expense side awaiting our payment.
+          return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
+            💡 <strong>ขั้นต่อไป:</strong> ถึงกำหนดจ่ายให้กด <strong>"💰 บันทึกชำระเงิน"</strong>
+            ด้านล่าง ระบบจะออกใบสำคัญจ่าย / Payment Voucher และล้างยอดเจ้าหนี้ให้อัตโนมัติ
+          </div>`;
+        }
+        if (d.documentType === 'Quotation') {
+          return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
+            💡 <strong>ขั้นต่อไป:</strong> เมื่อลูกค้าตอบรับ ให้กด <strong>"แปลงเอกสาร"</strong> → ใบแจ้งหนี้/ใบกำกับภาษี
+          </div>`;
+        }
+        if (d.documentType === 'PurchaseOrder' || d.documentType === 'PurchaseRequisition') {
+          return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
+            💡 <strong>ขั้นต่อไป:</strong> เมื่อรับสินค้า/บริการแล้ว กด <strong>"แปลงเอกสาร"</strong> → ใบแจ้งหนี้ซื้อ
+          </div>`;
+        }
+        return '';
+      },
+
       async detail(id) {
         const api = Layout.api(); if (!api) return;
         try {
@@ -1240,6 +1394,12 @@
               ⏳ ค้างชำระมาแล้ว <strong>${d.agingDays} วัน</strong> (เกินกำหนด ${d.agingDays >= 90 ? '90+' : d.agingDays >= 60 ? '60+' : '30+'} วัน)
             </div>`;
           }
+          // "Next step" banner — explains where this document sits in the
+          // accounting cycle and what the operator should do next. Without
+          // it the user issues a Tax Invoice + sees status=Approved and
+          // assumes the workflow is done; they don't realize a Receipt
+          // still needs to be generated when the customer eventually pays.
+          banners += this._nextStepBanner(d);
           if (d.ocrConfidenceScore != null) {
             const conf = Math.round(d.ocrConfidenceScore * 100);
             const color = conf >= 80 ? '#059669' : (conf >= 50 ? '#d97706' : '#dc2626');
@@ -1347,7 +1507,9 @@
           // Payment recording: for approved+ docs with balance due
           const payableStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
           if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
-            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue})">บันทึกชำระเงิน</button>`;
+            // Emoji prefix matches the next-step banner above so the user
+            // can trace the guidance "→ ปุ่มไหน" without hunting.
+            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง">💰 บันทึกชำระเงิน</button>`;
           }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
@@ -1504,23 +1666,117 @@
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       async recordPayment(docId, balanceDue) {
-        const amount = prompt(`บันทึกชำระเงิน\nยอดค้างชำระ: ${Layout.money(balanceDue)}\n\nจำนวนเงินที่ชำระ:`, balanceDue);
-        if (!amount) return;
-        const parsed = parseFloat(amount);
-        if (isNaN(parsed) || parsed <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
-        if (parsed > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
-        const api = Layout.api(); if (!api) return;
-        try {
-          await api.createPayment({
-            documentId: docId,
-            paymentDate: Layout.toDateInput(new Date()),
-            amount: parsed,
-            paymentMethod: 'Transfer'
-          });
-          Layout.toast('บันทึกชำระเงินสำเร็จ');
-          Layout.closeModal('detailModal');
-          await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        // Inline payment-recording modal. The previous prompt-based flow
+        // hardcoded paymentMethod='Transfer' which didn't match the
+        // PaymentMethod enum (BankTransfer / Cash / PromptPay / Cheque /
+        // CreditCard / DirectDebit / EWallet / Other) — every submission
+        // failed JSON deserialization with "value could not be converted".
+        // Build a small form modal lazily so operators can record what
+        // actually happened (cash vs. transfer vs. promptpay etc.) using
+        // enum values the backend will accept.
+        const today = Layout.toDateInput(new Date());
+        let wrap = document.getElementById('rpModal');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.id = 'rpModal';
+          wrap.className = 'modal-overlay';
+          wrap.innerHTML = `
+            <div class="modal" style="max-width:480px">
+              <div class="modal-header">
+                <h3 class="modal-title">💰 บันทึกชำระเงิน</h3>
+                <button class="modal-close" onclick="document.getElementById('rpModal').classList.remove('active')">&times;</button>
+              </div>
+              <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;padding:10px 12px;border-radius:8px;font-size:13px">
+                  ระบบจะออกใบเสร็จ / ใบสำคัญรับ-จ่ายและล้างยอดคงค้างให้อัตโนมัติ
+                </div>
+                <div style="font-size:13px"><strong>ยอดคงค้าง:</strong> <span id="rpBalanceDisplay">-</span></div>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>จำนวนเงินที่รับ-จ่าย *</span>
+                  <input id="rpAmount" type="number" step="0.01" min="0"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>วันที่ชำระ *</span>
+                  <input id="rpDate" type="date"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>วิธีชำระ *</span>
+                  <select id="rpMethod" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                    <option value="BankTransfer">โอนเงิน (Bank Transfer)</option>
+                    <option value="Cash">เงินสด</option>
+                    <option value="PromptPay">PromptPay</option>
+                    <option value="CreditCard">บัตรเครดิต</option>
+                    <option value="Cheque">เช็ค</option>
+                    <option value="DirectDebit">หักบัญชีอัตโนมัติ</option>
+                    <option value="EWallet">e-Wallet</option>
+                    <option value="Other">อื่นๆ</option>
+                  </select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span style="color:#64748b">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</span>
+                  <input id="rpRef" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span style="color:#64748b">หมายเหตุ</span>
+                  <input id="rpNotes" type="text"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="document.getElementById('rpModal').classList.remove('active')">ยกเลิก</button>
+                <button class="btn btn-primary" id="rpSubmit">✓ บันทึก</button>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+        }
+        // (Re)bind state for this document.
+        document.getElementById('rpBalanceDisplay').textContent = Layout.money(balanceDue);
+        const amountEl = document.getElementById('rpAmount');
+        const dateEl = document.getElementById('rpDate');
+        amountEl.value = balanceDue.toFixed(2);
+        amountEl.max = balanceDue;
+        dateEl.value = today;
+        document.getElementById('rpRef').value = '';
+        document.getElementById('rpNotes').value = '';
+        document.getElementById('rpMethod').value = 'BankTransfer';
+        const submit = document.getElementById('rpSubmit');
+        // Replace handler each open so docId / balanceDue close over the
+        // right values (and we don't pile up listeners across opens).
+        submit.onclick = async () => {
+          const amount = parseFloat(amountEl.value || '');
+          const paymentDate = dateEl.value;
+          const paymentMethod = document.getElementById('rpMethod').value || 'BankTransfer';
+          const reference = (document.getElementById('rpRef').value || '').trim() || null;
+          const notes = (document.getElementById('rpNotes').value || '').trim() || null;
+          if (isNaN(amount) || amount <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
+          if (amount > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
+          if (!paymentDate) { Layout.toast('กรุณาระบุวันที่ชำระ', 'error'); return; }
+          const api = Layout.api(); if (!api) return;
+          submit.disabled = true; submit.textContent = 'กำลังบันทึก...';
+          try {
+            await api.createPayment({
+              documentId: docId,
+              paymentDate,
+              amount,
+              paymentMethod,
+              reference,
+              notes,
+            });
+            Layout.toast('บันทึกชำระเงินสำเร็จ — ระบบออกใบเสร็จและอัพเดทยอดคงค้างให้แล้ว', 'success');
+            wrap.classList.remove('active');
+            Layout.closeModal('detailModal');
+            await this.load();
+          } catch (e) {
+            Layout.toast(e.message, 'error');
+          } finally {
+            submit.disabled = false; submit.textContent = '✓ บันทึก';
+          }
+        };
+        wrap.classList.add('active');
+        setTimeout(() => amountEl.focus(), 50);
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
