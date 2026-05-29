@@ -158,30 +158,54 @@
                ต้องออกใบกำกับภาษีตอนได้รับเงิน — flow default ของระบบ
                (issue → wait → record payment) บังคับให้กด 2 ครั้งซึ่งผิด
                กฎหมายสำหรับบริการและไม่จำเป็นสำหรับเงินสด ติ๊กช่องนี้แล้ว
-               ระบบจะสร้างใบเสร็จ + บันทึกรับเงินอัตโนมัติในคลิกเดียว -->
+               ระบบจะสร้างใบเสร็จ + บันทึกรับเงินอัตโนมัติในคลิกเดียว.
+               วิธีรับเงิน derive จาก "แหล่งเงิน / ช่องทางชำระ" ด้านบน —
+               ป้องกัน UX trap ที่ user เลือกช่องทางเป็นเงินสด แต่กดวิธี
+               เป็นโอน (channel drives GL, method ไม่ — ก่อนหน้านี้ผู้ใช้
+               สามารถสร้าง mismatch ได้ ทำให้ report กับ GL ไม่ตรงกัน). -->
           <div id="paidOnIssueSection" style="margin-bottom:12px;background:#ecfdf5;border:1px solid #10b981;border-radius:8px;padding:10px 14px;display:none">
             <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
               <input type="checkbox" id="fPaidOnIssue" style="margin-top:3px">
-              <div>
+              <div style="flex:1">
                 <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — สร้างใบเสร็จพร้อมกัน</div>
                 <div style="color:#047857;font-size:12px;margin-top:2px">
                   ติ๊กถ้าเป็นขายเงินสด / บริการที่ได้รับเงินแล้ว — ระบบจะ
                   อนุมัติเอกสาร + บันทึกชำระ + ออกใบเสร็จในคลิกเดียว
                   (ตามประมวลรัษฎากร §78/1 บริการต้องออกใบกำกับตอนรับเงิน)
                 </div>
-                <div id="fPaidOnIssueMethodRow" style="display:none;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                  <span style="font-size:12px;color:#065f46">วิธีรับเงิน:</span>
-                  <select id="fPaidOnIssueMethod" style="padding:4px 8px;font-size:12px;border:1px solid #6ee7b7;border-radius:6px;background:#fff">
-                    <option value="Cash">เงินสด</option>
-                    <option value="BankTransfer" selected>โอนเงิน</option>
-                    <option value="PromptPay">PromptPay</option>
-                    <option value="CreditCard">บัตรเครดิต</option>
-                    <option value="Cheque">เช็ค</option>
-                    <option value="Other">อื่นๆ</option>
-                  </select>
+                <div id="fPaidOnIssueDerivedRow" style="display:none;margin-top:10px;background:#fff;border:1px dashed #6ee7b7;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.7">
+                  <div style="color:#065f46;font-weight:600;margin-bottom:2px">📌 ใช้ช่องทางเดียวกับ "แหล่งเงิน / ช่องทางชำระ" ด้านบน</div>
+                  <div>เงินเข้าบัญชี: <span id="fPaidOnIssueChannelLabel" style="font-weight:600;color:#0f172a">เงินสด (ค่าเริ่มต้น)</span></div>
+                  <div>วิธีรับเงิน (metadata): <span id="fPaidOnIssueDerivedMethod" style="font-weight:600;color:#0f172a">Cash</span></div>
+                  <div style="color:#64748b;font-size:11px;margin-top:4px">ถ้าต้องการเปลี่ยน — แก้ "แหล่งเงิน" ด้านบน ระบบจะ sync ให้ตรงกันอัตโนมัติ (ลงบัญชีจะใช้ช่องทางนี้ — กันลงผังผิดที่ป้องกันด้วย)</div>
                 </div>
               </div>
             </label>
+          </div>
+
+          <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
+               Only "คืนสินค้า" restocks; the other 3 reasons are pure
+               financial adjustments with no stock impact. -->
+          <div id="creditNoteReasonSection" style="display:none;margin-bottom:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px">
+            <div style="font-weight:600;color:#991b1b;font-size:13px;margin-bottom:8px">เหตุผลการออกใบลดหนี้ *</div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Return" style="margin-top:3px">
+                <span><strong>คืนสินค้า (Return)</strong> — ลูกค้าส่งสินค้าคืน <span style="color:#dc2626">→ สต๊อกจะถูกเพิ่มกลับ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Discount" style="margin-top:3px">
+                <span><strong>ส่วนลด / ลดราคา (Discount)</strong> — ลดยอด VAT ขาย <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Adjustment" style="margin-top:3px">
+                <span><strong>ปรับยอด (Adjustment)</strong> — ค่าสินค้าน้อยกว่าที่ตกลง <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Writeoff" style="margin-top:3px">
+                <span><strong>ตัดยอด / ตัดหนี้สูญบางส่วน (Writeoff)</strong> <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+            </div>
           </div>
 
           <!-- CertificateInLieu-specific fields -->
@@ -489,17 +513,24 @@
         if (sideParam) this.setSide(sideParam);
         else await this.load();
 
-        // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide method picker when
-        // the checkbox toggles. The visibility of the whole block is
+        // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide the derived-method
+        // hint when the checkbox toggles. Whole block visibility is
         // managed by onDocTypeChange so it only appears for AR types
-        // that actually recognize revenue.
+        // that actually recognize revenue. The method itself is derived
+        // from the payment-channel dropdown to prevent the channel/method
+        // mismatch UX trap (channel drives GL — method is metadata only).
         const paidCb = document.getElementById('fPaidOnIssue');
-        const paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        const paidRow = document.getElementById('fPaidOnIssueDerivedRow');
         if (paidCb && paidRow) {
           paidCb.addEventListener('change', () => {
-            paidRow.style.display = paidCb.checked ? 'flex' : 'none';
+            paidRow.style.display = paidCb.checked ? 'block' : 'none';
+            if (paidCb.checked) this._syncPaidOnIssueMethod();
           });
         }
+        // Whenever the user changes "แหล่งเงิน / ช่องทางชำระ", refresh
+        // the derived method so the green hint stays in lockstep.
+        const pcEl = document.getElementById('fPaymentChannel');
+        if (pcEl) pcEl.addEventListener('change', () => this._syncPaidOnIssueMethod());
 
         // Restore strict-products preference + wire the hint to track it.
         // Default is ON ("เฉพาะสินค้าในระบบ") — most operators want clean
@@ -648,6 +679,57 @@
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
       },
+      /**
+       * Derive a PaymentMethod enum value from the selected paymentChannel.
+       * fPaymentChannel encodes:
+       *   "bank:<bankAccountId>"    → most commonly BankTransfer (could also
+       *                                be Cheque/PromptPay — that's why the
+       *                                detail-modal recordPayment keeps the
+       *                                explicit picker. For the cash-sale
+       *                                checkbox we default to BankTransfer
+       *                                so it stays consistent with the GL
+       *                                hitting a bank account.)
+       *   "account:<chartId>"       → look up the account code:
+       *                                 1111 / 111x  → Cash
+       *                                 113x / 114x  → EWallet
+       *                                 anything else → Other
+       *   "" (empty / cash default) → Cash
+       * Returns {method, label} so the UI can show what the user sees.
+       */
+      _deriveMethodFromChannel() {
+        const pcEl = document.getElementById('fPaymentChannel');
+        const val = pcEl?.value || '';
+        if (val.startsWith('bank:')) {
+          const id = val.substring(5);
+          const ba = (this.bankAccounts || []).find(a => a.id === id);
+          const lbl = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})` : 'บัญชีธนาคาร';
+          return { method: 'BankTransfer', label: lbl };
+        }
+        if (val.startsWith('account:')) {
+          const id = val.substring(8);
+          const acc = (this.paymentChannels || []).find(a => a.id === id);
+          const code = acc?.accountCode || '';
+          const name = acc?.accountName || 'บัญชี';
+          let method = 'Other';
+          // Cash group (TFRS chart of accounts: 1111 cash on hand, 1112 cash
+          // in bank — bank lives in the bank: branch; 1113-1119 typically
+          // petty cash / change fund variants).
+          if (code.startsWith('111')) method = 'Cash';
+          else if (code.startsWith('1131') || code.startsWith('1132')) method = 'EWallet';
+          return { method, label: `${code} - ${name}` };
+        }
+        return { method: 'Cash', label: 'เงินสด (ค่าเริ่มต้น)' };
+      },
+      _syncPaidOnIssueMethod() {
+        const cb = document.getElementById('fPaidOnIssue');
+        if (!cb || !cb.checked) return;
+        const { method, label } = this._deriveMethodFromChannel();
+        const mEl = document.getElementById('fPaidOnIssueDerivedMethod');
+        const lEl = document.getElementById('fPaidOnIssueChannelLabel');
+        if (mEl) mEl.textContent = method;
+        if (lEl) lEl.textContent = label;
+      },
+
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
@@ -659,6 +741,14 @@
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
+        // Show/hide CreditNote reason picker — required field on approve.
+        const cnSection = document.getElementById('creditNoteReasonSection');
+        if (cnSection) cnSection.style.display = docType === 'CreditNote' ? '' : 'none';
+        if (cnSection && cnSection.style.display === 'none') {
+          // Wipe so a stale selection from a previous CreditNote doesn't
+          // leak into a non-CN document.
+          document.querySelectorAll('input[name="fCreditNoteReason"]').forEach(r => r.checked = false);
+        }
         // Show/hide "ลูกค้าจ่ายเงินแล้ว" shortcut — only relevant for AR types
         // that recognize VAT / revenue (Invoice, TaxInvoice). Quotation +
         // BillingNote are pre-revenue, Receipt already IS the receipt, the
@@ -671,7 +761,7 @@
         if (paidSection && paidSection.style.display === 'none') {
           const cb = document.getElementById('fPaidOnIssue');
           if (cb) cb.checked = false;
-          const row = document.getElementById('fPaidOnIssueMethodRow');
+          const row = document.getElementById('fPaidOnIssueDerivedRow');
           if (row) row.style.display = 'none';
         }
       },
@@ -887,8 +977,17 @@
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
             // the document detail for follow-up.
+            //
+            // Suppress for Paid / Voided / Draft and for any document whose
+            // balanceDue dropped to ~0 — a paid invoice carrying "⏳ 30+d"
+            // is what triggered this fix: aging tracks the days since
+            // issuance, but the operator wants the badge to mean "still
+            // owed money".
+            const suppressAging =
+              d.status === 'Paid' || d.status === 'Voided' || d.status === 'Draft'
+              || Number(d.balanceDue ?? 0) <= 0.01;
             let agingBadge = '';
-            if (d.agingDays && d.agingDays >= 30) {
+            if (!suppressAging && d.agingDays && d.agingDays >= 30) {
               const tier = d.agingDays >= 90 ? '90+' : (d.agingDays >= 60 ? '60+' : '30+');
               const color = d.agingDays >= 90 ? '#dc2626' : (d.agingDays >= 60 ? '#ea580c' : '#d97706');
               agingBadge = `<span title="ค้างชำระ ${d.agingDays} วัน" style="margin-left:6px;padding:1px 6px;background:${color};color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ ${tier}d</span>`;
@@ -1045,7 +1144,7 @@
         // a previous create would silently auto-pay the next document.
         const _paidCb = document.getElementById('fPaidOnIssue');
         if (_paidCb) _paidCb.checked = false;
-        const _paidRow = document.getElementById('fPaidOnIssueMethodRow');
+        const _paidRow = document.getElementById('fPaidOnIssueDerivedRow');
         if (_paidRow) _paidRow.style.display = 'none';
         document.getElementById('fCustomAppendix').value = '';
         document.getElementById('fCustomFooterNotes').value = '';
@@ -1218,6 +1317,7 @@
           witnessName: document.getElementById('fWitnessName')?.value || null,
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
+          creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
         };
         try {
           let savedDocId = this.editingId;
@@ -1275,7 +1375,9 @@
           // surface as a warning toast so the operator knows.
           const paidNow = document.getElementById('fPaidOnIssue')?.checked;
           if (paidNow && !this.editingId && savedDocId) {
-            const method = document.getElementById('fPaidOnIssueMethod')?.value || 'BankTransfer';
+            // Derive method from the chosen payment channel — single source
+            // of truth so the Payment metadata can't drift from the GL.
+            const method = this._deriveMethodFromChannel().method;
             try {
               await api.approveDocument(savedDocId);
               // Re-fetch to get authoritative totals + balanceDue (server
@@ -1387,7 +1489,12 @@
               ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + issues.map(i => `<li>${Layout.esc(i.message || i.rule)}</li>`).join('') + '</ul>' : ''}
             </div>`;
           }
-          if (d.agingDays && d.agingDays >= 30) {
+          // Same gate as the list-row aging chip — never bother the user
+          // with "ค้างชำระ" on a document that's been paid, voided, or
+          // is still a draft with no obligation yet.
+          const _agingSuppress = d.status === 'Paid' || d.status === 'Voided' || d.status === 'Draft'
+              || Number(d.balanceDue ?? 0) <= 0.01;
+          if (!_agingSuppress && d.agingDays && d.agingDays >= 30) {
             const bg = d.agingDays >= 90 ? '#fee2e2' : (d.agingDays >= 60 ? '#fed7aa' : '#fef3c7');
             const color = d.agingDays >= 90 ? '#991b1b' : (d.agingDays >= 60 ? '#9a3412' : '#92400e');
             banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
@@ -1509,7 +1616,7 @@
           if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
-            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง">💰 บันทึกชำระเงิน</button>`;
+            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
@@ -1665,7 +1772,7 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
-      async recordPayment(docId, balanceDue) {
+      async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0) {
         // Inline payment-recording modal. The previous prompt-based flow
         // hardcoded paymentMethod='Transfer' which didn't match the
         // PaymentMethod enum (BankTransfer / Cash / PromptPay / Cheque /
@@ -1715,6 +1822,20 @@
                   </select>
                 </label>
                 <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>บัญชีรับ-จ่ายเงิน <span style="color:#64748b;font-weight:normal;font-size:11px">(override — เผื่อเช็ค/โอน เข้าบัญชีที่ไม่ตรงกับเอกสาร)</span></span>
+                  <select id="rpBankOverride" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                    <option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>
+                  </select>
+                </label>
+                <div id="rpWhtRow" style="display:none;flex-direction:column;gap:4px;font-size:13px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:8px 10px">
+                  <label style="display:flex;flex-direction:column;gap:4px">
+                    <span>WHT ที่ลูกค้าหักงวดนี้ <span style="color:#854d0e;font-weight:normal;font-size:11px">(บังคับเฉพาะ Cash basis — เริ่มต้นจาก proportional auto)</span></span>
+                    <input id="rpWht" type="number" step="0.01" min="0"
+                      style="padding:8px 10px;border:1px solid #fbbf24;border-radius:6px;font-size:14px;background:#fff">
+                  </label>
+                  <div id="rpWhtHint" style="font-size:11px;color:#854d0e;line-height:1.5"></div>
+                </div>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
                   <span style="color:#64748b">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</span>
                   <input id="rpRef" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ"
                     style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
@@ -1742,6 +1863,35 @@
         document.getElementById('rpRef').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
+        // Populate the bank-override dropdown with the company's bank
+        // accounts. Default option (empty value) keeps the doc's channel.
+        const rpBank = document.getElementById('rpBankOverride');
+        rpBank.innerHTML = '<option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>' +
+          (this.bankAccounts || []).map(a =>
+            `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`
+          ).join('');
+        rpBank.value = '';
+        // Per-installment WHT — only show when the source actually carries
+        // WHT. Proportional default = amount × (sourceWht / sourceTotal),
+        // recomputed live as the operator edits the cash amount. Operator
+        // can override (e.g. customer's WHT cert says different than split).
+        // Cumulative cap is enforced by the backend.
+        const rpWhtRow = document.getElementById('rpWhtRow');
+        const rpWht = document.getElementById('rpWht');
+        const rpWhtHint = document.getElementById('rpWhtHint');
+        const hasWht = sourceWht > 0 && sourceTotal > 0;
+        rpWhtRow.style.display = hasWht ? 'flex' : 'none';
+        const recalcWht = () => {
+          if (!hasWht) return;
+          const amt = parseFloat(amountEl.value || '0');
+          const prop = Math.round(amt * sourceWht / sourceTotal * 100) / 100;
+          rpWht.value = prop.toFixed(2);
+          rpWhtHint.textContent =
+            `WHT ทั้งหมดของเอกสาร: ${sourceWht.toFixed(2)} · proportional งวดนี้: ${prop.toFixed(2)} (= ${amt.toFixed(2)} × ${sourceWht.toFixed(2)} ÷ ${sourceTotal.toFixed(2)}) · แก้ตัวเลขข้างบนได้ถ้าใบ WHT ระบุยอดอื่น`;
+        };
+        recalcWht();
+        amountEl.removeEventListener('input', recalcWht);
+        amountEl.addEventListener('input', recalcWht);
         const submit = document.getElementById('rpSubmit');
         // Replace handler each open so docId / balanceDue close over the
         // right values (and we don't pile up listeners across opens).
@@ -1764,6 +1914,10 @@
               paymentMethod,
               reference,
               notes,
+              overrideBankAccountId: (document.getElementById('rpBankOverride').value) || null,
+              withholdingTaxAmount: (sourceWht > 0)
+                ? (parseFloat(document.getElementById('rpWht').value || '0') || 0)
+                : null,
             });
             Layout.toast('บันทึกชำระเงินสำเร็จ — ระบบออกใบเสร็จและอัพเดทยอดคงค้างให้แล้ว', 'success');
             wrap.classList.remove('active');

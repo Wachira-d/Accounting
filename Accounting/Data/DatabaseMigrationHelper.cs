@@ -2327,6 +2327,30 @@ public static class DatabaseMigrationHelper
             // Moo when the tenant's own office is provincial / rural.
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "Moo" text NULL;""",
 
+            // CreditNoteReason — required for new CreditNotes; existing rows
+            // get NULL (silent grandfather; UI badges them "ไม่ระบุเหตุผล").
+            // 1=Return (restocks), 2=Discount, 3=Adjustment, 4=Writeoff.
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreditNoteReason" integer NULL;""",
+
+            // Payment.OverrideBankAccountId — when populated, settlement GL
+            // hits this bank instead of doc.BankAccountId. Lets operators
+            // record "Invoice was for Bangkok Bank but cheque cleared via
+            // Kasikorn" without editing the original document.
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "OverrideBankAccountId" uuid NULL;""",
+
+            // Payment.WithholdingTaxAmount — per-installment WHT, required
+            // under cash-basis WHT (§50/§52) when the customer withholds
+            // proportionally on each partial payment. Existing rows default
+            // to 0 (pre-cash-basis world; the source invoice already booked
+            // WHT-Asset upfront so per-payment WHT is irrelevant for them).
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "WithholdingTaxAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // CompanySettings.WhtRecognitionBasis — 1=Cash (legal default
+            // per §50/§52), 2=Accrual (existing SMB practice). Existing
+            // tenants need to stay on Accrual to keep their historical GL
+            // consistent, so they get 2; new tenants will be created with 1.
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtRecognitionBasis" integer NOT NULL DEFAULT 2;""",
+
             // EF Core convention auto-created a shadow "OwnerId" FK column +
             // FK constraint because AccountSubscription.Owner nav wasn't bound
             // to OwnerUserId in OnModelCreating. The shadow column defaults to

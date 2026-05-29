@@ -48,6 +48,13 @@ public class CompanySettings : TenantEntity
     public bool VatRegistered { get; set; } = true;
     public string? VatRegistrationDate { get; set; }
 
+    /// <summary>Cash (default) = recognize WHT-Asset / WHT-Payable at the
+    /// Receipt / PaymentVoucher (strict ประมวลรัษฎากร §50/§52). Accrual =
+    /// recognize at Invoice / PurchaseInvoice approval (common SMB practice,
+    /// audit-accepted). New tenants default to Cash; existing tenants keep
+    /// the historical Accrual posting until they explicitly switch.</summary>
+    public WhtRecognitionBasis WhtRecognitionBasis { get; set; } = WhtRecognitionBasis.Cash;
+
     // Email Templates
     public string? EmailFromName { get; set; }
     public string? EmailReplyTo { get; set; }

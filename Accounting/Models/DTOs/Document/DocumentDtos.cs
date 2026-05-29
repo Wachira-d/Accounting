@@ -37,7 +37,10 @@ public record CreateDocumentRequest(
     // Internal callers (e.g. PayrollService) pass Sensitivity to gate the
     // resulting document behind the matching role. External clients leave it
     // None (the default) and the document is publicly visible within the company.
-    SensitivityKind Sensitivity = SensitivityKind.None);
+    SensitivityKind Sensitivity = SensitivityKind.None,
+    // CreditNote reason — required when DocumentType=CreditNote. Determines
+    // whether stock restocks (Return only) vs pure financial adjustment.
+    CreditNoteReason? CreditNoteReason = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -148,7 +151,11 @@ public record DocumentResponse(
     // exists but is hidden — they should not 404 or pretend it isn't there.
     SensitivityKind Sensitivity = SensitivityKind.None,
     bool IsRedacted = false,
-    string? RedactedReason = null);
+    string? RedactedReason = null,
+    // CreditNote reason — set when DocumentType=CreditNote so the UI can
+    // display "ลดราคา" / "คืนสินค้า" etc. Drives whether ApplyStockMovements
+    // restocks on approval (only Return does).
+    CreditNoteReason? CreditNoteReason = null);
 
 public record DocumentLineResponse(
     Guid Id,
@@ -332,7 +339,20 @@ public record CreatePaymentRequest(
     PaymentMethod PaymentMethod,
     string? Reference,
     string? BankAccount,
-    string? Notes);
+    string? Notes,
+    /// <summary>Optional — overrides the source document's BankAccountId for
+    /// THIS payment only. Use when the cheque actually cleared through a
+    /// different bank than the invoice originally targeted; the GL hit and
+    /// bank-balance update follow this override, not doc.BankAccountId.</summary>
+    Guid? OverrideBankAccountId = null,
+    /// <summary>Optional — WHT withheld on THIS installment. Null = the
+    /// service computes a proportional default: Amount / Document.TotalAmount
+    /// × Document.WithholdingTaxAmount. Use the override when the customer's
+    /// WHT certificate shows a different amount than the proportional split
+    /// (e.g. they withhold the full amount on the first installment).
+    /// Cumulative WHT across all payments must not exceed the source's
+    /// WithholdingTaxAmount.</summary>
+    decimal? WithholdingTaxAmount = null);
 
 public record PaymentResponse(
     Guid Id,
