@@ -371,8 +371,24 @@ internal static class SmartFieldExtractor
         // Buddhist year (พ.ศ.) ranges 2400–2700 commonly. Convert if so.
         if (d.Year >= 2400 && d.Year <= 2700)
         {
-            try { data.DocumentDate = new DateTime(d.Year - 543, d.Month, d.Day); }
+            try
+            {
+                // BUGFIX (2025-05): create with Kind=Utc so PostgreSQL +
+                // ASP.NET JSON serialisers don't apply local-timezone
+                // offset that previously made "29 พค 2569" round-trip
+                // as "28 พค 2569" (UTC+7 → previous calendar day).
+                // The DocumentDate is conceptually a calendar date, not
+                // a moment in time, so pinning Kind=Utc with the same
+                // y/m/d preserves the human-meaningful day.
+                data.DocumentDate = new DateTime(d.Year - 543, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
+            }
             catch { data.DocumentDate = null; }
+        }
+        else if (d.Kind != DateTimeKind.Utc)
+        {
+            // Non-BE year but maybe Unspecified/Local — re-pin to Utc
+            // for the same reason (round-trip stability across timezone).
+            data.DocumentDate = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
         }
         // Reject impossibly old / future dates
         var year = data.DocumentDate?.Year ?? 0;

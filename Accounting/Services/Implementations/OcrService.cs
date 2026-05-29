@@ -1934,7 +1934,10 @@ public class OcrService : IOcrService
             if (!data.DocumentDate.HasValue
                 && (keyLower.Contains("วันที่") || keyLower == "date" || keyLower.Contains("invoice date")))
             {
-                if (DateTime.TryParse(value, out var d)) data.DocumentDate = d;
+                if (DateTime.TryParse(value, out var d))
+                    // Pin Kind=Utc with same y/m/d — see BUGFIX note in
+                    // SmartFieldExtractor.ValidateAndNormalizeDate.
+                    data.DocumentDate = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
                 continue;
             }
 
@@ -2111,8 +2114,15 @@ public class OcrService : IOcrService
                 ZoneSummary = root.TryGetProperty("ocr_engine", out var oe) ? $"Local OCR: {oe.GetString()}" : "Local OCR: paddleocr",
             };
 
-            if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr && DateTime.TryParse(dateStr, out var parsedDate))
-                data.DocumentDate = parsedDate;
+            if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr
+                && DateTime.TryParse(dateStr, out var parsedDate))
+            {
+                // Pin to Kind=Utc using the same y/m/d so JSON/DB
+                // round-trip doesn't shift to the previous calendar day
+                // (the "29 พค → 28 พค" bug). DocumentDate is a calendar
+                // date, not a moment in time.
+                data.DocumentDate = new DateTime(parsedDate.Year, parsedDate.Month, parsedDate.Day, 0, 0, 0, DateTimeKind.Utc);
+            }
 
             // ── Per-field confidence (parity with Azure DI) ──
             if (root.TryGetProperty("field_confidence", out var fc) && fc.ValueKind == System.Text.Json.JsonValueKind.Object)
@@ -2827,8 +2837,34 @@ public class OcrService : IOcrService
             data.TotalAmount = data.SubTotal + data.VatAmount;
         else if (data.TotalAmount > 0 && data.SubTotal == null && data.VatAmount == null && hasTaxInvoice)
         {
-            data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
-            data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
+            // BUGFIX (2025-05): Many Thai SMEs print "ใบเสร็จ/ใบกำกับภาษี"
+            // on a single template even when they are NOT VAT-registered
+            // and cannot issue a real tax invoice. Auto-splitting the
+            // TotalAmount as if it had 7% VAT in that case poisons the
+            // ledger with imaginary input-VAT receivable.
+            //
+            // Per ประมวลรัษฎากร §86, only persons registered for VAT
+            // (มี Tax ID 13 หลัก) may issue an invoice with VAT. Gate the
+            // back-calculation on a valid 13-digit vendor tax ID + a
+            // sanity rounding match. When in doubt, leave both fields
+            // null so the gateway flags it as low-confidence + the user
+            // sees the original total verbatim.
+            var vendorTaxIdValid = !string.IsNullOrEmpty(data.VendorTaxId)
+                && new string(data.VendorTaxId.Where(char.IsDigit).ToArray()).Length == 13;
+            if (vendorTaxIdValid)
+            {
+                data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
+                data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
+                data.ReasoningTrace.Add(
+                    "[VAT back-calc] vendor มี Tax ID 13 หลัก + เอกสารเป็น TaxInvoice → แยก VAT 7% จากยอดรวม");
+            }
+            else
+            {
+                data.ReasoningTrace.Add(
+                    "[VAT skip] เอกสารพูดถึง 'ใบกำกับภาษี' แต่ vendor ไม่มี Tax ID 13 หลัก " +
+                    "— ไม่สามารถ back-calc VAT ได้ (vendor ไม่จด VAT). " +
+                    "ใส่ TotalAmount ตามที่อ่านมา, SubTotal/VatAmount = null");
+            }
         }
 
         // GL account suggestions
