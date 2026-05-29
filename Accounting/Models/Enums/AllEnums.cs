@@ -1014,3 +1014,150 @@ public enum WhtRecognitionBasis
     /// already book this way in their existing GL.</summary>
     Accrual = 2,
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  AI integration enums — keep numeric values STABLE because they're
+//  persisted directly in AiSuggestionFeedback.ProviderUsed and the daily
+//  rollup table. Append-only when adding a new provider.
+// ─────────────────────────────────────────────────────────────────────────
+
+public enum AiProviderType
+{
+    /// <summary>DeepSeek chat API (https://api.deepseek.com/v1/chat/completions).
+    /// First and default provider — pricing ~10× cheaper than GPT-4o-mini
+    /// for similar quality on accounting-domain prompts.</summary>
+    DeepSeek = 1,
+
+    /// <summary>OpenAI chat completion (https://api.openai.com/v1).
+    /// Standby slot for tenants that already have an OpenAI agreement.</summary>
+    OpenAi = 2,
+
+    /// <summary>Anthropic Messages API. Different request shape than
+    /// OpenAI-compatible providers — the AnthropicProvider implementation
+    /// translates the canonical AiRequest into the Anthropic schema.</summary>
+    Anthropic = 3,
+
+    /// <summary>Google Gemini. OpenAI-compat endpoint reserved for parity.</summary>
+    Gemini = 4,
+
+    /// <summary>Locally hosted llama.cpp / Ollama instance. Same OpenAI-
+    /// compat schema as the cloud providers; switches the orchestrator into
+    /// "always-on, no budget" mode.</summary>
+    LocalLlama = 5,
+
+    /// <summary>Custom OpenAI-compatible endpoint (Azure OpenAI, proxy,
+    /// gateway). Uses the OpenAI request shape; admin sets Endpoint + Model
+    /// freely.</summary>
+    Custom = 99,
+}
+
+/// <summary>
+/// Stable identifier for each call site — every AI integration point
+/// declares one and uses it for AiSuggestionFeedback.FeatureKey,
+/// AiResponseCache.FeatureKey, AiUsageDaily.FeatureKey, and LocalModelHealth.
+/// New features append to the bottom without breaking existing rows.
+/// </summary>
+public enum AiFeatureKey
+{
+    /// <summary>OCR vendor name → existing Contact id matching.</summary>
+    VendorCanonicalization = 1,
+
+    /// <summary>Suggest which GL account a line item should debit.</summary>
+    GlAccountSuggestion = 2,
+
+    /// <summary>Receipt vs TaxInvoice vs DeliveryNote classification.</summary>
+    DocumentTypeClassification = 3,
+
+    /// <summary>Buyer / Seller role inference from headers.</summary>
+    DocumentRoleInference = 4,
+
+    /// <summary>WHT category (revenue code 50, 50bis, 53) from vendor
+    /// industry + line description.</summary>
+    WhtCategoryInference = 5,
+
+    /// <summary>Parse table region into structured line items when regex
+    /// fails on irregular formatting.</summary>
+    LineItemStructuredParse = 6,
+
+    /// <summary>For each approval warning, propose a concrete fix.</summary>
+    ApprovalWarningFixSuggestion = 7,
+
+    /// <summary>Match a bank statement line → outstanding invoice(s).</summary>
+    BankStatementMatch = 8,
+
+    /// <summary>Credit note reason classification (Return / Discount /
+    /// Adjustment / Writeoff).</summary>
+    CreditNoteReasonClassification = 9,
+
+    /// <summary>Fuzzy duplicate document detection.</summary>
+    FuzzyDuplicateDetection = 10,
+
+    /// <summary>Explain why an anomaly was flagged + suggest action.</summary>
+    AnomalyExplanation = 11,
+
+    /// <summary>Narrate a cashflow forecast + suggest scenarios.</summary>
+    ForecastNarrative = 12,
+
+    /// <summary>Match a free-text product name → existing Product.</summary>
+    ProductMatch = 13,
+
+    /// <summary>Match a free-text contact name → existing Contact.</summary>
+    ContactMatch = 14,
+
+    /// <summary>Suggest payment method given vendor history + amount.</summary>
+    PaymentMethodSuggestion = 15,
+
+    /// <summary>Suggest currency + FX rate sanity-check.</summary>
+    CurrencyAndFxSuggestion = 16,
+
+    /// <summary>Aging-receivable explanation per customer.</summary>
+    AgingExplanation = 17,
+
+    /// <summary>Tax filing pre-check narrative (PND.3 / PND.53 / PP.30).</summary>
+    TaxFilingPreCheck = 18,
+
+    /// <summary>Stock movement validation + suggested action when
+    /// quantity-on-hand would go negative.</summary>
+    StockMovementValidation = 19,
+
+    /// <summary>Suggest debit / credit split when creating a Payment
+    /// Voucher from a TaxInvoice (the "ใบสำคัญจ่าย" workflow the
+    /// user called out explicitly).</summary>
+    PaymentVoucherAccountingSuggestion = 20,
+
+    /// <summary>Suggest JournalEntry lines when user is composing a
+    /// freeform manual JE.</summary>
+    ManualJournalSuggestion = 21,
+
+    /// <summary>Catch-all for ad-hoc admin queries.</summary>
+    AdHocAnalysis = 99,
+}
+
+public enum AiCallStatus
+{
+    Success = 1,
+    /// <summary>Served from AiResponseCache — no provider call.</summary>
+    Cached = 2,
+    Failed = 3,
+    /// <summary>Skipped because feature is disabled or tenant opted out.</summary>
+    Skipped = 4,
+    /// <summary>Refused by AiBudgetGuard (daily or monthly cap).</summary>
+    BudgetExceeded = 5,
+    /// <summary>Refused because no provider is configured / enabled.</summary>
+    NoProvider = 6,
+    /// <summary>Provider returned a response that failed schema validation
+    /// or Thai-compliance double-check.</summary>
+    InvalidResponse = 7,
+}
+
+public enum LocalModelHealthStatus
+{
+    Healthy = 1,
+    /// <summary>Accuracy trending down — admin should look at training data.</summary>
+    Degraded = 2,
+    /// <summary>Local model consistently loses to AI; recommend redesign
+    /// or always-on AI for this feature.</summary>
+    NeedsRedesign = 3,
+    /// <summary>Insufficient samples to evaluate.</summary>
+    InsufficientData = 4,
+}

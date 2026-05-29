@@ -297,6 +297,14 @@ public class AccountingDbContext : DbContext
     // Site Settings (global, singleton)
     public DbSet<SiteSettings> SiteSettings => Set<SiteSettings>();
 
+    // AI Integration — provider registry, per-call feedback (training set),
+    // prompt cache, per-feature local-model health, and daily usage rollup.
+    public DbSet<AiProviderConfig> AiProviderConfigs => Set<AiProviderConfig>();
+    public DbSet<AiSuggestionFeedback> AiSuggestionFeedbacks => Set<AiSuggestionFeedback>();
+    public DbSet<AiResponseCache> AiResponseCaches => Set<AiResponseCache>();
+    public DbSet<LocalModelHealth> LocalModelHealths => Set<LocalModelHealth>();
+    public DbSet<AiUsageDaily> AiUsageDailies => Set<AiUsageDaily>();
+
     // External Integration
     public DbSet<ExternalIntegration> ExternalIntegrations => Set<ExternalIntegration>();
     public DbSet<IntegrationSyncLog> IntegrationSyncLogs => Set<IntegrationSyncLog>();
@@ -2198,6 +2206,65 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteSettings>(e =>
         {
             e.Property(s => s.ServicesJson).HasColumnType("jsonb");
+        });
+
+        // ===== AI Integration =====
+        modelBuilder.Entity<AiProviderConfig>(e =>
+        {
+            // Partial unique index — only one row at a time may be active.
+            // PostgreSQL filter expression enforces "at most one active
+            // provider" without complicating the read path.
+            e.HasIndex(p => p.IsActive)
+                .HasFilter(@"""IsActive"" = true")
+                .HasDatabaseName("IX_AiProviderConfigs_OneActive")
+                .IsUnique();
+            e.HasIndex(p => p.ProviderType).HasDatabaseName("IX_AiProviderConfigs_ProviderType");
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiSuggestionFeedback>(e =>
+        {
+            // Per-feature accuracy reporting + retrain selection.
+            e.HasIndex(f => new { f.CompanyId, f.FeatureKey, f.CreatedAt })
+                .HasDatabaseName("IX_AiSuggestionFeedbacks_Company_Feature_Date");
+            // Lookup by prompt hash for cache-bypass debugging.
+            e.HasIndex(f => f.PromptHash).HasDatabaseName("IX_AiSuggestionFeedbacks_PromptHash");
+            // Find unreviewed rows (UserChosenAt NULL, older than 7d → discard).
+            e.HasIndex(f => new { f.FeatureKey, f.UserChosenAt })
+                .HasDatabaseName("IX_AiSuggestionFeedbacks_Feature_UserChosen");
+            e.Property(f => f.PromptJson).HasColumnType("jsonb");
+            e.Property(f => f.ResponseJson).HasColumnType("jsonb");
+            e.HasQueryFilter(f => !f.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiResponseCache>(e =>
+        {
+            // Hot lookup — every AI-augmented call site hashes the prompt
+            // and queries this index before invoking the provider.
+            e.HasIndex(c => new { c.PromptHash, c.CompanyId })
+                .HasDatabaseName("IX_AiResponseCaches_Hash_Company")
+                .IsUnique();
+            e.HasIndex(c => c.ExpiresAt).HasDatabaseName("IX_AiResponseCaches_ExpiresAt");
+            e.Property(c => c.ResponseJson).HasColumnType("jsonb");
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        modelBuilder.Entity<LocalModelHealth>(e =>
+        {
+            e.HasIndex(h => h.FeatureKey)
+                .HasDatabaseName("IX_LocalModelHealths_FeatureKey")
+                .IsUnique();
+            e.HasQueryFilter(h => !h.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiUsageDaily>(e =>
+        {
+            // Composite unique — one row per (day, provider, feature).
+            e.HasIndex(u => new { u.UsageDate, u.ProviderType, u.FeatureKey })
+                .HasDatabaseName("IX_AiUsageDailies_Day_Provider_Feature")
+                .IsUnique();
+            e.HasIndex(u => u.UsageDate).HasDatabaseName("IX_AiUsageDailies_UsageDate");
+            e.HasQueryFilter(u => !u.IsDeleted);
         });
 
         // External Integration

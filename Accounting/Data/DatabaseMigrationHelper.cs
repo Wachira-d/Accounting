@@ -3068,6 +3068,167 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Company_Site_Created" ON "CmsLeads" ("CompanyId", "SiteId", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Status" ON "CmsLeads" ("CompanyId", "SiteId", "Status") WHERE "IsDeleted" = false;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_CmsLeads_Company_LeadNumber" ON "CmsLeads" ("CompanyId", "LeadNumber") WHERE "IsDeleted" = false;""",
+
+            // ===== AI Integration tables (DeepSeek / OpenAI / Anthropic / etc) =====
+            // Provider registry — one row per configured provider, at most
+            // one IsActive at a time (enforced by partial unique index).
+            """
+            CREATE TABLE IF NOT EXISTS "AiProviderConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "ProviderType" integer NOT NULL,
+                "DisplayName" varchar(200) NOT NULL DEFAULT '',
+                "IsActive" boolean NOT NULL DEFAULT false,
+                "IsEnabled" boolean NOT NULL DEFAULT true,
+                "Endpoint" varchar(500) NULL,
+                "ApiKey" text NULL,
+                "Model" varchar(200) NOT NULL DEFAULT 'deepseek-chat',
+                "Temperature" decimal(4,2) NOT NULL DEFAULT 0.10,
+                "MaxOutputTokens" integer NOT NULL DEFAULT 1024,
+                "RequestTimeoutSeconds" integer NOT NULL DEFAULT 8,
+                "DailyCallCap" integer NULL,
+                "MonthlyBudgetUsd" decimal(18,4) NULL,
+                "PricePerInputTokenUsd1M" decimal(18,6) NULL,
+                "PricePerOutputTokenUsd1M" decimal(18,6) NULL,
+                "LastTestedAt" timestamp NULL,
+                "LastTestStatus" varchar(500) NULL,
+                "ExtraSettingsJson" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiProviderConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiProviderConfigs_OneActive" ON "AiProviderConfigs" ("IsActive") WHERE "IsActive" = true;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiProviderConfigs_ProviderType" ON "AiProviderConfigs" ("ProviderType");""",
+
+            // Per-call feedback row — the training set. Every orchestrator
+            // invocation writes here (Success / Cached / Failed / Skipped).
+            """
+            CREATE TABLE IF NOT EXISTS "AiSuggestionFeedbacks" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "PromptHash" varchar(80) NOT NULL,
+                "PromptJson" jsonb NOT NULL,
+                "ResponseJson" jsonb NULL,
+                "AiPrimaryAnswer" text NULL,
+                "AiConfidence" decimal(5,4) NULL,
+                "LocalModelAnswer" text NULL,
+                "LocalModelConfidence" decimal(5,4) NULL,
+                "LocalModelVersion" varchar(100) NULL,
+                "UserChosenAnswer" text NULL,
+                "UserChosenAt" timestamp NULL,
+                "UserAcceptedAi" boolean NULL,
+                "SourceEntityType" varchar(100) NULL,
+                "SourceEntityId" uuid NULL,
+                "Status" integer NOT NULL DEFAULT 1,
+                "ProviderUsed" integer NOT NULL DEFAULT 1,
+                "ModelVersion" varchar(200) NULL,
+                "LatencyMs" integer NULL,
+                "InputTokens" integer NULL,
+                "OutputTokens" integer NULL,
+                "CostUsd" decimal(18,6) NULL,
+                "CacheHitOfFeedbackId" uuid NULL,
+                "ErrorMessage" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiSuggestionFeedbacks" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_AiSuggestionFeedbacks_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_Company_Feature_Date" ON "AiSuggestionFeedbacks" ("CompanyId", "FeatureKey", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_PromptHash" ON "AiSuggestionFeedbacks" ("PromptHash") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_Feature_UserChosen" ON "AiSuggestionFeedbacks" ("FeatureKey", "UserChosenAt") WHERE "IsDeleted" = false;""",
+
+            // Prompt response cache — tenant-scoped, content-addressed.
+            """
+            CREATE TABLE IF NOT EXISTS "AiResponseCaches" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PromptHash" varchar(80) NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "ResponseJson" jsonb NOT NULL,
+                "ProviderUsed" integer NOT NULL,
+                "ModelVersion" varchar(200) NULL,
+                "Confidence" decimal(5,4) NULL,
+                "CompanyId" uuid NULL,
+                "HitCount" integer NOT NULL DEFAULT 0,
+                "LastHitAt" timestamp NULL,
+                "ExpiresAt" timestamp NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiResponseCaches" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiResponseCaches_Hash_Company" ON "AiResponseCaches" ("PromptHash", "CompanyId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiResponseCaches_ExpiresAt" ON "AiResponseCaches" ("ExpiresAt") WHERE "IsDeleted" = false;""",
+
+            // Per-feature local-model health (one row per FeatureKey).
+            """
+            CREATE TABLE IF NOT EXISTS "LocalModelHealths" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "FeatureKey" varchar(100) NOT NULL,
+                "LocalModelVersion" varchar(100) NOT NULL DEFAULT 'v1',
+                "SamplesLast30d" integer NOT NULL DEFAULT 0,
+                "LocalAccuracy30d" decimal(5,4) NOT NULL DEFAULT 0,
+                "AiAccuracy30d" decimal(5,4) NOT NULL DEFAULT 0,
+                "AgreementRate30d" decimal(5,4) NOT NULL DEFAULT 0,
+                "LastEvaluatedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" integer NOT NULL DEFAULT 1,
+                "Recommendation" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_LocalModelHealths" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_FeatureKey" ON "LocalModelHealths" ("FeatureKey") WHERE "IsDeleted" = false;""",
+
+            // Daily usage rollup — drives the admin AI burn widget. One
+            // row per (day, provider, feature). Job upserts at end-of-day.
+            """
+            CREATE TABLE IF NOT EXISTS "AiUsageDailies" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "UsageDate" timestamp NOT NULL,
+                "ProviderType" integer NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "CallsAttempted" integer NOT NULL DEFAULT 0,
+                "CallsSuccessful" integer NOT NULL DEFAULT 0,
+                "CallsCached" integer NOT NULL DEFAULT 0,
+                "CallsFailed" integer NOT NULL DEFAULT 0,
+                "CallsBudgetBlocked" integer NOT NULL DEFAULT 0,
+                "InputTokensTotal" bigint NOT NULL DEFAULT 0,
+                "OutputTokensTotal" bigint NOT NULL DEFAULT 0,
+                "CostUsdTotal" decimal(18,6) NOT NULL DEFAULT 0,
+                "AvgLatencyMs" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiUsageDailies" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiUsageDailies_Day_Provider_Feature" ON "AiUsageDailies" ("UsageDate", "ProviderType", "FeatureKey") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiUsageDailies_UsageDate" ON "AiUsageDailies" ("UsageDate" DESC) WHERE "IsDeleted" = false;""",
+
+            // SiteSettings — AI master switches.
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiAugmentationEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiReviewConfidenceThreshold" decimal(5,4) NOT NULL DEFAULT 0.6500;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiSamplingRate" decimal(5,4) NOT NULL DEFAULT 0.1000;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiDefaultCacheTtlDays" integer NOT NULL DEFAULT 30;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiStripPiiInPrompts" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiVerifyAgainstThaiComplianceRules" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiLastFeedbackTrainingAt" timestamp NULL;""",
         };
 
         foreach (var sql in statements)
