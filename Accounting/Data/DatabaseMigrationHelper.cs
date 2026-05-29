@@ -2293,6 +2293,36 @@ public static class DatabaseMigrationHelper
             // ETDA e-Tax schema doesn't have a dedicated element so it gets
             // folded into the composed free-text Address by ComposeAddress.
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "Moo" text NULL;""",
+
+            // CompanyInvitation — lets Owners invite people whose email
+            // isn't on the platform yet. The invitee gets an email link
+            // that doubles as a signup shortcut: signing up with the token
+            // auto-joins the company. Existing users open the same link,
+            // sign in, and accept.
+            """
+            CREATE TABLE IF NOT EXISTS "CompanyInvitations" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Email" text NOT NULL,
+                "Role" integer NOT NULL DEFAULT 5,
+                "InvitedByUserId" uuid NOT NULL,
+                "Token" text NOT NULL,
+                "Status" integer NOT NULL DEFAULT 0,
+                "ExpiresAt" timestamp NOT NULL,
+                "AcceptedAt" timestamp NULL,
+                "AcceptedByUserId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_CompanyInvitations" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_CompanyInvitations_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_CompanyInvitations_InvitedBy" FOREIGN KEY ("InvitedByUserId") REFERENCES "Users"("Id") ON DELETE RESTRICT
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_CompanyInvitations_Token" ON "CompanyInvitations" ("Token") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_CompanyInvitations_Company_Email" ON "CompanyInvitations" ("CompanyId", "Email") WHERE "IsDeleted" = false;""",
             // Mirror on Company so seller addresses on e-Tax XML don't drop
             // Moo when the tenant's own office is provincial / rural.
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "Moo" text NULL;""",

@@ -265,8 +265,14 @@
         if (!email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
         if (role === 'Owner' && !confirm(`เพิ่ม ${email} เป็น "เจ้าของ" ของบริษัทนี้?\n\nคนนี้จะ:\n• เห็นข้อมูลทั้งหมด รวมเงินเดือน + เอกสารลับ\n• จัดการสมาชิกคนอื่นได้\n• ลบ / โอน บริษัทได้\n\nให้เฉพาะคนที่ไว้ใจระดับเดียวกับคุณ`)) return;
         try {
-          await api.addMember(email, role);
-          Layout.toast(role === 'Owner' ? '⭐ เพิ่มเจ้าของสำเร็จ' : 'เพิ่มสมาชิกสำเร็จ');
+          // Response shape: { success, data: { wasInvited, email, invitationId }, message }
+          const res = await api.addMember(email, role);
+          const wasInvited = res && res.data && res.data.wasInvited;
+          if (wasInvited) {
+            Layout.toast(`📩 ส่งคำเชิญถึง ${email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล`, 'success', 5500);
+          } else {
+            Layout.toast(role === 'Owner' ? '⭐ เพิ่มเจ้าของสำเร็จ' : 'เพิ่มสมาชิกสำเร็จ');
+          }
           document.getElementById('addEmail').value = '';
           document.getElementById('ownerWarning').style.display = 'none';
           await this.load();

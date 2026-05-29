@@ -268,6 +268,13 @@
         const r = sessionStorage.getItem('returnTo');
         if (r) { sessionStorage.removeItem('returnTo'); return r; }
       } catch {}
+      // Invitation flow: when the user arrived here with ?invite=token they
+      // were redirected from /accept-invitation.html. After login, bounce
+      // them back so the accept handler can finish the join.
+      try {
+        const t = new URLSearchParams(location.search).get('invite');
+        if (t) return '/accept-invitation.html?token=' + encodeURIComponent(t);
+      } catch {}
       return null;
     }
 

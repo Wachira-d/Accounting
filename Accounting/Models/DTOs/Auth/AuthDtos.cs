@@ -16,7 +16,11 @@ public record RegisterRequest(
     string? FirstName,
     string? LastName,
     string? CompanyName,
-    Models.Enums.SubscriptionPlan? Plan = null);  // Plan to start trial with (defaults to Pro if null)
+    Models.Enums.SubscriptionPlan? Plan = null,
+    // Optional invitation token. When present, RegisterAsync consumes the
+    // matching CompanyInvitation in the same transaction so the new user
+    // lands on the inviter's company instead of creating a stub one.
+    string? InvitationToken = null);
 
 public record LoginRequest(
     [Required(ErrorMessage = "กรุณากรอกอีเมล")]

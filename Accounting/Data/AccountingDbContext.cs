@@ -14,6 +14,7 @@ public class AccountingDbContext : DbContext
     public DbSet<LineUserState> LineUserStates => Set<LineUserState>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
+    public DbSet<CompanyInvitation> CompanyInvitations => Set<CompanyInvitation>();
     public DbSet<CompanyRole> CompanyRoles => Set<CompanyRole>();
     public DbSet<CompanyRolePermission> CompanyRolePermissions => Set<CompanyRolePermission>();
     public DbSet<SensitivityAccessRule> SensitivityAccessRules => Set<SensitivityAccessRule>();
@@ -432,6 +433,17 @@ public class AccountingDbContext : DbContext
             e.Property(s => s.NotifyDaysAfterExpiry).HasMaxLength(100);
             e.Property(s => s.NotifyDaysBeforeDeactivation).HasMaxLength(100);
             e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        // ===== CompanyInvitation =====
+        modelBuilder.Entity<CompanyInvitation>(e =>
+        {
+            e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(i => i.InvitedBy).WithMany().HasForeignKey(i => i.InvitedByUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(i => i.Token).IsUnique();
+            // Email-lookup happens during invite acceptance — narrow index.
+            e.HasIndex(i => new { i.CompanyId, i.Email });
+            e.HasQueryFilter(i => !i.IsDeleted);
         });
 
         // ===== AccountSubscription =====
