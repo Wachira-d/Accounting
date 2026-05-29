@@ -41,11 +41,3 @@ public class CompanyInvitation : BaseEntity
     /// different cased / aliased email and we need to trace the link.</summary>
     public Guid? AcceptedByUserId { get; set; }
 }
-
-public enum InvitationStatus
-{
-    Pending   = 0,
-    Accepted  = 1,
-    Expired   = 2,
-    Cancelled = 3,
-}

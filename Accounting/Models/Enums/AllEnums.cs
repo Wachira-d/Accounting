@@ -980,3 +980,11 @@ public enum CheckoutMode
     QuotationThenPayment = 3,
     InquiryOnly = 4
 }
+
+public enum InvitationStatus
+{
+    Pending   = 0,
+    Accepted  = 1,
+    Expired   = 2,
+    Cancelled = 3,
+}
