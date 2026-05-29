@@ -48,6 +48,19 @@ const Layout = {
     document.addEventListener('DOMContentLoaded', () => setTimeout(() => this._mountHelpIcons(), 200));
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
+    // Deep-link override — when an external system sends the user to a URL
+    // with ?company=X (typically from the DeepLinkRewriter on the server),
+    // honor that immediately so the page that follows queries the right
+    // tenant. Without this the cached currentCompany would mask the redirect.
+    try {
+      const qCompany = new URLSearchParams(location.search).get('company');
+      if (qCompany && /^[0-9a-f-]{36}$/i.test(qCompany) && qCompany !== this.currentCompany?.id) {
+        // Stash a minimal company object until loadCompanies() repopulates the
+        // full record from the API. id-only is enough for getCompanyId().
+        this.currentCompany = { id: qCompany };
+        localStorage.setItem('currentCompany', JSON.stringify({ id: qCompany }));
+      }
+    } catch { /* malformed URL — fall through to cached company */ }
     // Restore cached subscription so menu renders correctly on first paint
     try {
       const cached = JSON.parse(localStorage.getItem('subscription') || 'null');
@@ -61,7 +74,19 @@ const Layout = {
       const cachedPerms = JSON.parse(localStorage.getItem('myPermissions') || 'null');
       if (cachedPerms) this.myPermissions = cachedPerms;
     } catch {}
-    if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return false; }
+    if (!localStorage.getItem('token')) {
+      // Preserve the deep-link target so the user lands on the right page
+      // after login — without this we'd send them to / and forget the
+      // /{cid}/journals/{id} they came from.
+      try {
+        const here = location.pathname + location.search + location.hash;
+        if (here && here !== '/' && !here.startsWith('/login') && !here.startsWith('/register')) {
+          sessionStorage.setItem('returnTo', here);
+        }
+      } catch {}
+      window.location.href = '/login.html';
+      return false;
+    }
     if (typeof I18n !== 'undefined') I18n.init();
     this.render();
     this.bindEvents();

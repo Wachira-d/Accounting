@@ -239,7 +239,10 @@
         this.loadCounts();
         this.checkDraftCount();
         const entryId = params.get('entryId');
-        if (entryId) this.detail(entryId);
+        if (entryId) {
+          this.detail(entryId);
+          if (params.get('fromDeepLink') === '1') Layout.toast('🔗 เปิดจากระบบที่เชื่อมต่อ', 'success');
+        }
       },
       renderHeaderActions() {
         const holder = document.getElementById('pageActions');
