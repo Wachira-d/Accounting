@@ -623,12 +623,25 @@ const Layout = {
     { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'บันทึกการซื้อ ค่าใช้จ่าย ใบสำคัญจ่าย ชำระเงิน' },
     { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases',
       description: 'ใบสั่งซื้อ · ใบรับสินค้า · ใบกำกับภาษีซื้อ' },
-    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement', _i18nKey: 'nav.expense',
-      description: 'บันทึกใบเสร็จค่าใช้จ่าย — มี OCR สแกนช่วยกรอกอัตโนมัติ' },
     { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense', feature: 'DocumentEngine', _i18nKey: 'nav.expenseDocs',
       description: 'ใบสำคัญจ่าย · ใบเสร็จรับเงินจากผู้ขาย · ใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ' },
     { id: 'payments', label: 'ชำระเงิน / รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments',
       description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว' },
+
+    // ───── 👥 พนักงาน (Self-Service) ─────
+    // Self-service flows the EMPLOYEE initiates (not the accountant).
+    // Distinct from HR/เงินเดือน below which is manager-side. Grouped
+    // here so the employee menu is one section away — they don't have
+    // to hunt through accounting submenus to file a claim. The "ไม่มี
+    // ใบเสร็จ" entry deep-links into expense.html?noReceipt=1 which
+    // toggles the §65 ทวิ form mode (reason + optional witness).
+    { section: 'พนักงาน (Self-Service)', icon: '🙋', description: 'เบิกค่าใช้จ่าย · ขอลา · ดู payslip · งานที่พนักงานทำเอง' },
+    { id: 'expense', label: 'เบิกค่าใช้จ่าย (มีใบเสร็จ)', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement', _i18nKey: 'nav.expense',
+      description: 'พนักงานออกเงินก่อน → ส่ง manager อนุมัติ → บริษัทคืนเงิน' },
+    { id: 'expense-no-receipt', label: 'เบิกค่าใช้จ่าย (ไม่มีใบเสร็จ)', icon: '📝', href: '/pages/expense.html?noReceipt=1', feature: 'ExpenseManagement',
+      description: '§65 ทวิ — กรณี vendor ออกใบเสร็จไม่ได้ (ตลาดสด · taxi · ใบเสร็จหาย) → อนุมัติแล้วระบบสร้างใบรับรองแทนใบเสร็จให้อัตโนมัติ' },
+    { id: 'quick-expense', label: 'จ่ายเร็ว (ภาคสนาม)', icon: '💨', href: '/pages/quick-expense.html', feature: 'BasicAccounting',
+      description: 'ฟอร์มเดียวจบ — บันทึกค่าใช้จ่ายเล็ก ๆ ระหว่างออกงาน (Mobile-first)' },
 
     { section: 'POS หน้าร้าน', icon: '🏪', description: 'ระบบหน้าขาย Point of Sale + แพ็คเกจบริการ + รายงาน' },
     { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html', feature: 'DocumentEngine', _i18nKey: 'nav.pos',
