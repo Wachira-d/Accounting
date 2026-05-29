@@ -146,7 +146,14 @@
             <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
-            <div class="form-group"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></label>
+            <div class="form-group">
+              <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+                <span>หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></span>
+                <button type="button" id="fExpenseCategoryAiBtn" onclick="Page.askAiExpenseCategory(event)"
+                        style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit">
+                  🤖 AI
+                </button>
+              </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
             </div>
           </div>
@@ -1692,6 +1699,48 @@
           }
         };
         await tryApprove(false);
+      },
+
+      // 🤖 Ask AI to suggest the GL expense category. Uses the document's
+      // existing fields (contact, totals, notes) — works whether the doc
+      // is saved or not because the AI sees the in-progress form values.
+      askAiExpenseCategory(ev) {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const contactSearchInput = document.getElementById('fContactSearch');
+        const vendorName = contactSearchInput?.value || '';
+        const lineDesc = document.getElementById('fNotes')?.value
+          || vendorName || 'ค่าใช้จ่ายทั่วไป';
+        const totalEl = document.getElementById('fTotal');
+        const amount = parseFloat(totalEl?.value || '0') || 0;
+        const currency = document.getElementById('fCurrency')?.value || 'THB';
+        const currentAccountId = document.getElementById('fExpenseCategory')?.value || null;
+        const currentAccountCode = currentAccountId
+          ? (this.expenseCategories.find(a => a.id === currentAccountId)?.accountCode || null)
+          : null;
+        // editingId is the source-invoice id when editing an existing doc;
+        // for a brand-new doc we pass Guid.Empty so the controller treats
+        // it as ad-hoc (no source-invoice grounding).
+        const sourceId = this.editingId || '00000000-0000-0000-0000-000000000000';
+        const btn = ev?.currentTarget;
+        AiSuggestion.show({
+          anchorEl: btn,
+          fetch: () => API.post(`/api/companies/${cid}/ai/payment-voucher/suggest-account`, {
+            sourceInvoiceId: sourceId,
+            lineDescription: lineDesc,
+            amount, currency, currentAccountCode,
+          }),
+          applyAnswer: (code) => {
+            // AI returns an account CODE; map to the option value (account id).
+            const match = this.expenseCategories.find(a => a.accountCode === code);
+            const sel = document.getElementById('fExpenseCategory');
+            if (match && sel) { sel.value = match.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+          },
+          answerToLabel: (code) => {
+            const m = this.expenseCategories.find(a => a.accountCode === code);
+            return m ? `${m.accountCode} - ${m.accountName}` : code;
+          },
+        });
       },
 
       // 🤖 Ask AI to classify the CN reason. Only valid when editing
