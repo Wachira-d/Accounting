@@ -145,9 +145,14 @@ public class DocumentController : ControllerBase
             // 422 Unprocessable Entity — semantically "request is well-
             // formed but content violates a pre-condition". Frontend
             // recognises the shape, prompts the operator with the warning
-            // list, and re-submits with AcknowledgeWarnings=true.
+            // list, and re-submits with AcknowledgeWarnings=true. When
+            // AI augmentation is online, AiHints[i] aligns with Warnings[i]
+            // so the UI can render the suggested fix next to each warning.
+            var aiHints = ex.AiHints?.Select(h => new ApprovalWarningAiHintDto(
+                h.Primary, h.Confidence, h.Reasoning, h.SuggestedActions,
+                h.Risks, h.ComplianceFlags, h.FeedbackId, h.UsedAi)).ToList();
             return StatusCode(422, new ApiResponse<object>(false,
-                new ApprovalWarningsResponse(ex.Warnings),
+                new ApprovalWarningsResponse(ex.Warnings, aiHints),
                 ex.Message));
         }
     }

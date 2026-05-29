@@ -27,6 +27,7 @@ public class DocumentService : IDocumentService
     private readonly ITaxService? _taxService;
     private readonly IBotExchangeRateService? _fxRates;
     private readonly ISensitivityService? _sensitivity;
+    private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -38,7 +39,8 @@ public class DocumentService : IDocumentService
         IBankService? bankService = null,
         ITaxService? taxService = null,
         IBotExchangeRateService? fxRates = null,
-        ISensitivityService? sensitivity = null)
+        ISensitivityService? sensitivity = null,
+        Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -54,6 +56,7 @@ public class DocumentService : IDocumentService
         _bankService = bankService;
         _taxService = taxService;
         _fxRates = fxRates;
+        _aiAugmenter = aiAugmenter;
     }
 
     /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
@@ -590,7 +593,50 @@ public class DocumentService : IDocumentService
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
         if (warnings.Count > 0 && !acknowledgeWarnings)
-            throw new DocumentApprovalWarningsException(warnings);
+        {
+            // Enrich each warning with an AI-suggested fix when augmenter
+            // is wired AND online. Done in parallel with a short overall
+            // budget (8s) so the approval dialog isn't laggy. Each call
+            // falls back to local on its own — overall request still
+            // throws the 422 regardless of whether AI ran.
+            IReadOnlyList<DocumentApprovalAiHint>? hints = null;
+            if (_aiAugmenter != null && warnings.Count > 0)
+            {
+                try
+                {
+                    using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                    var snapshot = new
+                    {
+                        doc.Id, doc.DocumentNumber, doc.DocumentType, doc.DocumentDate,
+                        doc.TotalAmount, doc.SubTotal, doc.VatAmount, doc.WhtAmount,
+                        doc.Currency, doc.BalanceDue, doc.ContactId,
+                        ContactName = doc.Contact?.Name,
+                        ContactTaxId = doc.Contact?.TaxId,
+                        LineCount = doc.Lines?.Count ?? 0,
+                    };
+                    var tasks = warnings
+                        .Select(w => _aiAugmenter.SuggestApprovalWarningFixAsync(
+                            companyId, doc.Id, w, snapshot, null, aiCts.Token))
+                        .ToList();
+                    var results = await Task.WhenAll(tasks);
+                    hints = results.Select(r => new DocumentApprovalAiHint(
+                        Primary: r.Answer ?? "Acknowledge",
+                        Confidence: r.Confidence ?? 0.5m,
+                        Reasoning: r.Reasoning,
+                        SuggestedActions: r.SuggestedActions,
+                        Risks: r.Risks,
+                        ComplianceFlags: r.ComplianceFlags,
+                        FeedbackId: r.FeedbackId,
+                        UsedAi: r.UsedAi)).ToList();
+                }
+                catch (Exception aiEx)
+                {
+                    // AI failure must not block the warning surfacing.
+                    _logger.LogWarning(aiEx, "Approval-warning AI augmentation failed; surfacing raw warnings");
+                }
+            }
+            throw new DocumentApprovalWarningsException(warnings, hints);
+        }
 
         // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
         // CN reason distinguishes whether goods physically returned (restocks)
@@ -3691,9 +3737,33 @@ public class DocumentService : IDocumentService
 public class DocumentApprovalWarningsException : Exception
 {
     public IReadOnlyList<string> Warnings { get; }
-    public DocumentApprovalWarningsException(IReadOnlyList<string> warnings)
+
+    /// <summary>AI-enriched per-warning suggestions. NULL when AI is
+    /// disabled / unreachable. Each item corresponds to Warnings[i] by
+    /// index — pair them in the UI.</summary>
+    public IReadOnlyList<DocumentApprovalAiHint>? AiHints { get; }
+
+    public DocumentApprovalWarningsException(
+        IReadOnlyList<string> warnings,
+        IReadOnlyList<DocumentApprovalAiHint>? aiHints = null)
         : base("เอกสารมีจุดที่ต้องตรวจก่อนยืนยันการอนุมัติ (" + warnings.Count + " รายการ)")
     {
         Warnings = warnings;
+        AiHints = aiHints;
     }
 }
+
+/// <summary>
+/// AI-generated per-warning hint. Surfaced alongside the warning text
+/// in the approval-confirmation modal so the user sees "Acknowledge / Edit
+/// / Block" + suggested actions per item.
+/// </summary>
+public sealed record DocumentApprovalAiHint(
+    string Primary,                         // "Acknowledge" | "Edit" | "Block"
+    decimal Confidence,
+    string? Reasoning,
+    IReadOnlyList<string> SuggestedActions,
+    IReadOnlyList<string> Risks,
+    IReadOnlyList<string> ComplianceFlags,
+    Guid? FeedbackId,
+    bool UsedAi);

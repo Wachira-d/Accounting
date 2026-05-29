@@ -1672,7 +1672,10 @@
             await this.load();
           } catch (e) {
             if (e.status === 422 && e.body && e.body.data && Array.isArray(e.body.data.warnings)) {
-              this._showApprovalWarnings(id, e.body.data.warnings, () => tryApprove(true));
+              // aiHints[i] aligns with warnings[i] when AI augmentation
+              // is on at the server. Null/undefined when AI is disabled
+              // or unreachable — modal falls back to plain warning text.
+              this._showApprovalWarnings(id, e.body.data.warnings, e.body.data.aiHints, () => tryApprove(true));
               return;
             }
             Layout.toast(e.message, 'error');
@@ -1681,14 +1684,14 @@
         await tryApprove(false);
       },
 
-      _showApprovalWarnings(docId, warnings, onConfirm) {
+      _showApprovalWarnings(docId, warnings, aiHints, onConfirm) {
         let wrap = document.getElementById('approvalWarningsModal');
         if (!wrap) {
           wrap = document.createElement('div');
           wrap.id = 'approvalWarningsModal';
           wrap.className = 'modal-overlay';
           wrap.innerHTML = `
-            <div class="modal" style="max-width:560px">
+            <div class="modal" style="max-width:640px">
               <div class="modal-header" style="background:#fef3c7;border-bottom:1px solid #f59e0b">
                 <h3 class="modal-title" style="color:#92400e">⚠️ ตรวจรายการก่อนอนุมัติ</h3>
                 <button class="modal-close" onclick="document.getElementById('approvalWarningsModal').classList.remove('active')">&times;</button>
@@ -1698,7 +1701,7 @@
                   ระบบเจอจุดที่ <strong>ยังถูกตามหลักบัญชี</strong> แต่ผิดจากแบบที่พบบ่อย —
                   โปรดตรวจรายการด้านล่างก่อนยืนยันการอนุมัติ
                 </p>
-                <ul id="awList" style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px"></ul>
+                <ul id="awList" style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px"></ul>
               </div>
               <div class="modal-footer">
                 <button class="btn btn-secondary" id="awCancel">กลับไปแก้ไข</button>
@@ -1707,14 +1710,57 @@
             </div>`;
           document.body.appendChild(wrap);
         }
-        document.getElementById('awList').innerHTML = warnings.map(w =>
-          `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:8px 12px;font-size:13px;color:#713f12;line-height:1.6">⚠️ ${Layout.esc(w)}</li>`
-        ).join('');
+        // Render each warning with its AI hint (if available). AI hint
+        // shows: recommended action badge + reasoning + action checklist.
+        document.getElementById('awList').innerHTML = warnings.map((w, i) => {
+          const hint = aiHints && aiHints[i];
+          if (!hint || !hint.usedAi) {
+            return `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.6">
+              <div>⚠️ ${Layout.esc(w)}</div>
+              ${hint ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px">🤖 AI ไม่พร้อม — ดูข้อมูลข้างต้นเท่านั้น</div>' : ''}
+            </li>`;
+          }
+          const badgeColor = hint.primary === 'Block' ? '#dc2626' : (hint.primary === 'Edit' ? '#d97706' : '#16a34a');
+          const badgeBg = hint.primary === 'Block' ? '#fee2e2' : (hint.primary === 'Edit' ? '#fef3c7' : '#dcfce7');
+          const conf = Math.round((hint.confidence || 0) * 100);
+          const actions = (hint.suggestedActions || []).filter(Boolean);
+          const risks = (hint.risks || []).filter(Boolean);
+          const compliance = (hint.complianceFlags || []).filter(Boolean);
+          return `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:8px;padding:12px;font-size:13px;color:#713f12;line-height:1.6">
+            <div style="margin-bottom:8px">⚠️ ${Layout.esc(w)}</div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-top:8px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="background:${badgeBg};color:${badgeColor};padding:3px 10px;border-radius:9999px;font-size:11px;font-weight:700">🤖 AI: ${hint.primary}</span>
+                <span style="font-size:11px;color:#64748b">${conf}%</span>
+              </div>
+              ${hint.reasoning ? `<div style="font-size:12px;color:#334155;margin-bottom:6px">${Layout.esc(hint.reasoning)}</div>` : ''}
+              ${actions.length ? `<div style="font-size:12px;color:#1e293b"><b>แนะนำ:</b><ul style="margin:4px 0 0 18px;padding:0">${actions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul></div>` : ''}
+              ${risks.length ? `<div style="font-size:11px;color:#dc2626;margin-top:6px"><b>ความเสี่ยง:</b> ${risks.map(r => Layout.esc(r)).join('; ')}</div>` : ''}
+              ${compliance.length ? `<div style="font-size:11px;color:#7c3aed;margin-top:4px"><b>กฎภาษีไทย:</b> ${compliance.map(c => Layout.esc(c)).join('; ')}</div>` : ''}
+            </div>
+          </li>`;
+        }).join('');
         const cancelBtn = document.getElementById('awCancel');
         const confirmBtn = document.getElementById('awConfirm');
+        const companyId = Layout.getCompanyId();
         cancelBtn.onclick = () => wrap.classList.remove('active');
         confirmBtn.onclick = async () => {
           wrap.classList.remove('active');
+          // Record each user's "Acknowledge" pick as feedback so the
+          // local model can learn which warning categories the user
+          // typically dismisses (low-value warning → maybe demote).
+          if (aiHints && companyId) {
+            for (const h of aiHints) {
+              if (h && h.feedbackId) {
+                try {
+                  await API.post(`/api/companies/${companyId}/ai-feedback/record`, {
+                    feedbackId: h.feedbackId, chosenAnswer: 'Acknowledge',
+                    acceptedAi: h.primary === 'Acknowledge',
+                  });
+                } catch (e) { /* feedback record is fire-and-forget */ }
+              }
+            }
+          }
           await onConfirm();
         };
         wrap.classList.add('active');

@@ -226,7 +226,26 @@ public record ApproveDocumentRequest(string? Notes, bool AcknowledgeWarnings = f
 /// list and retries with AcknowledgeWarnings=true to proceed. Hard errors
 /// (data corruption / illegal state) still throw inline — they're never
 /// surfaced as warnings.</summary>
-public record ApprovalWarningsResponse(IReadOnlyList<string> Warnings);
+public record ApprovalWarningsResponse(
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<ApprovalWarningAiHintDto>? AiHints = null);
+
+/// <summary>
+/// AI-generated hint for one approval warning. Paired with Warnings[i]
+/// by index. Surfaced in the UI alongside the warning text — operator
+/// sees Primary recommendation + actions + risks without needing to
+/// think through the warning from scratch. NULL when AI is disabled
+/// or unreachable.
+/// </summary>
+public record ApprovalWarningAiHintDto(
+    string Primary,
+    decimal Confidence,
+    string? Reasoning,
+    IReadOnlyList<string> SuggestedActions,
+    IReadOnlyList<string> Risks,
+    IReadOnlyList<string> ComplianceFlags,
+    Guid? FeedbackId,
+    bool UsedAi);
 
 // ===== Contact =====
 public record CreateContactRequest(
