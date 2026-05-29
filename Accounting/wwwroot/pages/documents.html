@@ -887,8 +887,17 @@
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
             // the document detail for follow-up.
+            //
+            // Suppress for Paid / Voided / Draft and for any document whose
+            // balanceDue dropped to ~0 — a paid invoice carrying "⏳ 30+d"
+            // is what triggered this fix: aging tracks the days since
+            // issuance, but the operator wants the badge to mean "still
+            // owed money".
+            const suppressAging =
+              d.status === 'Paid' || d.status === 'Voided' || d.status === 'Draft'
+              || Number(d.balanceDue ?? 0) <= 0.01;
             let agingBadge = '';
-            if (d.agingDays && d.agingDays >= 30) {
+            if (!suppressAging && d.agingDays && d.agingDays >= 30) {
               const tier = d.agingDays >= 90 ? '90+' : (d.agingDays >= 60 ? '60+' : '30+');
               const color = d.agingDays >= 90 ? '#dc2626' : (d.agingDays >= 60 ? '#ea580c' : '#d97706');
               agingBadge = `<span title="ค้างชำระ ${d.agingDays} วัน" style="margin-left:6px;padding:1px 6px;background:${color};color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ ${tier}d</span>`;
@@ -1387,7 +1396,12 @@
               ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + issues.map(i => `<li>${Layout.esc(i.message || i.rule)}</li>`).join('') + '</ul>' : ''}
             </div>`;
           }
-          if (d.agingDays && d.agingDays >= 30) {
+          // Same gate as the list-row aging chip — never bother the user
+          // with "ค้างชำระ" on a document that's been paid, voided, or
+          // is still a draft with no obligation yet.
+          const _agingSuppress = d.status === 'Paid' || d.status === 'Voided' || d.status === 'Draft'
+              || Number(d.balanceDue ?? 0) <= 0.01;
+          if (!_agingSuppress && d.agingDays && d.agingDays >= 30) {
             const bg = d.agingDays >= 90 ? '#fee2e2' : (d.agingDays >= 60 ? '#fed7aa' : '#fef3c7');
             const color = d.agingDays >= 90 ? '#991b1b' : (d.agingDays >= 60 ? '#9a3412' : '#92400e');
             banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">

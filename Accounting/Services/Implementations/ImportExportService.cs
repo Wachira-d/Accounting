@@ -964,6 +964,11 @@ public class ImportExportService : IImportExportService
         doc.PaidAmount += amount;
         doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
         doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+        if (doc.Status == DocumentStatus.Paid)
+        {
+            doc.AgingDays = null;
+            doc.AgingLastEvaluatedAt = DateTime.UtcNow;
+        }
 
         _db.Payments.Add(new Payment
         {

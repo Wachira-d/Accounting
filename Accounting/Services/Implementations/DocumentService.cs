@@ -1262,6 +1262,8 @@ public class DocumentService : IDocumentService
                 doc.PaidAmount = doc.TotalAmount;
                 doc.BalanceDue = 0;
                 doc.Status = DocumentStatus.Paid;
+                doc.AgingDays = null;
+                doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedBy = writtenOffBy;
                 doc.UpdatedAt = DateTime.UtcNow;
                 doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
@@ -1446,6 +1448,15 @@ public class DocumentService : IDocumentService
             source.Status = source.BalanceDue <= 0.01m
                 ? DocumentStatus.Paid
                 : DocumentStatus.PartiallyPaid;
+            // Settle stale aging on the source the same instant the
+            // settlement flips it to Paid (Receipt/PaymentVoucher converted
+            // path). Without this the source invoice keeps showing "⏳ 30+d"
+            // until the background job runs hours later.
+            if (source.Status == DocumentStatus.Paid)
+            {
+                source.AgingDays = null;
+                source.AgingLastEvaluatedAt = DateTime.UtcNow;
+            }
         }
         source.UpdatedAt = DateTime.UtcNow;
     }
@@ -2299,6 +2310,16 @@ public class DocumentService : IDocumentService
             doc.PaidAmount += request.Amount;
             doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
             doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+            // Clear stale aging immediately when the doc settles — otherwise
+            // the list view keeps showing "⏳ 30+d" on a paid invoice until
+            // DocumentAgingBackgroundService runs (every 6h). PartiallyPaid
+            // docs keep their aging since they still have an outstanding
+            // balance.
+            if (doc.Status == DocumentStatus.Paid)
+            {
+                doc.AgingDays = null;
+                doc.AgingLastEvaluatedAt = DateTime.UtcNow;
+            }
 
             await _db.SaveChangesAsync();
 

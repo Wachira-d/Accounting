@@ -608,6 +608,8 @@ public class IntegrationService : IIntegrationService
             {
                 document.BalanceDue = 0;
                 document.Status = DocumentStatus.Paid;
+                document.AgingDays = null;
+                document.AgingLastEvaluatedAt = DateTime.UtcNow;
             }
             else
             {
