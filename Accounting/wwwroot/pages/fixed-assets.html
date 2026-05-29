@@ -3,14 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>สินทรัพย์ถาวร - Next Acc</title>
+  <title>ทะเบียนสินทรัพย์ - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">สินทรัพย์ถาวร</h2><p class="page-subtitle">จัดการสินทรัพย์และค่าเสื่อมราคา</p></div>
+      <div>
+        <h2 class="page-title">ทะเบียนสินทรัพย์</h2>
+        <p class="page-subtitle">สินทรัพย์ทุกประเภท · PPE / ไม่มีตัวตน / สิทธิการใช้ / อสังหาฯ เพื่อการลงทุน — รวมค่าเสื่อมและค่าตัดจำหน่าย</p>
+      </div>
       <div class="flex gap-2">
         <button class="btn btn-secondary" onclick="Page.showReport()">รายงาน</button>
         <button class="btn btn-secondary" onclick="Page.openImport()">นำเข้า CSV</button>
@@ -22,12 +25,28 @@
                 data-tour-text="ขั้นที่ 1 — เพิ่มสินทรัพย์ ใส่ราคา / อายุการใช้งาน / วันได้มา → ระบบคิดค่าเสื่อมรายเดือนให้ตามวิธีเส้นตรง">+ เพิ่มสินทรัพย์</button>
       </div>
     </div>
+    <!-- Asset-type tabs — let the user filter by accounting treatment without
+         exiting the page. "ทั้งหมด" is the default; the per-type counts come
+         from the loaded list so the user sees how the mix breaks down. -->
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap" id="typeTabs">
+      <button class="type-tab active" data-type="" onclick="Page.setType('')">ทั้งหมด <span class="ct" id="ct-">-</span></button>
+      <button class="type-tab" data-type="Tangible" onclick="Page.setType('Tangible')">🏢 PPE / อุปกรณ์ <span class="ct" id="ct-Tangible">-</span></button>
+      <button class="type-tab" data-type="Intangible" onclick="Page.setType('Intangible')">📱 ไม่มีตัวตน <span class="ct" id="ct-Intangible">-</span></button>
+      <button class="type-tab" data-type="RightOfUse" onclick="Page.setType('RightOfUse')">🔑 สิทธิการใช้ (เช่า) <span class="ct" id="ct-RightOfUse">-</span></button>
+      <button class="type-tab" data-type="InvestmentProperty" onclick="Page.setType('InvestmentProperty')">🏘️ ลงทุน <span class="ct" id="ct-InvestmentProperty">-</span></button>
+    </div>
+    <style>
+      .type-tab { padding:6px 14px; background:#f1f5f9; border:none; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; color:#475569; }
+      .type-tab.active { background:#0ea5e9; color:#fff; }
+      .type-tab .ct { background:rgba(255,255,255,.25); border-radius:10px; padding:1px 7px; margin-left:4px; font-size:11px; }
+      .type-tab:not(.active) .ct { background:#cbd5e1; color:#475569; }
+    </style>
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Active">ใช้งาน</option>
-        <option value="FullyDepreciated">หมดค่าเสื่อม</option>
+        <option value="FullyDepreciated">หมดค่าเสื่อม/ตัดจำหน่ายแล้ว</option>
         <option value="Disposed">จำหน่าย</option>
         <option value="WrittenOff">ตัดจำหน่าย</option>
       </select>
@@ -46,6 +65,35 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มสินทรัพย์ถาวร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="fId">
+
+          <!-- Asset type selector. Driving accounting treatment + which extra
+               fields show. Default Tangible keeps the form identical to the
+               old PPE-only flow. -->
+          <div class="form-group">
+            <label class="form-label">ประเภทสินทรัพย์ *</label>
+            <select class="form-select" id="fAssetType" onchange="Page.onAssetTypeChange(this.value)">
+              <option value="Tangible">🏢 PPE — ที่ดิน อาคาร อุปกรณ์ (ค่าเสื่อมราคา)</option>
+              <option value="Intangible">📱 ไม่มีตัวตน — Software / Patent (ค่าตัดจำหน่าย)</option>
+              <option value="RightOfUse">🔑 สิทธิการใช้ — เช่าตามสัญญา (TFRS 16)</option>
+              <option value="InvestmentProperty">🏘️ อสังหาฯ เพื่อการลงทุน (Cost / Fair Value)</option>
+            </select>
+            <div id="fTypeHint" style="font-size:11px;color:#0c4a6e;background:#ecfeff;border:1px solid #67e8f9;border-radius:6px;padding:6px 10px;margin-top:6px"></div>
+          </div>
+
+          <!-- Lease-specific block — visible only for RightOfUse. Captures the
+               TFRS 16 inputs the GL needs (lessor, term, monthly payment,
+               liability account). Useful life defaults to the lease term
+               when not set explicitly. -->
+          <div id="fLeaseBlock" style="display:none;background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px 14px;margin-bottom:12px">
+            <div style="font-weight:700;font-size:13px;color:#78350f;margin-bottom:8px">🔑 ข้อมูลสัญญาเช่า (TFRS 16)</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ผู้ให้เช่า</label><input type="text" class="form-input" id="fLessor" placeholder="ชื่อบริษัทผู้ให้เช่า"></div>
+              <div class="form-group"><label class="form-label">ระยะเวลาเช่า (เดือน)</label><input type="number" class="form-input" id="fLeaseTerm" min="1" max="600" placeholder="เช่น 36"></div>
+            </div>
+            <div class="form-group"><label class="form-label">ค่าเช่าต่อเดือน (บาท)</label><input type="number" class="form-input" id="fLeasePmt" step="0.01" placeholder="0.00"></div>
+            <div style="font-size:11px;color:#78350f">💡 อายุการใช้งานจะใช้ระยะเวลาเช่า ถ้าไม่ระบุอายุการใช้งานเอง</div>
+          </div>
+
           <div class="form-row">
             <div class="form-group"><label class="form-label">รหัสสินทรัพย์ *</label><input type="text" class="form-input" id="fCode"></div>
             <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
@@ -222,10 +270,10 @@
     const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ' };
     const statusMap = { Active:'ใช้งาน', Disposed:'จำหน่าย', FullyDepreciated:'หมดค่าเสื่อม', WrittenOff:'ตัดจำหน่าย' };
     const Page = {
-      page: 1, allAssets: [], _currentAsset: null, _accounts: [],
+      page: 1, allAssets: [], _currentAsset: null, _accounts: [], currentType: '',
       async init() {
         if (!Layout.init('fixed-assets')) return;
-        Layout.setTitle('สินทรัพย์ถาวร');
+        Layout.setTitle('ทะเบียนสินทรัพย์');
         await Promise.all([this.load(), this.loadAccounts()]);
         // Deep-link from the OCR import-result table — ?id={assetId}
         // auto-opens the detail modal.
@@ -254,22 +302,45 @@
         const checked = document.getElementById('fPostAcq').checked;
         document.getElementById('fCreditAcctRow').style.display = checked ? '' : 'none';
       },
+      setType(t) {
+        this.currentType = t;
+        document.querySelectorAll('.type-tab').forEach(b => b.classList.toggle('active', b.dataset.type === t));
+        this.page = 1;
+        this.load();
+      },
+      _typeLabel(t) {
+        return ({ Tangible:'🏢 PPE', Intangible:'📱 ไม่มีตัวตน', RightOfUse:'🔑 เช่า', InvestmentProperty:'🏘️ ลงทุน' })[t] || '🏢 PPE';
+      },
       async load() {
         const api = Layout.api(); if (!api) return;
         const search = document.getElementById('searchInput').value;
         const status = document.getElementById('statusFilter').value;
-        let q = `?page=${this.page}&pageSize=20`;
+        // Server doesn't filter by AssetType yet — pull a larger page and
+        // filter client-side. Cheap enough for typical SME asset counts
+        // (<1000); upgrade to server-side filter if usage grows.
+        let q = `?page=${this.page}&pageSize=200`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (status) q += `&status=${status}`;
         try {
           const res = await api.getAssets(q);
-          const data = res.data; const items = data?.items || data || [];
-          this.allAssets = items;
+          const data = res.data; const all = data?.items || data || [];
+          this.allAssets = all;
+
+          // Per-type counts for the tab badges — keep them stable regardless of
+          // which tab is active so the user can see the mix at a glance.
+          const counts = { Tangible:0, Intangible:0, RightOfUse:0, InvestmentProperty:0 };
+          all.forEach(a => { const t = a.assetType || 'Tangible'; if (t in counts) counts[t]++; });
+          document.getElementById('ct-').textContent = all.length;
+          ['Tangible','Intangible','RightOfUse','InvestmentProperty'].forEach(t => {
+            const el = document.getElementById('ct-' + t); if (el) el.textContent = counts[t];
+          });
+
+          const items = this.currentType ? all.filter(a => (a.assetType || 'Tangible') === this.currentType) : all;
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(a => `<tr>
             <td class="font-medium">${a.assetCode}</td>
-            <td>${a.name}</td>
+            <td>${a.name}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div></td>
             <td>${a.category || '-'}</td>
             <td>${Layout.date(a.purchaseDate)}</td>
             <td class="text-right">${Layout.money(a.purchaseCost)}</td>
@@ -281,14 +352,29 @@
               ${a.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
             </td>
           </tr>`).join('');
-          const totalPages = data?.totalPages || 1;
-          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
+          document.getElementById('pagination').innerHTML = '';  // server paging disabled while we filter client-side
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+      onAssetTypeChange(t) {
+        // Show / hide the lease block + update the explainer hint.
+        document.getElementById('fLeaseBlock').style.display = t === 'RightOfUse' ? '' : 'none';
+        const hints = {
+          Tangible:           '🏢 บันทึก <strong>ค่าเสื่อมราคา</strong> รายเดือนโดย Dr ค่าเสื่อม / Cr ค่าเสื่อมสะสม · เช่น เครื่องคอมพ์ ยานพาหนะ',
+          Intangible:         '📱 บันทึก <strong>ค่าตัดจำหน่าย</strong> รายเดือนโดย Dr ค่าตัดจำหน่าย / Cr ค่าตัดจำหน่ายสะสม · เช่น Software, ลิขสิทธิ์',
+          RightOfUse:         '🔑 บันทึกตาม TFRS 16: Dr ROU / Cr หนี้สินตามสัญญาเช่า · ตัดจำหน่ายตามอายุสัญญา',
+          InvestmentProperty: '🏘️ เลือก Cost Model = บันทึกค่าเสื่อมเหมือน PPE · Fair Value = ปรับมูลค่าทุกงวดผ่านกำไร/ขาดทุน',
+        };
+        document.getElementById('fTypeHint').innerHTML = hints[t] || hints.Tangible;
+      },
       openCreate() {
-        document.getElementById('formTitle').textContent = 'เพิ่มสินทรัพย์ถาวร';
+        document.getElementById('formTitle').textContent = 'เพิ่มสินทรัพย์';
         document.getElementById('fId').value = '';
+        document.getElementById('fAssetType').value = this.currentType || 'Tangible';
+        this.onAssetTypeChange(document.getElementById('fAssetType').value);
+        document.getElementById('fLessor').value = '';
+        document.getElementById('fLeaseTerm').value = '';
+        document.getElementById('fLeasePmt').value = '';
         document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
         document.getElementById('fName').value = '';
         document.getElementById('fCategory').value = '';
@@ -310,6 +396,11 @@
           const res = await api.getAsset(id); const a = res.data;
           document.getElementById('formTitle').textContent = 'แก้ไขสินทรัพย์';
           document.getElementById('fId').value = a.id;
+          document.getElementById('fAssetType').value = a.assetType || 'Tangible';
+          this.onAssetTypeChange(a.assetType || 'Tangible');
+          document.getElementById('fLessor').value = a.lessorName || '';
+          document.getElementById('fLeaseTerm').value = a.leaseTermMonths || '';
+          document.getElementById('fLeasePmt').value = a.monthlyLeasePayment || '';
           document.getElementById('fCode').value = a.assetCode; document.getElementById('fCode').disabled = true;
           document.getElementById('fName').value = a.name;
           document.getElementById('fCategory').value = a.category || '';
@@ -354,6 +445,10 @@
           assetAccountId: assetAcct,
           depreciationExpenseAccountId: document.getElementById('fDepExpAcct').value || null,
           accumulatedDepreciationAccountId: document.getElementById('fAccumAcct').value || null,
+          assetType: document.getElementById('fAssetType').value,
+          leaseTermMonths: parseInt(document.getElementById('fLeaseTerm').value) || null,
+          lessorName: document.getElementById('fLessor').value.trim() || null,
+          monthlyLeasePayment: parseFloat(document.getElementById('fLeasePmt').value) || null,
           postAcquisitionJournalEntry: postAcq,
           creditAccountId: creditAcct,
         };

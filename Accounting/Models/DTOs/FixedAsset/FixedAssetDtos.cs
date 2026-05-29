@@ -21,7 +21,14 @@ public record CreateFixedAssetRequest(
     // CreditAccountId (cash or A/P). The OCR "Register Asset" path posts
     // its own entry and leaves this false to avoid a double post.
     bool PostAcquisitionJournalEntry = false,
-    Guid? CreditAccountId = null);
+    Guid? CreditAccountId = null,
+    // Asset type + lease-specific fields. Default Tangible keeps the create
+    // flow exactly as it was for existing callers.
+    AssetType AssetType = AssetType.Tangible,
+    int? LeaseTermMonths = null,
+    string? LessorName = null,
+    decimal? MonthlyLeasePayment = null,
+    Guid? LeaseLiabilityAccountId = null);
 
 public record UpdateFixedAssetRequest(
     string? Name,
@@ -54,7 +61,11 @@ public record FixedAssetResponse(
     DateTime CreatedAt,
     Guid? AssetAccountId = null,
     Guid? DepreciationExpenseAccountId = null,
-    Guid? AccumulatedDepreciationAccountId = null);
+    Guid? AccumulatedDepreciationAccountId = null,
+    AssetType AssetType = AssetType.Tangible,
+    int? LeaseTermMonths = null,
+    string? LessorName = null,
+    decimal? MonthlyLeasePayment = null);
 
 public record DepreciationResponse(
     Guid Id,

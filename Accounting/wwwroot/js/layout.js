@@ -667,7 +667,7 @@ const Layout = {
       description: 'งวดบัญชี · Soft Close · Year-End Close (auto JE โอน P&L ไป RE)' },
     { id: 'migration-wizard', label: 'นำเข้าข้อมูลเดิม', icon: '🔄', href: '/pages/migration-wizard.html', feature: 'BasicAccounting',
       description: 'Wizard 3 ขั้น: Upload legacy COA → Map → Validate → Commit opening balances' },
-    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets',
+    { id: 'fixed-assets', label: 'ทะเบียนสินทรัพย์', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets',
       description: 'ทะเบียนสินทรัพย์ · คำนวณค่าเสื่อมราคาอัตโนมัติ · จำหน่าย' },
     { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html', feature: 'AdvancedReporting', _i18nKey: 'nav.financialMgmt',
       description: 'Cash flow forecast · กระแสเงินสดล่วงหน้า · liquidity analysis' },

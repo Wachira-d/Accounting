@@ -2065,6 +2065,16 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "ImageUrlsJson" text NULL;
             """,
 
+            // Asset type discriminator — broadens the module from PPE-only to
+            // cover Intangible / RightOfUse / InvestmentProperty too.
+            // Default 1 = Tangible so existing rows behave unchanged.
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "AssetType" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseTermMonths" integer NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LessorName" varchar(200) NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "MonthlyLeasePayment" numeric(18,2) NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseLiabilityAccountId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_FixedAssets_AssetType" ON "FixedAssets" ("CompanyId", "AssetType") WHERE "IsDeleted" = false;""",
+
             // POS: tip + coupon columns
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "TipAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponCode" varchar(50) NULL;""",

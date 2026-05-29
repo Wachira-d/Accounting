@@ -350,6 +350,23 @@ public enum AssetStatus
     WrittenOff = 4
 }
 
+/// <summary>
+/// Classifies an asset by accounting treatment so the same module can hold
+/// the four broad categories of non-current assets defined by TFRS:
+///   • Tangible       → ที่ดิน อาคาร อุปกรณ์ — straight-line / declining-balance depreciation
+///   • Intangible     → ซอฟต์แวร์ ลิขสิทธิ์ — amortization (terminology + GL accounts differ)
+///   • RightOfUse     → สินทรัพย์สิทธิการใช้ (TFRS 16 lease) — amortization over lease term
+///   • InvestmentProperty → อสังหาริมทรัพย์เพื่อการลงทุน — cost or fair-value model
+/// Existing rows migrate to Tangible by default so the rename is non-breaking.
+/// </summary>
+public enum AssetType
+{
+    Tangible = 1,            // ที่ดิน อาคาร และอุปกรณ์ (Property, Plant, Equipment)
+    Intangible = 2,          // สินทรัพย์ไม่มีตัวตน — software, patents, trademarks
+    RightOfUse = 3,          // สินทรัพย์สิทธิการใช้ (TFRS 16 lease)
+    InvestmentProperty = 4   // อสังหาริมทรัพย์เพื่อการลงทุน
+}
+
 // ==================== Approval Workflow ====================
 public enum ApprovalStatus
 {
