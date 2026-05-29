@@ -209,6 +209,13 @@ public class DocumentService : IDocumentService
                 WitnessName = request.WitnessName,
                 WitnessPosition = request.WitnessPosition,
                 PaymentDate = request.PaymentDate,
+                // Required for CreditNote. Save only when actually a CN —
+                // ignored on other types so a stale UI value can't leak
+                // through. Approval-time validator (below) bounces a CN
+                // missing this.
+                CreditNoteReason = request.DocumentType == DocumentType.CreditNote
+                    ? request.CreditNoteReason
+                    : null,
                 CreatedBy = createdBy
             };
 
@@ -323,7 +330,8 @@ public class DocumentService : IDocumentService
             new List<DocumentLineResponse>(), stub.CreatedAt,
             Sensitivity: stub.Sensitivity,
             IsRedacted: true,
-            RedactedReason: SensitivityRedactReason(stub.Sensitivity));
+            RedactedReason: SensitivityRedactReason(stub.Sensitivity),
+            CreditNoteReason: stub.CreditNoteReason);
     }
 
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
@@ -346,7 +354,8 @@ public class DocumentService : IDocumentService
                     new List<DocumentLineResponse>(), it.CreatedAt,
                     Sensitivity: it.Sensitivity,
                     IsRedacted: true,
-                    RedactedReason: SensitivityRedactReason(it.Sensitivity))
+                    RedactedReason: SensitivityRedactReason(it.Sensitivity),
+                    CreditNoteReason: it.CreditNoteReason)
         ).ToList();
         return new PagedResponse<DocumentResponse>(redactedItems, page.TotalCount, page.Page, page.PageSize, page.TotalPages);
     }
@@ -569,6 +578,14 @@ public class DocumentService : IDocumentService
 
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
+
+        // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
+        // CN reason distinguishes whether goods physically returned (restocks)
+        // from a pure financial adjustment (no stock impact). Without it the
+        // stock cascade can't decide and the e-Tax label would be wrong.
+        if (doc.DocumentType == DocumentType.CreditNote && doc.CreditNoteReason == null)
+            throw new InvalidOperationException(
+                "ใบลดหนี้ต้องระบุเหตุผล (คืนสินค้า / ส่วนลด / ปรับยอด / ตัดยอด) ก่อนอนุมัติ");
 
         // Enforce CompanySettings.RequireApprovalForDocuments: when the
         // approval rail is on and the document's amount crosses the threshold,
@@ -2314,7 +2331,13 @@ public class DocumentService : IDocumentService
                 PaymentMethod = request.PaymentMethod,
                 Reference = request.Reference,
                 BankAccount = request.BankAccount,
-                BankAccountId = doc.BankAccountId,
+                // Honour the per-payment override when supplied. This is the
+                // "ลูกค้าจ่ายเข้าบัญชี Kasikorn แทน Bangkok Bank" case —
+                // operator records the actual landing bank so the GL +
+                // bank-balance adjustment hit the right place. Falls back
+                // to doc.BankAccountId when not provided.
+                BankAccountId = request.OverrideBankAccountId ?? doc.BankAccountId,
+                OverrideBankAccountId = request.OverrideBankAccountId,
                 Notes = request.Notes,
                 CreatedBy = createdBy
             };
@@ -2475,7 +2498,12 @@ public class DocumentService : IDocumentService
         {
             DocumentType.Invoice or DocumentType.TaxInvoice => -1,  // sale OUT
             DocumentType.PurchaseInvoice => +1,                     // purchase IN
-            DocumentType.CreditNote => +1,                          // sales return IN (goods come back)
+            // CreditNote only restocks when reason = Return (goods physically
+            // came back). Discount / Adjustment / Writeoff are pure financial
+            // adjustments — sticks were never returned and inventory must
+            // stay flat. The CreditNoteReason field is required by Create
+            // for CN; older grandfathered rows with NULL fall to 0 (no move).
+            DocumentType.CreditNote when doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return => +1,
             _ => 0,
         };
         if (direction == 0) return;
@@ -2538,6 +2566,17 @@ public class DocumentService : IDocumentService
         if (!string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase) && doc.ExchangeRate == 1m)
             throw new InvalidOperationException(
                 $"เอกสารสกุลเงิน {doc.Currency} ต้องระบุอัตราแลกเปลี่ยนก่อนอนุมัติ (พบ ExchangeRate = 1)");
+
+        // WHT recognition basis (per CompanySettings):
+        //   Cash    = recognize at Receipt / PaymentVoucher (strict §50/§52)
+        //   Accrual = recognize at Invoice / PurchaseInvoice approval
+        // Default for new tenants is Cash. Existing tenants stay Accrual to
+        // keep their historical GL consistent. Cash-side documents (cash
+        // sale Receipt without RelatedDoc) always post WHT here either way
+        // because there's no later cash event.
+        var whtSettings = await _db.CompanySettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var whtBasis = whtSettings?.WhtRecognitionBasis ?? Models.Enums.WhtRecognitionBasis.Cash;
 
         // Resolve default fallback accounts up front — used when document lines
         // have no explicit AccountId (the UI doesn't expose per-line account selection yet).
@@ -2618,13 +2657,21 @@ public class DocumentService : IDocumentService
         {
             journalType = JournalType.Sales;
 
-            // Dr: ลูกหนี้การค้า (113) — TotalAmount is net of WHT (Gross - WHT)
+            // Dr: ลูกหนี้การค้า (113). On Accrual basis the AR balance is NET
+            // of WHT (gross - WHT) so the WHT-Asset can be booked alongside.
+            // On Cash basis the AR balance is GROSS (full amount) and WHT
+            // isn't recognized here — it's recognized when the customer
+            // actually pays and withholds (Receipt path below).
             var arAccount = await FindAccountAsync(companyId, "113");
+            var arAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
+                ? doc.TotalAmount + doc.WithholdingTaxAmount
+                : doc.TotalAmount;
             if (arAccount != null)
-                AddLine(arAccount.Id, doc.TotalAmount, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}");
+                AddLine(arAccount.Id, arAmountAtInvoice, 0, $"ลูกหนี้การค้า - {doc.DocumentNumber}");
 
-            // Dr: ภาษีถูกหัก ณ ที่จ่าย (สินทรัพย์ 11910) — claim from Revenue Dept
-            if (doc.WithholdingTaxAmount > 0)
+            // Dr: ภาษีถูกหัก ณ ที่จ่าย (11910). Only fires on Accrual basis
+            // — Cash basis defers this to the Receipt that actually collects.
+            if (whtBasis == Models.Enums.WhtRecognitionBasis.Accrual && doc.WithholdingTaxAmount > 0)
             {
                 var whtAccount = await FindAccountAsync(companyId, "11910");
                 if (whtAccount != null)
@@ -2814,13 +2861,20 @@ public class DocumentService : IDocumentService
                     AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
             }
 
-            // Cr: เจ้าหนี้การค้า (212) — net of WHT
+            // Cr: เจ้าหนี้การค้า (212). On Accrual the AP carries NET of WHT
+            // (we'll withhold when we pay). On Cash the AP carries GROSS
+            // (full amount we owe before deducting the WHT we'll withhold
+            // when actually paying).
             var apAccount = await FindAccountAsync(companyId, "212");
+            var apAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
+                ? doc.TotalAmount + doc.WithholdingTaxAmount
+                : doc.TotalAmount;
             if (apAccount != null)
-                AddLine(apAccount.Id, 0, doc.TotalAmount, $"เจ้าหนี้การค้า - {doc.DocumentNumber}");
+                AddLine(apAccount.Id, 0, apAmountAtInvoice, $"เจ้าหนี้การค้า - {doc.DocumentNumber}");
 
-            // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53)
-            if (doc.WithholdingTaxAmount > 0)
+            // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53).
+            // Accrual only — Cash basis defers to the PaymentVoucher path.
+            if (whtBasis == Models.Enums.WhtRecognitionBasis.Accrual && doc.WithholdingTaxAmount > 0)
             {
                 var whtAccount = await FindAccountAsync(companyId, "21916")
                     ?? await FindAccountAsync(companyId, "21917");
@@ -2856,13 +2910,41 @@ public class DocumentService : IDocumentService
 
             if (doc.RelatedDocumentId.HasValue)
             {
-                if (moneyAccount != null)
-                    AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
-
+                // Cash basis: the source Invoice posted AR at GROSS (incl. WHT)
+                // and skipped the WHT-Asset line. We now book WHT-Asset for
+                // the withheld portion and clear AR at GROSS so the books
+                // balance. Pull the WHT amount from the source so we always
+                // match what was actually withheld, not whatever the operator
+                // typed on the Receipt.
                 var arAccount = await FindAccountAsync(companyId, "113");
-                if (arAccount != null)
-                    AddLine(arAccount.Id, 0, doc.TotalAmount,
-                        $"ตัดลูกหนี้ - {doc.DocumentNumber}");
+                if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
+                {
+                    var src = await _db.Documents.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value);
+                    var srcWht = src?.WithholdingTaxAmount ?? 0m;
+                    // Cash actually received = doc.TotalAmount (net of WHT).
+                    if (moneyAccount != null)
+                        AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
+                    if (srcWht > 0)
+                    {
+                        var whtAccount = await FindAccountAsync(companyId, "11910");
+                        if (whtAccount != null)
+                            AddLine(whtAccount.Id, srcWht, 0, "ภาษีหัก ณ ที่จ่าย (ลูกค้าหัก)");
+                    }
+                    if (arAccount != null)
+                        AddLine(arAccount.Id, 0, doc.TotalAmount + srcWht,
+                            $"ตัดลูกหนี้ - {doc.DocumentNumber}");
+                }
+                else
+                {
+                    // Accrual: AR was already net of WHT at Invoice time, so
+                    // Receipt just moves the net cash from AR to Cash.
+                    if (moneyAccount != null)
+                        AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
+                    if (arAccount != null)
+                        AddLine(arAccount.Id, 0, doc.TotalAmount,
+                            $"ตัดลูกหนี้ - {doc.DocumentNumber}");
+                }
             }
             else
             {
@@ -2904,13 +2986,40 @@ public class DocumentService : IDocumentService
             if (doc.RelatedDocumentId.HasValue)
             {
                 var apAccount = await FindAccountAsync(companyId, "212");
-                if (apAccount != null)
-                    AddLine(apAccount.Id, doc.TotalAmount, 0,
-                        $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
-
-                if (moneyAccount != null)
-                    AddLine(moneyAccount.Id, 0, doc.TotalAmount,
-                        $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
+                if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
+                {
+                    // Cash basis: PI booked AP at GROSS, skipped the WHT
+                    // payable. Here we clear AP at gross, pay net cash, and
+                    // recognize WHT-Payable for the withheld portion. Pull
+                    // the WHT amount from the source PI to stay consistent.
+                    var src = await _db.Documents.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value);
+                    var srcWht = src?.WithholdingTaxAmount ?? 0m;
+                    if (apAccount != null)
+                        AddLine(apAccount.Id, doc.TotalAmount + srcWht, 0,
+                            $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
+                    if (moneyAccount != null)
+                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
+                    if (srcWht > 0)
+                    {
+                        var whtAccount = await FindAccountAsync(companyId, "21916")
+                            ?? await FindAccountAsync(companyId, "21917");
+                        if (whtAccount != null)
+                            AddLine(whtAccount.Id, 0, srcWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
+                    }
+                }
+                else
+                {
+                    // Accrual: AP at PI was already net of WHT, so PV just
+                    // moves net cash from AP to Cash/Bank.
+                    if (apAccount != null)
+                        AddLine(apAccount.Id, doc.TotalAmount, 0,
+                            $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
+                    if (moneyAccount != null)
+                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
+                }
             }
             else
             {
@@ -3195,7 +3304,8 @@ public class DocumentService : IDocumentService
         StaleDays: ComputeStaleDays(d),
         Currency: d.Currency,
         ExchangeRate: d.ExchangeRate,
-        Sensitivity: d.Sensitivity);
+        Sensitivity: d.Sensitivity,
+        CreditNoteReason: d.CreditNoteReason);
 
     /// <summary>Build the redacted stub returned to API consumers who lack
     /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and

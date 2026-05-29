@@ -21,6 +21,12 @@ public class Document : TenantEntity
     public string? Reference { get; set; }
     public Guid? RelatedDocumentId { get; set; }  // e.g. Quotation → Invoice
 
+    /// <summary>Required when DocumentType = CreditNote — distinguishes the
+    /// legal/accounting reason per ประมวลรัษฎากร §82/10. Determines whether
+    /// the CN restocks goods (Return only) or is a pure financial adjustment
+    /// (Discount / Writeoff / OtherAdjustment).</summary>
+    public CreditNoteReason? CreditNoteReason { get; set; }
+
     // Project tagging — header default; lines can override per-line.
     // Used to attribute revenue/cost on auto-posted journal entries to a Project,
     // enabling per-project P&L (see ProjectAccountingService.GetGlSummaryAsync).

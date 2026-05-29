@@ -14,7 +14,16 @@ public class Payment : TenantEntity
     public string? BankAccount { get; set; }
     public string? Notes { get; set; }
 
-    // Proper FK to bank account (replaces text BankAccount field)
+    // Proper FK to bank account (replaces text BankAccount field).
+    // When OverrideBankAccountId is set, the GL hit + bank-balance update
+    // follow this value; BankAccountId mirrors it for convenience. When
+    // OverrideBankAccountId is null, BankAccountId inherits from doc.
     public Guid? BankAccountId { get; set; }
     public BankAccount? BankAccountEntity { get; set; }
+
+    /// <summary>Per-payment override of the source document's BankAccountId.
+    /// Lets operators record "the cheque actually cleared at Kasikorn even
+    /// though the invoice was targeted at Bangkok Bank". Null = use doc's
+    /// channel as-is. Audit-visible so we can trace overrides explicitly.</summary>
+    public Guid? OverrideBankAccountId { get; set; }
 }

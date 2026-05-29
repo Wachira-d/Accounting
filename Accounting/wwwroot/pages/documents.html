@@ -183,6 +183,31 @@
             </label>
           </div>
 
+          <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
+               Only "คืนสินค้า" restocks; the other 3 reasons are pure
+               financial adjustments with no stock impact. -->
+          <div id="creditNoteReasonSection" style="display:none;margin-bottom:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px">
+            <div style="font-weight:600;color:#991b1b;font-size:13px;margin-bottom:8px">เหตุผลการออกใบลดหนี้ *</div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Return" style="margin-top:3px">
+                <span><strong>คืนสินค้า (Return)</strong> — ลูกค้าส่งสินค้าคืน <span style="color:#dc2626">→ สต๊อกจะถูกเพิ่มกลับ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Discount" style="margin-top:3px">
+                <span><strong>ส่วนลด / ลดราคา (Discount)</strong> — ลดยอด VAT ขาย <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Adjustment" style="margin-top:3px">
+                <span><strong>ปรับยอด (Adjustment)</strong> — ค่าสินค้าน้อยกว่าที่ตกลง <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Writeoff" style="margin-top:3px">
+                <span><strong>ตัดยอด / ตัดหนี้สูญบางส่วน (Writeoff)</strong> <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+            </div>
+          </div>
+
           <!-- CertificateInLieu-specific fields -->
           <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
@@ -716,6 +741,14 @@
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
+        // Show/hide CreditNote reason picker — required field on approve.
+        const cnSection = document.getElementById('creditNoteReasonSection');
+        if (cnSection) cnSection.style.display = docType === 'CreditNote' ? '' : 'none';
+        if (cnSection && cnSection.style.display === 'none') {
+          // Wipe so a stale selection from a previous CreditNote doesn't
+          // leak into a non-CN document.
+          document.querySelectorAll('input[name="fCreditNoteReason"]').forEach(r => r.checked = false);
+        }
         // Show/hide "ลูกค้าจ่ายเงินแล้ว" shortcut — only relevant for AR types
         // that recognize VAT / revenue (Invoice, TaxInvoice). Quotation +
         // BillingNote are pre-revenue, Receipt already IS the receipt, the
@@ -1284,6 +1317,7 @@
           witnessName: document.getElementById('fWitnessName')?.value || null,
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
+          creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
         };
         try {
           let savedDocId = this.editingId;
@@ -1788,6 +1822,12 @@
                   </select>
                 </label>
                 <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>บัญชีรับ-จ่ายเงิน <span style="color:#64748b;font-weight:normal;font-size:11px">(override — เผื่อเช็ค/โอน เข้าบัญชีที่ไม่ตรงกับเอกสาร)</span></span>
+                  <select id="rpBankOverride" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                    <option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>
+                  </select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
                   <span style="color:#64748b">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</span>
                   <input id="rpRef" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ"
                     style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
@@ -1815,6 +1855,14 @@
         document.getElementById('rpRef').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
+        // Populate the bank-override dropdown with the company's bank
+        // accounts. Default option (empty value) keeps the doc's channel.
+        const rpBank = document.getElementById('rpBankOverride');
+        rpBank.innerHTML = '<option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>' +
+          (this.bankAccounts || []).map(a =>
+            `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`
+          ).join('');
+        rpBank.value = '';
         const submit = document.getElementById('rpSubmit');
         // Replace handler each open so docId / balanceDue close over the
         // right values (and we don't pile up listeners across opens).
@@ -1837,6 +1885,7 @@
               paymentMethod,
               reference,
               notes,
+              overrideBankAccountId: (document.getElementById('rpBankOverride').value) || null,
             });
             Layout.toast('บันทึกชำระเงินสำเร็จ — ระบบออกใบเสร็จและอัพเดทยอดคงค้างให้แล้ว', 'success');
             wrap.classList.remove('active');

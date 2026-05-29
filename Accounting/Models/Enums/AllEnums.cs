@@ -988,3 +988,29 @@ public enum InvitationStatus
     Expired   = 2,
     Cancelled = 3,
 }
+
+public enum CreditNoteReason
+{
+    /// <summary>คืนสินค้า (sales return) — ลด VAT ขาย + คืนสต๊อก</summary>
+    Return = 1,
+    /// <summary>ส่วนลด / ลดราคา (price discount) — ลด VAT ขาย เท่านั้น สต๊อกไม่กระทบ</summary>
+    Discount = 2,
+    /// <summary>ค่าสินค้าน้อยกว่าที่ตกลง / ปรับยอด (adjustment) — สต๊อกไม่กระทบ</summary>
+    Adjustment = 3,
+    /// <summary>ตัดยอด / ตัดหนี้สูญบางส่วน (write-off) — สต๊อกไม่กระทบ</summary>
+    Writeoff = 4,
+}
+
+public enum WhtRecognitionBasis
+{
+    /// <summary>Recognize WHT-Asset / WHT-Payable at the moment of payment
+    /// (Receipt / PaymentVoucher). Strict reading of ประมวลรัษฎากร §50/§52 —
+    /// payer withholds 'ณ ที่จ่าย', recipient recognises when receiving
+    /// payment. Default for new tenants.</summary>
+    Cash = 1,
+    /// <summary>Recognize WHT-Asset / WHT-Payable at the moment of invoice
+    /// approval (Invoice / PurchaseInvoice). Common practice in many Thai
+    /// SMBs; the auditor accepts it. Stays as an opt-in for tenants that
+    /// already book this way in their existing GL.</summary>
+    Accrual = 2,
+}
