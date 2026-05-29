@@ -202,6 +202,20 @@ builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddScoped<IDbdLookupService, DbdLookupService>();
 builder.Services.AddHttpClient();
 
+// ───── AI integration (DeepSeek + swappable providers + orchestrator) ─────
+// Provider implementations are registered as IAiProvider so the
+// orchestrator can pick the active one by AiProviderType. Adding a new
+// provider = drop a class in Services/Ai/Providers + add a line here.
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.DeepSeekProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.OpenAiProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.OpenAiCompatibleProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.LocalLlamaProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiPromptSanitizer, Accounting.Services.Ai.AiPromptSanitizer>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiResponseCacheService, Accounting.Services.Ai.AiResponseCacheService>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiBudgetGuard, Accounting.Services.Ai.AiBudgetGuard>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiFeedbackRecorder, Accounting.Services.Ai.AiFeedbackRecorder>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiOrchestrator, Accounting.Services.Ai.AiOrchestrator>();
+
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IEmailSenderFactory, Accounting.Services.Implementations.Email.EmailSenderFactory>();
