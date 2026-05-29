@@ -201,6 +201,9 @@ public class Contact : TenantEntity
     public string? BuildingNumber { get; set; }
     /// <summary>ชื่ออาคาร (optional)</summary>
     public string? BuildingName { get; set; }
+    /// <summary>หมู่ที่ (village number) — common in rural / provincial Thai
+    /// addresses, sits between BuildingNumber and StreetName.</summary>
+    public string? Moo { get; set; }
     /// <summary>ถนน/ซอย</summary>
     public string? StreetName { get; set; }
     public string? SubDistrict { get; set; }   // ตำบล/แขวง

@@ -230,6 +230,7 @@ public record CreateContactRequest(
     string? BranchName = null,
     string? BuildingNumber = null,
     string? BuildingName = null,
+    string? Moo = null,
     string? StreetName = null,
     string? SubDistrict = null,
     string? District = null,
@@ -252,6 +253,7 @@ public record UpdateContactRequest(
     string? BranchName = null,
     string? BuildingNumber = null,
     string? BuildingName = null,
+    string? Moo = null,
     string? StreetName = null,
     string? SubDistrict = null,
     string? District = null,
@@ -286,6 +288,7 @@ public record ContactResponse(
     string? BranchName = null,
     string? BuildingNumber = null,
     string? BuildingName = null,
+    string? Moo = null,
     string? StreetName = null,
     string? SubDistrict = null,
     string? District = null,
@@ -306,7 +309,8 @@ public record ParsedAddressResponse(
     string? SubDistrict,
     string? District,
     string? Province,
-    string? PostalCode);
+    string? PostalCode,
+    string? Moo = null);
 
 /// <summary>ค่าเริ่มต้นอัตโนมัติ ระบบวิเคราะห์จากข้อมูลผู้ติดต่อ</summary>
 public record ContactSmartDefaults(

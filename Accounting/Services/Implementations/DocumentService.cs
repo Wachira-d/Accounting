@@ -2084,6 +2084,7 @@ public class DocumentService : IDocumentService
             IsSupplier = request.IsSupplier,
             BuildingNumber = request.BuildingNumber ?? parsed?.BuildingNumber,
             BuildingName = request.BuildingName ?? parsed?.BuildingName,
+            Moo = request.Moo ?? parsed?.Moo,
             StreetName = request.StreetName ?? parsed?.StreetName,
             SubDistrict = request.SubDistrict ?? parsed?.SubDistrict,
             District = request.District ?? parsed?.District,
@@ -2106,6 +2107,7 @@ public class DocumentService : IDocumentService
     private static string? ComposeAddress(Contact c)
     {
         var parts = new[] { c.BuildingNumber, c.BuildingName,
+            string.IsNullOrEmpty(c.Moo) ? null : "หมู่ " + c.Moo,
             string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
             c.SubDistrict, c.District, c.Province, c.PostalCode }
             .Where(s => !string.IsNullOrWhiteSpace(s));
@@ -2196,6 +2198,7 @@ public class DocumentService : IDocumentService
         if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
         if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
         if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
+        if (request.Moo != null) contact.Moo = request.Moo;
         if (request.StreetName != null) contact.StreetName = request.StreetName;
         if (request.SubDistrict != null) contact.SubDistrict = request.SubDistrict;
         if (request.District != null) contact.District = request.District;
@@ -3101,6 +3104,7 @@ public class DocumentService : IDocumentService
         BranchName: c.BranchName,
         BuildingNumber: c.BuildingNumber,
         BuildingName: c.BuildingName,
+        Moo: c.Moo,
         StreetName: c.StreetName,
         SubDistrict: c.SubDistrict,
         District: c.District,

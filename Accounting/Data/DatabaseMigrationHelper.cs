@@ -2288,6 +2288,12 @@ public static class DatabaseMigrationHelper
             // doesn't double-send.
             """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "LastExpiryReminderAt" timestamp NULL;""",
             """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "ExpiryRemindersSentMask" integer NOT NULL DEFAULT 0;""",
+            // หมู่ที่ on Contact addresses — needed for provincial / rural
+            // tenants where building numbers alone don't identify a property.
+            // ETDA e-Tax schema doesn't have a dedicated element so it gets
+            // folded into the composed free-text Address by ComposeAddress.
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "Moo" text NULL;""",
+
             // EF Core convention auto-created a shadow "OwnerId" FK column +
             // FK constraint because AccountSubscription.Owner nav wasn't bound
             // to OwnerUserId in OnModelCreating. The shadow column defaults to

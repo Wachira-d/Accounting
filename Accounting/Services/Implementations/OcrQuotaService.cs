@@ -17,6 +17,64 @@ public class OcrQuotaService : IOcrQuotaService
         _logger = logger;
     }
 
+    /// <summary>OCR quota source-of-truth after the License overlay. When the
+    /// company rides under a User License, Max comes from the License and
+    /// Used is the aggregate across every Company attached to it. Otherwise
+    /// these are the per-company subscription values.</summary>
+    private record EffectiveOcr(
+        int MaxPagesPerMonth, int UsedThisMonth,
+        int? AzureMax, int AzureUsed,
+        int? LocalMax, int LocalUsed,
+        bool ViaLicense, Guid? LicenseId, bool FallbackToLocalWhenAzureExhausted);
+
+    private async Task<EffectiveOcr> ResolveEffectiveOcrAsync(Subscription sub)
+    {
+        if (!sub.AccountSubscriptionId.HasValue)
+        {
+            return new EffectiveOcr(
+                sub.MaxOcrPagesPerMonth, sub.CurrentMonthOcrPages,
+                sub.AzureOcrPagesPerMonth, sub.CurrentMonthAzureOcrPages,
+                sub.LocalOcrPagesPerMonth, sub.CurrentMonthLocalOcrPages,
+                ViaLicense: false, LicenseId: null,
+                FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted);
+        }
+        var acct = await _db.AccountSubscriptions.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+        if (acct == null)
+        {
+            // Dangling pointer — treat as per-company so the user isn't locked.
+            return new EffectiveOcr(
+                sub.MaxOcrPagesPerMonth, sub.CurrentMonthOcrPages,
+                sub.AzureOcrPagesPerMonth, sub.CurrentMonthAzureOcrPages,
+                sub.LocalOcrPagesPerMonth, sub.CurrentMonthLocalOcrPages,
+                ViaLicense: false, LicenseId: null,
+                FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted);
+        }
+        var agg = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
+            .Select(s => new { s.CurrentMonthOcrPages, s.CurrentMonthAzureOcrPages, s.CurrentMonthLocalOcrPages })
+            .ToListAsync();
+        return new EffectiveOcr(
+            acct.MaxOcrPagesPerMonth, agg.Sum(x => x.CurrentMonthOcrPages),
+            acct.AzureOcrPagesPerMonth, agg.Sum(x => x.CurrentMonthAzureOcrPages),
+            acct.LocalOcrPagesPerMonth, agg.Sum(x => x.CurrentMonthLocalOcrPages),
+            ViaLicense: true, LicenseId: acct.Id,
+            // Per-company fallback flag — License doesn't have one of its own;
+            // the per-company value is still used (consistent with engine-pick
+            // logic that reads from per-company sub).
+            FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted);
+    }
+
+    /// <summary>Take a row-level lock on the AccountSubscription so concurrent
+    /// TryConsume calls on different companies under the same License
+    /// serialize on it — without the lock two companies could both pass the
+    /// aggregate check and over-consume by one each.</summary>
+    private async Task LockLicenseAsync(Guid licenseId)
+    {
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $@"SELECT 1 FROM ""AccountSubscriptions"" WHERE ""Id"" = {licenseId} FOR UPDATE");
+    }
+
     public async Task<OcrQuotaStatus> GetQuotaStatusAsync(Guid companyId)
     {
         var sub = await _db.Subscriptions
@@ -34,47 +92,56 @@ public class OcrQuotaService : IOcrQuotaService
         // hand-flipped in the DB outside the upgrade flow) — without it
         // the tenant sees "10 / 10 pages" forever on an Enterprise plan
         // and has to wait for the admin to click Resync manually.
-        try
+        //
+        // Skip when this company rides under a User License — the License's
+        // OCR quota is authoritative and the per-company sub fields are no
+        // longer consulted for enforcement. Running self-heal here would
+        // overwrite the per-company values with the (stale) Trial template
+        // they were left at when attach happened, which is noise.
+        if (!sub.AccountSubscriptionId.HasValue)
         {
-            var template = await _db.PlanTemplates.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
-            if (template != null)
+            try
             {
-                bool changed = false;
-                if (sub.Status == SubscriptionStatus.Trial)
+                var template = await _db.PlanTemplates.AsNoTracking()
+                    .FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
+                if (template != null)
                 {
-                    if (sub.MaxOcrPagesPerMonth != template.TrialMaxOcrPagesPerMonth)
-                    { sub.MaxOcrPagesPerMonth = template.TrialMaxOcrPagesPerMonth; changed = true; }
-                }
-                else
-                {
-                    // Paid statuses (Active / PastDue / Expired-in-grace etc.)
-                    // get the full per-engine breakdown.
-                    if (sub.MaxOcrPagesPerMonth != template.MaxOcrPagesPerMonth)
-                    { sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth; changed = true; }
-                    if (sub.AzureOcrPagesPerMonth != template.AzureOcrPagesPerMonth)
-                    { sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth; changed = true; }
-                    if (sub.LocalOcrPagesPerMonth != template.LocalOcrPagesPerMonth)
-                    { sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth; changed = true; }
-                    if (sub.FallbackToLocalWhenAzureExhausted != template.FallbackToLocalWhenAzureExhausted)
-                    { sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted; changed = true; }
-                }
-                if (changed)
-                {
-                    sub.UpdatedBy = "OcrQuota-SelfHeal";
-                    await _db.SaveChangesAsync();
-                    _logger.LogInformation(
-                        "OCR quota self-heal: Subscription {CompanyId} synced from template (status={Status}, total={Total})",
-                        companyId, sub.Status, sub.MaxOcrPagesPerMonth);
+                    bool changed = false;
+                    if (sub.Status == SubscriptionStatus.Trial)
+                    {
+                        if (sub.MaxOcrPagesPerMonth != template.TrialMaxOcrPagesPerMonth)
+                        { sub.MaxOcrPagesPerMonth = template.TrialMaxOcrPagesPerMonth; changed = true; }
+                    }
+                    else
+                    {
+                        // Paid statuses (Active / PastDue / Expired-in-grace etc.)
+                        // get the full per-engine breakdown.
+                        if (sub.MaxOcrPagesPerMonth != template.MaxOcrPagesPerMonth)
+                        { sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth; changed = true; }
+                        if (sub.AzureOcrPagesPerMonth != template.AzureOcrPagesPerMonth)
+                        { sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth; changed = true; }
+                        if (sub.LocalOcrPagesPerMonth != template.LocalOcrPagesPerMonth)
+                        { sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth; changed = true; }
+                        if (sub.FallbackToLocalWhenAzureExhausted != template.FallbackToLocalWhenAzureExhausted)
+                        { sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted; changed = true; }
+                    }
+                    if (changed)
+                    {
+                        sub.UpdatedBy = "OcrQuota-SelfHeal";
+                        await _db.SaveChangesAsync();
+                        _logger.LogInformation(
+                            "OCR quota self-heal: Subscription {CompanyId} synced from template (status={Status}, total={Total})",
+                            companyId, sub.Status, sub.MaxOcrPagesPerMonth);
+                    }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            // Self-heal is best-effort — never let a sync failure block the
-            // quota-read path from returning. The Resync admin button stays
-            // available as a manual escape hatch.
-            _logger.LogWarning(ex, "OCR quota self-heal failed for company {CompanyId}", companyId);
+            catch (Exception ex)
+            {
+                // Self-heal is best-effort — never let a sync failure block the
+                // quota-read path from returning. The Resync admin button stays
+                // available as a manual escape hatch.
+                _logger.LogWarning(ex, "OCR quota self-heal failed for company {CompanyId}", companyId);
+            }
         }
 
         var siteSettings = await _db.SiteSettings.FirstOrDefaultAsync();
@@ -89,11 +156,16 @@ public class OcrQuotaService : IOcrQuotaService
         var effectiveBonus = (sub.OcrBonusExpiresAt == null || sub.OcrBonusExpiresAt > DateTime.UtcNow)
             ? sub.OcrBonusPages : 0;
 
-        var totalAvailable = sub.MaxOcrPagesPerMonth - sub.CurrentMonthOcrPages + effectiveBonus + creditPages;
+        // License-aware view: Max + Used resolve to the AccountSubscription
+        // (and SUM of every attached company's counter) when this company
+        // rides under a User License. Bonus + credit pages stay per-company
+        // since they're purchased by the company directly.
+        var eff = await ResolveEffectiveOcrAsync(sub);
+        var totalAvailable = eff.MaxPagesPerMonth - eff.UsedThisMonth + effectiveBonus + creditPages;
 
         return new OcrQuotaStatus(
-            MaxPagesPerMonth: sub.MaxOcrPagesPerMonth,
-            UsedThisMonth: sub.CurrentMonthOcrPages,
+            MaxPagesPerMonth: eff.MaxPagesPerMonth,
+            UsedThisMonth: eff.UsedThisMonth,
             BonusPages: effectiveBonus,
             CreditPagesRemaining: creditPages,
             TotalAvailable: Math.Max(0, totalAvailable),
@@ -104,12 +176,12 @@ public class OcrQuotaService : IOcrQuotaService
             // "Azure used X / Y, Local used X / Y" instead of one
             // opaque total. Null on either side means "this plan
             // doesn't split — uses MaxPagesPerMonth above".
-            AzureMaxPagesPerMonth: sub.AzureOcrPagesPerMonth,
-            AzureUsedThisMonth: sub.AzureOcrPagesPerMonth.HasValue ? sub.CurrentMonthAzureOcrPages : null,
-            LocalMaxPagesPerMonth: sub.LocalOcrPagesPerMonth,
-            LocalUsedThisMonth: sub.LocalOcrPagesPerMonth.HasValue ? sub.CurrentMonthLocalOcrPages : null,
-            FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted,
-            PlanName: sub.Plan.ToString());
+            AzureMaxPagesPerMonth: eff.AzureMax,
+            AzureUsedThisMonth: eff.AzureMax.HasValue ? eff.AzureUsed : (int?)null,
+            LocalMaxPagesPerMonth: eff.LocalMax,
+            LocalUsedThisMonth: eff.LocalMax.HasValue ? eff.LocalUsed : (int?)null,
+            FallbackToLocalWhenAzureExhausted: eff.FallbackToLocalWhenAzureExhausted,
+            PlanName: eff.ViaLicense ? $"License/{sub.Plan}" : sub.Plan.ToString());
     }
 
     public async Task<bool> CanScanAsync(Guid companyId)
@@ -147,13 +219,25 @@ public class OcrQuotaService : IOcrQuotaService
                 sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
             }
 
-            if (sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth)
+            // License path: lock the License row, sum every attached company's
+            // counter, and only consume if the aggregate is still under the
+            // License's quota. Per-company counter still increments so the
+            // aggregate read by the next consumer reflects this one.
+            if (sub.AccountSubscriptionId.HasValue)
+            {
+                await LockLicenseAsync(sub.AccountSubscriptionId.Value);
+            }
+            var eff = await ResolveEffectiveOcrAsync(sub);
+
+            if (eff.UsedThisMonth < eff.MaxPagesPerMonth)
             {
                 sub.CurrentMonthOcrPages++;
             }
             else if (sub.OcrBonusPages > 0
                 && (sub.OcrBonusExpiresAt == null || sub.OcrBonusExpiresAt > DateTime.UtcNow))
             {
+                // Bonus is per-company — purchased by this company, only it
+                // can spend. License attach doesn't pool bonus.
                 sub.OcrBonusPages--;
             }
             else
@@ -176,8 +260,10 @@ public class OcrQuotaService : IOcrQuotaService
             await tx.CommitAsync();
 
             _logger.LogInformation(
-                "OCR quota consumed CompanyId={CompanyId} MonthlyUsed={MonthlyUsed}/{MonthlyMax} BonusRemaining={BonusRemaining}",
-                companyId, sub.CurrentMonthOcrPages, sub.MaxOcrPagesPerMonth, sub.OcrBonusPages);
+                "OCR quota consumed CompanyId={CompanyId} Source={Source} Used={Used}/{Max} BonusRemaining={BonusRemaining}",
+                companyId, eff.ViaLicense ? $"License:{eff.LicenseId}" : "Company",
+                eff.ViaLicense ? eff.UsedThisMonth + 1 : sub.CurrentMonthOcrPages,
+                eff.MaxPagesPerMonth, sub.OcrBonusPages);
             return true;
         }
         catch (Exception ex)
@@ -219,22 +305,20 @@ public class OcrQuotaService : IOcrQuotaService
     public async Task<(bool Allowed, string? Reason)> CheckAzureQuotaAsync(Guid companyId)
     {
         var sub = await _db.Subscriptions.AsNoTracking()
-            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
-            .Select(s => new { s.AzureOcrPagesPerMonth, s.CurrentMonthAzureOcrPages,
-                s.MaxOcrPagesPerMonth, s.CurrentMonthOcrPages })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
         if (sub == null) return (true, null);  // unknown plan — let the cascade decide
+        var eff = await ResolveEffectiveOcrAsync(sub);
         // Legacy single-budget mode: no Azure-specific cap → fall back to total budget.
-        if (!sub.AzureOcrPagesPerMonth.HasValue)
+        if (!eff.AzureMax.HasValue)
         {
-            if (sub.CurrentMonthOcrPages < sub.MaxOcrPagesPerMonth) return (true, null);
-            return (false, $"โควต้า OCR ทั้งหมดเดือนนี้เต็มแล้ว ({sub.CurrentMonthOcrPages}/{sub.MaxOcrPagesPerMonth} หน้า) — กรุณาซื้อเครดิตเพิ่ม หรือรอเดือนหน้า");
+            if (eff.UsedThisMonth < eff.MaxPagesPerMonth) return (true, null);
+            return (false, $"โควต้า OCR ทั้งหมดเดือนนี้เต็มแล้ว ({eff.UsedThisMonth}/{eff.MaxPagesPerMonth} หน้า) — กรุณาซื้อเครดิตเพิ่ม หรือรอเดือนหน้า");
         }
         // Engine-specific mode.
-        if (sub.AzureOcrPagesPerMonth.Value == 0)
-            return (false, "แผนปัจจุบันให้ Azure DI 0 หน้า/เดือน — กรุณา upgrade plan หรือเพิ่ม AzureOcrPagesPerMonth บน Subscription");
-        if (sub.CurrentMonthAzureOcrPages < sub.AzureOcrPagesPerMonth.Value) return (true, null);
-        return (false, $"โควต้า Azure DI เดือนนี้เต็มแล้ว ({sub.CurrentMonthAzureOcrPages}/{sub.AzureOcrPagesPerMonth.Value} หน้า) — Local OCR ยังใช้งานได้");
+        if (eff.AzureMax.Value == 0)
+            return (false, "แผนปัจจุบันให้ Azure DI 0 หน้า/เดือน — กรุณา upgrade plan หรือเพิ่ม AzureOcrPagesPerMonth");
+        if (eff.AzureUsed < eff.AzureMax.Value) return (true, null);
+        return (false, $"โควต้า Azure DI เดือนนี้เต็มแล้ว ({eff.AzureUsed}/{eff.AzureMax.Value} หน้า) — Local OCR ยังใช้งานได้");
     }
 
     public async Task<bool> TryConsumeForEngineAsync(Guid companyId, string engineKind)
@@ -264,10 +348,19 @@ public class OcrQuotaService : IOcrQuotaService
                 sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
             }
 
+            // Lock the License row when attached so the aggregate counters
+            // we're about to read can't be stale-read by a concurrent consume
+            // on another company under the same License.
+            if (sub.AccountSubscriptionId.HasValue)
+            {
+                await LockLicenseAsync(sub.AccountSubscriptionId.Value);
+            }
+            var eff = await ResolveEffectiveOcrAsync(sub);
+
             if (isAzure)
             {
-                var azureBudget = sub.AzureOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth;
-                if (sub.CurrentMonthAzureOcrPages >= azureBudget)
+                var azureBudget = eff.AzureMax ?? eff.MaxPagesPerMonth;
+                if (eff.AzureUsed >= azureBudget)
                 {
                     await tx.RollbackAsync();
                     return false;
@@ -276,8 +369,7 @@ public class OcrQuotaService : IOcrQuotaService
             }
             else
             {
-                var localBudget = sub.LocalOcrPagesPerMonth;
-                if (localBudget.HasValue && sub.CurrentMonthLocalOcrPages >= localBudget.Value)
+                if (eff.LocalMax.HasValue && eff.LocalUsed >= eff.LocalMax.Value)
                 {
                     await tx.RollbackAsync();
                     return false;
@@ -289,8 +381,10 @@ public class OcrQuotaService : IOcrQuotaService
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
             _logger.LogInformation(
-                "OCR engine quota consumed CompanyId={C} Engine={E} AzureUsed={A} LocalUsed={L}",
-                companyId, engineKind, sub.CurrentMonthAzureOcrPages, sub.CurrentMonthLocalOcrPages);
+                "OCR engine quota consumed CompanyId={C} Engine={E} Source={S} AzureUsed={A} LocalUsed={L}",
+                companyId, engineKind,
+                eff.ViaLicense ? $"License:{eff.LicenseId}" : "Company",
+                sub.CurrentMonthAzureOcrPages, sub.CurrentMonthLocalOcrPages);
             return true;
         }
         catch (Exception ex)

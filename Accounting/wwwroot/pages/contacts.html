@@ -97,7 +97,10 @@
               <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
               <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
             </div>
-            <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
+              <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
+            </div>
             <div class="form-row">
               <div class="form-group"><label class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
               <div class="form-group"><label class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
@@ -162,6 +165,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/dbd-lookup.js"></script>
+  <script src="/js/thai-address.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
@@ -243,15 +247,30 @@
           // Default branch to 00000 (head office) for juristic
           if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
           if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
-          // Auto-parse the DBD address to extract building number + street into structured fields
+          // Auto-parse the DBD address to extract building number + moo +
+          // street into structured fields. DBD address sometimes hides Moo
+          // inside the free-text line so the parser is our best shot at
+          // surfacing it.
           const rawAddr = document.getElementById('fAddress').value;
           if (rawAddr) {
             const api = Layout.api();
-            if (api) api.parseAddress(rawAddr).then(j => {
+            if (api) api.parseAddress(rawAddr).then(async j => {
               const p = (j && j.data) || {};
               if (p.buildingNumber && !document.getElementById('fBuildingNumber').value) document.getElementById('fBuildingNumber').value = p.buildingNumber;
               if (p.buildingName && !document.getElementById('fBuildingName').value) document.getElementById('fBuildingName').value = p.buildingName;
+              if (p.moo && !document.getElementById('fMoo').value) document.getElementById('fMoo').value = p.moo;
               if (p.streetName && !document.getElementById('fStreetName').value) document.getElementById('fStreetName').value = p.streetName;
+              // Normalize the DBD province (often "กรุงเทพมหานคร" already, but
+              // sometimes "กทม") and refresh the cascading datalists so the
+              // user gets autocomplete on the fields DBD already filled.
+              if (typeof ThaiAddress !== 'undefined') {
+                const provEl = document.getElementById('fProvince');
+                if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+                await ThaiAddress.refresh({
+                  subDistrict: 'fSubDistrict', district: 'fDistrict',
+                  province: 'fProvince', postalCode: 'fPostalCode',
+                });
+              }
             }).catch(() => {});
           }
         };
@@ -264,7 +283,7 @@
       },
       _allFieldIds: [
         'fName','fTaxId','fBranch','fBranchName','fAddressPaste',
-        'fBuildingNumber','fBuildingName','fStreetName',
+        'fBuildingNumber','fBuildingName','fMoo','fStreetName',
         'fSubDistrict','fDistrict','fProvince','fPostalCode',
         'fPhone','fEmail','fContactPerson',
         'fJuristicId','fJuristicType','fRegisteredCapital','fDbdStatus'
@@ -290,7 +309,16 @@
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = 'none';
         this.onContactTypeChange();
         Layout.openModal('formModal');
-        setTimeout(() => this._attachDbd(), 100);
+        setTimeout(() => { this._attachDbd(); this._enhanceAddress(); }, 100);
+      },
+      _enhanceAddress() {
+        if (typeof ThaiAddress === 'undefined') return;
+        ThaiAddress.enhance({
+          subDistrict: 'fSubDistrict',
+          district:    'fDistrict',
+          province:    'fProvince',
+          postalCode:  'fPostalCode',
+        });
       },
       showHistory() {
         const id = document.getElementById('editId').value;
@@ -313,6 +341,7 @@
         document.getElementById('fAddress').value = c.address || '';
         document.getElementById('fBuildingNumber').value = c.buildingNumber || '';
         document.getElementById('fBuildingName').value = c.buildingName || '';
+        document.getElementById('fMoo').value = c.moo || '';
         document.getElementById('fStreetName').value = c.streetName || '';
         document.getElementById('fSubDistrict').value = c.subDistrict || '';
         document.getElementById('fDistrict').value = c.district || '';
@@ -327,7 +356,7 @@
         document.getElementById('fDbdStatus').value = '';
         this.onContactTypeChange();
         Layout.openModal('formModal');
-        setTimeout(() => this._attachDbd(), 100);
+        setTimeout(() => { this._attachDbd(); this._enhanceAddress(); }, 100);
       },
       async parseFromPaste() {
         const text = document.getElementById('fAddressPaste').value;
@@ -339,19 +368,34 @@
           const p = j.data || {};
           if (p.buildingNumber) document.getElementById('fBuildingNumber').value = p.buildingNumber;
           if (p.buildingName) document.getElementById('fBuildingName').value = p.buildingName;
+          if (p.moo) document.getElementById('fMoo').value = p.moo;
           if (p.streetName) document.getElementById('fStreetName').value = p.streetName;
           if (p.subDistrict) document.getElementById('fSubDistrict').value = p.subDistrict;
           if (p.district) document.getElementById('fDistrict').value = p.district;
           if (p.province) document.getElementById('fProvince').value = p.province;
           if (p.postalCode) document.getElementById('fPostalCode').value = p.postalCode;
           document.getElementById('fAddressPaste').value = '';
+          // Warm the cascade datalists with the parsed values + run alias
+          // normalization (e.g. "กรุงเทพฯ" → "กรุงเทพมหานคร") so the form is
+          // ready for the user to tweak.
+          this._enhanceAddress();
+          if (typeof ThaiAddress !== 'undefined') {
+            const provEl = document.getElementById('fProvince');
+            if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+            await ThaiAddress.refresh({
+              subDistrict: 'fSubDistrict', district: 'fDistrict',
+              province: 'fProvince', postalCode: 'fPostalCode',
+            });
+          }
           Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
         } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
       },
       composeAddress() {
+        const moo = document.getElementById('fMoo').value;
         const parts = [
           document.getElementById('fBuildingNumber').value,
           document.getElementById('fBuildingName').value,
+          moo ? 'หมู่ ' + moo : '',
           document.getElementById('fStreetName').value ? 'ถ.' + document.getElementById('fStreetName').value : '',
           document.getElementById('fSubDistrict').value,
           document.getElementById('fDistrict').value,
@@ -388,6 +432,7 @@
           address: this.composeAddress(),
           buildingNumber: document.getElementById('fBuildingNumber').value || null,
           buildingName: document.getElementById('fBuildingName').value || null,
+          moo: document.getElementById('fMoo').value || null,
           streetName: document.getElementById('fStreetName').value || null,
           subDistrict: document.getElementById('fSubDistrict').value || null,
           district: document.getElementById('fDistrict').value || null,

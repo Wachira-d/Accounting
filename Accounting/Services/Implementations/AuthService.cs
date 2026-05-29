@@ -17,6 +17,7 @@ public class AuthService : IAuthService
     private readonly IEmailService _emailService;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IAccountingService _accountingService;
+    private readonly ICompanyService _companyService;
     private readonly ILogger<AuthService> _logger;
 
     // Account lockout settings (configurable via appsettings Security section)
@@ -29,6 +30,7 @@ public class AuthService : IAuthService
         IEmailService emailService,
         ISubscriptionService subscriptionService,
         IAccountingService accountingService,
+        ICompanyService companyService,
         ILogger<AuthService> logger)
     {
         _db = db;
@@ -36,6 +38,7 @@ public class AuthService : IAuthService
         _emailService = emailService;
         _subscriptionService = subscriptionService;
         _accountingService = accountingService;
+        _companyService = companyService;
         _logger = logger;
         _maxFailedAttempts = int.Parse(config["Security:MaxLoginAttemptsBeforeLockout"] ?? "5");
         _lockoutMinutes = int.Parse(config["Security:_lockoutMinutes"] ?? "15");
@@ -100,6 +103,17 @@ public class AuthService : IAuthService
             {
                 _logger.LogWarning(ex, "Failed to auto-start trial for company {CompanyId}", company.Id);
                 // Continue — user can start trial manually from settings
+            }
+
+            // If this user already has an active License (e.g. they're
+            // re-registering after a prior signup, or SSO is linking a new
+            // company to an existing identity), attach the new company to it
+            // so quota/features flow from the License rather than the stub
+            // FreeTrial we just seeded. No-op when no License exists.
+            try { await _companyService.EnsureSubscriptionForNewCompanyAsync(company.Id, user.Id); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "License auto-attach failed for company {CompanyId}", company.Id);
             }
 
             // Auto-seed default chart of accounts so the user can immediately start using the system
@@ -351,6 +365,16 @@ public class AuthService : IAuthService
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "SSO: failed to auto-start trial for company {CompanyId}", company.Id);
+                    }
+
+                    // SSO re-link path: an existing License-holder signing in
+                    // through SSO with a new company name needs the new
+                    // company attached to their License, not stranded on the
+                    // FreeTrial stub above.
+                    try { await _companyService.EnsureSubscriptionForNewCompanyAsync(company.Id, user.Id); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "SSO: License auto-attach failed for company {CompanyId}", company.Id);
                     }
 
                     try { await _accountingService.SeedDefaultAccountsAsync(company.Id); }

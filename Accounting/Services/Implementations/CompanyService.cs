@@ -87,7 +87,7 @@ public class CompanyService : ICompanyService
     /// Failures are logged but never blow up the create flow — a missing
     /// Subscription row is recoverable later, but a failed Company create
     /// because of a billing hiccup is not.</summary>
-    private async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId)
+    public async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId)
     {
         try
         {
@@ -251,13 +251,23 @@ public class CompanyService : ICompanyService
     {
         await EnsureOwnerAccessAsync(companyId, ownerId);
 
-        // Hard limit: check subscription MaxUsers
+        // Hard limit: check effective MaxUsers — License's MaxUsersPerCompany
+        // wins when the company is attached, otherwise per-company sub.MaxUsers.
+        // Without the overlay an Enterprise License (e.g. 100 users) is
+        // capped at the stale per-company FreeTrial limit (1).
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
         if (sub != null)
         {
+            int maxUsers = sub.MaxUsers;
+            if (sub.AccountSubscriptionId.HasValue)
+            {
+                var acct = await _db.AccountSubscriptions.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+                if (acct != null) maxUsers = acct.MaxUsersPerCompany;
+            }
             var currentCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
-            if (currentCount >= sub.MaxUsers)
-                throw new InvalidOperationException($"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{sub.MaxUsers}) กรุณาอัปเกรดแพ็กเกจ");
+            if (currentCount >= maxUsers)
+                throw new InvalidOperationException($"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{maxUsers}) กรุณาอัปเกรดแพ็กเกจ");
         }
 
         var targetUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email)
