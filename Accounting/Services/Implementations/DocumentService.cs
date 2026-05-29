@@ -867,8 +867,13 @@ public class DocumentService : IDocumentService
                 if (doc.Status != DocumentStatus.Draft)
                     await ApplyStockMovementsAsync(companyId, doc, -1, "system-void");
 
-                // 7) Finally void the document itself
+                // 7) Finally void the document itself + clear the stale
+                //    aging value. The list-row gate already suppresses the
+                //    badge visually for Voided status, but cleaning the
+                //    underlying field keeps reports + bulk queries honest.
                 doc.Status = DocumentStatus.Voided;
+                doc.AgingDays = null;
+                doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedAt = DateTime.UtcNow;
 
                 await _db.SaveChangesAsync();
@@ -1488,6 +1493,15 @@ public class DocumentService : IDocumentService
                 : source.BalanceDue <= 0.01m
                     ? DocumentStatus.Paid
                     : DocumentStatus.PartiallyPaid;
+            // Whatever the new status is, the aging counter is now stale —
+            // either the source went back to having a balance (aging
+            // restarts from DocumentDate, computed by the background job)
+            // or the source stayed Paid because of other settlements
+            // (aging is null). Null in either case; the cron repopulates.
+            // Without this, voiding a Receipt left the now-unpaid source
+            // Invoice still showing "⏳ 30+d" until the 6h job ran.
+            source.AgingDays = null;
+            source.AgingLastEvaluatedAt = DateTime.UtcNow;
         }
         source.UpdatedAt = DateTime.UtcNow;
     }
