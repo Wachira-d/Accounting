@@ -21,7 +21,9 @@
     <div id="tab-employees">
       <div class="page-header">
         <div><h2 class="page-title">พนักงาน</h2><p class="page-subtitle">จัดการข้อมูลพนักงานทั้งหมด</p></div>
-        <button class="btn btn-primary" onclick="Page.openCreateEmployee()">+ เพิ่มพนักงาน</button>
+        <button class="btn btn-primary" onclick="Page.openCreateEmployee()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มพนักงาน ใส่ข้อมูลทะเบียน + เงินเดือน + รหัสประกันสังคม → ใช้คำนวณเงินเดือน WHT (ภงด.1) และ SSO อัตโนมัติ">+ เพิ่มพนักงาน</button>
       </div>
       <div class="toolbar">
         <input type="text" class="search-input" placeholder="ค้นหาพนักงาน..." id="empSearch" oninput="Page.loadEmployees()">
@@ -39,7 +41,9 @@
     <div id="tab-runs" style="display:none">
       <div class="page-header">
         <div><h2 class="page-title">รอบเงินเดือน</h2><p class="page-subtitle">สร้างและจัดการรอบการจ่ายเงินเดือน</p></div>
-        <button class="btn btn-primary" onclick="Page.openCreateRun()">+ สร้างรอบเงินเดือน</button>
+        <button class="btn btn-primary" onclick="Page.openCreateRun()"
+                data-tour-step="2"
+                data-tour-text="ขั้นที่ 2 — สร้างรอบเงินเดือน → คำนวณ → อนุมัติ → จ่าย · ระบบสร้าง JE + ภงด.1 + สปส.1-10 + payslip ให้อัตโนมัติ">+ สร้างรอบเงินเดือน</button>
       </div>
       <div class="table-container">
         <table class="table">
@@ -667,6 +671,7 @@ const Page = {
 };
 
 Page.init();
+Layout.enableTour('payroll');
   </script>
 </body>
 </html>

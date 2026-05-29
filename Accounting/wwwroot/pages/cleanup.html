@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เริ่มต้นใหม่ (Bulk Cleanup) - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .cu-shell { max-width:760px; margin:0 auto; padding:24px 16px 60px; }
+    .cu-warn { background:#fef2f2; border:2px solid #f87171; border-radius:10px; padding:14px 18px; margin-bottom:16px; color:#7f1d1d; font-size:13px; line-height:1.6; }
+    .cu-warn strong { color:#991b1b; }
+    .cu-summary { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:14px; margin-bottom:16px; }
+    .cu-summary table { width:100%; }
+    .cu-summary td { padding:6px 8px; font-size:13px; border-bottom:1px solid var(--gray-100); }
+    .cu-summary td:first-child { color:var(--gray-600); }
+    .cu-summary td:last-child { text-align:right; font-weight:700; }
+    .cu-card { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:16px; margin-bottom:14px; }
+    .cu-card h3 { margin:0 0 4px; font-size:16px; }
+    .cu-card .desc { font-size:12px; color:var(--gray-600); margin-bottom:12px; line-height:1.6; }
+    .cu-btn-danger { background:#dc2626; color:#fff; border:none; padding:10px 18px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; }
+    .cu-btn-danger:hover { background:#b91c1c; }
+    .cu-input { width:100%; padding:10px 12px; border:2px solid #cbd5e1; border-radius:6px; font-size:14px; margin-bottom:8px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="cu-shell">
+      <div class="cu-warn">
+        ⚠️ <strong>หน้าตั้งต้นใหม่</strong> — สำหรับเจ้าของบริษัทเท่านั้น ใช้ก่อนเริ่มใช้งานจริง (ลบข้อมูลทดสอบ) เท่านั้น<br>
+        การลบไม่สามารถย้อนกลับได้จากหน้านี้ ข้อมูล <strong>soft-delete</strong> เก็บไว้ใน DB แต่จะไม่แสดงในระบบ — กู้คืนต้องติดต่อแอดมินผ่านการรัน SQL
+      </div>
+
+      <h2 style="margin:0 0 14px">🧹 เริ่มต้นใหม่ (Bulk Cleanup)</h2>
+      <p style="color:var(--gray-600);font-size:13px;line-height:1.6;margin-bottom:18px">ลบข้อมูลทั้งหมดของบริษัท เพื่อเริ่มใช้งานจริงด้วยข้อมูลสะอาด — Owner เท่านั้น</p>
+
+      <div class="cu-summary">
+        <strong style="font-size:14px">📊 ข้อมูลปัจจุบัน</strong>
+        <table style="margin-top:8px">
+          <tr><td>เอกสาร (Documents)</td><td id="cDoc">-</td></tr>
+          <tr><td>สมุดรายวัน (Journal Entries)</td><td id="cJe">-</td></tr>
+          <tr><td>การชำระเงิน (Payments)</td><td id="cPay">-</td></tr>
+          <tr><td>POS Orders</td><td id="cPos">-</td></tr>
+          <tr><td>ผู้ติดต่อ (Contacts)</td><td id="cCt">-</td></tr>
+          <tr><td>สินค้า (Products)</td><td id="cPr">-</td></tr>
+          <tr><td>สินทรัพย์ถาวร (Fixed Assets)</td><td id="cFa">-</td></tr>
+          <tr><td>งวดบัญชี (Fiscal Periods)</td><td id="cFp">-</td></tr>
+        </table>
+      </div>
+
+      <div class="cu-card">
+        <h3>🗑️ ลบเฉพาะ Transactions</h3>
+        <div class="desc">
+          ลบ Documents / Journal Entries / Payments / POS Orders / Stock Movements ทั้งหมด<br>
+          <strong>คงไว้:</strong> Master data (สินค้า / ผู้ติดต่อ / ผังบัญชี / งวดบัญชี)<br>
+          เหมาะกับการ "เริ่มปีใหม่" หรือลบข้อมูลทดสอบก่อนใช้จริง
+        </div>
+        <input type="text" class="cu-input" id="txtCfm1" placeholder="พิมพ์: ลบรายการทั้งหมด">
+        <button class="cu-btn-danger" onclick="Page.deleteTxn()">🗑️ ลบ Transactions ทั้งหมด</button>
+      </div>
+
+      <div class="cu-card">
+        <h3>🧹 ลบ Master Data</h3>
+        <div class="desc">
+          ลบผู้ติดต่อ / สินค้า · ใช้ได้หลังจาก transactions ถูกลบหมดแล้ว<br>
+          <strong>คงไว้:</strong> ผังบัญชี / งวดบัญชี / ตั้งค่าบริษัท
+        </div>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <input type="checkbox" id="cbContacts"> รวมการลบ Contacts (ผู้ติดต่อ)
+        </label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <input type="checkbox" id="cbProducts"> รวมการลบ Products (สินค้า)
+        </label>
+        <input type="text" class="cu-input" id="txtCfm2" placeholder="พิมพ์: ลบ master data">
+        <button class="cu-btn-danger" onclick="Page.deleteMaster()">🧹 ลบ Master Data ที่เลือก</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('cleanup')) return;
+        Layout.setTitle('เริ่มต้นใหม่');
+        await this.loadSummary();
+      },
+      async loadSummary() {
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/cleanup/summary`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const s = j.data;
+          document.getElementById('cDoc').textContent = s.documents;
+          document.getElementById('cJe').textContent = s.journalEntries;
+          document.getElementById('cPay').textContent = s.payments;
+          document.getElementById('cPos').textContent = s.posOrders;
+          document.getElementById('cCt').textContent = s.contacts;
+          document.getElementById('cPr').textContent = s.products;
+          document.getElementById('cFa').textContent = s.fixedAssets;
+          document.getElementById('cFp').textContent = s.fiscalPeriods;
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async deleteTxn() {
+        const c = document.getElementById('txtCfm1').value;
+        if (c !== 'ลบรายการทั้งหมด') { Layout.toast('พิมพ์ยืนยันให้ตรง','warning'); return; }
+        if (!confirm('ยืนยันลบ transactions ทั้งหมด? — ไม่สามารถย้อนกลับได้')) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/cleanup/transactions`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirmation: c })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(`✓ ${j.message}`,'success');
+          document.getElementById('txtCfm1').value = '';
+          await this.loadSummary();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async deleteMaster() {
+        const c = document.getElementById('txtCfm2').value;
+        if (c !== 'ลบ master data') { Layout.toast('พิมพ์ยืนยันให้ตรง','warning'); return; }
+        if (!confirm('ยืนยันลบ master data?')) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/cleanup/master-data`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              confirmation: c,
+              includeContacts: document.getElementById('cbContacts').checked,
+              includeProducts: document.getElementById('cbProducts').checked
+            })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(`✓ ${j.message}`,'success');
+          document.getElementById('txtCfm2').value = '';
+          await this.loadSummary();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      }
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>
