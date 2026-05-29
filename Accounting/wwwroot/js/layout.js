@@ -643,6 +643,8 @@ const Layout = {
       description: 'พนักงานออกเงินก่อน → ส่ง manager อนุมัติ → บริษัทคืนเงิน' },
     { id: 'expense-no-receipt', label: 'เบิกค่าใช้จ่าย (ไม่มีใบเสร็จ)', icon: '📝', href: '/pages/expense.html?noReceipt=1', feature: 'ExpenseManagement',
       description: '§65 ทวิ — กรณี vendor ออกใบเสร็จไม่ได้ (ตลาดสด · taxi · ใบเสร็จหาย) → อนุมัติแล้วระบบสร้างใบรับรองแทนใบเสร็จให้อัตโนมัติ' },
+    { id: 'leave-my', label: 'ขอลา / ดูสิทธิ์ลา', icon: '🏖️', href: '/pages/leave.html', feature: 'Payroll',
+      description: 'ดูโควต้าลาคงเหลือ · ขอลาใหม่ · ดูประวัติของฉัน · รองรับครึ่งวัน' },
     // quick-expense was removed 2026 — bypassed VAT controls, vendor
     // linkage, approval workflow; created data that failed audit. All
     // field expenses now go through expense.html (มี/ไม่มี ใบเสร็จ)
@@ -712,6 +714,8 @@ const Layout = {
       description: 'แผนก · ตำแหน่ง · ผู้บังคับบัญชา · org chart · routing การอนุมัติ' },
     { id: 'payroll', label: 'ระบบเงินเดือน & ลา', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll', _i18nKey: 'nav.payroll',
       description: 'พนักงาน · รอบจ่าย · ภงด.1 · ประกันสังคม · กองทุน · ลาหยุด' },
+    { id: 'leave-types', label: 'ตั้งค่าประเภทลา + วันหยุด', icon: '📅', href: '/pages/leave-types.html', feature: 'Payroll',
+      description: 'HR Admin · กำหนดประเภทการลา · โควต้า · ปฏิทินวันหยุดประจำปี' },
     { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance',
       description: 'เงินยืม-เคลียร์ · workflow อนุมัติ · หักจากเงินเดือนอัตโนมัติ' },
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission',

@@ -1197,6 +1197,7 @@ public class PayrollService : IPayrollService
             EndDate = request.EndDate,
             TotalDays = request.TotalDays,
             Reason = request.Reason,
+            HalfDayMarker = request.HalfDayMarker,
             Status = "Pending"
         };
 
@@ -1319,6 +1320,22 @@ public class PayrollService : IPayrollService
 
     private async Task<Dictionary<string, decimal>> ResolveLeaveQuotasAsync(Guid companyId)
     {
+        // Priority order (highest wins):
+        //   1) LeaveType table (HR configured via /leaves/admin/types)
+        //   2) CompanySettings.LeaveQuotasJson (legacy)
+        //   3) DefaultLeaveQuotas (Thai labor-law baseline)
+        // 1 + 2 fill the gaps from 3 so a tenant doesn't accidentally
+        // lose a quota by partial config.
+        var typeRows = await _db.Set<LeaveType>().AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted)
+            .ToListAsync();
+        if (typeRows.Count > 0)
+        {
+            var merged = new Dictionary<string, decimal>(DefaultLeaveQuotas);
+            foreach (var t in typeRows) merged[t.Code] = t.AnnualQuota;
+            return merged;
+        }
+        // Fallback to the legacy JSON in CompanySettings.
         var settings = await _db.Set<CompanySettings>()
             .AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
@@ -1328,7 +1345,6 @@ public class PayrollService : IPayrollService
         {
             var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, decimal>>(settings.LeaveQuotasJson);
             if (parsed == null) return new Dictionary<string, decimal>(DefaultLeaveQuotas);
-            // Merge: tenant overrides win, defaults fill the gaps.
             var merged = new Dictionary<string, decimal>(DefaultLeaveQuotas);
             foreach (var kvp in parsed) merged[kvp.Key] = kvp.Value;
             return merged;
@@ -1573,5 +1589,7 @@ public class PayrollService : IPayrollService
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",
             l.LeaveType, l.StartDate, l.EndDate, l.TotalDays, l.Status, l.Reason,
-            l.ApprovedBy, l.RejectionReason);
+            l.ApprovedBy, l.RejectionReason,
+            HalfDayMarker: l.HalfDayMarker,
+            CreatedAt: l.CreatedAt);
 }

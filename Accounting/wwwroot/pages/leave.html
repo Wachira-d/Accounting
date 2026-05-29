@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ขอลา - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .balance-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:20px; }
+    .balance-card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px; }
+    .balance-card .head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .balance-card .name { font-size:13px; font-weight:600; color:#1e293b; }
+    .balance-card .remaining { font-size:24px; font-weight:700; }
+    .balance-card .sub { font-size:11px; color:#64748b; }
+    .balance-bar { height:6px; background:#e2e8f0; border-radius:3px; margin-top:8px; overflow:hidden; }
+    .balance-bar > div { height:100%; transition:width .3s; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:9999px; font-size:11px; font-weight:600; }
+    .pill-paid { background:#dcfce7; color:#16a34a; }
+    .pill-unpaid { background:#fef3c7; color:#92400e; }
+    .pill-attach { background:#fee2e2; color:#dc2626; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ขอลา</h2><p class="page-subtitle">ดูสิทธิ์ลาคงเหลือ · ขอลาใหม่ · ดูประวัติของฉัน</p></div>
+      <button class="btn btn-primary" id="newLeaveBtn" onclick="Page.openCreate()">+ ขอลาใหม่</button>
+    </div>
+
+    <!-- Balance cards -->
+    <div id="balanceGrid" class="balance-grid"></div>
+
+    <!-- My leave history -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0;font-size:15px;color:#1e293b">📜 ประวัติการลาของฉัน</h3>
+        <select id="yearFilter" class="form-input" style="width:auto;font-size:13px" onchange="Page.load()"></select>
+      </div>
+      <table class="table">
+        <thead><tr>
+          <th>ประเภท</th><th>วันที่</th><th>จำนวนวัน</th><th>เหตุผล</th><th>สถานะ</th><th>วันที่ขอ</th>
+        </tr></thead>
+        <tbody id="historyBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Create modal -->
+  <div class="modal-overlay" id="leaveModal">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <h3 class="modal-title">ขอลาใหม่</h3>
+        <button class="modal-close" onclick="Layout.closeModal('leaveModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">ประเภทการลา *</label>
+          <select id="fLeaveType" class="form-select" onchange="Page.onTypeChange()"></select>
+          <div id="fTypeHint" style="margin-top:6px;font-size:12px;color:#64748b"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">วันเริ่ม *</label>
+            <input type="date" id="fStart" class="form-input" onchange="Page.computeDays()">
+          </div>
+          <div class="form-group">
+            <label class="form-label">วันสิ้นสุด *</label>
+            <input type="date" id="fEnd" class="form-input" onchange="Page.computeDays()">
+          </div>
+        </div>
+        <div id="fHalfDayWrap" class="form-group" style="display:none">
+          <label class="form-label">รูปแบบ</label>
+          <div style="display:flex;gap:8px">
+            <label style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;text-align:center">
+              <input type="radio" name="fHalfDay" value="0" checked onchange="Page.computeDays()"> เต็มวัน
+            </label>
+            <label style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;text-align:center">
+              <input type="radio" name="fHalfDay" value="1" onchange="Page.computeDays()"> ครึ่งวันเช้า
+            </label>
+            <label style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;text-align:center">
+              <input type="radio" name="fHalfDay" value="2" onchange="Page.computeDays()"> ครึ่งวันบ่าย
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">จำนวนวัน <span id="fDaysHint" style="font-weight:normal;color:#64748b;font-size:11px">(คำนวณอัตโนมัติ)</span></label>
+          <input type="number" id="fDays" class="form-input" step="0.5" min="0.5" readonly style="background:#f8fafc">
+        </div>
+        <div class="form-group">
+          <label class="form-label">เหตุผล</label>
+          <textarea id="fReason" class="form-input" rows="3" placeholder="ระบุเหตุผลการลา (ไม่บังคับสำหรับลาทั่วไป)"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('leaveModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submit()">ส่งคำขอ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _balance: null,
+      _types: [],
+
+      async init() {
+        if (!Layout.init('leave-my')) return;
+        Layout.setTitle('ขอลา');
+        // Year filter — current year + 2 prior.
+        const yearEl = document.getElementById('yearFilter');
+        const y0 = new Date().getFullYear();
+        yearEl.innerHTML = [0,1,2].map(d => `<option value="${y0-d}" ${d===0?'selected':''}>${y0-d+543}</option>`).join('');
+        await this.loadBalance();
+        await this.load();
+      },
+
+      async loadBalance() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const yr = document.getElementById('yearFilter').value || new Date().getFullYear();
+        try {
+          const r = await API.get(`/api/companies/${cid}/leaves/me/balance?year=${yr}`);
+          const d = r?.data;
+          if (!d || !d.hasEmployeeRecord) {
+            document.getElementById('balanceGrid').innerHTML =
+              '<div style="grid-column:1/-1;padding:14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e">' +
+              '⚠️ บัญชีของคุณยังไม่ได้ผูกกับประวัติพนักงาน — ติดต่อ HR ให้สร้างประวัติพนักงานก่อน จึงจะใช้งานระบบลาได้</div>';
+            document.getElementById('newLeaveBtn').disabled = true;
+            return;
+          }
+          this._balance = d;
+          this._types = d.types;
+          document.getElementById('balanceGrid').innerHTML = (d.types || []).map(t => {
+            const pct = t.quota > 0 ? Math.max(0, Math.min(100, (t.remaining / t.quota) * 100)) : 0;
+            const color = pct > 50 ? '#22c55e' : pct > 20 ? '#f59e0b' : '#ef4444';
+            return `<div class="balance-card">
+              <div class="head">
+                <span style="font-size:22px">${t.icon || '📅'}</span>
+                <div>
+                  <div class="name">${Layout.esc(t.name)}</div>
+                  <div style="margin-top:2px">
+                    <span class="pill ${t.isPaid ? 'pill-paid' : 'pill-unpaid'}">${t.isPaid ? 'ลามีเงิน' : 'ลาไม่รับค่าจ้าง'}</span>
+                    ${t.requiresAttachment ? '<span class="pill pill-attach">📎 ต้องแนบ</span>' : ''}
+                  </div>
+                </div>
+              </div>
+              <div class="remaining" style="color:${color}">${t.remaining}</div>
+              <div class="sub">เหลือจาก ${t.quota} วัน · ใช้ไป ${t.used} วัน</div>
+              <div class="balance-bar"><div style="width:${pct}%;background:${color}"></div></div>
+            </div>`;
+          }).join('');
+        } catch (e) {
+          document.getElementById('balanceGrid').innerHTML =
+            '<div style="grid-column:1/-1;color:#dc2626">โหลด balance ไม่สำเร็จ: ' + Layout.esc(e.message) + '</div>';
+        }
+      },
+
+      async load() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const yr = document.getElementById('yearFilter').value;
+        try {
+          const r = await API.get(`/api/companies/${cid}/leaves/me?year=${yr}`);
+          const rows = r?.data || [];
+          const tbody = document.getElementById('historyBody');
+          if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:30px">ยังไม่มีประวัติการลาในปีนี้</td></tr>';
+            return;
+          }
+          const statusBadge = (s) => {
+            const map = { Pending: '#f59e0b', Approved: '#22c55e', Rejected: '#ef4444', Cancelled: '#64748b' };
+            const labels = { Pending: 'รออนุมัติ', Approved: 'อนุมัติแล้ว', Rejected: 'ปฏิเสธ', Cancelled: 'ยกเลิก' };
+            return `<span class="pill" style="background:${map[s]}22;color:${map[s]}">${labels[s] || s}</span>`;
+          };
+          const typeName = (code) => (this._types.find(t => t.code === code) || {}).name || code;
+          tbody.innerHTML = rows.map(r => `
+            <tr>
+              <td>${Layout.esc(typeName(r.leaveType))}</td>
+              <td>${Layout.date(r.startDate)} ${r.startDate !== r.endDate ? '→ ' + Layout.date(r.endDate) : ''}${r.halfDayMarker > 0 ? '<br><small style="color:#64748b">' + (r.halfDayMarker===1?'ครึ่งวันเช้า':'ครึ่งวันบ่าย') + '</small>' : ''}</td>
+              <td class="text-right">${r.totalDays}</td>
+              <td>${Layout.esc(r.reason || '-')}</td>
+              <td>${statusBadge(r.status)}${r.rejectionReason ? '<br><small style="color:#dc2626">' + Layout.esc(r.rejectionReason) + '</small>' : ''}</td>
+              <td>${r.createdAt ? Layout.date(r.createdAt) : '-'}</td>
+            </tr>`).join('');
+        } catch (e) { Layout.toast('โหลดประวัติไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      openCreate() {
+        if (!this._balance?.hasEmployeeRecord) { Layout.toast('ติดต่อ HR ให้สร้างประวัติพนักงานก่อน', 'error'); return; }
+        // Populate type dropdown from balance — keeps it in sync with HR config.
+        const sel = document.getElementById('fLeaveType');
+        sel.innerHTML = (this._types || []).map(t => `<option value="${t.code}">${Layout.esc(t.name)} (เหลือ ${t.remaining} วัน)</option>`).join('');
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('fStart').value = today;
+        document.getElementById('fEnd').value = today;
+        document.querySelector('input[name="fHalfDay"][value="0"]').checked = true;
+        document.getElementById('fReason').value = '';
+        this.onTypeChange();
+        this.computeDays();
+        Layout.openModal('leaveModal');
+      },
+
+      onTypeChange() {
+        const code = document.getElementById('fLeaveType').value;
+        const t = this._types.find(x => x.code === code);
+        if (!t) return;
+        // Reveal half-day options only when the type allows.
+        document.getElementById('fHalfDayWrap').style.display = t.allowHalfDay ? '' : 'none';
+        if (!t.allowHalfDay) document.querySelector('input[name="fHalfDay"][value="0"]').checked = true;
+        // Hint line summarising the policy.
+        const parts = [];
+        parts.push(t.isPaid ? '💰 ลามีเงิน' : '⛔ ลาไม่รับค่าจ้าง');
+        if (t.advanceNoticeDays > 0) parts.push(`📅 แจ้งล่วงหน้า ${t.advanceNoticeDays} วัน`);
+        if (t.requiresAttachment) parts.push('📎 ต้องแนบหลักฐาน');
+        if (t.remaining <= 0) parts.push('⚠️ ใช้สิทธิ์หมดแล้ว');
+        document.getElementById('fTypeHint').innerHTML = parts.join(' · ');
+        this.computeDays();
+      },
+
+      computeDays() {
+        const s = document.getElementById('fStart').value;
+        const e = document.getElementById('fEnd').value;
+        if (!s || !e) return;
+        const half = parseInt(document.querySelector('input[name="fHalfDay"]:checked')?.value || '0');
+        const start = new Date(s), end = new Date(e);
+        let days = Math.floor((end - start) / (1000*60*60*24)) + 1;
+        if (days < 0) days = 0;
+        // Half-day only meaningful for single-day requests.
+        if (half > 0 && days === 1) days = 0.5;
+        document.getElementById('fDays').value = days;
+      },
+
+      async submit() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const half = parseInt(document.querySelector('input[name="fHalfDay"]:checked')?.value || '0');
+        const days = parseFloat(document.getElementById('fDays').value) || 0;
+        if (days <= 0) { Layout.toast('จำนวนวันไม่ถูกต้อง', 'error'); return; }
+        const body = {
+          leaveType: document.getElementById('fLeaveType').value,
+          startDate: document.getElementById('fStart').value,
+          endDate: document.getElementById('fEnd').value,
+          totalDays: days,
+          reason: document.getElementById('fReason').value || null,
+          halfDayMarker: half,
+        };
+        try {
+          await API.post(`/api/companies/${cid}/leaves/me`, body);
+          Layout.toast('ส่งคำขอลาสำเร็จ — รอ manager อนุมัติ');
+          Layout.closeModal('leaveModal');
+          await this.loadBalance();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
