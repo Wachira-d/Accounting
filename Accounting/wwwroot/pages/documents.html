@@ -15,6 +15,7 @@
     <div class="page-header">
       <div><h2 class="page-title">เอกสารทั้งหมด</h2><p class="page-subtitle">จัดการเอกสารฝั่งรายรับและรายจ่าย</p></div>
       <div class="flex gap-2" id="pageActions">
+        <button class="btn btn-outline" onclick="Page.openOcrUpload()" title="อัปโหลดบิล / ใบเสร็จ / ใบกำกับ → OCR แกะรายการ + จับคู่ผู้ขาย → คุณตรวจ + แก้แล้วสร้างเอกสาร พร้อมนำเข้าสต๊อกได้ในคลิกเดียว">📤 อัปโหลด + OCR</button>
         <button class="btn btn-primary" onclick="Page.openCreate('revenue')">+ เอกสารรายรับ</button>
         <button class="btn btn-secondary" onclick="Page.openCreate('expense')">+ เอกสารรายจ่าย</button>
       </div>
@@ -919,6 +920,49 @@
         if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
       },
       editingId: null,
+      /**
+       * Quick OCR onboarding from the documents page: pick a bill / receipt
+       * image or PDF, upload it to /ocr/upload, then jump to the scan-review
+       * page where the operator confirms vendor + line items + can fire the
+       * "📦 นำเข้าสต๊อก" flow in one click. Previously the user had to
+       * navigate to /pages/document-scan.html first which wasn't obvious
+       * from the documents list.
+       */
+      async openOcrUpload() {
+        const api = Layout.api(); if (!api) return;
+        // Lazy-init a hidden file input so opening the dialog is one click
+        // without DOM churn on subsequent uses.
+        let input = document.getElementById('_ocrUploadInput');
+        if (!input) {
+          input = document.createElement('input');
+          input.type = 'file';
+          input.id = '_ocrUploadInput';
+          input.accept = 'image/*,application/pdf';
+          input.style.display = 'none';
+          document.body.appendChild(input);
+          input.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            Layout.toast('กำลังอัปโหลดและสแกน OCR...', 'info', 3500);
+            try {
+              const res = await api.ocrUploadAndScan(fd);
+              const id = res && (res.data?.id || res.data?.scanId || res.id);
+              if (!id) throw new Error((res && res.message) || 'OCR ไม่สำเร็จ');
+              // Hand off to the scan-review page. document-scan.html
+              // already wires the stockImport modal once the scan loads.
+              window.location.href = `/pages/document-scan.html?reviewScan=${encodeURIComponent(id)}`;
+            } catch (err) {
+              Layout.toast('OCR ไม่สำเร็จ: ' + (err.message || ''), 'error');
+            } finally {
+              input.value = '';  // reset so the same file can be re-picked
+            }
+          });
+        }
+        input.click();
+      },
+
       openCreate(side) {
         this.editingId = null;
         const isExpense = side === 'expense';
@@ -1323,6 +1367,21 @@
           }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
+
+          // OCR linkage probe (async, non-blocking). When this document was
+          // created from an OCR scan, prepend a "📦 นำเข้าสต๊อก" button to
+          // the actions row so the operator can run the same stock-import
+          // flow the scan page offers, without having to navigate there
+          // and find the scan manually.
+          try {
+            const linkRes = await api.getDocumentLinkedScan(d.id);
+            const scan = linkRes && linkRes.data;
+            if (scan && scan.scanId) {
+              const stockBtn = `<button class="btn btn-success" onclick="window.location.href='/pages/document-scan.html?reviewScan=${scan.scanId}&stockImport=1'" title="เปิดสแกน OCR ของเอกสารนี้ → จับคู่รายการกับสินค้าในระบบ → นำเข้าสต๊อก / วัสดุ / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต๊อก (จาก OCR)</button> `;
+              const actEl = document.getElementById('detailActions');
+              if (actEl) actEl.innerHTML = stockBtn + actEl.innerHTML;
+            }
+          } catch (e) { /* probe failure shouldn't block the modal */ }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async approve(id) {

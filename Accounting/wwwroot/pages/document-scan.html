@@ -497,12 +497,16 @@
         this.bindUpload();
         this.loadScans();
         this.loadQuota();
-        // Deep-link from /review-queue → ?reviewScan=<id> opens that
-        // scan's review modal automatically once the list loads.
+        // Deep-link from /review-queue or /pages/documents.html →
+        // ?reviewScan=<id> opens that scan's review modal once the list
+        // loads. ?stockImport=1 (paired with reviewScan) jumps the user
+        // straight to the stock-import overlay so coming from the docs
+        // page lands directly on the "📦 นำเข้าสต๊อก" flow.
         const params = new URLSearchParams(window.location.search);
         const reviewScanId = params.get('reviewScan');
+        const wantStockImport = params.get('stockImport') === '1';
         if (reviewScanId) {
-          setTimeout(() => this.openReview(reviewScanId), 400);
+          setTimeout(() => this.openReview(reviewScanId, { stockImport: wantStockImport }), 400);
         }
       },
 
