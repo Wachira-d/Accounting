@@ -2219,6 +2219,15 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_PosReservations_Company_Date" ON "PosReservations" ("CompanyId", "ReservedAt") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_PosReservations_Table_Date" ON "PosReservations" ("TableId", "ReservedAt") WHERE "IsDeleted" = false AND "TableId" IS NOT NULL;""",
+            // Cancellation + deposit columns.
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "FreeCancelHoursBefore" integer NOT NULL DEFAULT 24;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositPaid" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "LateCancelRefundPercent" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositPaidAt" timestamp NULL;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositReference" varchar(200) NULL;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "PublicToken" varchar(64) NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosReservations_PublicToken" ON "PosReservations" ("PublicToken") WHERE "PublicToken" IS NOT NULL AND "IsDeleted" = false;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).

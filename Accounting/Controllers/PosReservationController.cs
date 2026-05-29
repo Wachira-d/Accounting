@@ -30,7 +30,21 @@ public class PosReservationController : ControllerBase
         Guid? ContactId, string CustomerName, string? Phone, string? Email,
         int PartySize, DateTime ReservedAt, int DurationMinutes,
         ReservationStatus Status, Guid? PosOrderId,
-        string? Notes, string? Source, int ReminderCount, DateTime? LastReminderAt);
+        string? Notes, string? Source, int ReminderCount, DateTime? LastReminderAt,
+        int FreeCancelHoursBefore = 24, decimal DepositAmount = 0,
+        bool DepositPaid = false, int LateCancelRefundPercent = 0,
+        DateTime? DepositPaidAt = null, string? DepositReference = null,
+        string? PublicToken = null);
+
+    private static ReservationDto Map(PosReservation r) => new(
+        r.Id, r.TableId, r.TableNumber, r.ContactId,
+        r.CustomerName, r.Phone, r.Email,
+        r.PartySize, r.ReservedAt, r.DurationMinutes,
+        r.Status, r.PosOrderId, r.Notes, r.Source,
+        r.ReminderCount, r.LastReminderAt,
+        r.FreeCancelHoursBefore, r.DepositAmount, r.DepositPaid,
+        r.LateCancelRefundPercent, r.DepositPaidAt, r.DepositReference,
+        r.PublicToken);
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<ReservationDto>>>> List(Guid companyId,
@@ -48,13 +62,8 @@ public class PosReservationController : ControllerBase
                 || (r.Phone != null && r.Phone.Contains(search))
                 || (r.TableNumber != null && r.TableNumber.Contains(search)));
         var rows = await q.OrderBy(r => r.ReservedAt)
-            .Select(r => new ReservationDto(r.Id, r.TableId, r.TableNumber,
-                r.ContactId, r.CustomerName, r.Phone, r.Email,
-                r.PartySize, r.ReservedAt, r.DurationMinutes,
-                r.Status, r.PosOrderId, r.Notes, r.Source,
-                r.ReminderCount, r.LastReminderAt))
             .ToListAsync();
-        return Ok(new ApiResponse<List<ReservationDto>>(true, rows));
+        return Ok(new ApiResponse<List<ReservationDto>>(true, rows.Select(Map).ToList()));
     }
 
     /// <summary>Today's reservations sorted by time — quick endpoint for the
@@ -68,19 +77,18 @@ public class PosReservationController : ControllerBase
             .Where(r => r.CompanyId == companyId && !r.IsDeleted
                 && r.ReservedAt >= start && r.ReservedAt < end)
             .OrderBy(r => r.ReservedAt)
-            .Select(r => new ReservationDto(r.Id, r.TableId, r.TableNumber,
-                r.ContactId, r.CustomerName, r.Phone, r.Email,
-                r.PartySize, r.ReservedAt, r.DurationMinutes,
-                r.Status, r.PosOrderId, r.Notes, r.Source,
-                r.ReminderCount, r.LastReminderAt))
             .ToListAsync();
-        return Ok(new ApiResponse<List<ReservationDto>>(true, rows));
+        return Ok(new ApiResponse<List<ReservationDto>>(true, rows.Select(Map).ToList()));
     }
 
     public record CreateReservationRequest(
         Guid? TableId, string CustomerName, string? Phone, string? Email,
         Guid? ContactId, int PartySize, DateTime ReservedAt, int DurationMinutes = 90,
-        string? Notes = null, string? Source = "Phone");
+        string? Notes = null, string? Source = "Phone",
+        // Optional cancellation/deposit policy. Owner UI fills these — public
+        // widget reads the company's default policy and copies it in.
+        int FreeCancelHoursBefore = 24, decimal DepositAmount = 0,
+        int LateCancelRefundPercent = 0);
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<ReservationDto>>> Create(Guid companyId, [FromBody] CreateReservationRequest req)
@@ -128,16 +136,36 @@ public class PosReservationController : ControllerBase
             Status = ReservationStatus.Pending,
             Notes = req.Notes?.Trim(),
             Source = req.Source ?? "Phone",
+            FreeCancelHoursBefore = Math.Max(0, req.FreeCancelHoursBefore),
+            DepositAmount = Math.Max(0, req.DepositAmount),
+            LateCancelRefundPercent = Math.Clamp(req.LateCancelRefundPercent, 0, 100),
+            PublicToken = Guid.NewGuid().ToString("N"),
             CreatedBy = userId,
         };
         _db.PosReservations.Add(r2);
         await _db.SaveChangesAsync();
-        return StatusCode(201, new ApiResponse<ReservationDto>(true,
-            new ReservationDto(r2.Id, r2.TableId, r2.TableNumber, r2.ContactId,
-                r2.CustomerName, r2.Phone, r2.Email, r2.PartySize, r2.ReservedAt,
-                r2.DurationMinutes, r2.Status, r2.PosOrderId, r2.Notes, r2.Source,
-                r2.ReminderCount, r2.LastReminderAt),
-            "สร้างการจองสำเร็จ"));
+        return StatusCode(201, new ApiResponse<ReservationDto>(true, Map(r2), "สร้างการจองสำเร็จ"));
+    }
+
+    public record MarkDepositRequest(decimal? Amount, string? Reference);
+    /// <summary>Mark the deposit as received. Used by the host when the customer
+    /// has just transferred via PromptPay / bank — no payment provider involved.</summary>
+    [HttpPost("{id:guid}/deposit")]
+    public async Task<ActionResult<ApiResponse<string>>> MarkDeposit(Guid companyId, Guid id, [FromBody] MarkDepositRequest req)
+    {
+        var r = await _db.PosReservations.FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId && !x.IsDeleted);
+        if (r == null) return NotFound();
+        if (req.Amount.HasValue && req.Amount.Value > 0) r.DepositAmount = req.Amount.Value;
+        r.DepositPaid = true;
+        r.DepositPaidAt = DateTime.UtcNow;
+        r.DepositReference = req.Reference;
+        r.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        r.UpdatedAt = DateTime.UtcNow;
+        // Auto-promote Pending → Confirmed once the deposit lands. The host
+        // doesn't need to click Confirm separately.
+        if (r.Status == ReservationStatus.Pending) r.Status = ReservationStatus.Confirmed;
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<string>(true, null, "บันทึกการรับมัดจำสำเร็จ"));
     }
 
     public record UpdateReservationRequest(

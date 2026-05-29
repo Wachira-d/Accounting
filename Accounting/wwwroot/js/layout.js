@@ -948,6 +948,15 @@ const Layout = {
         if (this.currentCompany?.id === c.id) opt.selected = true;
         select.appendChild(opt);
       });
+      // "+ สร้างบริษัทใหม่" sentinel — triggers the setup overlay so users
+      // who already have one company can spin up another from the same login.
+      const sep = document.createElement('option');
+      sep.disabled = true; sep.textContent = '──────────';
+      select.appendChild(sep);
+      const newOpt = document.createElement('option');
+      newOpt.value = '__create_new__';
+      newOpt.textContent = '+ สร้างบริษัทใหม่';
+      select.appendChild(newOpt);
 
       // Auto-select if only 1 company or no company selected
       if (!this.currentCompany || !companies.find(c => c.id === this.currentCompany.id)) {
@@ -1009,8 +1018,10 @@ const Layout = {
 
   setupStep: 1,
 
-  showCompanySetupPrompt() {
+  showCompanySetupPrompt(opts) {
     this.setupStep = 1;
+    this._setupData = {};
+    this._setupForNewCompany = !!(opts && opts.forNewCompany);
     this.renderSetupStep();
   },
 
@@ -1312,6 +1323,15 @@ const Layout = {
     document.addEventListener('change', e => {
       if (e.target.id === 'companySelect') {
         const id = e.target.value;
+        if (id === '__create_new__') {
+          // Reset to the current selection visually, then launch the setup
+          // overlay. Reusing the existing first-time wizard means the create
+          // flow stays consistent — same field validation, same chart-of-
+          // accounts seeding, same trial subscription auto-attach.
+          if (this.currentCompany?.id) e.target.value = this.currentCompany.id;
+          this.showCompanySetupPrompt({ forNewCompany: true });
+          return;
+        }
         if (id) {
           // Keep full company object if available, fallback to { id }
           const full = this.companies?.find(c => c.id === id) || { id };
