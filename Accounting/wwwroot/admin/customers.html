@@ -276,134 +276,46 @@
               ` : '<p style="color:#94a3b8;text-align:center;padding:20px">ยังไม่มี Subscription</p>'}
             </div>
 
-            <!-- Actions -->
+            <!-- Actions — License-centric only.
+                 The per-company plan/status/dates/limits controls were removed
+                 because billing now lives at the User License layer; managing
+                 quota at the company level was a footgun (mismatch with parent
+                 license). Operators attach the company to a User License or
+                 detach it; everything else is done on /admin/account-subscriptions.html. -->
             <div class="detail-panel" id="panel-actions">
               ${ap ? `
-              <!-- 🎫 Account Plan controls — when this company is under a
-                   User-level License, these are the actions that actually
-                   matter. The per-company section below is shown for the
-                   "detached / separate billing" case only. -->
               <div class="action-card" style="border:2px solid #0ea5e9;background:#ecfeff">
-                <h4 style="color:#0c4a6e">🎫 จัดการ License ที่ครอบบริษัทนี้ <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px">${ap.planName}</span></h4>
-                <div style="font-size:12px;color:#475569;margin-bottom:10px;line-height:1.6">
-                  เจ้าของ License: <strong>${ap.ownerName}</strong> · สถานะ <strong>${ap.status}</strong> · หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}<br>
-                  <span style="color:#dc2626">⚠️ การเปลี่ยนที่นี่ส่งผลทุกบริษัทใต้ License เดียวกัน</span>
+                <h4 style="color:#0c4a6e;margin-top:0">🎫 บริษัทนี้อยู่ใต้ License <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px">${ap.planName}</span></h4>
+                <div style="font-size:13px;color:#475569;line-height:1.7;margin-bottom:12px">
+                  เจ้าของ License: <strong>${ap.ownerName}</strong> &lt;${ap.ownerEmail}&gt;<br>
+                  สถานะ: <strong>${ap.status}</strong> · หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}<br>
+                  <span style="color:#0c4a6e">ℹ️ การจัดการแพ็กเกจ / ราคา / quota / วันต่ออายุ ทำได้ที่หน้า License เท่านั้น
+                  เพื่อไม่ให้ค่ารายบริษัทขัดแย้งกับ License แม่</span>
                 </div>
-                <div class="action-row" style="flex-wrap:wrap;gap:8px">
-                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="apExtend('${ap.id}','${ap.endDate}')">⏰ ขยายอายุ</button>
-                  <button class="admin-btn admin-btn-warning admin-btn-sm" onclick="apStatus('${ap.id}','${ap.status}')">🔄 เปลี่ยนสถานะ</button>
-                  <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="apLimits('${ap.id}')">⚙️ ปรับ Limits</button>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  <a href="/admin/account-subscriptions.html?id=${ap.id}" class="admin-btn admin-btn-primary admin-btn-sm" style="text-decoration:none">→ ไปจัดการ License</a>
                   <button class="admin-btn admin-btn-danger admin-btn-sm" onclick="apDetach('${c.id}','${c.name.replace(/'/g,'&apos;')}')">🔓 ถอดบริษัทออกจาก License</button>
-                  <a href="/admin/account-subscriptions.html" class="admin-btn admin-btn-ghost admin-btn-sm" style="text-decoration:none">ดู License เต็ม →</a>
                 </div>
               </div>
-              <details style="background:#fafafa;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px">
-                <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">💼 จัดการ Subscription ระดับบริษัทนี้ <span style="font-weight:400;color:#94a3b8;font-size:11px">— ใช้เมื่อแยกบิลออกจาก License</span></summary>
-                <div style="margin-top:10px">
-              ` : ''}
-              ${s ? `
-              <!-- Change Plan -->
-              <div class="action-card">
-                <h4>เปลี่ยนแพ็กเกจ${ap ? ' <span style="font-weight:400;color:#94a3b8;font-size:11px">(บริษัทนี้แยกบิล)</span>' : ''}</h4>
-                <div class="action-row">
-                  <div class="field">
-                    <label>แพ็กเกจใหม่</label>
-                    <select id="actPlan">
-                      ${['FreeTrial','Basic','Pro','Enterprise'].map(p => `<option value="${p}" ${s.plan===p?'selected':''}>${p}</option>`).join('')}
+              ` : `
+              <div class="action-card" style="border:2px solid #fbbf24;background:#fef3c7">
+                <h4 style="color:#92400e;margin-top:0">⚠️ บริษัทนี้ยังไม่ผูกกับ License ใด</h4>
+                <div style="font-size:13px;color:#78350f;line-height:1.7;margin-bottom:12px">
+                  บริษัทที่ไม่มี License แม่จะใช้ Subscription ระดับบริษัท (FreeTrial default) ซึ่ง<strong>ไม่ใช่โหมดที่แนะนำ</strong>
+                  สำหรับบัญชีลูกค้าจริง — ผูกเข้ากับ License ของผู้ใช้เพื่อให้ quota / billing / วันต่ออายุไหลรวมกัน
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+                  <div class="field" style="flex:1;min-width:240px">
+                    <label>เลือก License ของผู้ใช้</label>
+                    <select id="attachLicenseSelect">
+                      <option value="">— กำลังโหลด —</option>
                     </select>
                   </div>
-                  <div class="field">
-                    <label>รอบบิล</label>
-                    <select id="actBillingCycle">
-                      ${['Monthly','Quarterly','SemiAnnual','Annual'].map(bc => `<option value="${bc}" ${s.billingCycle===bc?'selected':''}>${bc}</option>`).join('')}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>ราคา/รอบ (฿) - ว่าง=ใช้ตาม template</label>
-                    <input type="number" id="actPrice" placeholder="auto" step="0.01">
-                  </div>
-                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangePlan('${c.id}')">เปลี่ยนแพ็กเกจ</button>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doAttachLicense('${c.id}')">🔗 ผูกเข้า License</button>
+                  <a href="/admin/users.html" class="admin-btn admin-btn-ghost admin-btn-sm" style="text-decoration:none">+ สร้าง License ให้ผู้ใช้</a>
                 </div>
               </div>
-
-              <!-- Change Status -->
-              <div class="action-card">
-                <h4>เปลี่ยนสถานะ Subscription</h4>
-                <div class="action-row">
-                  <div class="field">
-                    <label>สถานะใหม่</label>
-                    <select id="actSubStatus">
-                      ${['Trial','Active','PastDue','Cancelled','Expired','Suspended'].map(st => `<option value="${st}" ${s.status===st?'selected':''}>${st}</option>`).join('')}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>หมายเหตุ</label>
-                    <input type="text" id="actSubStatusNote" placeholder="เหตุผล (optional)">
-                  </div>
-                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangeSubStatus('${c.id}')">เปลี่ยนสถานะ</button>
-                </div>
-              </div>
-
-              <!-- Change Dates -->
-              <div class="action-card">
-                <h4>ปรับวันที่ / ต่ออายุ</h4>
-                <div class="action-row">
-                  <div class="field">
-                    <label>วันเริ่ม</label>
-                    <input type="date" id="actStartDate" value="${fmtDate(s.startDate)}">
-                  </div>
-                  <div class="field">
-                    <label>วันหมดอายุ</label>
-                    <input type="date" id="actEndDate" value="${fmtDate(s.endDate)}">
-                  </div>
-                  <div class="field">
-                    <label>บิลถัดไป</label>
-                    <input type="date" id="actNextBilling" value="${fmtDate(s.nextBillingDate)}">
-                  </div>
-                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangeDates('${c.id}')">อัพเดทวันที่</button>
-                </div>
-              </div>
-
-              <!-- Change Limits -->
-              <div class="action-card">
-                <h4>ปรับ Usage Limits</h4>
-                <div class="action-row">
-                  <div class="field">
-                    <label>ผู้ใช้สูงสุด</label>
-                    <input type="number" id="actMaxUsers" value="${s.limits?.maxUsers || ''}" min="1">
-                  </div>
-                  <div class="field">
-                    <label>เอกสาร/เดือน</label>
-                    <input type="number" id="actMaxDocs" value="${s.limits?.maxDocumentsPerMonth || ''}" min="1">
-                  </div>
-                  <div class="field">
-                    <label>สมุดรายวัน/เดือน</label>
-                    <input type="number" id="actMaxJournals" value="${s.limits?.maxJournalEntriesPerMonth || ''}" min="1">
-                  </div>
-                  <div class="field">
-                    <label>Storage (MB)</label>
-                    <input type="number" id="actMaxStorage" value="${s.limits ? Math.round(s.limits.maxStorageBytes / 1048576) : ''}" min="1">
-                  </div>
-                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doChangeLimits('${c.id}')">ปรับ Limits</button>
-                </div>
-              </div>
-
-              ${t ? `
-              <!-- Trial Actions -->
-              <div class="action-card" style="border-color:#bfdbfe;background:#f0f9ff">
-                <h4 style="color:#1d4ed8">จัดการ Trial</h4>
-                <div class="action-row">
-                  <div class="field">
-                    <label>ขยายเวลา (วัน)</label>
-                    <input type="number" id="actExtendDays" value="14" min="1" max="365">
-                  </div>
-                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doExtendTrial('${c.id}')">ขยายเวลา Trial</button>
-                  <button class="admin-btn admin-btn-outline admin-btn-sm" style="color:#ef4444;border-color:#ef4444" onclick="doExpireTrial('${c.id}')">บังคับหมดอายุ Trial</button>
-                </div>
-              </div>
-              ` : ''}
-              ` : '<p style="color:#94a3b8;text-align:center;padding:20px">ยังไม่มี Subscription ไม่สามารถจัดการได้</p>'}
-              ${ap ? `</div></details>` : ''}
+              `}
             </div>
 
             <!-- Users -->
@@ -464,6 +376,9 @@
           </div>
         </div>
       `;
+      // Populate the License dropdown only when the company is NOT attached —
+      // the select element only exists in that branch of the template.
+      if (!ap) loadAttachLicenseOptions();
     }
 
     function renderLimitBar(label, current, max, actualCount, isBytes) {
@@ -498,71 +413,43 @@
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
-    async function doChangePlan(companyId) {
-      const plan = document.getElementById('actPlan').value;
-      const billingCycle = document.getElementById('actBillingCycle').value;
-      const priceVal = document.getElementById('actPrice').value;
+    // ===== Attach to User License =====
+    // Per-company plan/status/dates/limits/trial handlers were removed when
+    // we moved billing to the User License layer — those concerns now live
+    // on /admin/account-subscriptions.html. The only company-level write
+    // here is "attach this company to a License".
+    async function loadAttachLicenseOptions() {
+      const sel = document.getElementById('attachLicenseSelect');
+      if (!sel) return;
       try {
-        await AdminAPI.changePlan(companyId, {
-          plan, billingCycle,
-          pricePerCycle: priceVal ? parseFloat(priceVal) : null
-        });
-        AdminLayout.toast('เปลี่ยนแพ็กเกจสำเร็จ');
-        await refreshDetail(companyId);
-      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+        const r = await AdminAPI.get('/account-subscriptions');
+        const usable = new Set(['Trial', 'Active', 'PastDue']);
+        const items = (r.data || []).filter(a => a.companiesUsed < a.maxCompanies && usable.has(a.status));
+        if (!items.length) {
+          sel.innerHTML = '<option value="">— ไม่มี License ที่ว่าง — ต้องสร้าง / เพิ่ม MaxCompanies ก่อน —</option>';
+          sel.disabled = true;
+          return;
+        }
+        sel.disabled = false;
+        sel.innerHTML = '<option value="">— เลือก License —</option>' + items.map(a =>
+          `<option value="${a.id}">${a.ownerName} &lt;${a.ownerEmail}&gt; · ${a.planName} (${a.companiesUsed}/${a.maxCompanies} ใช้แล้ว)</option>`
+        ).join('');
+      } catch (e) {
+        sel.innerHTML = `<option value="">— โหลดล้มเหลว: ${e.message} —</option>`;
+      }
     }
 
-    async function doChangeSubStatus(companyId) {
-      const status = document.getElementById('actSubStatus').value;
-      const notes = document.getElementById('actSubStatusNote').value;
-      if (!confirm(`เปลี่ยนสถานะ subscription เป็น "${status}"?`)) return;
+    async function doAttachLicense(companyId) {
+      const sel = document.getElementById('attachLicenseSelect');
+      const apId = sel?.value;
+      if (!apId) { AdminLayout.toast('กรุณาเลือก License', 'error'); return; }
+      const label = sel.options[sel.selectedIndex].text;
+      if (!confirm(`🔗 ผูกบริษัทนี้เข้ากับ License:\n${label}\n\nบริษัทจะใช้ quota / สิทธิ์ / วันหมดอายุของ License นี้`)) return;
       try {
-        await AdminAPI.changeSubStatus(companyId, { status, notes: notes || null });
-        AdminLayout.toast('เปลี่ยนสถานะ subscription สำเร็จ');
+        await AdminAPI.post('/companies/' + companyId + '/attach-to-account-plan', { accountSubscriptionId: apId });
+        AdminLayout.toast('ผูกเข้า License สำเร็จ');
         await refreshDetail(companyId);
-      } catch (err) { AdminLayout.toast(err.message, 'error'); }
-    }
-
-    async function doChangeDates(companyId) {
-      const startDate = document.getElementById('actStartDate').value || null;
-      const endDate = document.getElementById('actEndDate').value || null;
-      const nextBillingDate = document.getElementById('actNextBilling').value || null;
-      try {
-        await AdminAPI.changeDates(companyId, { startDate, endDate, nextBillingDate });
-        AdminLayout.toast('ปรับวันที่สำเร็จ');
-        await refreshDetail(companyId);
-      } catch (err) { AdminLayout.toast(err.message, 'error'); }
-    }
-
-    async function doChangeLimits(companyId) {
-      const maxUsers = parseInt(document.getElementById('actMaxUsers').value) || null;
-      const maxDocumentsPerMonth = parseInt(document.getElementById('actMaxDocs').value) || null;
-      const maxJournalEntriesPerMonth = parseInt(document.getElementById('actMaxJournals').value) || null;
-      const storageMB = parseInt(document.getElementById('actMaxStorage').value);
-      const maxStorageBytes = storageMB ? storageMB * 1048576 : null;
-      try {
-        await AdminAPI.changeLimits(companyId, { maxUsers, maxDocumentsPerMonth, maxJournalEntriesPerMonth, maxStorageBytes });
-        AdminLayout.toast('ปรับ limits สำเร็จ');
-        await refreshDetail(companyId);
-      } catch (err) { AdminLayout.toast(err.message, 'error'); }
-    }
-
-    async function doExtendTrial(companyId) {
-      const additionalDays = parseInt(document.getElementById('actExtendDays').value) || 14;
-      try {
-        await AdminAPI.extendTrial(companyId, { additionalDays });
-        AdminLayout.toast('ขยายเวลา Trial สำเร็จ');
-        await refreshDetail(companyId);
-      } catch (err) { AdminLayout.toast(err.message, 'error'); }
-    }
-
-    async function doExpireTrial(companyId) {
-      if (!confirm('บังคับให้ Trial หมดอายุทันที?')) return;
-      try {
-        await AdminAPI.expireTrial(companyId);
-        AdminLayout.toast('Trial หมดอายุแล้ว');
-        await refreshDetail(companyId);
-      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
     }
 
     // ===== Account Plan (User License) actions =====
