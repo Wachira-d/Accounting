@@ -599,7 +599,7 @@
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'cName', nameEn: 'cNameEn', taxId: 'cTaxId', juristicId: 'cJuristicId',
             address: 'cAddress',
-            addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
+            addressParts: { moo: 'cMoo', subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
           });
           autoParseAddr();
           Layout.toast('ดึงข้อมูล ' + result.nameTh + ' จาก DBD สำเร็จ');
@@ -609,7 +609,7 @@
           DbdLookup.fillCompanyForm(result, {
             nameTh: 'cName', nameEn: 'cNameEn', juristicId: 'cJuristicId',
             address: 'cAddress',
-            addressParts: { subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
+            addressParts: { moo: 'cMoo', subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
           });
           autoParseAddr();
           // Also map registered capital and biz type if available
