@@ -76,6 +76,25 @@ public class AdminController : ControllerBase
         var expiredSubs = subscriptions.Count(s => s.Status == SubscriptionStatus.Expired);
         var cancelledSubs = subscriptions.Count(s => s.Status == SubscriptionStatus.Cancelled);
 
+        // Account Plans (User-level Licenses) — separate KPI block so support
+        // staff can see how many Licenses are out, how many are about to expire,
+        // and the user-side MRR vs company-side MRR.
+        var accountPlans = await _db.AccountSubscriptions.Where(a => !a.IsDeleted).ToListAsync();
+        var accountActive = accountPlans.Count(a => a.Status == SubscriptionStatus.Active);
+        var accountTrial = accountPlans.Count(a => a.Status == SubscriptionStatus.Trial);
+        var accountExpiring = accountPlans.Count(a => a.Status == SubscriptionStatus.Active
+                                                  && a.EndDate <= now.AddDays(7));
+        var accountCompaniesCovered = await _db.Subscriptions
+            .CountAsync(s => s.AccountSubscriptionId != null && !s.IsDeleted);
+        var accountMrr = accountPlans
+            .Where(a => a.Status == SubscriptionStatus.Active)
+            .Sum(a => a.BillingCycle switch
+            {
+                BillingCycle.Monthly => a.MonthlyPrice,
+                BillingCycle.Annual => a.AnnualPrice / 12m,
+                _ => a.MonthlyPrice,
+            });
+
         // MRR (Monthly Recurring Revenue) - from active subscriptions
         var mrr = subscriptions
             .Where(s => s.Status == SubscriptionStatus.Active)
@@ -129,6 +148,17 @@ public class AdminController : ControllerBase
                 expired = expiredSubs,
                 cancelled = cancelledSubs,
                 total = subscriptions.Count
+            },
+            accountPlans = new
+            {
+                active = accountActive,
+                trial = accountTrial,
+                expiringIn7d = accountExpiring,
+                total = accountPlans.Count,
+                companiesCovered = accountCompaniesCovered,
+                companiesUnderAccount = accountCompaniesCovered,
+                companiesStandalone = subscriptions.Count(s => s.AccountSubscriptionId == null),
+                mrr = Math.Round(accountMrr, 2),
             },
             revenue = new
             {

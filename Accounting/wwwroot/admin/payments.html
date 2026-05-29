@@ -187,6 +187,12 @@
               ${p.referenceNumber ? `<div class="admin-mb"><div class="admin-label">เลขอ้างอิง</div>${p.referenceNumber}</div>` : ''}
               ${p.notes ? `<div class="admin-mb"><div class="admin-label">หมายเหตุลูกค้า</div>${p.notes}</div>` : ''}
 
+              <div style="background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0c4a6e;line-height:1.6">
+                💡 <strong>การอนุมัติจะ sync 2 ชั้นอัตโนมัติ:</strong><br>
+                1. ยืด <code>Subscription.EndDate</code> ของบริษัท ${p.companyName ? '<strong>' + p.companyName + '</strong>' : ''} ตามรอบที่ลูกค้าสมัคร<br>
+                2. ถ้าบริษัทนี้อยู่ใต้ <strong>Account Plan</strong> ของ User → ยืด <code>AccountSubscription.EndDate</code> + flip status เป็น Active ให้ด้วย (กัน License แม่หมดอายุก่อนลูก) — quota บน Account Plan ไม่ถูก overwrite
+              </div>
+
               <div class="admin-form-group">
                 <label class="admin-label">หมายเหตุ Admin</label>
                 <textarea class="admin-input" id="reviewNotes" rows="3" placeholder="บันทึกเพิ่มเติม (ถ้ามี)"></textarea>

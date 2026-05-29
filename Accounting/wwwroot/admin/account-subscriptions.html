@@ -101,7 +101,7 @@
 
       async openDetail(id) {
         try {
-          const r = await AdminAPI.get('/api/admin/account-subscriptions/' + id);
+          const r = await AdminAPI.get('/account-subscriptions/' + id);
           const d = r.data;
           const u = d.usage || {};
           const gauge = (used, max, fmt) => {
@@ -166,7 +166,7 @@
         const local = new Date(cur.getTime() - cur.getTimezoneOffset()*60000).toISOString().slice(0,10);
         const newDate = prompt('วันสิ้นสุดใหม่ (YYYY-MM-DD)', local);
         if (!newDate) return;
-        AdminAPI.put('/api/admin/account-subscriptions/' + id + '/extend', { endDate: newDate + 'T00:00:00Z' })
+        AdminAPI.put('/account-subscriptions/' + id + '/extend', { endDate: newDate + 'T00:00:00Z' })
           .then(j => { if (j.success) { alert('✓ ' + j.message); this.load(); } else alert(j.message); })
           .catch(e => alert(e.message));
       },
@@ -175,7 +175,7 @@
         const next = prompt('สถานะใหม่ (Trial / Active / PastDue / Cancelled / Expired / Suspended)', current);
         if (!next) return;
         const reason = prompt('เหตุผล (เก็บใน audit)', '') || '';
-        AdminAPI.put('/api/admin/account-subscriptions/' + id + '/status', { status: next, reason })
+        AdminAPI.put('/account-subscriptions/' + id + '/status', { status: next, reason })
           .then(j => { if (j.success) { alert('✓ ' + j.message); this.load(); } else alert(j.message); })
           .catch(e => alert(e.message));
       },
@@ -196,7 +196,7 @@
         const mo = parseInt(prompt('MaxOcrPagesPerMonth (aggregate)', a.maxOcrPagesPerMonth));
         if (isNaN(mo)) return;
         try {
-          const r = await AdminAPI.put('/api/admin/account-subscriptions/' + id + '/limits', {
+          const r = await AdminAPI.put('/account-subscriptions/' + id + '/limits', {
             maxCompanies: mc, maxUsersPerCompany: mu,
             maxDocumentsPerMonth: md, maxJournalEntriesPerMonth: mj,
             maxOcrPagesPerMonth: mo,

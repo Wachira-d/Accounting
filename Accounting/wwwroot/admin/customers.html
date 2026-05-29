@@ -230,6 +230,15 @@
 
             <!-- Subscription -->
             <div class="detail-panel" id="panel-subscription">
+              ${ap ? `
+                <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#9a3412;line-height:1.6">
+                  ⚠️ <strong>อ่านลำดับการ resolver:</strong> บริษัทนี้อยู่ใต้ Account Plan
+                  <strong>${ap.planName}</strong> ของ <strong>${ap.ownerName}</strong>
+                  → quota / features ที่ใช้จริง <strong>ดูจาก Account Plan</strong>
+                  (หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}) ·
+                  ค่าด้านล่างนี้เป็น Subscription ระดับบริษัทเฉพาะตอน "ถอดออกจาก Account Plan" หรือใช้แยกบิลเท่านั้น
+                </div>
+              ` : ''}
               ${s ? `
                 <div class="info-grid">
                   <div class="info-item"><div class="label">แพ็กเกจ</div><div class="value">${AdminLayout.planBadge(s.plan)}</div></div>

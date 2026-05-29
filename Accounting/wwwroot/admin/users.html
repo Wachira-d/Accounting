@@ -52,8 +52,11 @@
                 // License pill — populated from accountPlan field the API
                 // attaches (or "-" when the user has no plan of their own).
                 const ap = u.accountPlan;
-                const licenseChip = ap
-                  ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🎫 ${ap.planName} <span style="opacity:.7">${ap.companiesUsed}/${ap.maxCompanies}</span></span>`
+                // Defensive — accountPlan may be null, or missing fields if the
+                // user's License row is partially migrated. Skip the chip
+                // unless planName + companiesUsed are both present.
+                const licenseChip = (ap && ap.planName && ap.companiesUsed != null)
+                  ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600" title="License: ${ap.planName} · หมดอายุ ${ap.endDate ? new Date(ap.endDate).toLocaleDateString('th-TH') : '-'}">🎫 ${ap.planName} <span style="opacity:.7">${ap.companiesUsed}/${ap.maxCompanies||'?'}</span></span>`
                   : '<span style="color:#94a3b8">—</span>';
                 return `
                 <tr>

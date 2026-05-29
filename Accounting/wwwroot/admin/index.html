@@ -76,6 +76,7 @@
         const r = d.revenue;
         const s = d.subscriptions;
         const p = d.payments;
+        const ap = d.accountPlans || {};
 
         document.getElementById('kpiGrid').innerHTML = `
           <div class="admin-kpi">
@@ -119,6 +120,17 @@
             <div class="admin-kpi-value" style="color:var(--admin-warning)">${p.pendingReview}</div>
             <div class="admin-kpi-sub">อนุมัติเดือนนี้: ${p.approvedThisMonth}</div>
           </div>
+          <div class="admin-kpi" onclick="location.href='/admin/account-subscriptions.html'" style="cursor:pointer;border:2px solid #67e8f9">
+            <div class="admin-kpi-label">🎫 Account Plans (User License)</div>
+            <div class="admin-kpi-value" style="color:#0c4a6e">${(ap.active||0)+(ap.trial||0)}</div>
+            <div class="admin-kpi-sub">Active ${ap.active||0} · Trial ${ap.trial||0} · ${ap.companiesUnderAccount||0} บริษัทใต้ Plan · MRR ${AdminLayout.money(ap.mrr||0)}</div>
+          </div>
+          ${(ap.expiringIn7d||0) > 0 ? `
+          <div class="admin-kpi" onclick="location.href='/admin/account-subscriptions.html'" style="cursor:pointer;background:#fef3c7;border:2px solid #fbbf24">
+            <div class="admin-kpi-label" style="color:#92400e">⏰ Account Plan ใกล้หมดอายุ</div>
+            <div class="admin-kpi-value" style="color:#dc2626">${ap.expiringIn7d}</div>
+            <div class="admin-kpi-sub" style="color:#78350f">ภายใน 7 วัน — แจ้งลูกค้าให้ต่อ</div>
+          </div>` : ''}
         `;
 
         // Subscription chart (simple bar)
