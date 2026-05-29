@@ -87,7 +87,7 @@ public class CompanyService : ICompanyService
     /// Failures are logged but never blow up the create flow — a missing
     /// Subscription row is recoverable later, but a failed Company create
     /// because of a billing hiccup is not.</summary>
-    private async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId)
+    public async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId)
     {
         try
         {

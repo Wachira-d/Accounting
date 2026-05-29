@@ -1040,11 +1040,57 @@ public class SubscriptionService : ISubscriptionService
                 f.UploadedByUserId != Guid.Empty && userMap.ContainsKey(f.UploadedByUserId) ? userMap[f.UploadedByUserId] : "-"))
             .ToList();
 
+        // License overlay: when this company rides under a User License the
+        // dashboard should show the License's limits (and aggregate Used)
+        // not the stale per-company FreeTrial values. Otherwise the user
+        // sees scary "1/1 users — upgrade now" warnings on a 100-seat
+        // Enterprise account.
+        var plan = sub.Plan;
+        var status = sub.Status;
+        var endDate = sub.EndDate;
+        var maxUsers = sub.MaxUsers;
+        var maxStorage = sub.MaxStorageBytes;
+        var maxDocs = sub.MaxDocumentsPerMonth;
+        var maxJournals = sub.MaxJournalEntriesPerMonth;
+        var maxOcr = sub.MaxOcrPagesPerMonth;
+        var storageUsed = sub.CurrentStorageUsed;
+        var docsUsed = sub.CurrentMonthDocuments;
+        var journalsUsed = sub.CurrentMonthJournalEntries;
+        var ocrUsed = sub.CurrentMonthOcrPages;
+
+        if (sub.AccountSubscriptionId.HasValue)
+        {
+            var acct = await _db.AccountSubscriptions.AsNoTracking()
+                .Include(a => a.PlanTemplate)
+                .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+            if (acct != null)
+            {
+                plan = acct.PlanTemplate.Plan;
+                status = acct.Status;
+                endDate = acct.EndDate;
+                maxUsers = acct.MaxUsersPerCompany;
+                maxStorage = acct.MaxStorageBytes;
+                maxDocs = acct.MaxDocumentsPerMonth;
+                maxJournals = acct.MaxJournalEntriesPerMonth;
+                maxOcr = acct.MaxOcrPagesPerMonth;
+                // Used counters are aggregate across every attached company
+                // so the dashboard's "X / Y" matches what enforcement sees.
+                var agg = await _db.Subscriptions.AsNoTracking()
+                    .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
+                    .Select(s => new { s.CurrentStorageUsed, s.CurrentMonthDocuments, s.CurrentMonthJournalEntries, s.CurrentMonthOcrPages })
+                    .ToListAsync();
+                storageUsed = agg.Sum(x => x.CurrentStorageUsed);
+                docsUsed = agg.Sum(x => x.CurrentMonthDocuments);
+                journalsUsed = agg.Sum(x => x.CurrentMonthJournalEntries);
+                ocrUsed = agg.Sum(x => x.CurrentMonthOcrPages);
+            }
+        }
+
         // Build alerts
         var alerts = new List<UsageAlert>();
-        var storagePct = sub.MaxStorageBytes > 0 ? (double)sub.CurrentStorageUsed / sub.MaxStorageBytes * 100 : 0;
-        var docPct = sub.MaxDocumentsPerMonth > 0 ? (double)sub.CurrentMonthDocuments / sub.MaxDocumentsPerMonth * 100 : 0;
-        var userPct = sub.MaxUsers > 0 ? (double)companyUsers.Count / sub.MaxUsers * 100 : 0;
+        var storagePct = maxStorage > 0 ? (double)storageUsed / maxStorage * 100 : 0;
+        var docPct = maxDocs > 0 ? (double)docsUsed / maxDocs * 100 : 0;
+        var userPct = maxUsers > 0 ? (double)companyUsers.Count / maxUsers * 100 : 0;
 
         if (storagePct >= 90)
             alerts.Add(new UsageAlert("danger", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storagePct:F0}% แล้ว กรุณาเคลียร์ไฟล์หรืออัปเกรดแพ็กเกจ"));
@@ -1052,24 +1098,24 @@ public class SubscriptionService : ISubscriptionService
             alerts.Add(new UsageAlert("warning", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storagePct:F0}% แล้ว"));
 
         if (docPct >= 90)
-            alerts.Add(new UsageAlert("danger", "documents", $"เอกสารเดือนนี้ใช้ไป {sub.CurrentMonthDocuments}/{sub.MaxDocumentsPerMonth} รายการ"));
+            alerts.Add(new UsageAlert("danger", "documents", $"เอกสารเดือนนี้ใช้ไป {docsUsed}/{maxDocs} รายการ"));
         else if (docPct >= 70)
             alerts.Add(new UsageAlert("warning", "documents", $"เอกสารเดือนนี้ใช้ไป {docPct:F0}%"));
 
         if (userPct >= 100)
             alerts.Add(new UsageAlert("danger", "users", "จำนวนผู้ใช้เต็มแล้ว อัปเกรดแพ็กเกจเพื่อเพิ่มผู้ใช้"));
-        else if (companyUsers.Count >= sub.MaxUsers - 1 && sub.MaxUsers < 999)
-            alerts.Add(new UsageAlert("warning", "users", $"เหลือโควต้าผู้ใช้อีก {sub.MaxUsers - companyUsers.Count} คน"));
+        else if (companyUsers.Count >= maxUsers - 1 && maxUsers < 999)
+            alerts.Add(new UsageAlert("warning", "users", $"เหลือโควต้าผู้ใช้อีก {maxUsers - companyUsers.Count} คน"));
 
-        var daysLeft = (sub.EndDate - DateTime.UtcNow).Days;
+        var daysLeft = (endDate - DateTime.UtcNow).Days;
         if (daysLeft <= 0)
             alerts.Add(new UsageAlert("danger", "subscription", "Subscription หมดอายุแล้ว กรุณาต่ออายุ"));
         else if (daysLeft <= 7)
             alerts.Add(new UsageAlert("warning", "subscription", $"Subscription จะหมดอายุใน {daysLeft} วัน"));
 
-        var ocrPct = sub.MaxOcrPagesPerMonth > 0 ? (double)sub.CurrentMonthOcrPages / sub.MaxOcrPagesPerMonth * 100 : 0;
+        var ocrPct = maxOcr > 0 ? (double)ocrUsed / maxOcr * 100 : 0;
         if (ocrPct >= 90)
-            alerts.Add(new UsageAlert("danger", "ocr", $"โควต้า OCR ใช้ไป {sub.CurrentMonthOcrPages}/{sub.MaxOcrPagesPerMonth} หน้า"));
+            alerts.Add(new UsageAlert("danger", "ocr", $"โควต้า OCR ใช้ไป {ocrUsed}/{maxOcr} หน้า"));
         else if (ocrPct >= 70)
             alerts.Add(new UsageAlert("warning", "ocr", $"โควต้า OCR ใช้ไป {ocrPct:F0}%"));
 
@@ -1080,14 +1126,14 @@ public class SubscriptionService : ISubscriptionService
             .SumAsync(p => p.PagesRemaining);
 
         return new UsageDetailResponse(
-            sub.Plan, sub.Status, sub.EndDate,
-            companyUsers.Count, sub.MaxUsers, companyUsers,
-            sub.CurrentStorageUsed, sub.MaxStorageBytes, breakdown, largest,
-            sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth,
-            sub.CurrentMonthJournalEntries, sub.MaxJournalEntriesPerMonth,
+            plan, status, endDate,
+            companyUsers.Count, maxUsers, companyUsers,
+            storageUsed, maxStorage, breakdown, largest,
+            docsUsed, maxDocs,
+            journalsUsed, maxJournals,
             sub.UsageResetDate,
-            OcrPagesThisMonth: sub.CurrentMonthOcrPages,
-            MaxOcrPagesPerMonth: sub.MaxOcrPagesPerMonth,
+            OcrPagesThisMonth: ocrUsed,
+            MaxOcrPagesPerMonth: maxOcr,
             OcrBonusPages: sub.OcrBonusPages,
             OcrCreditPagesRemaining: ocrCredits,
             Alerts: alerts);
