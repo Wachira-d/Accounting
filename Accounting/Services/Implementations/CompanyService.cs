@@ -219,6 +219,16 @@ public class CompanyService : ICompanyService
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
 
+        // Refuse to leave the company without an Owner. If this is the last
+        // Owner standing, removal would orphan the company — block here.
+        if (cu.Role == UserRole.Owner)
+        {
+            var ownerCount = await _db.CompanyUsers
+                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner && !x.IsDeleted);
+            if (ownerCount <= 1)
+                throw new InvalidOperationException("ลบไม่ได้ — บริษัทต้องมีเจ้าของอย่างน้อย 1 คน");
+        }
+
         _db.CompanyUsers.Remove(cu);
         await _db.SaveChangesAsync();
     }
@@ -232,6 +242,16 @@ public class CompanyService : ICompanyService
 
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
+
+        // Demoting the last Owner would lock the company. Block if target is
+        // currently Owner, the new role isn't Owner, and they're the only one.
+        if (cu.Role == UserRole.Owner && newRole != UserRole.Owner)
+        {
+            var ownerCount = await _db.CompanyUsers
+                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner && !x.IsDeleted);
+            if (ownerCount <= 1)
+                throw new InvalidOperationException("ลดสิทธิ์ไม่ได้ — บริษัทต้องมีเจ้าของอย่างน้อย 1 คน");
+        }
 
         cu.Role = newRole;
         await _db.SaveChangesAsync();

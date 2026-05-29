@@ -164,6 +164,7 @@
         <div class="order-header">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
             <strong style="font-size:14px;flex:1;" id="orderTitle">ออเดอร์ใหม่</strong>
+            <button type="button" onclick="Page.openFloorView()" title="ดูผังโต๊ะ — เห็นสถานะทุกโต๊ะ" style="background:#dbeafe;border:1px solid #93c5fd;color:#1e40af;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">🪑 ผังโต๊ะ</button>
             <button type="button" id="recallBtn" onclick="Page.openHeldOrders()" title="ดูบิลที่พักไว้" style="background:#fef3c7;border:1px solid #fbbf24;color:#92400e;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">📌 บิลพัก <span id="heldCount" style="background:#fbbf24;color:#fff;border-radius:10px;padding:0 6px;font-size:11px;display:none;">0</span></button>
             <select id="orderType" style="font-size:12px;padding:4px 8px;border:1px solid var(--gray-300);border-radius:6px;" onchange="Page.onOrderTypeChange()">
               <option value="0">ทานที่ร้าน</option>
@@ -286,6 +287,26 @@
         <div class="modal-footer" style="gap:8px">
           <button class="btn btn-secondary" onclick="Layout.closeModal('splitModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.confirmSplit()">✓ ยืนยันแยกบิล</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floor view modal — live floor plan with table status colors -->
+    <div class="modal-overlay" id="floorViewModal">
+      <div class="modal" style="max-width:1100px;width:95vw;max-height:90vh">
+        <div class="modal-header">
+          <h3 class="modal-title">🪑 ผังโต๊ะ <span id="fvLegend" style="font-size:12px;font-weight:400;color:#64748b;margin-left:14px">🟢 ว่าง · 🔵 มีออเดอร์ · 🟡 บิลพัก · ⚪ ปิด</span></h3>
+          <button class="modal-close" onclick="Layout.closeModal('floorViewModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:0;background:#f1f5f9">
+          <div id="fvFloorTabs" style="display:flex;gap:4px;padding:10px 14px;background:#fff;border-bottom:1px solid #e5e7eb;overflow-x:auto;flex-wrap:nowrap"></div>
+          <div id="fvCanvasWrap" style="overflow:auto;max-height:calc(90vh - 200px);padding:20px">
+            <div id="fvCanvas" style="position:relative;background:#fff;background-image:linear-gradient(#f1f5f9 1px, transparent 1px), linear-gradient(90deg, #f1f5f9 1px, transparent 1px);background-size:20px 20px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.06);margin:0 auto"></div>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;padding:10px 16px">
+          <a href="/pages/pos-floorplan.html" target="_blank" style="font-size:12px;color:#64748b;text-decoration:none">⚙️ จัดการผังโต๊ะ</a>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('floorViewModal')">ปิด</button>
         </div>
       </div>
     </div>
@@ -2290,6 +2311,120 @@
           Layout.toast('ยกเลิกออเดอร์สำเร็จ');
           this.resetOrder();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Visual floor plan =====
+      async openFloorView() {
+        if (!this.session) { Layout.toast('กรุณาเปิดกะก่อน','warning'); return; }
+        Layout.openModal('floorViewModal');
+        await this._loadFloors();
+      },
+      async _loadFloors() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans?includeStatus=true&sessionId=${this.session.id}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          this._floors = j.data || [];
+          if (!this._floors.length) {
+            document.getElementById('fvFloorTabs').innerHTML = '';
+            document.getElementById('fvCanvas').innerHTML = `
+              <div style="padding:60px 20px;text-align:center;color:#64748b">
+                ยังไม่มีผังโต๊ะ<br>
+                <a href="/pages/pos-floorplan.html" target="_blank" style="color:#3b82f6;margin-top:10px;display:inline-block">⚙️ สร้างผังโต๊ะ</a>
+              </div>`;
+            document.getElementById('fvCanvas').style.width = '100%';
+            document.getElementById('fvCanvas').style.height = '300px';
+            return;
+          }
+          this._currentFloorIdx = 0;
+          this._renderFloorTabs();
+          this._renderFloorCanvas();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      _renderFloorTabs() {
+        const el = document.getElementById('fvFloorTabs');
+        el.innerHTML = this._floors.map((f, i) => {
+          const total = (f.tables || []).length;
+          const active = i === this._currentFloorIdx;
+          const occupied = (f.tables || []).filter(t => t.status === 'Active' || t.status === 'OnHold').length;
+          return `<button onclick="Page._switchFloor(${i})" style="padding:8px 14px;background:${active?'#0ea5e9':'#f1f5f9'};color:${active?'#fff':'#475569'};border:none;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap">
+            ${Layout.esc(f.name)} <span style="opacity:.7;margin-left:4px">${occupied}/${total}</span>
+          </button>`;
+        }).join('');
+      },
+      _switchFloor(i) {
+        this._currentFloorIdx = i;
+        this._renderFloorTabs();
+        this._renderFloorCanvas();
+      },
+      _renderFloorCanvas() {
+        const f = this._floors[this._currentFloorIdx];
+        if (!f) return;
+        const canvas = document.getElementById('fvCanvas');
+        canvas.style.width = f.canvasWidth + 'px';
+        canvas.style.height = f.canvasHeight + 'px';
+        canvas.innerHTML = (f.tables || []).map(t => {
+          // Status → color: free = green, active = blue, hold = yellow, inactive = grey
+          let bg = '#dcfce7', border = '#22c55e', tip = 'ว่าง';
+          if (!t.isActive) { bg = '#f1f5f9'; border = '#94a3b8'; tip = 'ปิด'; }
+          else if (t.status === 'OnHold') { bg = '#fef3c7'; border = '#f59e0b'; tip = 'บิลพัก'; }
+          else if (t.status === 'Active') { bg = '#dbeafe'; border = '#3b82f6'; tip = 'มีออเดอร์'; }
+          else if (t.color) { bg = t.color + '40'; border = t.color; }
+          const dataAttrs = t.activeOrderId ? `data-oid="${t.activeOrderId}"` : '';
+          const radius = t.shape === 'circle' ? '50%' : (t.shape === 'square' ? '6px' : '8px');
+          return `<div ${dataAttrs} onclick="Page._tableClick('${Layout.esc(t.tableNumber).replace(/'/g,'&apos;')}','${t.activeOrderId || ''}','${t.status || ''}',${t.isActive?'true':'false'})"
+                       style="position:absolute;left:${t.x}px;top:${t.y}px;width:${t.width}px;height:${t.height}px;background:${bg};border:2px solid ${border};border-radius:${radius};transform:rotate(${t.rotation}deg);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${t.isActive?'pointer':'not-allowed'};user-select:none;font-weight:700;color:#0f172a;transition:transform .12s,box-shadow .12s"
+                       onmouseover="this.style.transform='rotate(${t.rotation}deg) scale(1.04)';this.style.boxShadow='0 8px 20px rgba(0,0,0,.15)'"
+                       onmouseout="this.style.transform='rotate(${t.rotation}deg)';this.style.boxShadow=''"
+                       title="${Layout.esc(tip)}${t.activeOrderNumber?' · '+Layout.esc(t.activeOrderNumber):''}${t.activeOrderAmount?' · ฿'+t.activeOrderAmount.toFixed(2):''}">
+            <div style="font-size:${Math.min(20, t.width/4)}px">${Layout.esc(t.tableNumber)}</div>
+            <div style="font-size:11px;color:#475569;font-weight:600">🪑 ${t.seats}</div>
+            ${t.activeOrderNumber ? `<div style="font-size:10px;color:${border};font-weight:700;margin-top:2px">${Layout.esc(t.activeOrderNumber)}</div>` : ''}
+            ${t.activeOrderAmount ? `<div style="font-size:11px;color:#0f172a;font-weight:700">฿${t.activeOrderAmount.toFixed(0)}</div>` : ''}
+          </div>`;
+        }).join('');
+      },
+      async _tableClick(tableNumber, orderId, status, isActive) {
+        if (!isActive) { Layout.toast('โต๊ะนี้ปิดใช้งานอยู่','warning'); return; }
+        Layout.closeModal('floorViewModal');
+        if (orderId) {
+          // Recall the existing order on that table — works for both Active and OnHold.
+          if (status === 'OnHold') {
+            await this.recallOrder(orderId);
+          } else {
+            // Active order — just load it into the panel.
+            const api = Layout.api();
+            try {
+              const res = await api.getPosOrder(orderId);
+              if (this.currentOrderId) await this.holdOrder();
+              this.currentOrderId = orderId;
+              this._syncCartFromServer(res.data);
+              document.getElementById('orderTitle').textContent = `#${res.data.orderNumber}`;
+              document.getElementById('fTableNo').value = tableNumber;
+              Layout.toast(`เปิดบิลโต๊ะ ${tableNumber}`);
+            } catch(e) { Layout.toast(e.message, 'error'); }
+          }
+        } else {
+          // Free table — set tableNumber on current cart or start a new order.
+          if (this.currentOrderId) {
+            // Already have an active order — transfer it to this table.
+            try {
+              await fetch(`/api/companies/${Layout.getCompanyId()}/pos/orders/${this.currentOrderId}/table`, {
+                method: 'PUT',
+                headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tableNumber })
+              });
+              document.getElementById('fTableNo').value = tableNumber;
+              Layout.toast(`ย้ายไปโต๊ะ ${tableNumber}`);
+            } catch(e) { Layout.toast(e.message, 'error'); }
+          } else {
+            document.getElementById('fTableNo').value = tableNumber;
+            Layout.toast(`เลือกโต๊ะ ${tableNumber} แล้ว — เพิ่มสินค้าได้เลย`);
+          }
+        }
       },
 
       // ===== Hold / recall =====

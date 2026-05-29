@@ -75,13 +75,17 @@
         </div>
         <div class="form-group" style="min-width:160px">
           <label class="form-label">บทบาท</label>
-          <select id="addRole" class="form-select">
+          <select id="addRole" class="form-select" onchange="Page.onRoleChange(this.value)">
             <option value="Accountant">นักบัญชี</option>
             <option value="Staff">พนักงาน</option>
             <option value="Auditor">ผู้ตรวจสอบ</option>
             <option value="Viewer">ดูอย่างเดียว</option>
             <option value="ExternalAccountant">นักบัญชีภายนอก</option>
+            <option value="Owner">⭐ เจ้าของ (สิทธิ์เต็ม)</option>
           </select>
+          <div id="ownerWarning" style="display:none;font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fbbf24;padding:6px 8px;border-radius:6px;margin-top:6px;line-height:1.5">
+            ⚠️ <strong>สิทธิ์เจ้าของ</strong> เห็นข้อมูลทุกอย่าง รวมเงินเดือน + เอกสารลับ จัดการสมาชิก / ลบบริษัทได้ — ให้เฉพาะคนที่ไว้ใจ
+          </div>
         </div>
         <button class="btn btn-primary" onclick="Page.addMember()" style="height:40px;white-space:nowrap">เพิ่มสมาชิก</button>
       </div>
@@ -199,7 +203,10 @@
           return;
         }
 
-        const editableRoles = ['Accountant','Staff','Auditor','Viewer','ExternalAccountant'];
+        // Owner is editable too — promoting a trusted user to co-owner is a
+        // legit operation (multiple owners = shared full-control). Demoting an
+        // owner is blocked from the dropdown below (role check on the row).
+        const editableRoles = ['Owner','Accountant','Staff','Auditor','Viewer','ExternalAccountant'];
 
         document.getElementById('memberList').innerHTML = filtered.map(m => {
           const r = ROLES[m.role] || ROLE_DEFAULT;
@@ -210,7 +217,9 @@
           const lastLogin = m.lastLoginAt ? Page.timeAgo(m.lastLoginAt) : 'ยังไม่เคยเข้าใช้';
 
           let actions = '';
-          if (isOwner && !isMe && m.role !== 'Owner') {
+          // Owners can manage any other member, including demoting another Owner.
+          // Self-edit / self-remove is always blocked — UI never offers it.
+          if (isOwner && !isMe) {
             const customRoleOpts = Page.customRoles.map(cr =>
               `<option value="${cr.id}" ${m.companyRoleId === cr.id ? 'selected' : ''}>${cr.icon} ${cr.name}</option>`
             ).join('');
@@ -222,7 +231,7 @@
                 <option value="">-- สิทธิ์เมนู --</option>
                 ${customRoleOpts}
               </select>` : ''}
-              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName}')" data-i18n="common.delete">ลบ</button>
+              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName.replace(/'/g,'&apos;')}',${m.role==='Owner'?'true':'false'})" data-i18n="common.delete">ลบ</button>
             `;
           }
 
@@ -243,24 +252,33 @@
 
       filterMembers() { this.renderMembers(); },
 
+      onRoleChange(role) {
+        // Owner is high-privilege — show a warning banner so the action
+        // can't be made by accident.
+        document.getElementById('ownerWarning').style.display = role === 'Owner' ? 'block' : 'none';
+      },
+
       async addMember() {
         const api = Layout.api(); if (!api) return;
         const email = document.getElementById('addEmail').value.trim();
         const role = document.getElementById('addRole').value;
         if (!email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
+        if (role === 'Owner' && !confirm(`เพิ่ม ${email} เป็น "เจ้าของ" ของบริษัทนี้?\n\nคนนี้จะ:\n• เห็นข้อมูลทั้งหมด รวมเงินเดือน + เอกสารลับ\n• จัดการสมาชิกคนอื่นได้\n• ลบ / โอน บริษัทได้\n\nให้เฉพาะคนที่ไว้ใจระดับเดียวกับคุณ`)) return;
         try {
           await api.addMember(email, role);
-          Layout.toast('เพิ่มสมาชิกสำเร็จ');
+          Layout.toast(role === 'Owner' ? '⭐ เพิ่มเจ้าของสำเร็จ' : 'เพิ่มสมาชิกสำเร็จ');
           document.getElementById('addEmail').value = '';
+          document.getElementById('ownerWarning').style.display = 'none';
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async changeRole(userId, newRole) {
         const api = Layout.api(); if (!api) return;
+        if (newRole === 'Owner' && !confirm('ยกระดับเป็น "เจ้าของ"?\n\nคนนี้จะมีสิทธิ์เท่าคุณทุกอย่าง — เห็นข้อมูลทั้งหมด จัดการสมาชิก ลบบริษัท')) return;
         try {
           await api.updateMemberRole(userId, newRole);
-          Layout.toast('เปลี่ยนบทบาทสำเร็จ');
+          Layout.toast(newRole === 'Owner' ? '⭐ ยกระดับเป็นเจ้าของสำเร็จ' : 'เปลี่ยนบทบาทสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -275,8 +293,17 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      async removeMember(userId, name) {
-        if (!(await Layout.confirmDanger({ title: 'ลบสมาชิก', message: `ลบ <b>${name}</b> ออกจากบริษัท — ผู้ใช้จะเข้าถึงข้อมูลบริษัทไม่ได้อีก`, mode: 'math' }))) return;
+      async removeMember(userId, name, isOwnerRow) {
+        // Refuse to leave 0 owners — count active owners minus this one.
+        if (isOwnerRow) {
+          const owners = (this.members || []).filter(m => m.role === 'Owner').length;
+          if (owners <= 1) {
+            Layout.toast('ลบไม่ได้ — ต้องมีเจ้าของอย่างน้อย 1 คน', 'error');
+            return;
+          }
+        }
+        const extra = isOwnerRow ? '<br><span style="color:#dc2626;font-weight:600">⚠️ คนนี้เป็นเจ้าของอีกคน — สิทธิ์เต็ม</span>' : '';
+        if (!(await Layout.confirmDanger({ title: 'ลบสมาชิก', message: `ลบ <b>${name}</b> ออกจากบริษัท — ผู้ใช้จะเข้าถึงข้อมูลบริษัทไม่ได้อีก${extra}`, mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.removeMember(userId);

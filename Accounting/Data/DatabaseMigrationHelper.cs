@@ -2137,6 +2137,54 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_VatFilingHistories_Company_Year_Month" ON "VatFilingHistories" ("CompanyId", "Year", "Month") WHERE "IsDeleted" = false;""",
+
+            // Visual floor plan + tables for POS.
+            """
+            CREATE TABLE IF NOT EXISTS "PosFloorPlans" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "Name" varchar(100) NOT NULL,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CanvasWidth" integer NOT NULL DEFAULT 1200,
+                "CanvasHeight" integer NOT NULL DEFAULT 800,
+                "BackgroundImageUrl" text NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PosFloorPlans" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PosFloorPlans_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "PosTables" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "FloorPlanId" uuid NOT NULL,
+                "TableNumber" varchar(50) NOT NULL,
+                "Seats" integer NOT NULL DEFAULT 4,
+                "Shape" varchar(20) NOT NULL DEFAULT 'rectangle',
+                "X" integer NOT NULL DEFAULT 0,
+                "Y" integer NOT NULL DEFAULT 0,
+                "Width" integer NOT NULL DEFAULT 100,
+                "Height" integer NOT NULL DEFAULT 80,
+                "Rotation" integer NOT NULL DEFAULT 0,
+                "Color" varchar(20) NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PosTables" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PosTables_FloorPlan" FOREIGN KEY ("FloorPlanId") REFERENCES "PosFloorPlans"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_PosTables_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PosTables_FloorPlan" ON "PosTables" ("FloorPlanId") WHERE "IsDeleted" = false;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosTables_Floor_Number" ON "PosTables" ("FloorPlanId", "TableNumber") WHERE "IsDeleted" = false;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).
