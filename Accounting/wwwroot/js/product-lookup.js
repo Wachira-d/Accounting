@@ -1,6 +1,11 @@
 // ===== Product Lookup Component =====
 // Typeahead for the document line-item editor. On select, fills qty/price/VAT
 // and tags the row with data-product-code so save() persists the linkage.
+//
+// Version tag emitted to the console at module load — bump it when shipping
+// a fix so the user can tell at a glance whether the browser actually picked
+// up the new version vs. a cached older copy.
+console.log('[ProductLookup] module v2 loaded');
 
 const ProductLookup = {
   _debounceTimer: null,
@@ -12,6 +17,10 @@ const ProductLookup = {
   attach(inputEl, onSelect) {
     if (!inputEl || inputEl.dataset.productLookupAttached === '1') return;
     inputEl.dataset.productLookupAttached = '1';
+    // Visible breadcrumb so "ไม่ขึ้นอะไรเลย" symptoms are diagnosable from
+    // DevTools without spelunking the source. Logs once per row at attach
+    // time, plus on every search firing below.
+    console.log('[ProductLookup] attached to input', inputEl);
 
     // Position:fixed (vs. position:absolute) + viewport coords from
     // getBoundingClientRect. position:absolute is relative to the nearest
@@ -37,6 +46,7 @@ const ProductLookup = {
     const triggerSearch = () => {
       clearTimeout(this._debounceTimer);
       const q = inputEl.value.trim();
+      console.log('[ProductLookup] triggerSearch q=' + JSON.stringify(q) + ' len=' + q.length);
       if (q.length < 2) { dropdown.style.display = 'none'; return; }
       // Render the "loading" frame immediately so the user knows the
       // lookup fired even if the API takes a moment to respond.

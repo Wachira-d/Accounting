@@ -93,6 +93,29 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result));
     }
 
+    /// <summary>Lookup the OCR scan that produced this document (if any).
+    /// Drives the "📦 นำเข้าสต๊อก" button on the document detail modal —
+    /// without it the operator can't reuse the stock-import flow that the
+    /// scan page exposes for OCR-derived documents.
+    /// Returns the scan id + filename when found, success-with-null when
+    /// the document wasn't created from a scan.</summary>
+    [HttpGet("{documentId:guid}/linked-scan")]
+    public async Task<ActionResult<ApiResponse<object>>> GetLinkedScan(Guid companyId, Guid documentId)
+    {
+        var scan = await _db.OcrScanResults
+            .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == documentId)
+            .OrderByDescending(s => s.CreatedAt)
+            .Select(s => new
+            {
+                scanId = s.Id,
+                fileName = s.OriginalFileName,
+                createdAt = s.CreatedAt,
+                hasExtractedItems = s.ExtractedItemsJson != null && s.ExtractedItemsJson.Length > 2,
+            })
+            .FirstOrDefaultAsync();
+        return Ok(new ApiResponse<object>(true, scan, scan == null ? "ไม่มีไฟล์ OCR ที่ผูกกับเอกสารนี้" : null));
+    }
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> CreateDocument(Guid companyId, [FromBody] CreateDocumentRequest request)
     {

@@ -1,16 +1,29 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Text.Json;
 using Accounting.Services.Interfaces;
 
 namespace Accounting.Services.Implementations;
 
 /// <summary>
-/// Thai Address Autocomplete — uses static JSON data from Thailand Post / DOPA
-/// Data source: https://raw.githubusercontent.com/ApisitKawor662/Thai-Address-Database/master/db.json
-/// Alternative: data.go.th CKAN API for official DOPA subdivision data
+/// Thai Address Autocomplete — backed by the embedded
+/// Resources/ThaiAdmin.csv that ships with the app (7,436 tambon rows,
+/// every postal code in Thailand). Loaded into memory once at first
+/// request, served from a static cache thereafter.
 ///
-/// ข้อมูลตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์ ทั้ง 7,255 ตำบล
-/// โหลดครั้งเดียวเก็บใน memory สำหรับ autocomplete แบบ instant
+/// Was previously fetching a remote db.json from GitHub which:
+///   • required outbound internet from the production host,
+///   • broke silently when the URL went away, and
+///   • degraded to a 5-row "minimal fallback" that listed only
+///     Bangkok / Chonburi / Chiang Mai — making "พิมพ์จังหวัด"
+///     show three options and postal codes outside that tiny set
+///     come back as "not found".
+/// Same CSV that ThaiAdminCodes already uses for the e-Tax XML
+/// TISI 1099 codes — single source of truth.
+///
+/// Columns in the CSV: PostalCode, Province, District, SubDistrict,
+/// AddressCode (8 digits where the first 2 = province TISI, the
+/// first 4 = district TISI, the first 6 = subdistrict TISI).
 /// </summary>
 public class ThaiAddressService : IThaiAddressService
 {
@@ -19,8 +32,6 @@ public class ThaiAddressService : IThaiAddressService
     private static readonly ConcurrentDictionary<string, ThaiAddressResult> _addressCache = new();
     private static List<ThaiAddressResult>? _allAddresses;
     private static readonly SemaphoreSlim _loadLock = new(1, 1);
-
-    private const string DataUrl = "https://raw.githubusercontent.com/ApisitKawor662/Thai-Address-Database/master/db.json";
 
     public ThaiAddressService(IHttpClientFactory httpClientFactory, ILogger<ThaiAddressService> logger)
     {
@@ -61,9 +72,11 @@ public class ThaiAddressService : IThaiAddressService
     public async Task<List<ThaiProvinceInfo>> GetProvincesAsync()
     {
         var addresses = await EnsureLoadedAsync();
+        // GroupBy → first-of-group keeps a single canonical row per province
+        // (the CSV has one row per subdistrict so 7K rows collapse to 77).
         return addresses
-            .Select(a => new ThaiProvinceInfo(a.ProvinceCode, a.ProvinceNameTh, a.ProvinceNameEn))
-            .Distinct()
+            .GroupBy(a => a.ProvinceCode)
+            .Select(g => new ThaiProvinceInfo(g.Key, g.First().ProvinceNameTh, g.First().ProvinceNameEn))
             .OrderBy(p => p.NameTh)
             .ToList();
     }
@@ -73,8 +86,8 @@ public class ThaiAddressService : IThaiAddressService
         var addresses = await EnsureLoadedAsync();
         return addresses
             .Where(a => a.ProvinceCode == provinceCode)
-            .Select(a => new ThaiDistrictInfo(a.DistrictCode, a.DistrictNameTh, a.DistrictNameEn, a.ProvinceCode))
-            .Distinct()
+            .GroupBy(a => a.DistrictCode)
+            .Select(g => new ThaiDistrictInfo(g.Key, g.First().DistrictNameTh, g.First().DistrictNameEn, provinceCode))
             .OrderBy(d => d.NameTh)
             .ToList();
     }
@@ -84,8 +97,8 @@ public class ThaiAddressService : IThaiAddressService
         var addresses = await EnsureLoadedAsync();
         return addresses
             .Where(a => a.DistrictCode == districtCode)
-            .Select(a => new ThaiSubDistrictInfo(a.SubDistrictCode, a.SubDistrictNameTh, a.SubDistrictNameEn, a.DistrictCode, a.PostalCode))
-            .Distinct()
+            .GroupBy(a => a.SubDistrictCode)
+            .Select(g => new ThaiSubDistrictInfo(g.Key, g.First().SubDistrictNameTh, g.First().SubDistrictNameEn, districtCode, g.First().PostalCode))
             .OrderBy(s => s.NameTh)
             .ToList();
     }
@@ -99,13 +112,9 @@ public class ThaiAddressService : IThaiAddressService
         {
             if (_allAddresses != null) return _allAddresses;
 
-            _logger.LogInformation("Loading Thai address database...");
-
-            // Try loading from embedded resource first, then from URL
-            var loaded = await LoadFromUrlAsync() ?? GenerateMinimalFallback();
-
-            _allAddresses = loaded;
-            _logger.LogInformation("Loaded {Count} Thai addresses", _allAddresses.Count);
+            _logger.LogInformation("Loading Thai address database from embedded CSV...");
+            _allAddresses = LoadFromEmbeddedCsv();
+            _logger.LogInformation("Loaded {Count} Thai addresses from embedded CSV", _allAddresses.Count);
             return _allAddresses;
         }
         finally
@@ -114,91 +123,62 @@ public class ThaiAddressService : IThaiAddressService
         }
     }
 
-    private async Task<List<ThaiAddressResult>?> LoadFromUrlAsync()
+    /// <summary>Load Resources/ThaiAdmin.csv from the assembly's embedded
+    /// resources. Same file ThaiAdminCodes uses — single source of truth.
+    /// Columns: PostalCode, Province, District, SubDistrict, AddressCode.</summary>
+    private List<ThaiAddressResult> LoadFromEmbeddedCsv()
     {
+        var list = new List<ThaiAddressResult>();
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(30);
-
-            var json = await client.GetStringAsync(DataUrl);
-            var doc = JsonDocument.Parse(json);
-
-            var results = new List<ThaiAddressResult>();
-            var root = doc.RootElement;
-
-            // Parse the Thai address database format
-            // Format varies — handle both flat array and nested structures
-            if (root.ValueKind == JsonValueKind.Array)
+            var asm = Assembly.GetExecutingAssembly();
+            var resourceName = asm.GetManifestResourceNames()
+                .FirstOrDefault(n => n.EndsWith("ThaiAdmin.csv", StringComparison.OrdinalIgnoreCase));
+            if (resourceName == null)
             {
-                foreach (var item in root.EnumerateArray())
-                {
-                    var addr = ParseAddressEntry(item);
-                    if (addr != null) results.Add(addr);
-                }
-            }
-            else if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in data.EnumerateArray())
-                {
-                    var addr = ParseAddressEntry(item);
-                    if (addr != null) results.Add(addr);
-                }
+                _logger.LogError("ThaiAdmin.csv embedded resource not found — address autocomplete will be empty");
+                return list;
             }
 
-            return results.Count > 0 ? results : null;
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null) return list;
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+
+            var first = true;
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (first) { first = false; continue; }
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                var parts = line.Split(',');
+                if (parts.Length < 5) continue;
+
+                var postal     = parts[0].Trim();
+                var province   = parts[1].Trim();
+                var district   = parts[2].Trim();
+                var subDist    = parts[3].Trim();
+                var addrCode   = parts[4].Trim();
+
+                // The CSV doesn't carry English names — fall back to the
+                // Thai name for the En field. Callers using English search
+                // will still hit the Thai name; better than empty.
+                list.Add(new ThaiAddressResult(
+                    SubDistrictCode: addrCode.Length >= 6 ? addrCode.Substring(0, 6) : addrCode,
+                    SubDistrictNameTh: subDist,
+                    SubDistrictNameEn: subDist,
+                    DistrictCode: addrCode.Length >= 4 ? addrCode.Substring(0, 4) : addrCode,
+                    DistrictNameTh: district,
+                    DistrictNameEn: district,
+                    ProvinceCode: addrCode.Length >= 2 ? addrCode.Substring(0, 2) : addrCode,
+                    ProvinceNameTh: province,
+                    ProvinceNameEn: province,
+                    PostalCode: postal));
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load Thai address database from URL");
-            return null;
+            _logger.LogError(ex, "Failed to parse embedded Thai address CSV");
         }
-    }
-
-    private static ThaiAddressResult? ParseAddressEntry(JsonElement item)
-    {
-        var subDistrictTh = GetStr(item, "district", "sub_district", "tambon", "tumbol", "subDistrict") ?? "";
-        var districtTh = GetStr(item, "amphoe", "amphur", "district_name", "amphoe_name") ?? "";
-        var provinceTh = GetStr(item, "province", "changwat", "province_name") ?? "";
-        var zipcode = GetStr(item, "zipcode", "postal_code", "zip", "postcode") ?? "";
-
-        if (string.IsNullOrEmpty(subDistrictTh) && string.IsNullOrEmpty(districtTh))
-            return null;
-
-        return new ThaiAddressResult(
-            SubDistrictCode: GetStr(item, "district_code", "sub_district_code", "tambon_code") ?? "",
-            SubDistrictNameTh: subDistrictTh,
-            SubDistrictNameEn: GetStr(item, "district_en", "sub_district_en", "tambon_en") ?? "",
-            DistrictCode: GetStr(item, "amphoe_code", "amphur_code", "district_code_parent") ?? "",
-            DistrictNameTh: districtTh,
-            DistrictNameEn: GetStr(item, "amphoe_en", "amphur_en", "amphoe_name_en") ?? "",
-            ProvinceCode: GetStr(item, "province_code", "changwat_code") ?? "",
-            ProvinceNameTh: provinceTh,
-            ProvinceNameEn: GetStr(item, "province_en", "changwat_en", "province_name_en") ?? "",
-            PostalCode: zipcode);
-    }
-
-    private static List<ThaiAddressResult> GenerateMinimalFallback()
-    {
-        // Minimal fallback for offline operation — major cities only
-        return new List<ThaiAddressResult>
-        {
-            new("100101", "พระบรมมหาราชวัง", "Phra Borom Maha Ratchawang", "1001", "พระนคร", "Phra Nakhon", "10", "กรุงเทพมหานคร", "Bangkok", "10200"),
-            new("100201", "ดุสิต", "Dusit", "1002", "ดุสิต", "Dusit", "10", "กรุงเทพมหานคร", "Bangkok", "10300"),
-            new("100301", "กระทุ่มแบน", "Krathum Baen", "1003", "หนองแขม", "Nong Khaem", "10", "กรุงเทพมหานคร", "Bangkok", "10160"),
-            new("500101", "ศรีภูมิ", "Si Phum", "5001", "เมืองเชียงใหม่", "Mueang Chiang Mai", "50", "เชียงใหม่", "Chiang Mai", "50200"),
-            new("200101", "บางปลาสร้อย", "Bang Pla Soi", "2001", "เมืองชลบุรี", "Mueang Chon Buri", "20", "ชลบุรี", "Chon Buri", "20000"),
-        };
-    }
-
-    private static string? GetStr(JsonElement el, params string[] props)
-    {
-        foreach (var p in props)
-            if (el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.String)
-            {
-                var s = v.GetString();
-                if (!string.IsNullOrWhiteSpace(s)) return s;
-            }
-        return null;
+        return list;
     }
 }

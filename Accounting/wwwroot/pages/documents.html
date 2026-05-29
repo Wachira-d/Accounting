@@ -15,6 +15,7 @@
     <div class="page-header">
       <div><h2 class="page-title">เอกสารทั้งหมด</h2><p class="page-subtitle">จัดการเอกสารฝั่งรายรับและรายจ่าย</p></div>
       <div class="flex gap-2" id="pageActions">
+        <button class="btn btn-outline" onclick="Page.openOcrUpload()" title="อัปโหลดบิล / ใบเสร็จ / ใบกำกับ → OCR แกะรายการ + จับคู่ผู้ขาย → คุณตรวจ + แก้แล้วสร้างเอกสาร พร้อมนำเข้าสต๊อกได้ในคลิกเดียว">📤 อัปโหลด + OCR</button>
         <button class="btn btn-primary" onclick="Page.openCreate('revenue')">+ เอกสารรายรับ</button>
         <button class="btn btn-secondary" onclick="Page.openCreate('expense')">+ เอกสารรายจ่าย</button>
       </div>
@@ -201,16 +202,22 @@
           </details>
 
           <div style="margin-top:16px">
-            <div class="flex items-center justify-between" style="margin-bottom:8px">
+            <div class="flex items-center justify-between" style="margin-bottom:8px;gap:12px;flex-wrap:wrap">
               <label class="form-label" style="margin:0">รายการสินค้า/บริการ</label>
-              <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
+              <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none">
+                  <input type="checkbox" id="fStrictProducts" checked style="margin:0">
+                  <span title="ติ๊กไว้ = ห้ามกรอกอิสระ ต้องเลือกจากสินค้าที่บันทึกในระบบเท่านั้น (ป้องกันชื่อสะกดผิด + ทำให้รายงานสรุปสินค้ารวมยอดได้ถูกต้อง)">เฉพาะสินค้าในระบบ</span>
+                </label>
+                <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
+              </div>
             </div>
             <div class="table-container">
               <table class="table" id="linesTable" data-doc-side="revenue">
                 <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
-              <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+              <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:4px">
                 💡 พิมพ์ในช่อง "รายละเอียด" อย่างน้อย 2 ตัวอักษรเพื่อค้นหาสินค้า/บริการ — ราคาและ VAT จะถูกเติมให้อัตโนมัติ
               </div>
             </div>
@@ -451,6 +458,30 @@
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
         else await this.load();
+
+        // Restore strict-products preference + wire the hint to track it.
+        // Default is ON ("เฉพาะสินค้าในระบบ") — most operators want clean
+        // product attribution for inventory + reporting. The user can flip
+        // it off per session.
+        try {
+          const cb = document.getElementById('fStrictProducts');
+          if (cb) {
+            const saved = localStorage.getItem('docs.strictProducts');
+            if (saved !== null) cb.checked = saved === '1';
+            const updateHint = () => {
+              const hint = document.getElementById('linesHint');
+              if (!hint) return;
+              hint.innerHTML = cb.checked
+                ? '🔒 โหมด "เฉพาะสินค้าในระบบ" เปิดอยู่ — พิมพ์ในช่อง "รายละเอียด" แล้วเลือกจาก dropdown เท่านั้น (เอาเครื่องหมายถูกออกถ้าต้องการกรอกเอง)'
+                : '💡 พิมพ์ในช่อง "รายละเอียด" อย่างน้อย 2 ตัวอักษรเพื่อค้นหาสินค้า/บริการ — ราคาและ VAT จะถูกเติมให้อัตโนมัติ (หรือกรอกอิสระก็ได้)';
+            };
+            cb.addEventListener('change', () => {
+              try { localStorage.setItem('docs.strictProducts', cb.checked ? '1' : '0'); } catch {}
+              updateHint();
+            });
+            updateHint();
+          }
+        } catch {}
 
         // OCR scan → document handoff: when the user pressed "เปิดในฟอร์มเอกสาร"
         // on the scan-detail page, we land here with ?from=scan and a payload
@@ -860,6 +891,11 @@
         const descInput = row.querySelector('[data-f="desc"]');
         if (window.ProductLookup) {
           ProductLookup.attach(descInput, (r, p) => ProductLookup.fillRow(r, p, { overwriteQty: false }));
+        } else {
+          // product-lookup.js failed to load (404 / script error). Without
+          // this warning we'd silently lose autocomplete with no console
+          // hint that anything went wrong.
+          console.warn('[ProductLookup] window.ProductLookup is undefined — autocomplete will not work. Check /js/product-lookup.js loaded successfully.');
         }
       },
       calcSum() {
@@ -884,6 +920,49 @@
         if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
       },
       editingId: null,
+      /**
+       * Quick OCR onboarding from the documents page: pick a bill / receipt
+       * image or PDF, upload it to /ocr/upload, then jump to the scan-review
+       * page where the operator confirms vendor + line items + can fire the
+       * "📦 นำเข้าสต๊อก" flow in one click. Previously the user had to
+       * navigate to /pages/document-scan.html first which wasn't obvious
+       * from the documents list.
+       */
+      async openOcrUpload() {
+        const api = Layout.api(); if (!api) return;
+        // Lazy-init a hidden file input so opening the dialog is one click
+        // without DOM churn on subsequent uses.
+        let input = document.getElementById('_ocrUploadInput');
+        if (!input) {
+          input = document.createElement('input');
+          input.type = 'file';
+          input.id = '_ocrUploadInput';
+          input.accept = 'image/*,application/pdf';
+          input.style.display = 'none';
+          document.body.appendChild(input);
+          input.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            Layout.toast('กำลังอัปโหลดและสแกน OCR...', 'info', 3500);
+            try {
+              const res = await api.ocrUploadAndScan(fd);
+              const id = res && (res.data?.id || res.data?.scanId || res.id);
+              if (!id) throw new Error((res && res.message) || 'OCR ไม่สำเร็จ');
+              // Hand off to the scan-review page. document-scan.html
+              // already wires the stockImport modal once the scan loads.
+              window.location.href = `/pages/document-scan.html?reviewScan=${encodeURIComponent(id)}`;
+            } catch (err) {
+              Layout.toast('OCR ไม่สำเร็จ: ' + (err.message || ''), 'error');
+            } finally {
+              input.value = '';  // reset so the same file can be re-picked
+            }
+          });
+        }
+        input.click();
+      },
+
       openCreate(side) {
         this.editingId = null;
         const isExpense = side === 'expense';
@@ -1008,10 +1087,21 @@
       },
       async save() {
         const api = Layout.api(); if (!api) return;
+        // Strict mode: every line must come from the product picker, not a
+        // free-text description. The checkbox lives next to "+ เพิ่มรายการ".
+        // Persist the preference so it survives navigation; default is ON.
+        const strict = document.getElementById('fStrictProducts')?.checked !== false;
+        try { localStorage.setItem('docs.strictProducts', strict ? '1' : '0'); } catch {}
+
         const lines = [];
-        document.querySelectorAll('#linesBody tr').forEach(row => {
+        const strictViolators = [];
+        document.querySelectorAll('#linesBody tr').forEach((row, idx) => {
+          const desc = (row.querySelector('[data-f="desc"]').value || '').trim();
+          if (strict && desc && !row.dataset.productCode) {
+            strictViolators.push({ idx: idx + 1, desc });
+          }
           const line = {
-            description: row.querySelector('[data-f="desc"]').value,
+            description: desc,
             quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: parseFloat(row.querySelector('[data-f="disc"]').value) || 0,
@@ -1025,6 +1115,14 @@
           if (row.dataset.sourceLineId) line.sourceLineId = row.dataset.sourceLineId;
           lines.push(line);
         });
+        if (strict && strictViolators.length) {
+          const sample = strictViolators.slice(0, 3).map(v => `แถวที่ ${v.idx}: "${v.desc}"`).join('\n');
+          Layout.toast(
+            `มี ${strictViolators.length} แถวที่กรอกอิสระทั้งที่เปิดโหมด "เฉพาะสินค้าในระบบ":\n${sample}\n` +
+            `→ เลือกจาก dropdown หรือเอาเครื่องหมายถูกออกถ้าต้องการกรอกเอง`,
+            'error', 6500);
+          return;
+        }
         const contactId = document.getElementById('fContactId').value;
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
@@ -1269,6 +1367,21 @@
           }
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
+
+          // OCR linkage probe (async, non-blocking). When this document was
+          // created from an OCR scan, prepend a "📦 นำเข้าสต๊อก" button to
+          // the actions row so the operator can run the same stock-import
+          // flow the scan page offers, without having to navigate there
+          // and find the scan manually.
+          try {
+            const linkRes = await api.getDocumentLinkedScan(d.id);
+            const scan = linkRes && linkRes.data;
+            if (scan && scan.scanId) {
+              const stockBtn = `<button class="btn btn-success" onclick="window.location.href='/pages/document-scan.html?reviewScan=${scan.scanId}&stockImport=1'" title="เปิดสแกน OCR ของเอกสารนี้ → จับคู่รายการกับสินค้าในระบบ → นำเข้าสต๊อก / วัสดุ / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต๊อก (จาก OCR)</button> `;
+              const actEl = document.getElementById('detailActions');
+              if (actEl) actEl.innerHTML = stockBtn + actEl.innerHTML;
+            }
+          } catch (e) { /* probe failure shouldn't block the modal */ }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async approve(id) {

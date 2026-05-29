@@ -174,6 +174,7 @@ const API = {
       // Documents
       getDocuments: (q = '') => API.get(`${base}/document${q}`),
       getDocument: (id) => API.get(`${base}/document/${id}`),
+      getDocumentLinkedScan: (id) => API.get(`${base}/document/${id}/linked-scan`),
       createDocument: (d) => API.post(`${base}/document`, d),
       updateDocument: (id, d) => API.put(`${base}/document/${id}`, d),
       approveDocument: (id) => API.post(`${base}/document/${id}/approve`),
