@@ -1427,6 +1427,36 @@ public class DocumentService : IDocumentService
                     $"จำนวนเงินรับ/จ่าย ({doc.TotalAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
                     $"{source.DocumentNumber} (คงค้าง {source.BalanceDue:N2})");
 
+            // Cumulative WHT cap — without this, operators using the
+            // manual Receipt-conversion flow could over-withhold by issuing
+            // sibling Receipts whose WHT sum exceeds the source Invoice's
+            // total WHT, producing WHT-Asset / WHT-Payable balances that
+            // don't reconcile with ภ.ง.ด.3/53. The CreatePaymentAsync (modal
+            // flow) already enforces this; this branch is the missing twin.
+            // Sums BOTH paths so mixing modal + manual Receipt still caps.
+            if (doc.WithholdingTaxAmount > 0m && source.WithholdingTaxAmount > 0m)
+            {
+                var siblingTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher };
+                var withheldViaReceipts = await _db.Documents.AsNoTracking()
+                    .Where(r => r.RelatedDocumentId == source.Id
+                        && r.Id != doc.Id   // exclude self (we're approving it now)
+                        && siblingTypes.Contains(r.DocumentType)
+                        && r.Status != DocumentStatus.Voided
+                        && r.Status != DocumentStatus.Draft
+                        && r.Status != DocumentStatus.Rejected
+                        && !r.IsDeleted)
+                    .SumAsync(r => (decimal?)r.WithholdingTaxAmount) ?? 0m;
+                var withheldViaPayments = await _db.Payments.AsNoTracking()
+                    .Where(p => p.DocumentId == source.Id && !p.IsDeleted)
+                    .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+                var cumulative = withheldViaReceipts + withheldViaPayments + doc.WithholdingTaxAmount;
+                if (cumulative > source.WithholdingTaxAmount + 0.01m)
+                    throw new InvalidOperationException(
+                        $"WHT รวมจากใบเสร็จ/ใบสำคัญทั้งหมด ({cumulative:N2}) เกินยอด WHT " +
+                        $"ของเอกสารต้นทาง {source.DocumentNumber} ({source.WithholdingTaxAmount:N2}) " +
+                        "— โปรดแก้ไข WHT บนเอกสารฉบับนี้ก่อนอนุมัติ");
+            }
+
             source.PaidAmount += doc.TotalAmount;
         }
         else if (isCreditNote)
@@ -2315,10 +2345,34 @@ public class DocumentService : IDocumentService
         decimal paymentWht = 0m;
         if (doc.WithholdingTaxAmount > 0m)
         {
-            var alreadyWithheld = await _db.Payments.AsNoTracking()
+            // Sum WHT from BOTH Payment rows AND Receipt-document children
+            // referencing this Invoice via RelatedDocumentId — operators can
+            // mix the modal flow with the manual Receipt-conversion flow,
+            // and only counting one path lets cumulative exceed the cap
+            // when both are used. Excludes Draft/Voided/Rejected on both
+            // sides so in-flight or cancelled rows don't reserve slots.
+            var withheldViaPayments = await _db.Payments.AsNoTracking()
                 .Where(p => p.DocumentId == doc.Id && !p.IsDeleted)
                 .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+            var settlementTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher };
+            var withheldViaReceipts = await _db.Documents.AsNoTracking()
+                .Where(r => r.RelatedDocumentId == doc.Id
+                    && settlementTypes.Contains(r.DocumentType)
+                    && r.Status != DocumentStatus.Voided
+                    && r.Status != DocumentStatus.Draft
+                    && r.Status != DocumentStatus.Rejected
+                    && !r.IsDeleted)
+                .SumAsync(r => (decimal?)r.WithholdingTaxAmount) ?? 0m;
+            var alreadyWithheld = withheldViaPayments + withheldViaReceipts;
             var remainingCap = Math.Max(0m, doc.WithholdingTaxAmount - alreadyWithheld);
+
+            // Final-installment detection — if this payment closes the
+            // outstanding balance, assign whatever WHT slice is still
+            // unspent so cumulative lands exactly on doc.WithholdingTaxAmount.
+            // Without this, proportional rounding leaves a satang-level gap
+            // (115.38 + 115.38 + 69.23 = 299.99 ≠ 300.00) and the WHT cert
+            // numbers don't reconcile with ภ.ง.ด.3/53 filings.
+            var isFinalPayment = request.Amount + 0.01m >= doc.BalanceDue;
 
             if (request.WithholdingTaxAmount.HasValue)
             {
@@ -2329,6 +2383,12 @@ public class DocumentService : IDocumentService
                     throw new InvalidOperationException(
                         $"WHT งวดนี้ ({paymentWht:N2}) + ที่หักไปแล้ว ({alreadyWithheld:N2}) " +
                         $"เกินยอด WHT ทั้งหมดของเอกสาร ({doc.WithholdingTaxAmount:N2})");
+            }
+            else if (isFinalPayment)
+            {
+                // Closing payment: consume the remaining slice exactly so
+                // rounding can't drift below the legal total.
+                paymentWht = remainingCap;
             }
             else
             {
