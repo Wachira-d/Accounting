@@ -5,7 +5,7 @@
 // Version tag emitted to the console at module load — bump it when shipping
 // a fix so the user can tell at a glance whether the browser actually picked
 // up the new version vs. a cached older copy.
-console.log('[ProductLookup] module v2 loaded');
+console.log('[ProductLookup] module v3 loaded');
 
 const ProductLookup = {
   _debounceTimer: null,
@@ -232,3 +232,11 @@ document.addEventListener('click', (e) => {
     if (!insideInput && !insideDropdown) entry.dropdown.style.display = 'none';
   }
 });
+
+// Top-level `const` and `let` in classic (non-module) scripts are NOT
+// attached to the global `window` object — that was a deliberate ES2015
+// change. documents.html checks `if (window.ProductLookup)` to gate the
+// addLine() attach call, which silently returned false the entire time
+// because of this. Pin the reference onto window explicitly so the gate
+// passes and the typeahead actually wires up.
+window.ProductLookup = ProductLookup;

@@ -618,3 +618,9 @@ const ThaiAddress = (() => {
 
   return { enhance, refresh, normalize, autoFillFromPostal, getProvinces, getDistricts, getSubDistricts, getByPostal };
 })();
+
+// Pin onto window for parity with ProductLookup. Top-level `const` in a
+// classic <script> doesn't attach to window, so any `if (window.ThaiAddress)`
+// guard would fail silently. Existing call sites use `typeof ThaiAddress` so
+// they work without this, but pinning prevents the next gotcha.
+window.ThaiAddress = ThaiAddress;
