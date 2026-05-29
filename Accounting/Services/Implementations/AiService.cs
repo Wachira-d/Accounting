@@ -383,33 +383,35 @@ public class AiService : IAiService
 
         if (journalEntries.Count > 0)
         {
-            var avgAmount = journalEntries.Average(j => j.TotalDebit);
-            var stdDev = CalculateStdDev(journalEntries.Select(j => j.TotalDebit));
-            var threshold = avgAmount + (stdDev * 3); // 3 sigma rule
-
+            // ───── Anomaly model upgrade (2026) ─────
+            // Replaced raw 3-sigma on a Gaussian assumption with
+            // modified-Z-score on log-amounts (Ocr.AmountAnomalyDetector).
+            // Business amounts are heavy-tailed (one big purchase pulls
+            // the mean; stddev balloons; 3-sigma flags nothing). MAD on
+            // log-amounts is robust to outliers IN the training data
+            // and matches the threshold accounting auditors use (|z| > 3.5).
+            var amounts = journalEntries.Select(j => j.TotalDebit).Where(a => a > 0).ToList();
+            var avgAmount = amounts.Count > 0 ? amounts.Average() : 0m;
             foreach (var je in journalEntries)
             {
-                if (je.TotalDebit > threshold && threshold > 0)
-                {
-                    var deviation = stdDev > 0
-                        ? ((je.TotalDebit - avgAmount) / avgAmount) * 100
-                        : 0;
+                var madCheck = Ocr.AmountAnomalyDetector.CheckModifiedZScore(je.TotalDebit, amounts);
+                if (madCheck?.IsAnomaly != true) continue;
 
-                    detectedAnomalies.Add(new AnomalyDetection
-                    {
-                        CompanyId = companyId,
-                        AnomalyType = "UnusualAmount",
-                        Severity = deviation > 500 ? "Critical" : deviation > 200 ? "High" : "Medium",
-                        EntityType = "JournalEntry",
-                        EntityId = je.Id,
-                        Description = $"Journal entry {je.EntryNumber} has an unusually high amount of {je.TotalDebit:N2} (average: {avgAmount:N2})",
-                        ExpectedValue = avgAmount,
-                        ActualValue = je.TotalDebit,
-                        DeviationPercent = deviation,
-                        Status = "Open",
-                        DetectedAt = DateTime.UtcNow
-                    });
-                }
+                var absScore = Math.Abs((decimal)madCheck.Score);
+                detectedAnomalies.Add(new AnomalyDetection
+                {
+                    CompanyId = companyId,
+                    AnomalyType = "UnusualAmount",
+                    Severity = absScore > 6 ? "Critical" : absScore > 5 ? "High" : "Medium",
+                    EntityType = "JournalEntry",
+                    EntityId = je.Id,
+                    Description = $"Journal entry {je.EntryNumber}: {madCheck.Reason}",
+                    ExpectedValue = avgAmount,
+                    ActualValue = je.TotalDebit,
+                    DeviationPercent = avgAmount > 0 ? ((je.TotalDebit - avgAmount) / avgAmount) * 100 : 0,
+                    Status = "Open",
+                    DetectedAt = DateTime.UtcNow
+                });
             }
 
             // 2. Detect duplicate entries (same date, same amount, same description)
