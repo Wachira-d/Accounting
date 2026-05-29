@@ -581,13 +581,32 @@
           const api = Layout.api();
           if (api) api.parseAddress(raw).then(async j => {
             const p = (j && j.data) || {};
-            if (p.buildingNumber && !document.getElementById('cBuildingNumber').value) document.getElementById('cBuildingNumber').value = p.buildingNumber;
-            if (p.buildingName && !document.getElementById('cBuildingName').value) document.getElementById('cBuildingName').value = p.buildingName;
-            if (p.moo && !document.getElementById('cMoo').value) document.getElementById('cMoo').value = p.moo;
-            if (p.streetName && !document.getElementById('cStreetName').value) document.getElementById('cStreetName').value = p.streetName;
+            const setIfEmpty = (id, val) => {
+              if (!val) return;
+              const el = document.getElementById(id);
+              if (el && !el.value) el.value = val;
+            };
+            // Fill every structured field DbdLookup may have missed (the JS
+            // regex stops at the next non-space char, so addresses with
+            // "ตำบล สุรศักดิ์" — space after the prefix — silently fail).
+            setIfEmpty('cBuildingNumber', p.buildingNumber);
+            setIfEmpty('cBuildingName',   p.buildingName);
+            setIfEmpty('cMoo',            p.moo);
+            setIfEmpty('cStreetName',     p.streetName);
+            setIfEmpty('cSubDistrict',    p.subDistrict);
+            setIfEmpty('cDistrict',       p.district);
+            setIfEmpty('cProvince',       p.province);
+            setIfEmpty('cPostalCode',     p.postalCode);
+
             if (typeof ThaiAddress !== 'undefined') {
               const provEl = document.getElementById('cProvince');
               if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+              // Postal reverse-lookup as fallback for anything the parser
+              // missed — guarantees canonical names from the gov dataset.
+              await ThaiAddress.autoFillFromPostal({
+                subDistrict: 'cSubDistrict', district: 'cDistrict',
+                province: 'cProvince', postalCode: 'cPostalCode',
+              });
               await ThaiAddress.refresh({
                 subDistrict: 'cSubDistrict', district: 'cDistrict',
                 province: 'cProvince', postalCode: 'cPostalCode',
@@ -1158,6 +1177,10 @@
             const provEl = document.getElementById('cProvince');
             if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
             ThaiAddress.enhance({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+            await ThaiAddress.autoFillFromPostal({
               subDistrict: 'cSubDistrict', district: 'cDistrict',
               province: 'cProvince', postalCode: 'cPostalCode',
             });

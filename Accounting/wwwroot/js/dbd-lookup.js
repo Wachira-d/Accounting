@@ -186,11 +186,16 @@ const DbdLookup = {
   // filled directly from the DBD address.
   _parseThaiAddress(addr, fieldIds) {
     if (!addr) return;
-    // Thai address patterns: ตำบล/แขวง, อำเภอ/เขต, จังหวัด, รหัสไปรษณีย์, หมู่ที่
-    const tumbonMatch = addr.match(/(?:ตำบล|แขวง|ต\.|ตำบล)([^\s,]+)/);
-    const amphurMatch = addr.match(/(?:อำเภอ|เขต|อ\.|อำเภอ)([^\s,]+)/);
-    const provinceMatch = addr.match(/(?:จังหวัด|จ\.)([^\s,]+)/);
-    const postalMatch = addr.match(/(\d{5})/);
+    // Thai address patterns: ตำบล/แขวง, อำเภอ/เขต, จังหวัด, รหัสไปรษณีย์, หมู่ที่.
+    // Allow optional whitespace after the prefix — DBD often returns
+    // "ตำบล สุรศักดิ์" (with space) rather than "ตำบลสุรศักดิ์", and the
+    // previous regex silently skipped those cases. The regex is intentionally
+    // simple; the postal-code reverse-lookup invoked by the caller is the
+    // bulletproof source of canonical tambon/amphur/province names.
+    const tumbonMatch = addr.match(/(?:แขวง|ตำบล|ต\.)\s*([^\s,]+)/);
+    const amphurMatch = addr.match(/(?:เขต|อำเภอ|อ\.)\s*([^\s,]+)/);
+    const provinceMatch = addr.match(/(?:จังหวัด|จ\.)\s*([^\s,\d]+)/);
+    const postalMatch = addr.match(/(\d{5})(?!\d)/);
     // Matches "หมู่ที่ 5" / "หมู่ 5" / "ม.5" and Thai-numeral variants.
     // Group 1 is the digit run; we strip Thai numerals downstream.
     const mooMatch = addr.match(/(?:หมู่ที่|หมู่|ม\.)\s*([0-9๐-๙]+)/);
