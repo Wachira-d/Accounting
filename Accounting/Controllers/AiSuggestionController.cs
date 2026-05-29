@@ -204,7 +204,7 @@ public class AiSuggestionController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> ExplainAnomaly(
         Guid companyId, Guid anomalyId, [FromQuery] bool force = false, CancellationToken ct = default)
     {
-        var anomaly = await _db.Set<AnomalyDetection>()
+        var anomaly = await _db.AnomalyDetections
             .FirstOrDefaultAsync(a => a.Id == anomalyId && a.CompanyId == companyId && !a.IsDeleted, ct);
         if (anomaly == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบ anomaly"));

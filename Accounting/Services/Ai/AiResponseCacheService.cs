@@ -44,28 +44,28 @@ public class AiResponseCacheService : IAiResponseCacheService
         if (row == null)
             return (false, null, null, null, null);
 
-        // Bump hit count fire-and-forget — don't await so cache lookup
-        // stays sub-millisecond and a write failure doesn't break the
-        // happy path.
-        _ = Task.Run(async () =>
+        // Bump hit-count synchronously — short row update, on a tracked
+        // entity, completes well inside the orchestrator's overall
+        // budget. (Earlier fire-and-forget version risked using the
+        // scoped DbContext after request disposal — moved to sync
+        // here for safety.)
+        try
         {
-            try
+            var tracked = await _db.AiResponseCaches.FirstOrDefaultAsync(c => c.Id == row.Id, ct);
+            if (tracked != null)
             {
-                using var scope = _db.Database.BeginTransaction();
-                var tracked = await _db.AiResponseCaches.FirstOrDefaultAsync(c => c.Id == row.Id);
-                if (tracked != null)
-                {
-                    tracked.HitCount++;
-                    tracked.LastHitAt = now;
-                    await _db.SaveChangesAsync();
-                    scope.Commit();
-                }
+                tracked.HitCount++;
+                tracked.LastHitAt = now;
+                await _db.SaveChangesAsync(ct);
             }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Cache hit-count update failed (non-fatal)");
-            }
-        });
+        }
+        catch (Exception ex)
+        {
+            // Hit-count update is non-critical — log + return the
+            // cached content regardless. The next hit corrects the
+            // count.
+            _logger.LogDebug(ex, "Cache hit-count update failed (non-fatal)");
+        }
 
         return (true, row.ResponseJson, null, row.ModelVersion, row.Confidence);
     }

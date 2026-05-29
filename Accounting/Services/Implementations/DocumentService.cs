@@ -608,7 +608,8 @@ public class DocumentService : IDocumentService
                     var snapshot = new
                     {
                         doc.Id, doc.DocumentNumber, doc.DocumentType, doc.DocumentDate,
-                        doc.TotalAmount, doc.SubTotal, doc.VatAmount, doc.WhtAmount,
+                        doc.TotalAmount, doc.SubTotal, doc.VatAmount,
+                        WhtAmount = doc.WithholdingTaxAmount,
                         doc.Currency, doc.BalanceDue, doc.ContactId,
                         ContactName = doc.Contact?.Name,
                         ContactTaxId = doc.Contact?.TaxId,

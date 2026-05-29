@@ -785,19 +785,32 @@ public class AiService : IAiService
 
     private static AnomalyResponse MapToAnomalyResponse(AnomalyDetection a)
     {
+        // AI augmentation fields are populated lazily by
+        // POST /ai/anomalies/{id}/explain. Surface here so list/get
+        // calls already include cached explanations when present.
+        IReadOnlyList<string>? actions = null;
+        IReadOnlyList<string>? risks = null;
+        if (!string.IsNullOrEmpty(a.AiSuggestedActionsJson))
+        {
+            try { actions = System.Text.Json.JsonSerializer.Deserialize<List<string>>(a.AiSuggestedActionsJson); }
+            catch { /* tolerate malformed cached JSON */ }
+        }
+        if (!string.IsNullOrEmpty(a.AiRisksJson))
+        {
+            try { risks = System.Text.Json.JsonSerializer.Deserialize<List<string>>(a.AiRisksJson); }
+            catch { }
+        }
         return new AnomalyResponse(
-            a.Id,
-            a.AnomalyType,
-            a.Severity,
-            a.EntityType,
-            a.EntityId,
-            a.Description,
-            a.ExpectedValue,
-            a.ActualValue,
-            a.DeviationPercent,
-            a.Status,
-            a.DetectedAt
-        );
+            a.Id, a.AnomalyType, a.Severity,
+            a.EntityType, a.EntityId, a.Description,
+            a.ExpectedValue, a.ActualValue, a.DeviationPercent,
+            a.Status, a.DetectedAt,
+            AiVerdict: a.AiVerdict,
+            AiConfidence: a.AiConfidence,
+            AiReasoning: a.AiReasoning,
+            AiSuggestedActions: actions,
+            AiRisks: risks,
+            AiFeedbackId: a.AiFeedbackId);
     }
 
     private static CashFlowForecastResponse MapToForecastResponse(CashFlowForecast f)

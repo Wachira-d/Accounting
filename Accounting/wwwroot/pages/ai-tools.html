@@ -168,15 +168,25 @@ const Page = {
       const tbody = document.getElementById('anomalyBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบความผิดปกติ</td></tr>'; return; }
       const sevMap = {High:'<span class="badge badge-danger">สูง</span>',Medium:'<span class="badge badge-warning">ปานกลาง</span>',Low:'<span class="badge badge-info">ต่ำ</span>'};
-      tbody.innerHTML = items.map(a => `<tr>
-        <td>${a.anomalyType || a.type || '-'}</td>
-        <td class="font-medium">${a.entityDescription || a.description || '-'}</td>
-        <td class="text-sm">${a.details || a.reason || '-'}</td>
-        <td>${sevMap[a.severity] || a.severity || '-'}</td>
-        <td>${Layout.date(a.detectedAt || a.createdAt)}</td>
-        <td>${Layout.statusBadge(a.status || 'Open')}</td>
-        <td>${a.status !== 'Resolved' ? `<button class="btn btn-sm btn-success" onclick="Page.resolveAnomaly('${a.id}')">แก้ไขแล้ว</button>` : ''}</td>
-      </tr>`).join('');
+      tbody.innerHTML = items.map(a => {
+        // AI explanation may already be cached on the server (populated
+        // by a prior /explain call) — surface inline when present so
+        // user doesn't have to click again. When NOT yet explained,
+        // show a "🤖 ขอ AI อธิบาย" button that lazily fetches + caches.
+        const hasAi = !!a.aiVerdict;
+        const aiBadge = hasAi
+          ? `<div style="margin-top:6px;font-size:11px;line-height:1.5;color:#475569"><span style="background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:9999px;font-weight:600">🤖 ${a.aiVerdict}${a.aiConfidence ? ' ' + Math.round(a.aiConfidence*100) + '%' : ''}</span>${a.aiReasoning ? '<div style="margin-top:4px">' + a.aiReasoning + '</div>' : ''}</div>`
+          : `<button class="btn btn-sm btn-ghost" style="margin-top:6px;font-size:11px" onclick="Page.explainAnomaly('${a.id}')">🤖 ขอ AI อธิบาย</button>`;
+        return `<tr id="anomaly-row-${a.id}">
+          <td>${a.anomalyType || a.type || '-'}</td>
+          <td class="font-medium">${a.entityDescription || a.description || '-'}${aiBadge}</td>
+          <td class="text-sm">${a.details || a.reason || '-'}</td>
+          <td>${sevMap[a.severity] || a.severity || '-'}</td>
+          <td>${Layout.date(a.detectedAt || a.createdAt)}</td>
+          <td>${Layout.statusBadge(a.status || 'Open')}</td>
+          <td>${a.status !== 'Resolved' ? `<button class="btn btn-sm btn-success" onclick="Page.resolveAnomaly('${a.id}')">แก้ไขแล้ว</button>` : ''}</td>
+        </tr>`;
+      }).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
@@ -184,6 +194,17 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     Layout.toast('กำลังสแกน...', 'info');
     try { await api.aiDetectAnomalies(); Layout.toast('สแกนสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async explainAnomaly(id) {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    Layout.toast('กำลังถาม AI...', 'info');
+    try {
+      const r = await API.post(`/api/companies/${cid}/ai/anomalies/${id}/explain`);
+      // Re-fetch the list so the row gets re-rendered with the cached AI fields.
+      // Cheaper: patch just this row. We reload for simplicity since list is small.
+      this.loadAnomalies();
+    } catch (e) { Layout.toast('ขอ AI ไม่สำเร็จ: ' + e.message, 'error'); }
   },
 
   async resolveAnomaly(id) {
