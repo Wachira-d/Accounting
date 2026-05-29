@@ -564,10 +564,14 @@ const Layout = {
   signalRConnection: null,
   initSignalR() {
     if (typeof signalR === 'undefined') {
-      // Dynamically load SignalR client if not already loaded
+      // Dynamically load SignalR client if not already loaded.
+      // jsdelivr is on the CSP allow-list (cdnjs.cloudflare.com is not),
+      // so loading from cdnjs is silently blocked with a console error.
+      // Switched to the jsdelivr mirror — same package, same version.
       const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js';
       script.onload = () => this.connectSignalR();
+      script.onerror = () => console.warn('[Layout] SignalR client failed to load — real-time notifications disabled');
       document.head.appendChild(script);
     } else {
       this.connectSignalR();
