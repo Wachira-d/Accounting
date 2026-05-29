@@ -410,29 +410,105 @@ public class SubscriptionService : ISubscriptionService
 
     public async Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature)
     {
+        var eff = await GetEffectivePlanAsync(companyId);
+        if (eff == null || !eff.IsActive) return false;
+        return eff.EnabledFeatures.HasFlag(feature);
+    }
+
+    /// <summary>The resolved plan for a Company at quota-check time. Encapsulates
+    /// the hybrid model: a Company's own Subscription (per-company plan) wins
+    /// when AccountSubscriptionId is null; otherwise the owner's AccountSubscription
+    /// (account-level plan) drives limits and features. Grace-period logic is
+    /// applied here so callers don't reimplement it.</summary>
+    public record EffectivePlan(
+        string Source,                    // "Company" or "Account"
+        bool IsActive,                    // false = past-expiry past-grace → readonly
+        bool InGrace,                     // true = expired but within grace days
+        SubscriptionStatus Status,
+        DateTime EndDate,
+        int MaxUsers,
+        int MaxCompanies,
+        int MaxDocumentsPerMonth,
+        int MaxJournalEntriesPerMonth,
+        long MaxStorageBytes,
+        int MaxOcrPagesPerMonth,
+        int? AzureOcrPagesPerMonth,
+        int? LocalOcrPagesPerMonth,
+        FeatureFlags EnabledFeatures);
+
+    public async Task<EffectivePlan?> GetEffectivePlanAsync(Guid companyId)
+    {
         var sub = await _db.Subscriptions
             .Include(s => s.TrialConfig)
-            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return null;
 
-        if (sub == null) return false;
-
-        // Check subscription status
-        if (sub.Status == SubscriptionStatus.Cancelled || sub.Status == SubscriptionStatus.Suspended)
-            return false;
-
-        if (sub.Status == SubscriptionStatus.Expired)
+        // Per-company plan wins when AccountSubscriptionId is null (legacy /
+        // explicit "this company pays its own bill" mode).
+        if (!sub.AccountSubscriptionId.HasValue)
         {
-            // In grace period?
-            if (sub.TrialConfig != null)
-            {
-                var graceEnd = sub.EndDate.AddDays(sub.TrialConfig.GracePeriodDays);
-                if (DateTime.UtcNow > graceEnd)
-                    return sub.TrialConfig.BlockAccessOnExpiry ? false : feature == FeatureFlags.BasicAccounting;
-            }
-            return false;
+            return BuildFromCompanySub(sub);
         }
 
-        return sub.EnabledFeatures.HasFlag(feature);
+        // Account-plan path. If the account row is missing / deleted, fall back
+        // to the per-company row so we never lock the user out by accident.
+        var acct = await _db.AccountSubscriptions
+            .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+        if (acct == null)
+        {
+            // Defensive: detach the dangling pointer so the next check is clean.
+            sub.AccountSubscriptionId = null;
+            await _db.SaveChangesAsync();
+            return BuildFromCompanySub(sub);
+        }
+
+        var now = DateTime.UtcNow;
+        var inGrace = acct.Status == SubscriptionStatus.Expired
+                      && now <= acct.EndDate.AddDays(acct.GracePeriodDays);
+        var active = (acct.Status == SubscriptionStatus.Trial
+                      || acct.Status == SubscriptionStatus.Active
+                      || acct.Status == SubscriptionStatus.PastDue)
+                     && now <= acct.EndDate.AddDays(acct.GracePeriodDays);
+        return new EffectivePlan(
+            Source: "Account",
+            IsActive: active,
+            InGrace: inGrace,
+            Status: acct.Status,
+            EndDate: acct.EndDate,
+            MaxUsers: acct.MaxUsersPerCompany,
+            MaxCompanies: acct.MaxCompanies,
+            MaxDocumentsPerMonth: acct.MaxDocumentsPerMonth,
+            MaxJournalEntriesPerMonth: acct.MaxJournalEntriesPerMonth,
+            MaxStorageBytes: acct.MaxStorageBytes,
+            MaxOcrPagesPerMonth: acct.MaxOcrPagesPerMonth,
+            AzureOcrPagesPerMonth: acct.AzureOcrPagesPerMonth,
+            LocalOcrPagesPerMonth: acct.LocalOcrPagesPerMonth,
+            EnabledFeatures: acct.EnabledFeatures);
+    }
+
+    private static EffectivePlan BuildFromCompanySub(Subscription sub)
+    {
+        var now = DateTime.UtcNow;
+        var graceDays = sub.TrialConfig?.GracePeriodDays ?? 7;
+        var inGrace = sub.Status == SubscriptionStatus.Expired && now <= sub.EndDate.AddDays(graceDays);
+        var active = sub.Status != SubscriptionStatus.Cancelled
+                     && sub.Status != SubscriptionStatus.Suspended
+                     && (sub.Status != SubscriptionStatus.Expired || inGrace);
+        return new EffectivePlan(
+            Source: "Company",
+            IsActive: active,
+            InGrace: inGrace,
+            Status: sub.Status,
+            EndDate: sub.EndDate,
+            MaxUsers: sub.MaxUsers,
+            MaxCompanies: sub.MaxCompanies,
+            MaxDocumentsPerMonth: sub.MaxDocumentsPerMonth,
+            MaxJournalEntriesPerMonth: sub.MaxJournalEntriesPerMonth,
+            MaxStorageBytes: sub.MaxStorageBytes,
+            MaxOcrPagesPerMonth: sub.MaxOcrPagesPerMonth,
+            AzureOcrPagesPerMonth: sub.AzureOcrPagesPerMonth,
+            LocalOcrPagesPerMonth: sub.LocalOcrPagesPerMonth,
+            EnabledFeatures: sub.EnabledFeatures);
     }
 
     public async Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType)

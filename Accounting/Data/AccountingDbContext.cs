@@ -24,6 +24,7 @@ public class AccountingDbContext : DbContext
 
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<AccountSubscription> AccountSubscriptions => Set<AccountSubscription>();
     public DbSet<TrialConfig> TrialConfigs => Set<TrialConfig>();
     public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
     public DbSet<PlanTemplate> PlanTemplates => Set<PlanTemplate>();

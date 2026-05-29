@@ -19,6 +19,7 @@ public interface ISubscriptionService
 
     // Usage Tracking
     Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature);
+    Task<Accounting.Services.Implementations.SubscriptionService.EffectivePlan?> GetEffectivePlanAsync(Guid companyId);
     Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType);
     Task IncrementUsageAsync(Guid companyId, string usageType);
 

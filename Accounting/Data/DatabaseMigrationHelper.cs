@@ -2228,6 +2228,49 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositReference" varchar(200) NULL;""",
             """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "PublicToken" varchar(64) NULL;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosReservations_PublicToken" ON "PosReservations" ("PublicToken") WHERE "PublicToken" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Account-level subscription — one paying User covers N Companies.
+            // Resolves the "freelancer accountant pays once for 10 client books"
+            // and "holding owner runs 5 sub-companies on one plan" cases.
+            """
+            CREATE TABLE IF NOT EXISTS "AccountSubscriptions" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "OwnerUserId" uuid NOT NULL,
+                "PlanTemplateId" uuid NOT NULL,
+                "Status" integer NOT NULL DEFAULT 0,
+                "StartDate" timestamp NOT NULL DEFAULT now(),
+                "EndDate" timestamp NOT NULL,
+                "MaxCompanies" integer NOT NULL DEFAULT 1,
+                "MaxUsersPerCompany" integer NOT NULL DEFAULT 1,
+                "MaxDocumentsPerMonth" integer NOT NULL DEFAULT 30,
+                "MaxJournalEntriesPerMonth" integer NOT NULL DEFAULT 50,
+                "MaxStorageBytes" bigint NOT NULL DEFAULT 104857600,
+                "MaxOcrPagesPerMonth" integer NOT NULL DEFAULT 0,
+                "AzureOcrPagesPerMonth" integer NULL,
+                "LocalOcrPagesPerMonth" integer NULL,
+                "EnabledFeatures" bigint NOT NULL DEFAULT 0,
+                "MonthlyPrice" numeric(18,2) NOT NULL DEFAULT 0,
+                "AnnualPrice" numeric(18,2) NOT NULL DEFAULT 0,
+                "BillingCycle" integer NOT NULL DEFAULT 0,
+                "LastPaidAt" timestamp NULL,
+                "GracePeriodDays" integer NOT NULL DEFAULT 7,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AccountSubscriptions" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_AccountSubscriptions_Users" FOREIGN KEY ("OwnerUserId") REFERENCES "Users"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_AccountSubscriptions_Plan" FOREIGN KEY ("PlanTemplateId") REFERENCES "PlanTemplates"("Id")
+            );
+            """,
+            // Only one ACTIVE account-plan per user. Trial(0) / Active(1) /
+            // PastDue(2) / Suspended(5) are non-terminal — Expired(4) and
+            // Cancelled(3) free the slot so the user can subscribe again.
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AccountSubscriptions_Owner_Active" ON "AccountSubscriptions" ("OwnerUserId") WHERE "Status" IN (0,1,2,5) AND "IsDeleted" = false;""",
+            // Subscription gets the AccountSubscriptionId opt-in column.
+            """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "AccountSubscriptionId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Subscriptions_AccountSub" ON "Subscriptions" ("AccountSubscriptionId") WHERE "AccountSubscriptionId" IS NOT NULL AND "IsDeleted" = false;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).
