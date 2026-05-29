@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Ai;
+using Accounting.Services.Ai.Prompts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -31,10 +33,11 @@ public class AiSuggestionController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly IDocumentAiAugmenter _docAi;
     private readonly IBankAiAugmenter _bankAi;
+    private readonly IAiOrchestrator _orchestrator;
 
     public AiSuggestionController(AccountingDbContext db,
-        IDocumentAiAugmenter docAi, IBankAiAugmenter bankAi)
-    { _db = db; _docAi = docAi; _bankAi = bankAi; }
+        IDocumentAiAugmenter docAi, IBankAiAugmenter bankAi, IAiOrchestrator orchestrator)
+    { _db = db; _docAi = docAi; _bankAi = bankAi; _orchestrator = orchestrator; }
 
     // ────────────────────────────────────────────────────────────────
     //  GL account suggestion when composing a Payment Voucher line
@@ -189,6 +192,173 @@ public class AiSuggestionController : ControllerBase
             req.CurrentMatchedDocId != null ? 0.50m : (decimal?)null,
             ct);
         return Ok(new ApiResponse<object>(true, ToDto(result)));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Anomaly explanation — lazy "explain this" button on the
+    //  anomaly card. Cached on the AnomalyDetection row so second
+    //  view doesn't re-bill.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpPost("anomalies/{anomalyId:guid}/explain")]
+    public async Task<ActionResult<ApiResponse<object>>> ExplainAnomaly(
+        Guid companyId, Guid anomalyId, [FromQuery] bool force = false, CancellationToken ct = default)
+    {
+        var anomaly = await _db.Set<AnomalyDetection>()
+            .FirstOrDefaultAsync(a => a.Id == anomalyId && a.CompanyId == companyId && !a.IsDeleted, ct);
+        if (anomaly == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบ anomaly"));
+
+        // Cache short-circuit unless force=true. Cached explanation is
+        // valid until the underlying data changes — the simplest proxy
+        // is age-based (re-explain after 30 days), but for now we leave
+        // it indefinite; admin retry button passes force=true.
+        if (!force && !string.IsNullOrEmpty(anomaly.AiReasoning))
+        {
+            return Ok(new ApiResponse<object>(true, new
+            {
+                primary = anomaly.AiVerdict,
+                confidence = anomaly.AiConfidence,
+                reasoning = anomaly.AiReasoning,
+                suggestedActions = DeserializeList(anomaly.AiSuggestedActionsJson),
+                risks = DeserializeList(anomaly.AiRisksJson),
+                feedbackId = anomaly.AiFeedbackId,
+                usedAi = anomaly.AiFeedbackId.HasValue,
+                cached = true,
+            }));
+        }
+
+        // Build vendor context if anomaly is on a Document — gives AI
+        // grounding for "is this amount really unusual for this vendor?".
+        object vendorHistory = "";
+        object peerAverage = "";
+        if (anomaly.EntityType == "Document" || anomaly.EntityType == "JournalEntry")
+        {
+            try
+            {
+                var doc = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == anomaly.EntityId && d.CompanyId == companyId)
+                    .Select(d => new { d.ContactId })
+                    .FirstOrDefaultAsync(ct);
+                if (doc?.ContactId != null)
+                {
+                    var since = DateTime.UtcNow.AddMonths(-12);
+                    var hist = await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
+                                    && d.DocumentDate >= since && !d.IsDeleted)
+                        .Select(d => d.TotalAmount).ToListAsync(ct);
+                    if (hist.Count > 0)
+                    {
+                        vendorHistory = new
+                        {
+                            count = hist.Count,
+                            avg = hist.Average(),
+                            min = hist.Min(),
+                            max = hist.Max(),
+                            median = hist.OrderBy(x => x).Skip(hist.Count / 2).FirstOrDefault(),
+                        };
+                    }
+                }
+            }
+            catch { /* grounding is best-effort */ }
+        }
+
+        var req = AnomalyExplainPrompt.Build(
+            companyId, anomalyId,
+            anomaly.AnomalyType, anomaly.Description,
+            vendorHistory, peerAverage,
+            anomaly.ActualValue ?? 0m, anomaly.DetailJson ?? "",
+            localGuess: anomaly.Severity == "Critical" ? "LikelyError" : "NeedReview");
+        var resp = await _orchestrator.AskAsync(req, ct);
+
+        // Persist explanation on the anomaly row so subsequent reads
+        // don't re-call. UserChoice (Acknowledge/Resolve/FalsePositive)
+        // is recorded via the existing /acknowledge / /resolve /
+        // /false-positive endpoints and paired with AiFeedbackId via
+        // a separate /ai-feedback/record call from the UI.
+        if (resp.UsedAi && !string.IsNullOrEmpty(resp.PrimaryAnswer))
+        {
+            anomaly.AiVerdict = resp.PrimaryAnswer;
+            anomaly.AiConfidence = resp.Confidence;
+            anomaly.AiReasoning = resp.Reasoning;
+            anomaly.AiSuggestedActionsJson = JsonSerializer.Serialize(resp.SuggestedActions);
+            anomaly.AiRisksJson = JsonSerializer.Serialize(resp.Risks);
+            anomaly.AiFeedbackId = resp.FeedbackId;
+            anomaly.AiExplainedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+        }
+        return Ok(new ApiResponse<object>(true, new
+        {
+            primary = resp.PrimaryAnswer,
+            confidence = resp.Confidence,
+            reasoning = resp.Reasoning,
+            suggestedActions = resp.SuggestedActions,
+            risks = resp.Risks,
+            feedbackId = resp.FeedbackId,
+            usedAi = resp.UsedAi,
+            cached = false,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Payment-voucher batch suggestion — one call returns AI's pick
+    //  for EVERY line in one go. Used by the "สร้างใบสำคัญจ่ายจาก
+    //  ใบกำกับภาษี" wizard so the user sees a fully pre-filled draft
+    //  and only needs to override the rare bad guess.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record BatchSuggestPvRequest(Guid SourceInvoiceId);
+
+    [HttpPost("payment-voucher/suggest-all-accounts")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestAllPvAccounts(
+        Guid companyId, [FromBody] BatchSuggestPvRequest req, CancellationToken ct)
+    {
+        var src = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == req.SourceInvoiceId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new
+            {
+                d.Id, d.Currency,
+                ContactName = d.Contact != null ? d.Contact.Name : null,
+                ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
+                ContactIndustry = d.Contact != null ? d.Contact.Industry : null,
+                Lines = d.Lines.Select(l => new { l.Id, l.Description, l.Amount, l.AccountId })
+                               .ToList(),
+            })
+            .FirstOrDefaultAsync(ct);
+        if (src == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบ source invoice"));
+        if (src.Lines.Count == 0)
+            return Ok(new ApiResponse<object>(true, new { lines = Array.Empty<object>() }));
+
+        // Fan out one AI call per line, in parallel, with overall 12s
+        // budget so a 10-line invoice doesn't hang the wizard. Each
+        // call independently falls back to local on failure.
+        using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var tasks = src.Lines.Select(async ln =>
+        {
+            var r = await _docAi.SuggestPaymentVoucherAccountingAsync(
+                companyId, req.SourceInvoiceId,
+                src.ContactName, src.ContactTaxId, src.ContactIndustry,
+                ln.Description ?? "", ln.Amount, src.Currency ?? "THB",
+                localBestAccountCode: null, localConfidence: null,
+                aiCts.Token);
+            return new
+            {
+                lineId = ln.Id,
+                description = ln.Description,
+                amount = ln.Amount,
+                ai = ToDto(r),
+            };
+        }).ToList();
+        var results = await Task.WhenAll(tasks);
+        return Ok(new ApiResponse<object>(true, new { lines = results }));
+    }
+
+    private static IReadOnlyList<string> DeserializeList(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return Array.Empty<string>();
+        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch { return Array.Empty<string>(); }
     }
 
     private static object ToDto(DocumentAiSuggestion r) => new

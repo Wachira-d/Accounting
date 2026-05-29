@@ -187,7 +187,16 @@
                Only "คืนสินค้า" restocks; the other 3 reasons are pure
                financial adjustments with no stock impact. -->
           <div id="creditNoteReasonSection" style="display:none;margin-bottom:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px">
-            <div style="font-weight:600;color:#991b1b;font-size:13px;margin-bottom:8px">เหตุผลการออกใบลดหนี้ *</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div style="font-weight:600;color:#991b1b;font-size:13px">เหตุผลการออกใบลดหนี้ *</div>
+              <!-- 🤖 AI ขอความเห็นเลือก CN reason. ปรากฏเฉพาะตอนกำลังแก้
+                   CN ที่มีอยู่ (มี id) — สำหรับ CN ใหม่ที่ยังไม่ save ปุ่มจะ
+                   no-op เพราะ AI ต้องอ่าน lines + original invoice. -->
+              <button type="button" id="cnReasonAiBtn" onclick="Page.askAiCnReason(event)"
+                      style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">
+                🤖 ขอความเห็น AI
+              </button>
+            </div>
             <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
               <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
                 <input type="radio" name="fCreditNoteReason" value="Return" style="margin-top:3px">
@@ -387,6 +396,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/ai-suggestion.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
@@ -1682,6 +1692,39 @@
           }
         };
         await tryApprove(false);
+      },
+
+      // 🤖 Ask AI to classify the CN reason. Only valid when editing
+      // an EXISTING CN — AI needs the document's lines + linked invoice
+      // to give a useful answer. For a brand-new CN being composed
+      // we toast a hint instead of calling.
+      async askAiCnReason(ev) {
+        const id = this.editingId;
+        if (!id) {
+          Layout.toast('กรุณาบันทึก draft ก่อนเพื่อให้ AI อ่าน lines + อ้างอิงใบกำกับ', 'info');
+          return;
+        }
+        const currentReason = document.querySelector('input[name="fCreditNoteReason"]:checked')?.value || null;
+        // Look up original invoice from the form's reference field if user filled it.
+        const originalInvoiceId = (document.getElementById('fReferenceDocumentId') || {}).value || null;
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const btn = ev?.currentTarget;
+        AiSuggestion.show({
+          anchorEl: btn,
+          fetch: () => API.post(`/api/companies/${cid}/ai/credit-note/classify-reason`,
+            { creditNoteId: id, originalInvoiceId, currentReason }),
+          applyAnswer: (primary) => {
+            const radio = document.querySelector(`input[name="fCreditNoteReason"][value="${primary}"]`);
+            if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
+          },
+          answerToLabel: (v) => ({
+            Return: 'คืนสินค้า (Return)',
+            Discount: 'ส่วนลด / ลดราคา (Discount)',
+            Adjustment: 'ปรับยอด (Adjustment)',
+            Writeoff: 'ตัดยอด (Writeoff)',
+          })[v] || v,
+        });
       },
 
       _showApprovalWarnings(docId, warnings, aiHints, onConfirm) {

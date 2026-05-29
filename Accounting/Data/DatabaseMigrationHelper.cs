@@ -3233,6 +3233,15 @@ public static class DatabaseMigrationHelper
             // OcrScanResult — AI augmentation trail.
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
+
+            // AnomalyDetection — lazy AI explanation cache.
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiVerdict" varchar(50) NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiConfidence" decimal(5,4) NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiReasoning" text NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiSuggestedActionsJson" text NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiRisksJson" text NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiExplainedAt" timestamp NULL;""",
         };
 
         foreach (var sql in statements)

@@ -28,7 +28,16 @@ public record AnomalyResponse(
     Guid Id, string AnomalyType, string Severity,
     string EntityType, Guid EntityId, string Description,
     decimal? ExpectedValue, decimal? ActualValue,
-    decimal? DeviationPercent, string Status, DateTime DetectedAt);
+    decimal? DeviationPercent, string Status, DateTime DetectedAt,
+    // AI augmentation — populated when the orchestrator successfully
+    // explained the anomaly. NULL across the board when AI is disabled
+    // / unreachable / hasn't been asked yet (lazy on-demand by /explain).
+    string? AiVerdict = null,            // "LikelyError" | "LikelyLegit" | "NeedReview"
+    decimal? AiConfidence = null,
+    string? AiReasoning = null,
+    IReadOnlyList<string>? AiSuggestedActions = null,
+    IReadOnlyList<string>? AiRisks = null,
+    Guid? AiFeedbackId = null);
 
 public record CreateForecastRequest(
     string Name, DateTime PeriodStart, DateTime PeriodEnd,

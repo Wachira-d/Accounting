@@ -59,6 +59,18 @@ public class AnomalyDetection : TenantEntity
     public string? ResolvedBy { get; set; }
     public string? ResolutionNotes { get; set; }
     public DateTime DetectedAt { get; set; } = DateTime.UtcNow;
+
+    // AI-generated explanation — populated lazily by ExplainAnomalyAsync
+    // on first /explain call. Cached so re-views don't pay for the
+    // same explanation; user-confirm-or-override updates the feedback
+    // row, not this column.
+    public string? AiVerdict { get; set; }
+    public decimal? AiConfidence { get; set; }
+    public string? AiReasoning { get; set; }
+    public string? AiSuggestedActionsJson { get; set; }
+    public string? AiRisksJson { get; set; }
+    public Guid? AiFeedbackId { get; set; }
+    public DateTime? AiExplainedAt { get; set; }
 }
 
 /// <summary>

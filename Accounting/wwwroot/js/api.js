@@ -721,6 +721,10 @@ const API = {
       aiFeedbackRecord: (feedbackId, chosenAnswer, acceptedAi) =>
         API.post(`${base}/ai-feedback/record`,
           { feedbackId, chosenAnswer, acceptedAi }),
+      aiExplainAnomaly: (anomalyId, force) =>
+        API.post(`${base}/ai/anomalies/${anomalyId}/explain${force ? '?force=true' : ''}`),
+      aiBatchSuggestPvAccounts: (sourceInvoiceId) =>
+        API.post(`${base}/ai/payment-voucher/suggest-all-accounts`, { sourceInvoiceId }),
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
