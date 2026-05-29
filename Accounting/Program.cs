@@ -223,6 +223,11 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
     Accounting.Services.Ai.Distillation.VendorCanonDistillationModel>();
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.GlAccountDistillationModel>();
+// Sentence-embedding service for Thai short text (vendor names, line
+// descriptions). Hashing-trick baseline today; swap to ONNX MiniLM by
+// changing this single line once the model file is checked in.
+builder.Services.AddSingleton<Accounting.Services.Ai.Embedding.IEmbeddingService,
+    Accounting.Services.Ai.Embedding.HashingEmbeddingService>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiOrchestrator, Accounting.Services.Ai.AiOrchestrator>();
 builder.Services.AddScoped<Accounting.Services.Ai.IOcrAiAugmenter, Accounting.Services.Ai.OcrAiAugmenter>();
 builder.Services.AddScoped<Accounting.Services.Ai.IDocumentAiAugmenter, Accounting.Services.Ai.DocumentAiAugmenter>();
