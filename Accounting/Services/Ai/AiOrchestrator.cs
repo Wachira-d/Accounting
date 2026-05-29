@@ -15,6 +15,7 @@ public class AiOrchestrator : IAiOrchestrator
     private readonly IAiBudgetGuard _budget;
     private readonly IAiFeedbackRecorder _recorder;
     private readonly IAiPromptSanitizer _sanitizer;
+    private readonly IEnumerable<Distillation.ILocalDistillationModel> _distilled;
     private readonly ILogger<AiOrchestrator> _logger;
 
     public AiOrchestrator(
@@ -22,6 +23,7 @@ public class AiOrchestrator : IAiOrchestrator
         IEnumerable<IAiProvider> providers,
         IAiResponseCacheService cache,
         IAiBudgetGuard budget,
+        IEnumerable<Distillation.ILocalDistillationModel> distilled,
         IAiFeedbackRecorder recorder,
         IAiPromptSanitizer sanitizer,
         ILogger<AiOrchestrator> logger)
@@ -30,10 +32,33 @@ public class AiOrchestrator : IAiOrchestrator
         _providers = providers;
         _cache = cache;
         _budget = budget;
+        _distilled = distilled;
         _recorder = recorder;
         _sanitizer = sanitizer;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Threshold above which the local distilled model "wins" — the
+    /// orchestrator skips DeepSeek entirely and returns the local
+    /// answer. Set high (0.85) so cost savings only kick in when the
+    /// student is genuinely confident. Below this, we still consult
+    /// DeepSeek as the teacher even if local has a guess.
+    /// </summary>
+    private const decimal LocalConfidenceThreshold = 0.85m;
+
+    /// <summary>Sampling rate — when local IS above threshold, we
+    /// still hit DeepSeek 10% of the time so LocalModelHealth stays
+    /// calibrated and drift is detected. Lower this once accuracy
+    /// has plateaued.</summary>
+    private const decimal LocalSamplingRate = 0.10m;
+
+    /// <summary>Shared RNG for the calibration-sample coin-flip. Random
+    /// is not thread-safe pre-.NET 6 but Random.Shared (or a static
+    /// instance accessed under lock) is — we use a static instance and
+    /// NextDouble is called under no contention concerns since concurrent
+    /// reads of independent doubles are tolerable for sampling.</summary>
+    private static readonly Random _sampling = Random.Shared;
 
     public async Task<AiResponse> AskAsync(AiRequest request, CancellationToken ct = default)
     {
@@ -55,6 +80,70 @@ public class AiOrchestrator : IAiOrchestrator
     private async Task<AiResponse> AskInternalAsync(AiRequest request, CancellationToken ct)
     {
         var settings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+
+        // ── Step 0: distilled local-model short-circuit ───────────────
+        // Knowledge-distillation routing: if a local model has been
+        // trained from past DeepSeek feedback AND its confidence on
+        // this input exceeds the threshold, return that prediction
+        // and skip DeepSeek entirely (cost saver). We still sample
+        // 10% of confident-local cases through DeepSeek so accuracy
+        // stats stay calibrated + drift gets detected.
+        //
+        // This is the closed loop the user flagged: DeepSeek bootstraps
+        // labels; local model approximates DeepSeek; once accuracy
+        // saturates the system spends nothing on confident calls.
+        if (!request.ForceProviderCall && !request.BypassCache)
+        {
+            var local = _distilled.FirstOrDefault(m => m.FeatureKey == request.FeatureKey);
+            if (local != null && local.IsReady)
+            {
+                var localPred = await local.PredictAsync(request.CompanyId, request.UserPromptJson, ct);
+                if (localPred != null && localPred.Confidence >= LocalConfidenceThreshold)
+                {
+                    var sampleThis = _sampling.NextDouble() < (double)LocalSamplingRate;
+                    if (!sampleThis)
+                    {
+                        // Local wins — record a Skipped feedback row for
+                        // accuracy attribution but emit nothing to the
+                        // provider (zero cost).
+                        var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
+                            request.CompanyId, request.FeatureKey, "", request.UserPromptJson, null,
+                            AiPrimaryAnswer: null, AiConfidence: null,
+                            LocalModelAnswer: localPred.PrimaryAnswer,
+                            LocalModelConfidence: localPred.Confidence,
+                            LocalModelVersion: localPred.ModelVersion,
+                            request.SourceEntityType, request.SourceEntityId,
+                            AiCallStatus.Skipped, AiProviderType.DeepSeek, ModelVersion: null,
+                            LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
+                            CacheHitOfFeedbackId: null,
+                            ErrorMessage: $"LocalDistilled wins ({localPred.Confidence:P0} >= {LocalConfidenceThreshold:P0})"), ct);
+                        return new AiResponse
+                        {
+                            Status = AiCallStatus.Skipped,
+                            PrimaryAnswer = localPred.PrimaryAnswer,
+                            Confidence = localPred.Confidence,
+                            Alternatives = localPred.Alternatives,
+                            Risks = Array.Empty<string>(),
+                            ComplianceFlags = Array.Empty<string>(),
+                            Reasoning = $"Local distilled model (v{localPred.ModelVersion}, {localPred.SupportingSamples} samples)",
+                            SuggestedActions = Array.Empty<string>(),
+                            UsedAi = false, UsedCache = false,
+                            FeedbackId = fid,
+                            ProviderModel = "local:" + localPred.ModelVersion,
+                        };
+                    }
+                    // sampleThis = true → fall through to DeepSeek for
+                    // calibration. Pass the local prediction along so
+                    // the response can mark agree/disagree explicitly.
+                    request = request with
+                    {
+                        LocalPrimaryAnswer = localPred.PrimaryAnswer,
+                        LocalConfidence = localPred.Confidence,
+                        LocalModelVersion = localPred.ModelVersion,
+                    };
+                }
+            }
+        }
 
         // ── Step 1: master switch ─────────────────────────────────────
         if (settings == null || !settings.AiAugmentationEnabled)

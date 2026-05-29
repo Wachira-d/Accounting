@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Ai.Distillation;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations.Jobs;
@@ -55,6 +56,7 @@ public class AiFeedbackTrainingJob : BackgroundService
         var cutoff = DateTime.UtcNow.AddDays(-30);
         await RefreshAllLocalModelHealthsAsync(db, cutoff, ct);
         await TrainLocalModelsAsync(db, ct);
+        await ReloadDistillationModelsAsync(db, ct);
 
         // Stamp "last trained" — drives the admin badge.
         var settings = await db.SiteSettings.FirstOrDefaultAsync(ct);
@@ -327,6 +329,42 @@ public class AiFeedbackTrainingJob : BackgroundService
             _logger.LogDebug(ex, "TrainGlAccount parse failed for {Id}", row.Id);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Rebuild the in-memory distilled student models (vendor canon,
+    /// GL account) from the freshly-trained feedback corpus. Runs per
+    /// company since each company's prediction table is independent.
+    ///
+    /// The models are SINGLETON in DI; resolving them here gets the
+    /// same instance the orchestrator uses, so the reload immediately
+    /// affects live traffic without any restart or cache invalidation.
+    /// </summary>
+    private async Task ReloadDistillationModelsAsync(AccountingDbContext db, CancellationToken ct)
+    {
+        var models = _services.GetServices<ILocalDistillationModel>().ToList();
+        if (models.Count == 0) return;
+
+        // Only reload for companies that have ANY relevant feedback —
+        // empty companies don't waste a DB pass.
+        var companyIds = await db.AiSuggestionFeedbacks.AsNoTracking()
+            .Where(f => f.UserChosenAt != null && !f.IsDeleted)
+            .Select(f => f.CompanyId).Distinct().ToListAsync(ct);
+
+        foreach (var companyId in companyIds)
+        {
+            foreach (var model in models)
+            {
+                try { await model.LoadFromFeedbackAsync(companyId, ct); }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Distillation reload failed for {Feature} / {Cid}",
+                        model.FeatureKey, companyId);
+                }
+            }
+        }
+        _logger.LogInformation("Reloaded {N} distillation models across {C} companies",
+            models.Count, companyIds.Count);
     }
 
     private async Task PruneExpiredCacheAsync(AccountingDbContext db, CancellationToken ct)
