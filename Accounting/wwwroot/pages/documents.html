@@ -1571,23 +1571,117 @@
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       async recordPayment(docId, balanceDue) {
-        const amount = prompt(`บันทึกชำระเงิน\nยอดค้างชำระ: ${Layout.money(balanceDue)}\n\nจำนวนเงินที่ชำระ:`, balanceDue);
-        if (!amount) return;
-        const parsed = parseFloat(amount);
-        if (isNaN(parsed) || parsed <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
-        if (parsed > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
-        const api = Layout.api(); if (!api) return;
-        try {
-          await api.createPayment({
-            documentId: docId,
-            paymentDate: Layout.toDateInput(new Date()),
-            amount: parsed,
-            paymentMethod: 'Transfer'
-          });
-          Layout.toast('บันทึกชำระเงินสำเร็จ');
-          Layout.closeModal('detailModal');
-          await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        // Inline payment-recording modal. The previous prompt-based flow
+        // hardcoded paymentMethod='Transfer' which didn't match the
+        // PaymentMethod enum (BankTransfer / Cash / PromptPay / Cheque /
+        // CreditCard / DirectDebit / EWallet / Other) — every submission
+        // failed JSON deserialization with "value could not be converted".
+        // Build a small form modal lazily so operators can record what
+        // actually happened (cash vs. transfer vs. promptpay etc.) using
+        // enum values the backend will accept.
+        const today = Layout.toDateInput(new Date());
+        let wrap = document.getElementById('rpModal');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.id = 'rpModal';
+          wrap.className = 'modal-overlay';
+          wrap.innerHTML = `
+            <div class="modal" style="max-width:480px">
+              <div class="modal-header">
+                <h3 class="modal-title">💰 บันทึกชำระเงิน</h3>
+                <button class="modal-close" onclick="document.getElementById('rpModal').classList.remove('active')">&times;</button>
+              </div>
+              <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;padding:10px 12px;border-radius:8px;font-size:13px">
+                  ระบบจะออกใบเสร็จ / ใบสำคัญรับ-จ่ายและล้างยอดคงค้างให้อัตโนมัติ
+                </div>
+                <div style="font-size:13px"><strong>ยอดคงค้าง:</strong> <span id="rpBalanceDisplay">-</span></div>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>จำนวนเงินที่รับ-จ่าย *</span>
+                  <input id="rpAmount" type="number" step="0.01" min="0"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>วันที่ชำระ *</span>
+                  <input id="rpDate" type="date"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span>วิธีชำระ *</span>
+                  <select id="rpMethod" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                    <option value="BankTransfer">โอนเงิน (Bank Transfer)</option>
+                    <option value="Cash">เงินสด</option>
+                    <option value="PromptPay">PromptPay</option>
+                    <option value="CreditCard">บัตรเครดิต</option>
+                    <option value="Cheque">เช็ค</option>
+                    <option value="DirectDebit">หักบัญชีอัตโนมัติ</option>
+                    <option value="EWallet">e-Wallet</option>
+                    <option value="Other">อื่นๆ</option>
+                  </select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span style="color:#64748b">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</span>
+                  <input id="rpRef" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+                  <span style="color:#64748b">หมายเหตุ</span>
+                  <input id="rpNotes" type="text"
+                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
+                </label>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="document.getElementById('rpModal').classList.remove('active')">ยกเลิก</button>
+                <button class="btn btn-primary" id="rpSubmit">✓ บันทึก</button>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+        }
+        // (Re)bind state for this document.
+        document.getElementById('rpBalanceDisplay').textContent = Layout.money(balanceDue);
+        const amountEl = document.getElementById('rpAmount');
+        const dateEl = document.getElementById('rpDate');
+        amountEl.value = balanceDue.toFixed(2);
+        amountEl.max = balanceDue;
+        dateEl.value = today;
+        document.getElementById('rpRef').value = '';
+        document.getElementById('rpNotes').value = '';
+        document.getElementById('rpMethod').value = 'BankTransfer';
+        const submit = document.getElementById('rpSubmit');
+        // Replace handler each open so docId / balanceDue close over the
+        // right values (and we don't pile up listeners across opens).
+        submit.onclick = async () => {
+          const amount = parseFloat(amountEl.value || '');
+          const paymentDate = dateEl.value;
+          const paymentMethod = document.getElementById('rpMethod').value || 'BankTransfer';
+          const reference = (document.getElementById('rpRef').value || '').trim() || null;
+          const notes = (document.getElementById('rpNotes').value || '').trim() || null;
+          if (isNaN(amount) || amount <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
+          if (amount > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
+          if (!paymentDate) { Layout.toast('กรุณาระบุวันที่ชำระ', 'error'); return; }
+          const api = Layout.api(); if (!api) return;
+          submit.disabled = true; submit.textContent = 'กำลังบันทึก...';
+          try {
+            await api.createPayment({
+              documentId: docId,
+              paymentDate,
+              amount,
+              paymentMethod,
+              reference,
+              notes,
+            });
+            Layout.toast('บันทึกชำระเงินสำเร็จ — ระบบออกใบเสร็จและอัพเดทยอดคงค้างให้แล้ว', 'success');
+            wrap.classList.remove('active');
+            Layout.closeModal('detailModal');
+            await this.load();
+          } catch (e) {
+            Layout.toast(e.message, 'error');
+          } finally {
+            submit.disabled = false; submit.textContent = '✓ บันทึก';
+          }
+        };
+        wrap.classList.add('active');
+        setTimeout(() => amountEl.focus(), 50);
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
