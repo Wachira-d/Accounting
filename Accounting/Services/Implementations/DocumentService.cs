@@ -2084,7 +2084,7 @@ public class DocumentService : IDocumentService
             IsSupplier = request.IsSupplier,
             BuildingNumber = request.BuildingNumber ?? parsed?.BuildingNumber,
             BuildingName = request.BuildingName ?? parsed?.BuildingName,
-            Moo = request.Moo,
+            Moo = request.Moo ?? parsed?.Moo,
             StreetName = request.StreetName ?? parsed?.StreetName,
             SubDistrict = request.SubDistrict ?? parsed?.SubDistrict,
             District = request.District ?? parsed?.District,

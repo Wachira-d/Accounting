@@ -309,7 +309,8 @@ public record ParsedAddressResponse(
     string? SubDistrict,
     string? District,
     string? Province,
-    string? PostalCode);
+    string? PostalCode,
+    string? Moo = null);
 
 /// <summary>ค่าเริ่มต้นอัตโนมัติ ระบบวิเคราะห์จากข้อมูลผู้ติดต่อ</summary>
 public record ContactSmartDefaults(

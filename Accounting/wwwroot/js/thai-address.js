@@ -1,9 +1,12 @@
-// Thai address autocomplete widget — enhances a tambon/amphur/province/postal
-// input group with cascading datalist suggestions + reverse postal lookup.
+// Thai address autocomplete widget — enhances a tambon / amphur / province /
+// postal input group with cascading datalist suggestions, reverse postal
+// lookup, alias normalization, and a no-match inline warning.
 //
-// Backend already serves the data at /api/gov/address (provinces / districts /
-// subdistricts / postal). We cache responses in-memory so a typical form fills
-// in 3–5 fetches max regardless of how many times the user edits the fields.
+// Backend API already serves data at /api/gov/address (provinces, districts,
+// subdistricts, postal). We cache in-memory so a typical form fills in 3–5
+// fetches total regardless of how many times the user opens / closes the
+// modal. The widget is idempotent — calling enhance() on the same inputs is
+// a no-op (tracked via WeakSet).
 //
 // Usage:
 //   ThaiAddress.enhance({
@@ -13,8 +16,9 @@
 //     postalCode:  'fPostalCode',
 //   });
 //
-// The function is idempotent — safe to call every time a modal opens; the
-// widget tracks which inputs it has already wired.
+// Public extras (useful after a free-text paste-parse):
+//   ThaiAddress.refresh(ids)              — re-run cascade given current values
+//   ThaiAddress.normalize(text, kind)     — collapse aliases (e.g. "กทม" → "กรุงเทพมหานคร")
 
 const ThaiAddress = (() => {
   const BASE = '/api/gov/address';
@@ -25,6 +29,19 @@ const ThaiAddress = (() => {
     postal: {},             // postalCode   -> []
   };
   const wired = new WeakSet();
+
+  // Common province aliases. Most provinces resolve cleanly by Thai name; the
+  // capital is the one that arrives in five different forms depending on
+  // who's typing.
+  const PROVINCE_ALIASES = {
+    'กรุงเทพ':      'กรุงเทพมหานคร',
+    'กรุงเทพฯ':     'กรุงเทพมหานคร',
+    'กรุงเทพมหานคร': 'กรุงเทพมหานคร',
+    'กทม':         'กรุงเทพมหานคร',
+    'กทม.':        'กรุงเทพมหานคร',
+    'bkk':         'กรุงเทพมหานคร',
+    'bangkok':     'กรุงเทพมหานคร',
+  };
 
   async function _fetch(path) {
     const res = await fetch(BASE + path);
@@ -48,6 +65,19 @@ const ThaiAddress = (() => {
   async function getByPostal(code) {
     if (!cache.postal[code]) cache.postal[code] = await _fetch('/postal/' + code);
     return cache.postal[code];
+  }
+
+  // Normalize a province alias to its canonical name. Falls through unchanged
+  // when no alias matches — non-Bangkok provinces almost always have a single
+  // canonical form so the dictionary stays small.
+  function normalize(text, kind) {
+    if (!text) return text;
+    const trimmed = String(text).trim();
+    if (kind === 'province') {
+      const key = trimmed.toLowerCase();
+      return PROVINCE_ALIASES[trimmed] || PROVINCE_ALIASES[key] || trimmed;
+    }
+    return trimmed;
   }
 
   function _ensureList(input, listId) {
@@ -74,8 +104,25 @@ const ThaiAddress = (() => {
 
   function _findByThai(list, value) {
     if (!value) return null;
-    const v = value.trim();
+    const v = String(value).trim();
     return list.find(x => (x.nameTh || x.subDistrictNameTh) === v) || null;
+  }
+
+  // Inline status note attached just below the postal field — shown when a
+  // 5-digit code has zero matches (typo) or when normalization rewrote a
+  // province alias. Less intrusive than a toast.
+  function _setNote(input, message, level) {
+    const id = '_thAddrNote_' + input.id;
+    let el = document.getElementById(id);
+    if (!message) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.style.cssText = 'font-size:11px;margin-top:4px;line-height:1.4';
+      input.insertAdjacentElement('afterend', el);
+    }
+    el.style.color = level === 'warn' ? '#b45309' : level === 'ok' ? '#047857' : '#475569';
+    el.textContent = message;
   }
 
   function _showPostalPicker(code, results, els) {
@@ -86,12 +133,20 @@ const ThaiAddress = (() => {
       modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;z-index:99999;padding:16px';
       document.body.appendChild(modal);
     }
+    // If the user already typed a matching district, narrow the picker — they
+    // probably want one of those. Fall back to the full list otherwise so
+    // they still get to see every option.
+    const userDist = els.dist.value && els.dist.value.trim();
+    const narrowed = userDist
+      ? results.filter(r => r.districtNameTh === userDist)
+      : results;
+    const shown = narrowed.length ? narrowed : results;
     modal.innerHTML = `
       <div style="background:#fff;border-radius:14px;max-width:480px;width:100%;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,.25);font-family:inherit">
         <h4 style="margin:0 0 6px;font-size:16px;font-weight:700;color:#0f172a">เลือกที่อยู่สำหรับรหัสไปรษณีย์ ${code}</h4>
-        <p style="margin:0 0 14px;font-size:13px;color:#64748b">มี ${results.length} ตำบลใช้รหัสนี้ — เลือกตัวเลือกที่ตรง</p>
+        <p style="margin:0 0 14px;font-size:13px;color:#64748b">มี ${results.length} ตำบลใช้รหัสนี้${shown.length !== results.length ? ` — กรองตามอำเภอ "${userDist}" แล้ว` : ''} — เลือกตัวเลือกที่ตรง</p>
         <div style="max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
-          ${results.map((r, i) => `
+          ${shown.map((r, i) => `
             <button type="button" data-i="${i}" style="text-align:left;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:#0f172a">
               <strong>${r.subDistrictNameTh}</strong> · ${r.districtNameTh} · ${r.provinceNameTh}
             </button>`).join('')}
@@ -103,17 +158,63 @@ const ThaiAddress = (() => {
     modal.style.display = 'flex';
     modal.querySelectorAll('button[data-i]').forEach(btn => {
       btn.onclick = () => {
-        const r = results[parseInt(btn.dataset.i, 10)];
+        const r = shown[parseInt(btn.dataset.i, 10)];
         els.sub.value = r.subDistrictNameTh;
         els.dist.value = r.districtNameTh;
         els.prov.value = r.provinceNameTh;
-        // Pre-warm cascade caches so subsequent typing into province/district
-        // surfaces the right options without another fetch.
-        cache.districts[r.provinceCode] = cache.districts[r.provinceCode] || null;
         modal.style.display = 'none';
+        // Pre-load district list for this province + subdistrict list for this
+        // district so the user's next edit hits a warm cache and sees
+        // suggestions immediately.
+        getDistricts(r.provinceCode).then(() => getSubDistricts(r.districtCode)).catch(() => {});
       };
     });
     document.getElementById('thAddrPickerCancel').onclick = () => { modal.style.display = 'none'; };
+  }
+
+  // Update the district + subdistrict datalists to match the currently-typed
+  // province. Returns the resolved province object (or null if no match).
+  async function _refreshDistricts(prov, dist, sub) {
+    try {
+      const provs = await getProvinces();
+      const p = _findByThai(provs, prov.value);
+      if (!p) { _fillList('thAddrDistList', []); _fillList('thAddrSubList', []); return null; }
+      const dists = await getDistricts(p.code);
+      _fillList('thAddrDistList', dists.map(d => d.nameTh));
+      // If the typed district no longer belongs to this province, drop it +
+      // subdistrict + reset the subdistrict datalist. Without this users can
+      // end up with a Phuket province + Bangkok district saved.
+      if (dist.value && !_findByThai(dists, dist.value)) {
+        dist.value = '';
+        sub.value = '';
+        _fillList('thAddrSubList', []);
+      }
+      return { p, dists };
+    } catch { return null; }
+  }
+
+  async function _refreshSubs(prov, dist, sub) {
+    try {
+      const r = await _refreshDistricts(prov, dist, sub);
+      if (!r) return null;
+      const d = _findByThai(r.dists, dist.value);
+      if (!d) { _fillList('thAddrSubList', []); return null; }
+      const subs = await getSubDistricts(d.code);
+      _fillList('thAddrSubList', subs.map(s => s.nameTh));
+      // Same containment check at the subdistrict level.
+      if (sub.value && !_findByThai(subs, sub.value)) sub.value = '';
+      return { d, subs };
+    } catch { return null; }
+  }
+
+  // Public: re-run the cascade against current input values. Use after a
+  // free-text address paste-parse to warm datalists with the right options.
+  async function refresh(ids) {
+    const sub  = document.getElementById(ids.subDistrict);
+    const dist = document.getElementById(ids.district);
+    const prov = document.getElementById(ids.province);
+    if (!sub || !dist || !prov) return;
+    await _refreshSubs(prov, dist, sub);
   }
 
   function enhance(ids) {
@@ -132,78 +233,93 @@ const ThaiAddress = (() => {
     // Province list is small (~77) — load once and keep.
     getProvinces().then(provs => {
       _fillList('thAddrProvList', provs.map(p => p.nameTh));
+      // Warm the cascade against any pre-filled values (edit mode).
+      if (prov.value) _refreshSubs(prov, dist, sub).catch(() => {});
     }).catch(() => {});
 
-    // Province → districts. Run on `change` (datalist commit) and `blur`.
-    const refreshDistricts = async () => {
-      try {
-        const provs = await getProvinces();
-        const p = _findByThai(provs, prov.value);
-        if (!p) { _fillList('thAddrDistList', []); return null; }
-        const dists = await getDistricts(p.code);
-        _fillList('thAddrDistList', dists.map(d => d.nameTh));
-        return { p, dists };
-      } catch { return null; }
+    // Province handlers — normalize aliases on blur, refresh cascade on
+    // commit. We don't auto-clear district when province is wiped completely
+    // because the user might just be retyping; the cascade re-check on the
+    // next blur catches mismatches.
+    const onProvCommit = async () => {
+      const before = prov.value;
+      const after = normalize(before, 'province');
+      if (before !== after) {
+        prov.value = after;
+        _setNote(prov, `จังหวัด "${before}" ถูกปรับเป็น "${after}"`, 'ok');
+        setTimeout(() => _setNote(prov, '', ''), 2500);
+      } else {
+        _setNote(prov, '', '');
+      }
+      await _refreshSubs(prov, dist, sub);
     };
-    prov.addEventListener('change', refreshDistricts);
-    prov.addEventListener('blur', refreshDistricts);
+    prov.addEventListener('change', onProvCommit);
+    prov.addEventListener('blur', onProvCommit);
 
-    // District → subdistricts.
-    const refreshSubs = async () => {
-      try {
-        const provs = await getProvinces();
-        const p = _findByThai(provs, prov.value);
-        if (!p) return null;
-        const dists = await getDistricts(p.code);
-        const d = _findByThai(dists, dist.value);
-        if (!d) { _fillList('thAddrSubList', []); return null; }
-        const subs = await getSubDistricts(d.code);
-        _fillList('thAddrSubList', subs.map(s => s.nameTh));
-        return { d, subs };
-      } catch { return null; }
+    // District handlers.
+    const onDistCommit = async () => {
+      await _refreshSubs(prov, dist, sub);
     };
-    dist.addEventListener('change', refreshSubs);
-    dist.addEventListener('blur', refreshSubs);
+    dist.addEventListener('change', onDistCommit);
+    dist.addEventListener('blur', onDistCommit);
 
-    // Subdistrict commit → autofill postal (only if user hasn't typed one).
-    const onSubChange = async () => {
+    // Subdistrict handlers — autofill postal on commit, always (even if a
+    // postal is already there). Subdistrict is the most specific field; if
+    // the user just changed it, the previous postal almost certainly belongs
+    // to the old subdistrict.
+    const onSubCommit = async () => {
       try {
-        const r = await refreshSubs();
+        const r = await _refreshSubs(prov, dist, sub);
         if (!r) return;
         const s = _findByThai(r.subs, sub.value);
-        if (s && !zip.value) zip.value = s.postalCode;
+        if (s && s.postalCode && zip.value !== s.postalCode) {
+          zip.value = s.postalCode;
+          _setNote(zip, '', '');
+        }
       } catch {}
     };
-    sub.addEventListener('change', onSubChange);
-    sub.addEventListener('blur', onSubChange);
+    sub.addEventListener('change', onSubCommit);
+    sub.addEventListener('blur', onSubCommit);
 
-    // Reverse postal lookup: 5 digits → autofill all three when there's a
-    // single match, otherwise prompt the user to pick.
+    // Reverse postal lookup. Debounced so typing the code one digit at a time
+    // doesn't fire five requests.
     let zipTimer;
     zip.addEventListener('input', () => {
       const v = zip.value.replace(/\D/g, '').slice(0, 5);
       if (zip.value !== v) zip.value = v;
+      _setNote(zip, '', '');
       if (v.length !== 5) return;
       clearTimeout(zipTimer);
       zipTimer = setTimeout(async () => {
         try {
           const results = await getByPostal(v);
-          if (!results.length) return;
+          if (!results.length) {
+            _setNote(zip, `ไม่พบที่อยู่สำหรับรหัส ${v} — โปรดตรวจตัวเลขอีกครั้ง`, 'warn');
+            return;
+          }
           if (results.length === 1) {
             const r = results[0];
             if (!sub.value)  sub.value  = r.subDistrictNameTh;
             if (!dist.value) dist.value = r.districtNameTh;
             if (!prov.value) prov.value = r.provinceNameTh;
             // Prime cascading datalists so further typing has hints.
-            await refreshDistricts();
-            await refreshSubs();
+            await _refreshSubs(prov, dist, sub);
+            _setNote(zip, `เติม ${r.subDistrictNameTh} · ${r.districtNameTh} · ${r.provinceNameTh} อัตโนมัติ`, 'ok');
+            setTimeout(() => _setNote(zip, '', ''), 2500);
           } else {
             _showPostalPicker(v, results, { sub, dist, prov });
           }
-        } catch {}
+        } catch {
+          // Network blip — stay silent rather than nag, user can retry.
+        }
       }, 250);
+    });
+
+    // When the user clears the postal box explicitly, drop the inline note.
+    zip.addEventListener('blur', () => {
+      if (!zip.value) _setNote(zip, '', '');
     });
   }
 
-  return { enhance, getProvinces, getDistricts, getSubDistricts, getByPostal };
+  return { enhance, refresh, normalize, getProvinces, getDistricts, getSubDistricts, getByPostal };
 })();

@@ -22,6 +22,11 @@ public static class ThaiAddressParser
     private static readonly Regex BuildingNameRegex = new(
         @"(?:อาคาร|Building)\s+([^\s,]+(?:\s+[^\s,]+){0,3})",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // หมู่ที่ — matches "หมู่ 5", "หมู่ที่ 5", "ม.5", "ม. 5", and Thai-numeral
+    // variants like "หมู่ ๕". The captured group is the number itself.
+    private static readonly Regex MooRegex = new(
+        @"(?:หมู่ที่|หมู่|ม\.)\s*([0-9๐-๙]+)",
+        RegexOptions.Compiled);
 
     // Address keyword patterns — match Thai administrative-area markers
     private static readonly Regex SubDistrictRegex = new(
@@ -45,6 +50,7 @@ public static class ThaiAddressParser
         var text = address.Trim();
         string? buildingNumber = null, buildingName = null, street = null;
         string? subDistrict = null, district = null, province = null, postcode = null;
+        string? moo = null;
 
         var pcMatch = PostcodeRegex.Match(text);
         if (pcMatch.Success) postcode = pcMatch.Groups[1].Value;
@@ -57,6 +63,9 @@ public static class ThaiAddressParser
 
         var streetMatch = StreetRegex.Match(text);
         if (streetMatch.Success) street = streetMatch.Groups[1].Value.Trim().TrimEnd(',', ' ');
+
+        var mooMatch = MooRegex.Match(text);
+        if (mooMatch.Success) moo = NormalizeThaiDigits(mooMatch.Groups[1].Value);
 
         var subDistMatch = SubDistrictRegex.Match(text);
         if (subDistMatch.Success) subDistrict = CleanArea(subDistMatch.Groups[1].Value);
@@ -78,20 +87,36 @@ public static class ThaiAddressParser
 
         return new ParsedAddressResponse(
             buildingNumber, buildingName, street,
-            subDistrict, district, province, postcode);
+            subDistrict, district, province, postcode, moo);
     }
 
     private static string CleanArea(string raw) =>
         raw.Trim().TrimEnd('ฯ', ',', '.', ' ');
 
+    /// <summary>Map Thai numerals (๐-๙) to Arabic so the form receives "5"
+    /// not "๕" — keeps downstream e-Tax XML serializers happy.</summary>
+    private static string NormalizeThaiDigits(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return raw;
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (var c in raw)
+        {
+            if (c >= '๐' && c <= '๙') sb.Append((char)('0' + (c - '๐')));
+            else sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
     /// <summary>Compose a free-text Address line from structured fields (for display)</summary>
     public static string Compose(
         string? buildingNumber, string? buildingName, string? streetName,
-        string? subDistrict, string? district, string? province, string? postalCode)
+        string? subDistrict, string? district, string? province, string? postalCode,
+        string? moo = null)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(buildingNumber)) parts.Add(buildingNumber);
         if (!string.IsNullOrWhiteSpace(buildingName)) parts.Add($"อาคาร{buildingName}");
+        if (!string.IsNullOrWhiteSpace(moo)) parts.Add($"หมู่ {moo}");
         if (!string.IsNullOrWhiteSpace(streetName)) parts.Add($"ถ.{streetName}");
         if (!string.IsNullOrWhiteSpace(subDistrict))
         {

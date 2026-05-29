@@ -247,15 +247,30 @@
           // Default branch to 00000 (head office) for juristic
           if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
           if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
-          // Auto-parse the DBD address to extract building number + street into structured fields
+          // Auto-parse the DBD address to extract building number + moo +
+          // street into structured fields. DBD address sometimes hides Moo
+          // inside the free-text line so the parser is our best shot at
+          // surfacing it.
           const rawAddr = document.getElementById('fAddress').value;
           if (rawAddr) {
             const api = Layout.api();
-            if (api) api.parseAddress(rawAddr).then(j => {
+            if (api) api.parseAddress(rawAddr).then(async j => {
               const p = (j && j.data) || {};
               if (p.buildingNumber && !document.getElementById('fBuildingNumber').value) document.getElementById('fBuildingNumber').value = p.buildingNumber;
               if (p.buildingName && !document.getElementById('fBuildingName').value) document.getElementById('fBuildingName').value = p.buildingName;
+              if (p.moo && !document.getElementById('fMoo').value) document.getElementById('fMoo').value = p.moo;
               if (p.streetName && !document.getElementById('fStreetName').value) document.getElementById('fStreetName').value = p.streetName;
+              // Normalize the DBD province (often "กรุงเทพมหานคร" already, but
+              // sometimes "กทม") and refresh the cascading datalists so the
+              // user gets autocomplete on the fields DBD already filled.
+              if (typeof ThaiAddress !== 'undefined') {
+                const provEl = document.getElementById('fProvince');
+                if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+                await ThaiAddress.refresh({
+                  subDistrict: 'fSubDistrict', district: 'fDistrict',
+                  province: 'fProvince', postalCode: 'fPostalCode',
+                });
+              }
             }).catch(() => {});
           }
         };
@@ -353,12 +368,25 @@
           const p = j.data || {};
           if (p.buildingNumber) document.getElementById('fBuildingNumber').value = p.buildingNumber;
           if (p.buildingName) document.getElementById('fBuildingName').value = p.buildingName;
+          if (p.moo) document.getElementById('fMoo').value = p.moo;
           if (p.streetName) document.getElementById('fStreetName').value = p.streetName;
           if (p.subDistrict) document.getElementById('fSubDistrict').value = p.subDistrict;
           if (p.district) document.getElementById('fDistrict').value = p.district;
           if (p.province) document.getElementById('fProvince').value = p.province;
           if (p.postalCode) document.getElementById('fPostalCode').value = p.postalCode;
           document.getElementById('fAddressPaste').value = '';
+          // Warm the cascade datalists with the parsed values + run alias
+          // normalization (e.g. "กรุงเทพฯ" → "กรุงเทพมหานคร") so the form is
+          // ready for the user to tweak.
+          this._enhanceAddress();
+          if (typeof ThaiAddress !== 'undefined') {
+            const provEl = document.getElementById('fProvince');
+            if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+            await ThaiAddress.refresh({
+              subDistrict: 'fSubDistrict', district: 'fDistrict',
+              province: 'fProvince', postalCode: 'fPostalCode',
+            });
+          }
           Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
         } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
       },
