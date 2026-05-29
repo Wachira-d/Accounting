@@ -442,6 +442,8 @@
         </div>
         <div class="modal-footer" id="reviewFooter">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
+          <!-- 🤖 AI Tier-4 review: re-asks AI with full context (raw text + company + vendor history) and applies corrections + Thai compliance flags inline. -->
+          <button class="btn btn-outline" id="reviewAiBtn" onclick="Page.aiReviewScan()" style="background:#fef3c7;color:#92400e;border-color:#fde047" title="ส่งข้อมูลทั้งหมดให้ AI ตรวจสอบอีกครั้ง + ใส่ค่าให้ถูกต้อง + เลือกประเภทเอกสารที่จะสร้าง">🤖 AI ตรวจสอบ + เสนอเอกสาร</button>
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
           <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
@@ -2055,6 +2057,107 @@
         }
       },
 
+      // 🤖 AI Tier-4 review of the current scan. Runs in parallel:
+      //   1) Full-field review (corrections + Thai compliance flags)
+      //   2) Target-document-type conversion suggestion
+      // When AI returns, applies corrections to the form fields,
+      // surfaces flags + suggested actions, and pre-selects the
+      // recommended target doc type for "เปิดในฟอร์มเอกสาร".
+      // Safety: AI down → toast + keep the form as-is.
+      async aiReviewScan() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const scanId = this._reviewScan.id;
+        const btn = document.getElementById('reviewAiBtn');
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '🤖 กำลังถาม AI...';
+        try {
+          const [reviewRes, convRes] = await Promise.all([
+            API.post(`/api/companies/${cid}/ai/ocr/${scanId}/ai-review`).catch(e => ({ data: null, err: e })),
+            API.post(`/api/companies/${cid}/ai/ocr/${scanId}/conversion-suggestions`).catch(e => ({ data: null, err: e })),
+          ]);
+          const review = reviewRes && reviewRes.data ? reviewRes.data : null;
+          const conv = convRes && convRes.data ? convRes.data : null;
+          if (!review && !conv) {
+            Layout.toast('AI ไม่ตอบ — ใช้ข้อมูลเดิมต่อ', 'warning');
+            return;
+          }
+          // Apply corrections: parse review.structured (JSON string of
+          // the full AI response) — corrections field carries the field-
+          // level overrides. Apply them to the visible form inputs.
+          let corrections = null;
+          if (review && review.structured) {
+            try {
+              const parsed = JSON.parse(review.structured);
+              corrections = parsed.corrections || null;
+              this._lastAiReview = parsed;
+            } catch (e) { /* tolerate malformed */ }
+          }
+          if (corrections) this._applyAiCorrections(corrections);
+          // Show flags + suggested target type as a yellow tip inside
+          // the review modal so the operator sees AI's verdict before
+          // clicking "สร้างเอกสาร".
+          this._renderAiVerdict(review, conv);
+          Layout.toast('🤖 AI ตรวจสอบเสร็จ — ตรวจรายการก่อนสร้างเอกสาร');
+        } catch (err) {
+          Layout.toast('AI failed: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      },
+
+      _applyAiCorrections(c) {
+        // Apply each correction to the corresponding form field if it exists.
+        const set = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && val != null && String(val).trim() !== '') {
+            el.value = val;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        };
+        set('rDocNumber', c.document_number);
+        set('rDate', c.document_date);
+        set('rVendor', c.vendor_name);
+        set('rVendorTaxId', c.vendor_tax_id);
+        set('rBuyerName', c.buyer_name);
+        set('rBuyerTaxId', c.buyer_tax_id);
+        set('rSubTotal', c.sub_total);
+        set('rVatAmount', c.vat_amount);
+        set('rWhtAmount', c.wht_amount);
+        set('rTotalAmount', c.total_amount);
+      },
+
+      _renderAiVerdict(review, conv) {
+        let panel = document.getElementById('aiVerdictPanel');
+        if (!panel) {
+          panel = document.createElement('div');
+          panel.id = 'aiVerdictPanel';
+          panel.style.cssText = 'margin-top:10px;padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:13px;line-height:1.55';
+          document.getElementById('reviewBody').appendChild(panel);
+        }
+        const flags = [...(review?.complianceFlags || []), ...(conv?.complianceFlags || [])];
+        const actions = [...(review?.suggestedActions || []), ...(conv?.suggestedActions || [])];
+        const risks = [...(review?.risks || []), ...(conv?.risks || [])];
+        let targets = [];
+        if (conv && conv.structured) {
+          try { targets = (JSON.parse(conv.structured).targets) || []; } catch (e) { }
+        }
+        panel.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px">
+            <strong style="color:#9a3412">🤖 AI ตรวจสอบ</strong>
+            <button onclick="document.getElementById('aiVerdictPanel').remove()" style="background:none;border:none;color:#94a3b8;cursor:pointer">×</button>
+          </div>
+          ${review?.reasoning ? `<div style="color:#7c2d12;margin-bottom:6px"><b>สรุป:</b> ${Layout.esc(review.reasoning)}</div>` : ''}
+          ${targets.length ? `<div style="margin-bottom:6px"><b>แนะนำให้สร้าง:</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            ${targets.map(t => `<button class="btn btn-sm btn-outline" onclick="Page.openInDocumentForm('${Layout.esc(t.target_type)}')" title="${Layout.esc(t.rationale || '')}">${Layout.esc(t.target_type)}</button>`).join('')}
+          </div></div>` : ''}
+          ${flags.length ? `<div style="color:#7c3aed;margin-bottom:6px"><b>กฎภาษีไทย:</b> ${flags.map(f => Layout.esc(f)).join(' · ')}</div>` : ''}
+          ${actions.length ? `<div style="color:#0f766e;margin-bottom:6px"><b>แนะนำ:</b><ul style="margin:4px 0 0 18px;padding:0">${actions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul></div>` : ''}
+          ${risks.length ? `<div style="color:#dc2626"><b>ความเสี่ยง:</b> ${risks.map(r => Layout.esc(r)).join(' · ')}</div>` : ''}`;
+      },
+
       async saveCorrection() {
         if (!this._reviewScan) return;
         const api = Layout.api();
@@ -2131,6 +2234,69 @@
        * so the NEXT receipt from that vendor matches the same wording
        * instantly without re-prompting.
        */
+      // 🤖 Ask AI for stock decisions on every line: CreateNew vs
+      // UpdateExisting vs MatchUncertain + category + semantic equiv-
+      // alence note. Lazy — fires once per scan + caches in
+      // this._lastAiStockDecision so re-opening the modal doesn't
+      // re-bill. User overrides anything they disagree with; the
+      // override gets posted as feedback.
+      async aiStockDecisions() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const scanId = this._reviewScan.id;
+        if (this._lastAiStockDecision && this._lastAiStockDecision.scanId === scanId) {
+          this._applyAiStockDecisions(this._lastAiStockDecision.payload);
+          return;
+        }
+        const btn = document.getElementById('aiStockBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '🤖 กำลังถาม AI...'; }
+        try {
+          const res = await API.post(`/api/companies/${cid}/ai/ocr/${scanId}/stock-decisions`);
+          if (res && res.data && res.data.structured) {
+            const payload = JSON.parse(res.data.structured);
+            this._lastAiStockDecision = { scanId, payload };
+            this._applyAiStockDecisions(payload);
+            Layout.toast('🤖 AI ตัดสินใจให้แล้ว — กรุณาตรวจรายการก่อนยืนยัน');
+          } else {
+            Layout.toast('AI ไม่ตอบ — ใช้การจับคู่เดิม', 'warning');
+          }
+        } catch (e) {
+          Layout.toast('AI failed: ' + e.message, 'warning');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = '🤖 ให้ AI ตัดสินใจให้'; }
+        }
+      },
+
+      _applyAiStockDecisions(payload) {
+        const lines = payload?.lines || [];
+        lines.forEach(ln => {
+          // Each line has line_index — find the matching row in the
+          // modal and update its category dropdown / matched-product
+          // select / equivalence note based on AI's decision.
+          const row = document.querySelector(`#stockImportBody [data-line-index="${ln.line_index}"]`);
+          if (!row) return;
+          const catSel = row.querySelector('[data-f="category"]');
+          if (catSel && ln.category) catSel.value = ln.category;
+          const prodSel = row.querySelector('[data-f="matchedProductId"]');
+          if (prodSel && ln.matched_product_id) {
+            const opt = prodSel.querySelector(`option[value="${ln.matched_product_id}"]`);
+            if (opt) prodSel.value = ln.matched_product_id;
+          }
+          // Surface equivalence note inline so user sees WHY the AI
+          // thinks two differently-named items are the same.
+          if (ln.equivalence_note) {
+            const noteEl = row.querySelector('[data-ai-note]') || (() => {
+              const div = document.createElement('div');
+              div.setAttribute('data-ai-note', '1');
+              div.style.cssText = 'font-size:11px;color:#7c2d12;background:#fff7ed;padding:4px 8px;border-radius:4px;margin-top:4px';
+              row.appendChild(div);
+              return div;
+            })();
+            noteEl.textContent = '🤖 ' + ln.equivalence_note;
+          }
+        });
+      },
+
       async openStockImport() {
         const scan = this._reviewScan;
         if (!scan) return;
@@ -2144,6 +2310,7 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:auto;color:var(--gray-700)">
             <input type="checkbox" id="stockImportLearn" checked> เรียนรู้ชื่อสินค้าตามผู้ขายนี้
           </label>
+          <button class="btn btn-outline" id="aiStockBtn" onclick="Page.aiStockDecisions()" style="background:#fef3c7;color:#92400e;border-color:#fde047" title="ส่งทุกบรรทัด + product catalog ให้ AI ตัดสินใจ Create/Update/Match + Inventory/Supply/FixedAsset/Service พร้อมจับคู่ของที่ชื่อต่างแต่เป็นตัวเดียวกัน">🤖 ให้ AI ตัดสินใจให้</button>
           <span style="font-size:11px;color:var(--gray-500);font-style:italic">เลือกปลายทาง (📦 / 🧻 / 🏢) ในแต่ละแถว — ระบบเดาให้แล้ว</span>
           <button class="btn btn-secondary" onclick="Layout.closeModal('stockImportModal')">ยกเลิก</button>
           <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้า</button>`;
@@ -2303,7 +2470,7 @@
         }
 
         return `
-        <tr data-line-idx="${idx}" data-will-create="${willCreate ? '1' : '0'}" data-dest="${defaultDest}" style="border-bottom:1px solid var(--gray-200)">
+        <tr data-line-idx="${idx}" data-line-index="${idx}" data-will-create="${willCreate ? '1' : '0'}" data-dest="${defaultDest}" style="border-bottom:1px solid var(--gray-200)">
           <td style="padding:8px 6px;vertical-align:top">
             <div style="font-weight:500;color:var(--gray-900)">${Layout.esc(line.description || '-')}</div>
             <div style="font-size:11px;color:var(--gray-500);margin-top:2px">
