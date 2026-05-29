@@ -74,12 +74,17 @@
                   <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
                   <td>${AdminLayout.date(u.createdAt)}</td>
                   <td>
-                    <div class="admin-flex">
+                    <div class="admin-flex" style="flex-wrap:wrap;gap:4px">
                       <select class="admin-select" style="font-size:12px;padding:4px 6px" onchange="changeUserStatus('${u.id}',this.value)">
                         <option value="Active" ${u.status==='Active'?'selected':''}>Active</option>
                         <option value="Inactive" ${u.status==='Inactive'?'selected':''}>Inactive</option>
                         <option value="Suspended" ${u.status==='Suspended'?'selected':''}>Suspended</option>
                       </select>
+                      <button class="admin-btn admin-btn-sm admin-btn-primary"
+                              style="background:#0ea5e9;border-color:#0ea5e9"
+                              onclick="openLicense('${u.id}','${(u.fullName||'').replace(/'/g,'&apos;')}','${u.email}',${u.accountPlan ? JSON.stringify(u.accountPlan).replace(/"/g,'&quot;') : 'null'})">
+                        🎫 จัดการ License
+                      </button>
                       <button class="admin-btn admin-btn-sm ${u.isSystemAdmin ? 'admin-btn-danger' : 'admin-btn-outline'}"
                         onclick="toggleAdmin('${u.id}', ${!u.isSystemAdmin}, '${u.email}')">
                         ${u.isSystemAdmin ? 'ยกเลิก Admin' : 'ตั้งเป็น Admin'}
@@ -131,6 +136,177 @@
       } catch (err) {
         AdminLayout.toast(err.message, 'error');
       }
+    }
+
+    // ===== License management modal =====
+    // Opens an inline modal showing the user's Account Plan (or "no plan")
+    // with controls to extend, change status, adjust limits, switch plan,
+    // and create a new plan. Mirrors the actions on the dedicated
+    // /admin/account-subscriptions.html page so admin doesn't have to leave
+    // the user list.
+    let _planTemplates = null;
+    async function _ensurePlanTemplates() {
+      if (_planTemplates) return _planTemplates;
+      try {
+        const r = await AdminAPI.get('/plan-templates');
+        _planTemplates = (r.data || []).filter(p => p.isActive);
+      } catch { _planTemplates = []; }
+      return _planTemplates;
+    }
+    async function openLicense(userId, fullName, email, apStr) {
+      // Decode the JSON-stringified accountPlan (may be null when user has no
+      // plan yet). Defensive: any parse error → treat as no-plan.
+      let ap = null;
+      try { ap = (apStr && apStr !== 'null') ? JSON.parse(apStr.replace(/&quot;/g,'"')) : null; } catch { ap = null; }
+      const tpls = await _ensurePlanTemplates();
+
+      const ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px';
+      ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+
+      const fmtBytes = (b) => { if(!b)return '0';const u=['B','KB','MB','GB'];let i=0,v=b;while(v>=1024&&i<3){v/=1024;i++;}return v.toFixed(v<10?1:0)+' '+u[i]; };
+      const tplOptions = tpls.map(t => `<option value="${t.id}">${t.name} — ${t.maxCompanies} companies × ${t.maxUsers} users</option>`).join('');
+
+      const hasPlan = !!ap;
+      const summary = hasPlan ? `
+        <div style="background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:14px;font-weight:700;color:#0c4a6e">🎫 ${ap.planName} <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;margin-left:6px">${ap.status||'Active'}</span></div>
+          <div style="font-size:12px;color:#475569;margin-top:4px">
+            บริษัทใต้ License: <strong>${ap.companiesUsed||0}/${ap.maxCompanies||'?'}</strong> ·
+            หมดอายุ <strong>${ap.endDate ? new Date(ap.endDate).toLocaleDateString('th-TH') : '-'}</strong>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:14px">
+          <button class="admin-btn admin-btn-sm admin-btn-primary" onclick="luExtend('${ap.planId}','${ap.endDate}')">⏰ ขยายอายุ</button>
+          <button class="admin-btn admin-btn-sm admin-btn-warning" onclick="luStatus('${ap.planId}','${ap.status||'Active'}')">🔄 เปลี่ยนสถานะ</button>
+          <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="luLimits('${ap.planId}')">⚙️ ปรับ Limits</button>
+          <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="luSwitchPlan('${ap.planId}')">🔁 เปลี่ยน Plan template</button>
+        </div>
+        <details style="background:#fafafa;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+          <summary style="cursor:pointer;font-weight:600;color:#475569">ดูบริษัทที่ผูก / Aggregate usage</summary>
+          <div id="luDetailArea" style="margin-top:8px;color:#94a3b8">กำลังโหลด...</div>
+        </details>
+        <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-top:14px">
+          <button class="admin-btn admin-btn-sm admin-btn-danger" onclick="luCancel('${ap.planId}')">🚫 ยกเลิก License</button>
+          <span style="font-size:11px;color:#991b1b;margin-left:10px">บริษัทใต้ License จะกลับไปใช้ Subscription ของตัวเอง · Cancelled = slot ว่าง user สมัครใหม่ได้</span>
+        </div>` : `
+        <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px 16px;margin-bottom:14px;font-size:13px;color:#78350f">
+          ⚠️ ผู้ใช้นี้ยังไม่มี License (Account Plan) · บริษัทที่ user เป็นเจ้าของใช้ subscription ของตัวเองแยก
+        </div>
+        <div class="admin-form-group">
+          <label class="admin-label">เลือก Plan Template</label>
+          <select id="luNewPlan">${tplOptions}</select>
+        </div>
+        <div class="admin-form-group">
+          <label class="admin-label">MaxCompanies override (ว่าง = ใช้ตาม template)</label>
+          <input type="number" min="1" id="luNewMax" class="admin-input" placeholder="เช่น 5 สำหรับ enterprise deal">
+        </div>
+        <div class="admin-form-group">
+          <label class="admin-label">วันสิ้นสุด custom (ว่าง = +1 เดือนจากวันนี้)</label>
+          <input type="date" id="luNewEnd" class="admin-input">
+        </div>
+        <button class="admin-btn admin-btn-primary" onclick="luCreate('${userId}')">+ สร้าง License ให้ผู้ใช้</button>`;
+
+      ov.innerHTML = `
+        <div style="background:#fff;border-radius:12px;max-width:680px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+          <div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0;font-size:16px">🎫 จัดการ License ของ ${fullName} <span style="color:#94a3b8;font-size:12px;font-weight:400">${email}</span></h3>
+            <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background:transparent;border:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button>
+          </div>
+          <div style="padding:16px 20px;overflow-y:auto">${summary}</div>
+        </div>`;
+      document.body.appendChild(ov);
+      window._licenseOverlay = ov;
+      window._licenseUserId = userId;
+
+      // Lazy-load companies-under-plan + aggregate when expanded.
+      if (hasPlan) {
+        setTimeout(async () => {
+          try {
+            const r = await AdminAPI.get('/account-subscriptions/' + ap.planId);
+            const d = r.data; const u = d.usage || {};
+            const cos = (d.attachedCompanies||[]).map(c => `<div style="padding:4px 0;border-bottom:1px solid #f1f5f9">📌 ${c.companyName} · ${c.status} · 📄${c.currentMonthDocuments||0} 📒${c.currentMonthJournalEntries||0} 📸${c.currentMonthOcrPages||0}</div>`).join('') || '<div style="color:#94a3b8">ไม่มีบริษัทผูก</div>';
+            document.getElementById('luDetailArea').innerHTML = `
+              <div style="margin-bottom:8px;color:#475569">
+                <strong>Aggregate (รวมทุกบริษัท):</strong>
+                📄 ${u.documents||0}/${u.maxDocuments||0} ·
+                📒 ${u.journalEntries||0}/${u.maxJournalEntries||0} ·
+                📸 ${u.ocrPages||0}/${u.maxOcrPages||0} ·
+                💾 ${fmtBytes(u.storageBytes||0)}/${fmtBytes(u.maxStorageBytes||0)}
+              </div>
+              ${cos}`;
+          } catch(e) {
+            document.getElementById('luDetailArea').innerHTML = '<div style="color:#dc2626">⚠ ' + e.message + '</div>';
+          }
+        }, 0);
+      }
+    }
+
+    function _luRefresh() { if (window._licenseOverlay) window._licenseOverlay.remove(); loadUsers(); }
+
+    async function luExtend(apId, currentEnd) {
+      const cur = new Date(currentEnd); cur.setDate(cur.getDate()+30);
+      const v = prompt('⏰ ขยายอายุ License — วันสิ้นสุดใหม่ (YYYY-MM-DD)', cur.toISOString().slice(0,10));
+      if (!v) return;
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/extend', { endDate: v + 'T00:00:00Z' });
+        alert('✓ ขยายอายุสำเร็จ'); _luRefresh();
+      } catch(e) { alert(e.message); }
+    }
+    async function luStatus(apId, current) {
+      const next = prompt('🔄 สถานะใหม่ (Trial / Active / PastDue / Suspended / Cancelled / Expired)', current);
+      if (!next) return;
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/status', { status: next, reason: '' });
+        alert('✓ เปลี่ยนสถานะสำเร็จ'); _luRefresh();
+      } catch(e) { alert(e.message); }
+    }
+    async function luLimits(apId) {
+      try {
+        const r = await AdminAPI.get('/account-subscriptions/' + apId);
+        const d = r.data;
+        const mc = parseInt(prompt('MaxCompanies', d.maxCompanies));
+        if (isNaN(mc)) return;
+        const mu = parseInt(prompt('MaxUsersPerCompany', d.maxUsersPerCompany));
+        if (isNaN(mu)) return;
+        const md = parseInt(prompt('MaxDocumentsPerMonth (aggregate)', d.maxDocumentsPerMonth));
+        if (isNaN(md)) return;
+        const mj = parseInt(prompt('MaxJournalEntriesPerMonth (aggregate)', d.maxJournalEntriesPerMonth));
+        if (isNaN(mj)) return;
+        const mo = parseInt(prompt('MaxOcrPagesPerMonth (aggregate)', d.maxOcrPagesPerMonth));
+        if (isNaN(mo)) return;
+        await AdminAPI.put('/account-subscriptions/' + apId + '/limits', {
+          maxCompanies: mc, maxUsersPerCompany: mu,
+          maxDocumentsPerMonth: md, maxJournalEntriesPerMonth: mj,
+          maxOcrPagesPerMonth: mo,
+        });
+        alert('✓ บันทึก limits ใหม่แล้ว'); _luRefresh();
+      } catch(e) { alert(e.message); }
+    }
+    async function luSwitchPlan(apId) {
+      // Future: backend endpoint to swap PlanTemplateId. For now point admin
+      // to cancel + create new pattern via the alert.
+      alert('การเปลี่ยน Plan template ทำได้ 2 วิธี:\n1. ปรับ Limits ทีละค่า (ปุ่ม ⚙️ ปรับ Limits)\n2. ยกเลิก License เดิม แล้วสร้างใหม่จาก template ที่ต้องการ');
+    }
+    async function luCancel(apId) {
+      if (!confirm('🚫 ยกเลิก License นี้?\n\nบริษัทใต้ License จะกลับไปใช้ Subscription ของตัวเอง (อาจเป็น FreeTrial) · slot ว่าง user สมัครใหม่ได้')) return;
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/status', { status: 'Cancelled', reason: 'Admin cancelled' });
+        alert('✓ ยกเลิก License แล้ว'); _luRefresh();
+      } catch(e) { alert(e.message); }
+    }
+    async function luCreate(userId) {
+      const planId = document.getElementById('luNewPlan').value;
+      if (!planId) { alert('เลือก Plan'); return; }
+      const max = document.getElementById('luNewMax').value;
+      const end = document.getElementById('luNewEnd').value;
+      const body = { ownerUserId: userId, planTemplateId: planId };
+      if (max) body.overrideMaxCompanies = parseInt(max);
+      if (end) body.customEndDate = end + 'T00:00:00Z';
+      try {
+        await AdminAPI.post('/account-subscriptions', body);
+        alert('✓ สร้าง License สำเร็จ'); _luRefresh();
+      } catch(e) { alert(e.message); }
     }
 
     loadUsers();
