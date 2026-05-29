@@ -3234,6 +3234,15 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
 
+            // ExpenseClaim — no-receipt claim (§65 ทวิ) auto-generates a
+            // Document(CertificateInLieu) on Approve. New columns added
+            // 2026 — idempotent ADD COLUMN IF NOT EXISTS.
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "NoReceipt" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "NoReceiptReason" varchar(500) NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "WitnessName" varchar(200) NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "WitnessPosition" varchar(200) NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "CertificateInLieuDocumentId" uuid NULL;""",
+
             // AnomalyDetection — lazy AI explanation cache.
             """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiVerdict" varchar(50) NULL;""",
             """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiConfidence" decimal(5,4) NULL;""",

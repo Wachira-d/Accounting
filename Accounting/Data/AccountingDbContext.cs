@@ -1068,6 +1068,16 @@ public class AccountingDbContext : DbContext
             e.HasOne(ec => ec.SubmittedByUser).WithMany().HasForeignKey(ec => ec.SubmittedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.PaymentVoucherDocument).WithMany().HasForeignKey(ec => ec.PaymentVoucherDocumentId).OnDelete(DeleteBehavior.SetNull);
+            // Auto-generated CertificateInLieu (§65 ทวิ) — SetNull on the
+            // claim row when the document is deleted; the certificate
+            // entity owns its own GL posting, the claim is just an HR
+            // claim record that references it.
+            e.HasOne(ec => ec.CertificateInLieuDocument).WithMany()
+                .HasForeignKey(ec => ec.CertificateInLieuDocumentId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.Property(ec => ec.NoReceiptReason).HasMaxLength(500);
+            e.Property(ec => ec.WitnessName).HasMaxLength(200);
+            e.Property(ec => ec.WitnessPosition).HasMaxLength(200);
             e.HasQueryFilter(ec => !ec.IsDeleted);
         });
 
