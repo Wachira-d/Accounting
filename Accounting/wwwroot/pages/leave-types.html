@@ -20,6 +20,7 @@
     <div class="tabs">
       <div class="tab active" onclick="Page.switchTab('types',this)">ประเภทการลา</div>
       <div class="tab" onclick="Page.switchTab('holidays',this)">วันหยุดประจำปี</div>
+      <div class="tab" onclick="Page.switchTab('carry',this)">ตัดยอด / ยกยอดสิ้นปี</div>
     </div>
 
     <!-- Leave types tab -->
@@ -38,6 +39,29 @@
           <tbody id="typesBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Year-end carry-forward tab -->
+    <div id="tab-carry" style="display:none">
+      <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#1e40af;line-height:1.6">
+        💡 <b>การยกยอด (carry-forward) ตั้งค่าต่อประเภทในแท็บ "ประเภทการลา"</b><br>
+        — ประเภทที่ตั้ง <b>ยกยอด=✅</b> + <b>ยกยอดสูงสุด=N วัน</b> → วันที่ไม่ได้ใช้ในปีก่อน (≤ N) จะถูกบวกเข้าปีใหม่<br>
+        — ประเภทที่ <b>ยกยอด=❌</b> → วันที่ไม่ใช้จะถูก <b>ตัดทิ้ง</b> (เริ่มนับใหม่ทุกปี)<br>
+        แนะนำ run <i>Dry-run</i> ก่อน เพื่อตรวจตัวเลขก่อนกด Commit จริง
+      </div>
+      <div style="display:flex;gap:10px;align-items:end;margin-bottom:14px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">จากปี (FromYear)</label>
+          <input type="number" id="cFromYear" class="form-input" style="width:120px">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">ไปปี (ToYear)</label>
+          <input type="number" id="cToYear" class="form-input" style="width:120px">
+        </div>
+        <button class="btn btn-secondary" onclick="Page.runCarry(true)">🔍 Dry-run (ดูตัวอย่าง)</button>
+        <button class="btn btn-primary" onclick="Page.runCarry(false)">✅ Commit ยกยอดจริง</button>
+      </div>
+      <div id="carryResult" style="font-size:13px;color:#64748b">ระบุปีแล้วกด Dry-run</div>
     </div>
 
     <!-- Holidays tab -->
@@ -158,8 +182,57 @@
         el.classList.add('active');
         document.getElementById('tab-types').style.display = t === 'types' ? '' : 'none';
         document.getElementById('tab-holidays').style.display = t === 'holidays' ? '' : 'none';
+        document.getElementById('tab-carry').style.display = t === 'carry' ? '' : 'none';
         this.currentTab = t;
         if (t === 'holidays') this.loadHolidays();
+        if (t === 'carry') {
+          const y = new Date().getFullYear();
+          document.getElementById('cFromYear').value = y - 1;
+          document.getElementById('cToYear').value = y;
+        }
+      },
+
+      // ── Year-end carry-forward run ──
+      async runCarry(dryRun) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const body = {
+          fromYear: parseInt(document.getElementById('cFromYear').value),
+          toYear: parseInt(document.getElementById('cToYear').value),
+          dryRun,
+        };
+        if (!body.fromYear || !body.toYear) { Layout.toast('ระบุปีให้ครบ', 'error'); return; }
+        if (!dryRun && !confirm('ยืนยันยกยอดจริง? — ข้อมูลปี ' + body.toYear + ' จะถูกอัปเดต')) return;
+        const out = document.getElementById('carryResult');
+        out.textContent = 'กำลังประมวลผล...';
+        try {
+          const r = await API.post(`/api/companies/${cid}/leaves/admin/carry-forward`, body);
+          const d = r?.data;
+          if (!d || !d.preview?.length) { out.innerHTML = '<i>ไม่มี balance ที่ต้องยกยอด (ทุกประเภทอาจตั้งยกยอด=❌)</i>'; return; }
+          out.innerHTML = `
+            <div style="margin-bottom:10px;font-weight:600;color:${dryRun ? '#d97706' : '#16a34a'}">
+              ${dryRun ? '🔍 Dry-run' : '✅ Committed'} · ${d.preview.length} รายการ · ${body.fromYear} → ${body.toYear}
+            </div>
+            <div class="table-container">
+              <table class="table">
+                <thead><tr>
+                  <th>พนักงาน</th><th>ประเภท</th>
+                  <th class="text-right">โควต้า + คงเหลือก่อน</th>
+                  <th class="text-right">ใช้ไป</th><th class="text-right">เหลือ</th>
+                  <th class="text-right">Cap</th><th class="text-right">ยกยอด</th>
+                </tr></thead>
+                <tbody>${d.preview.map(p => `<tr>
+                  <td>${Layout.esc(p.employeeName)}</td>
+                  <td>${Layout.esc(p.leaveTypeName)}</td>
+                  <td class="text-right">${p.quota}</td>
+                  <td class="text-right">${p.used}</td>
+                  <td class="text-right">${p.unused}</td>
+                  <td class="text-right">${p.cap ?? '∞'}</td>
+                  <td class="text-right" style="font-weight:600;color:#16a34a">+${p.rolledForward}</td>
+                </tr>`).join('')}</tbody>
+              </table>
+            </div>`;
+          if (!dryRun) Layout.toast('ยกยอดสำเร็จ');
+        } catch (e) { out.innerHTML = '<span style="color:#dc2626">' + Layout.esc(e.message) + '</span>'; }
       },
 
       // ── Leave types CRUD ──

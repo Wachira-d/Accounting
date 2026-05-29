@@ -277,6 +277,14 @@ public class LeaveController : ControllerBase
                         && l.StartDate.Year == year && !l.IsDeleted
                         && l.Status != "Rejected" && l.Status != "Cancelled")
             .ToListAsync(ct);
+        // EmployeeLeaveBalance overlays — carry-forward + HR adjustment
+        // per type for this year. Keyed by LeaveTypeCode so the LINQ
+        // below can simply index in.
+        var balances = await _db.EmployeeLeaveBalances.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.EmployeeId == empId
+                        && b.Year == year && !b.IsDeleted)
+            .ToListAsync(ct);
+        var balanceByType = balances.ToDictionary(b => b.LeaveTypeCode, b => b);
 
         return new
         {
@@ -285,19 +293,194 @@ public class LeaveController : ControllerBase
             types = types.Select(t =>
             {
                 var used = allLeaves.Where(l => l.LeaveType == t.Code).Sum(l => l.TotalDays);
-                var remaining = Math.Max(0m, t.AnnualQuota - used);
+                var bal = balanceByType.GetValueOrDefault(t.Code);
+                var carryForward = bal?.CarriedForwardDays ?? 0m;
+                var adjust = bal?.AdjustmentDays ?? 0m;
+                var effectiveQuota = t.AnnualQuota + carryForward + adjust;
+                var remaining = Math.Max(0m, effectiveQuota - used);
                 return new
                 {
                     code = t.Code, name = t.NameTh, color = t.Color, icon = t.Icon,
-                    quota = t.AnnualQuota, used,
-                    remaining,
+                    quota = t.AnnualQuota,
+                    carryForward, adjustment = adjust,
+                    effectiveQuota,
+                    used, remaining,
                     isPaid = t.IsPaid,
                     allowHalfDay = t.AllowHalfDay,
                     requiresAttachment = t.RequiresAttachment,
                     advanceNoticeDays = t.AdvanceNoticeDays,
+                    carryForwardEnabled = t.CarryForward,
+                    carryForwardCap = t.CarryForwardCap,
                 };
             }).ToList(),
         };
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  HR admin: year-end carry-forward roll-over
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record CarryForwardRunRequest(int FromYear, int ToYear, bool DryRun = true);
+
+    /// <summary>
+    /// Year-end roll: for every active employee × every LeaveType
+    /// with CarryForward=true, compute (Quota - Used in FromYear),
+    /// clamp by CarryForwardCap, write/refresh EmployeeLeaveBalance
+    /// row for ToYear with Phase="YearEnd". Types where
+    /// CarryForward=false don't roll — unused days are lost (= ตัดเลย),
+    /// HR sets this per type in /pages/leave-types.html. DryRun=true
+    /// returns the preview without persisting so HR can validate
+    /// before committing.
+    /// </summary>
+    [HttpPost("admin/carry-forward")]
+    public async Task<ActionResult<ApiResponse<object>>> RunCarryForward(
+        Guid companyId, [FromBody] CarryForwardRunRequest req, CancellationToken ct)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.HrAdmin))
+            return Forbid();
+        if (req.ToYear <= req.FromYear)
+            return BadRequest(new ApiResponse<object>(false, null, "ToYear ต้องมากกว่า FromYear"));
+
+        var types = await _db.LeaveTypes.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && t.IsActive && !t.IsDeleted && t.CarryForward)
+            .ToListAsync(ct);
+        if (types.Count == 0)
+            return Ok(new ApiResponse<object>(true, new { rolled = 0, message = "ไม่มี leave type ที่ตั้ง CarryForward = true" }));
+
+        var employees = await _db.Employees.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted
+                        && (e.TerminationDate == null || e.TerminationDate.Value.Year >= req.ToYear))
+            .Select(e => new { e.Id, FullName = e.FirstNameTh + " " + e.LastNameTh })
+            .ToListAsync(ct);
+
+        // Sum used per (employeeId, typeCode) for FromYear.
+        var leaves = await _db.EmployeeLeaves.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.StartDate.Year == req.FromYear
+                        && !l.IsDeleted
+                        && l.Status != "Rejected" && l.Status != "Cancelled")
+            .Select(l => new { l.EmployeeId, l.LeaveType, l.TotalDays })
+            .ToListAsync(ct);
+        var usedLookup = leaves
+            .GroupBy(l => (l.EmployeeId, l.LeaveType))
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.TotalDays));
+
+        // Existing FromYear balance rows = previous carry-forward +
+        // HR adjustments. Their carry+adjust adds to AnnualQuota when
+        // computing remaining for FromYear (matches ComputeBalanceAsync).
+        var priorBalances = await _db.EmployeeLeaveBalances.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.Year == req.FromYear && !b.IsDeleted)
+            .Select(b => new { b.EmployeeId, b.LeaveTypeCode, b.CarriedForwardDays, b.AdjustmentDays })
+            .ToListAsync(ct);
+        var priorByKey = priorBalances.ToDictionary(b => (b.EmployeeId, b.LeaveTypeCode));
+
+        var preview = new List<object>();
+        var toUpsert = new List<EmployeeLeaveBalance>();
+        foreach (var emp in employees)
+        foreach (var t in types)
+        {
+            usedLookup.TryGetValue((emp.Id, t.Code), out var used);
+            priorByKey.TryGetValue((emp.Id, t.Code), out var prior);
+            var quota = t.AnnualQuota + (prior?.CarriedForwardDays ?? 0m) + (prior?.AdjustmentDays ?? 0m);
+            var unused = Math.Max(0m, quota - used);
+            // Clamp by cap when set; null = unlimited.
+            var rolled = t.CarryForwardCap.HasValue
+                ? Math.Min(unused, t.CarryForwardCap.Value)
+                : unused;
+            rolled = Math.Round(rolled, 2, MidpointRounding.AwayFromZero);
+            if (rolled <= 0) continue;
+            preview.Add(new
+            {
+                employeeId = emp.Id, employeeName = emp.FullName,
+                leaveTypeCode = t.Code, leaveTypeName = t.NameTh,
+                fromYear = req.FromYear, toYear = req.ToYear,
+                quota, used, unused, cap = t.CarryForwardCap, rolledForward = rolled,
+            });
+            toUpsert.Add(new EmployeeLeaveBalance
+            {
+                CompanyId = companyId, EmployeeId = emp.Id, Year = req.ToYear,
+                LeaveTypeCode = t.Code, CarriedForwardDays = rolled,
+                Phase = "YearEnd", CreatedBy = User.Identity?.Name,
+                Notes = $"Auto-rolled from {req.FromYear}",
+            });
+        }
+
+        if (req.DryRun)
+            return Ok(new ApiResponse<object>(true, new
+            {
+                dryRun = true, fromYear = req.FromYear, toYear = req.ToYear,
+                rolled = preview.Count, preview
+            }, "ตัวอย่าง (ยังไม่บันทึก)"));
+
+        // Persist — upsert per (companyId, employeeId, year, typeCode).
+        // We update CarriedForwardDays only; AdjustmentDays + Notes left
+        // alone if HR has already adjusted manually for the target year.
+        foreach (var entry in toUpsert)
+        {
+            var existing = await _db.EmployeeLeaveBalances
+                .FirstOrDefaultAsync(b => b.CompanyId == companyId
+                    && b.EmployeeId == entry.EmployeeId
+                    && b.Year == entry.Year
+                    && b.LeaveTypeCode == entry.LeaveTypeCode && !b.IsDeleted, ct);
+            if (existing == null)
+            {
+                _db.EmployeeLeaveBalances.Add(entry);
+            }
+            else
+            {
+                existing.CarriedForwardDays = entry.CarriedForwardDays;
+                existing.Phase = "YearEnd";
+                existing.UpdatedAt = DateTime.UtcNow;
+                existing.UpdatedBy = User.Identity?.Name;
+                if (string.IsNullOrEmpty(existing.Notes)) existing.Notes = entry.Notes;
+            }
+        }
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            dryRun = false, fromYear = req.FromYear, toYear = req.ToYear,
+            rolled = preview.Count, preview
+        }, $"ดำเนินการ year-end สำหรับ {preview.Count} รายการ"));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  HR admin: per-employee balance adjustment (one-off)
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record AdjustBalanceRequest(
+        Guid EmployeeId, int Year, string LeaveTypeCode,
+        decimal AdjustmentDays, string? Notes);
+
+    [HttpPost("admin/balance/adjust")]
+    public async Task<ActionResult<ApiResponse<object>>> AdjustBalance(
+        Guid companyId, [FromBody] AdjustBalanceRequest req, CancellationToken ct)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.HrAdmin))
+            return Forbid();
+        var row = await _db.EmployeeLeaveBalances
+            .FirstOrDefaultAsync(b => b.CompanyId == companyId
+                && b.EmployeeId == req.EmployeeId
+                && b.Year == req.Year
+                && b.LeaveTypeCode == req.LeaveTypeCode && !b.IsDeleted, ct);
+        if (row == null)
+        {
+            row = new EmployeeLeaveBalance
+            {
+                CompanyId = companyId, EmployeeId = req.EmployeeId,
+                Year = req.Year, LeaveTypeCode = req.LeaveTypeCode,
+                Phase = "Manual",
+            };
+            _db.EmployeeLeaveBalances.Add(row);
+        }
+        row.AdjustmentDays = req.AdjustmentDays;
+        row.Notes = req.Notes;
+        row.Phase = "Manual";
+        row.UpdatedBy = User.Identity?.Name;
+        row.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(new ApiResponse<object>(true, null, "ปรับ balance สำเร็จ"));
     }
 
     /// <summary>Seed Thai-labor-law defaults — applied on first read of

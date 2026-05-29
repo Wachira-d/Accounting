@@ -3296,6 +3296,30 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_PublicHolidays_Company_Date" ON "PublicHolidays" ("CompanyId", "Date") WHERE "IsDeleted" = false;""",
 
+            // EmployeeLeaveBalance — carry-forward + manual HR adjustment.
+            """
+            CREATE TABLE IF NOT EXISTS "EmployeeLeaveBalances" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "Year" integer NOT NULL,
+                "LeaveTypeCode" varchar(50) NOT NULL,
+                "CarriedForwardDays" decimal(10,2) NOT NULL DEFAULT 0,
+                "AdjustmentDays" decimal(10,2) NOT NULL DEFAULT 0,
+                "Notes" text NULL,
+                "Phase" varchar(20) NOT NULL DEFAULT 'Manual',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_EmployeeLeaveBalances" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ELB_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id"),
+                CONSTRAINT "FK_ELB_Employees" FOREIGN KEY ("EmployeeId") REFERENCES "Employees"("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ELB_Company_Emp_Year_Type" ON "EmployeeLeaveBalances" ("CompanyId", "EmployeeId", "Year", "LeaveTypeCode") WHERE "IsDeleted" = false;""",
+
             // Contact — per-contact GL account overrides. Default AR =
             // "113" prefix in FindAccountAsync; specific contacts can pin
             // their own (e.g. ลูกหนี้พนักงาน vs ลูกหนี้การค้า).

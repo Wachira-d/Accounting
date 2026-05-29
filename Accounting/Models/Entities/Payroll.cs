@@ -249,6 +249,54 @@ public class LeaveType : TenantEntity
 }
 
 /// <summary>
+/// Per-employee, per-year, per-type balance adjustment. Holds the
+/// carry-forward day-count from the previous year (after applying
+/// LeaveType.CarryForwardCap) plus any manual HR adjustment (e.g. add
+/// 3 days as a perk, deduct 1 day for a forgotten clock-in).
+///
+/// Effective quota for an employee × year × type =
+///     LeaveType.AnnualQuota
+///   + EmployeeLeaveBalance.CarriedForwardDays
+///   + EmployeeLeaveBalance.AdjustmentDays
+///
+/// Rows are written by the year-end carry-forward job
+/// (Phase=YearEnd) or by the HR adjustment endpoint (Phase=Manual).
+/// Unique on (CompanyId, EmployeeId, Year, LeaveTypeCode) so each
+/// employee has exactly one balance row per type per year — the job
+/// upserts; HR adjustments overwrite the AdjustmentDays portion.
+/// </summary>
+public class EmployeeLeaveBalance : TenantEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+
+    /// <summary>Calendar year this row applies to (the YEAR FOR WHICH
+    /// the quota is being adjusted, not the year the unused days came
+    /// from). E.g. Year=2026 row carries forward 2025's unused days.</summary>
+    public int Year { get; set; }
+
+    /// <summary>References LeaveType.Code — stable string key.</summary>
+    public string LeaveTypeCode { get; set; } = "";
+
+    /// <summary>Days rolled forward from Year-1. Already clamped by
+    /// LeaveType.CarryForwardCap when the year-end job ran. Can be 0
+    /// when the type doesn't carry forward (e.g. Sick).</summary>
+    public decimal CarriedForwardDays { get; set; } = 0m;
+
+    /// <summary>Free-form HR adjustment (positive = add, negative =
+    /// deduct). Independent of carry-forward; HR uses this for one-off
+    /// changes (perk days, disciplinary deduction, prorated hire).</summary>
+    public decimal AdjustmentDays { get; set; } = 0m;
+
+    public string? Notes { get; set; }
+
+    /// <summary>"YearEnd" (written by the auto-roll job at Jan 1) or
+    /// "Manual" (HR-adjustment endpoint). Lets the audit see who
+    /// produced the entry.</summary>
+    public string Phase { get; set; } = "Manual";
+}
+
+/// <summary>
 /// Public-holiday calendar — company-configurable list. Used by the
 /// leave engine to skip non-working days when computing TotalDays + by
 /// payroll for §29 holiday-pay multipliers.
