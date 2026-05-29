@@ -356,6 +356,13 @@ public class AuthService : IAuthService
         if (string.IsNullOrWhiteSpace(email))
             throw new InvalidOperationException("ไม่สามารถดึงอีเมลจาก " + provider + " ได้ กรุณาอนุญาตการเข้าถึงอีเมล");
 
+        // The provider validators return email as string? but the guard
+        // above proves it's non-null here. Flow analysis doesn't propagate
+        // through tuple destructure so the compiler still flags subsequent
+        // dereferences (Email = email, email.Split(...)). Pin it as a
+        // local string to silence CS8601 / CS8602 without an inline `!`.
+        string emailNonNull = email!;
+
         // Find existing user by provider+id or by email
         var user = await _db.Users.FirstOrDefaultAsync(u =>
             u.AuthProvider == provider && u.AuthProviderId == providerUserId);
@@ -363,7 +370,7 @@ public class AuthService : IAuthService
         if (user == null)
         {
             // Check if email already exists (local account) — case-insensitive.
-            var ssoEmailNorm = (email ?? string.Empty).Trim().ToLowerInvariant();
+            var ssoEmailNorm = emailNonNull.Trim().ToLowerInvariant();
             user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == ssoEmailNorm);
 
             if (user != null)
@@ -378,9 +385,9 @@ public class AuthService : IAuthService
                 // Create new user via SSO (no password needed)
                 user = new User
                 {
-                    Email = email,
+                    Email = emailNonNull,
                     PasswordHash = "", // SSO users don't have password
-                    FullName = fullName ?? email.Split('@')[0],
+                    FullName = fullName ?? emailNonNull.Split('@')[0],
                     AuthProvider = provider,
                     AuthProviderId = providerUserId,
                     EmailVerified = true
