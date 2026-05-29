@@ -117,12 +117,12 @@
                   <option value="ReceiptVoucher">ใบสำคัญรับ</option>
                 </optgroup>
                 <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
-                  <option value="PurchaseRequisition">ใบขอซื้อ</option>
-                  <option value="PurchaseOrder">ใบสั่งซื้อ</option>
-                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
-                  <option value="Expense">ค่าใช้จ่าย</option>
-                  <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
-                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                  <option value="PurchaseRequisition">ใบขอซื้อ (PR)</option>
+                  <option value="PurchaseOrder">ใบสั่งซื้อ (PO)</option>
+                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
+                  <option value="Expense">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
+                  <option value="PaymentVoucher">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
                 </optgroup>
               </select>
             </div>
@@ -380,11 +380,11 @@
                 <option value="ReceiptVoucher">ใบสำคัญรับ</option>
               </optgroup>
               <optgroup label="📤 ฝั่งรายจ่าย">
-                <option value="PurchaseOrder">ใบสั่งซื้อ</option>
-                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
-                <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
-                <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
-                <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                <option value="PurchaseOrder">ใบสั่งซื้อ (PO)</option>
+                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
+                <option value="Expense">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
+                <option value="PaymentVoucher">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
               </optgroup>
             </select>
           </div>
@@ -1146,11 +1146,22 @@
         if (linesTbl) linesTbl.dataset.docSide = isExpense ? 'expense' : 'revenue';
         const sel = document.getElementById('fDocType');
         sel.disabled = false;
-        // Show only relevant optgroup
+        // BUGFIX: setting display:none on <optgroup> hides the GROUP LABEL
+        // but the <option> elements inside still render in the dropdown on
+        // Safari + some Chrome versions, so the user opening "+ เอกสารรายจ่าย"
+        // saw "ใบแจ้งหนี้", "ใบเสร็จ" etc. mixed in with the expense types.
+        // Set `hidden` on every option individually — that one is honored
+        // by every browser since HTML 5.1.
         const revGroup = document.getElementById('fDocTypeRevenue');
         const expGroup = document.getElementById('fDocTypeExpense');
-        if (revGroup) revGroup.style.display = isExpense ? 'none' : '';
-        if (expGroup) expGroup.style.display = isExpense ? '' : 'none';
+        if (revGroup) {
+          revGroup.style.display = isExpense ? 'none' : '';
+          revGroup.querySelectorAll('option').forEach(o => { o.hidden = isExpense; o.disabled = isExpense; });
+        }
+        if (expGroup) {
+          expGroup.style.display = isExpense ? '' : 'none';
+          expGroup.querySelectorAll('option').forEach(o => { o.hidden = !isExpense; o.disabled = !isExpense; });
+        }
         // Pre-select first option of the correct side
         sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
