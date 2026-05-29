@@ -588,6 +588,25 @@
           try { await this.openEdit(editDocId); }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
         }
+
+        // Deep-link from purchases.html (now a dashboard) — opens the
+        // create modal pre-set to the right side + document type. We do
+        // this AFTER the contacts/projects/payment-channels loads above
+        // because openCreate touches those.
+        const openCreate = params.get('openCreate');
+        if (openCreate === 'expense' || openCreate === 'revenue') {
+          this.openCreate(openCreate);
+          // Pre-select the requested document type if provided.
+          const wantType = params.get('type');
+          if (wantType) {
+            const sel = document.getElementById('fDocType');
+            const opt = sel?.querySelector(`option[value="${wantType}"]`);
+            if (opt && !opt.hidden) {
+              sel.value = wantType;
+              this.onDocTypeChange();
+            }
+          }
+        }
       },
 
       async _consumeScanHandoff() {
