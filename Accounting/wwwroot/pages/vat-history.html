@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ภ.พ.30 ย้อนหลัง - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .vh-shell { max-width:1000px; margin:0 auto; padding:24px 16px 60px; }
+    .vh-info { background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; padding:12px 14px; margin-bottom:16px; color:#1e3a8a; font-size:13px; line-height:1.6; }
+    table.vh-table { width:100%; border-collapse:collapse; font-size:13px; }
+    table.vh-table th, table.vh-table td { padding:8px 10px; border-bottom:1px solid var(--gray-100); }
+    table.vh-table th { background:#f8fafc; text-align:left; font-weight:600; color:#475569; }
+    table.vh-table td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .vh-paste { background:#fef3c7; border:1px solid #fbbf24; border-radius:8px; padding:12px 14px; margin-bottom:16px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="vh-shell">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">📋 ภ.พ.30 ย้อนหลัง</h2>
+          <p class="page-subtitle">บันทึก ภ.พ.30 ที่เคยยื่นไปแล้วในระบบเดิม — เพื่อให้รายงาน VAT ปัจจุบันแสดง YTD ครบถ้วน</p>
+        </div>
+        <button class="btn btn-primary" onclick="Page.openAdd()">+ เพิ่มเดือน</button>
+      </div>
+
+      <div class="vh-info">
+        💡 ใช้หน้านี้เมื่อบริษัทเริ่มใช้ระบบกลางปี — บันทึกยอด ภ.พ.30 ของเดือนก่อนๆ ที่ยื่นไปแล้ว ระบบจะนำมาบวกกับยอดในระบบเพื่อสร้างรายงาน YTD<br>
+        🔢 NetPayable = OutputVat − InputVat (ค่าบวก = ต้องนำส่ง / ค่าลบ = เครดิตเหลือ)
+      </div>
+
+      <div class="vh-paste">
+        <strong style="font-size:14px">📋 วาง Excel ทีเดียวหลายเดือน</strong>
+        <p style="font-size:12px;color:#78350f;margin:4px 0 8px">วางตารางตามรูปแบบนี้ (tab-separated หรือคั่นด้วย ,): <code>ปี เดือน ยอดขาย OutputVat ยอดซื้อ InputVat</code></p>
+        <textarea id="pasteArea" placeholder="2025	1	100000	7000	60000	4200&#10;2025	2	120000	8400	65000	4550&#10;2025	3	95000	6650	58000	4060" style="width:100%;min-height:80px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #cbd5e1;border-radius:6px"></textarea>
+        <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="Page.applyPaste()">📥 นำเข้าจากที่วาง</button>
+      </div>
+
+      <div class="toolbar">
+        <select class="filter-select" id="yearFilter" onchange="Page.load()">
+          <option value="">ทุกปี</option>
+        </select>
+      </div>
+
+      <div class="table-container">
+        <table class="vh-table">
+          <thead><tr>
+            <th>ปี</th><th>เดือน</th>
+            <th style="text-align:right">ยอดขาย</th><th style="text-align:right">VAT ขาย</th>
+            <th style="text-align:right">ยอดซื้อ</th><th style="text-align:right">VAT ซื้อ</th>
+            <th style="text-align:right">สุทธิ</th>
+            <th>สถานะ</th><th>เลขที่ยื่น</th><th>จัดการ</th>
+          </tr></thead>
+          <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:540px">
+        <div class="modal-header"><h3 class="modal-title">ภ.พ.30 (เดือน)</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ปี *</label><input type="number" class="form-input" id="fYear"></div>
+            <div class="form-group"><label class="form-label">เดือน *</label>
+              <select class="form-select" id="fMonth">
+                ${[1,2,3,4,5,6,7,8,9,10,11,12].map(m => '<option value="'+m+'">'+m+'</option>').join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ยอดขาย (ก่อน VAT)</label><input type="number" class="form-input" id="fSales" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label">VAT ขาย (Output)</label><input type="number" class="form-input" id="fOutput" step="0.01" value="0"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ยอดซื้อ (ก่อน VAT)</label><input type="number" class="form-input" id="fPurchase" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label">VAT ซื้อ (Input)</label><input type="number" class="form-input" id="fInput" step="0.01" value="0"></div>
+          </div>
+          <div class="form-group"><label class="form-label">เลขที่ยื่น (อ้างอิงสรรพากร)</label><input type="text" class="form-input" id="fRef" placeholder="เช่น VAT-25-01-00012"></div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('vat-history')) return;
+        Layout.setTitle('ภ.พ.30 ย้อนหลัง');
+        // Populate year filter — current year and 4 back.
+        const sel = document.getElementById('yearFilter');
+        const cur = new Date().getFullYear();
+        for (let y = cur; y >= cur - 5; y--) {
+          const opt = document.createElement('option');
+          opt.value = y; opt.textContent = y;
+          sel.appendChild(opt);
+        }
+        // Populate month dropdown after DOM render (template literal trick).
+        const fM = document.getElementById('fMonth');
+        fM.innerHTML = '';
+        for (let m = 1; m <= 12; m++) {
+          const o = document.createElement('option'); o.value = m; o.textContent = m;
+          fM.appendChild(o);
+        }
+        await this.load();
+      },
+      async load() {
+        const year = document.getElementById('yearFilter').value;
+        const q = year ? `?year=${year}` : '';
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/vat-history${q}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          this.render(j.data);
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      render(rows) {
+        const tbody = document.getElementById('tableBody');
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ยังไม่มีบันทึก — เพิ่มเดือนแรกได้ที่ปุ่ม +</td></tr>'; return; }
+        tbody.innerHTML = rows.map(r => `<tr>
+          <td>${r.year}</td><td>${r.month}</td>
+          <td class="num">${Layout.money(r.salesTotal)}</td>
+          <td class="num">${Layout.money(r.outputVat)}</td>
+          <td class="num">${Layout.money(r.purchaseTotal)}</td>
+          <td class="num">${Layout.money(r.inputVat)}</td>
+          <td class="num" style="font-weight:700;color:${r.netPayable>=0?'#dc2626':'#16a34a'}">${Layout.money(r.netPayable)}</td>
+          <td>${r.isFiled ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ ยื่นแล้ว</span>' : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">ยังไม่ยื่น</span>'}</td>
+          <td style="font-size:12px;color:#64748b">${Layout.esc(r.filingReference || '-')}</td>
+          <td>
+            <button class="btn btn-sm btn-ghost" onclick="Page.edit('${r.id}',${r.year},${r.month},${r.salesTotal},${r.outputVat},${r.purchaseTotal},${r.inputVat},'${(r.filingReference||'').replace(/'/g,'&apos;')}','${(r.notes||'').replace(/'/g,'&apos;').replace(/\n/g,' ')}')">แก้</button>
+            <button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.del('${r.id}',${r.year},${r.month})">ลบ</button>
+          </td>
+        </tr>`).join('');
+      },
+      openAdd() {
+        document.getElementById('fYear').value = new Date().getFullYear();
+        document.getElementById('fMonth').value = '1';
+        ['fSales','fOutput','fPurchase','fInput'].forEach(id => document.getElementById(id).value = '0');
+        document.getElementById('fRef').value = '';
+        document.getElementById('fNotes').value = '';
+        Layout.openModal('formModal');
+      },
+      edit(id, y, m, sales, out_, purchase, in_, ref, notes) {
+        document.getElementById('fYear').value = y;
+        document.getElementById('fMonth').value = m;
+        document.getElementById('fSales').value = sales;
+        document.getElementById('fOutput').value = out_;
+        document.getElementById('fPurchase').value = purchase;
+        document.getElementById('fInput').value = in_;
+        document.getElementById('fRef').value = ref;
+        document.getElementById('fNotes').value = notes;
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const body = {
+          year: parseInt(document.getElementById('fYear').value),
+          month: parseInt(document.getElementById('fMonth').value),
+          salesTotal: parseFloat(document.getElementById('fSales').value) || 0,
+          outputVat: parseFloat(document.getElementById('fOutput').value) || 0,
+          purchaseTotal: parseFloat(document.getElementById('fPurchase').value) || 0,
+          inputVat: parseFloat(document.getElementById('fInput').value) || 0,
+          isFiled: true,
+          filingReference: document.getElementById('fRef').value || null,
+          notes: document.getElementById('fNotes').value || null
+        };
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/vat-history`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.closeModal('formModal'); Layout.toast(j.message || 'บันทึกสำเร็จ');
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async del(id, y, m) {
+        if (!confirm(`ลบ ภ.พ.30 ของเดือน ${m}/${y}?`)) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/vat-history/${id}`, {
+            method: 'DELETE', headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          if (!r.ok) throw new Error('ลบไม่สำเร็จ');
+          Layout.toast('ลบแล้ว'); await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async applyPaste() {
+        const text = document.getElementById('pasteArea').value.trim();
+        if (!text) { Layout.toast('วางข้อมูลก่อน','warning'); return; }
+        // Parse — split per line, split each line by tab or comma. Expected 6 cols:
+        // year, month, salesTotal, outputVat, purchaseTotal, inputVat.
+        const rows = [];
+        for (const line of text.split(/\r?\n/)) {
+          const cells = line.split(/[\t,]/).map(c => c.trim());
+          if (cells.length < 6) continue;
+          const r = {
+            year: parseInt(cells[0]), month: parseInt(cells[1]),
+            salesTotal: parseFloat(cells[2]) || 0,
+            outputVat: parseFloat(cells[3]) || 0,
+            purchaseTotal: parseFloat(cells[4]) || 0,
+            inputVat: parseFloat(cells[5]) || 0,
+            isFiled: true
+          };
+          if (!isNaN(r.year) && !isNaN(r.month)) rows.push(r);
+        }
+        if (!rows.length) { Layout.toast('วิเคราะห์ไม่ได้ — เช็คฟอร์แมต','warning'); return; }
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/vat-history/bulk`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('✓ ' + j.message);
+          document.getElementById('pasteArea').value = '';
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      }
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

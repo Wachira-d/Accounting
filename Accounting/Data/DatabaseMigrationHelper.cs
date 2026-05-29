@@ -2109,6 +2109,34 @@ public static class DatabaseMigrationHelper
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SensitivityAccessRules_Company_Kind_Role" ON "SensitivityAccessRules" ("CompanyId", "Kind", "Role") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_Sensitivity" ON "Documents" ("CompanyId", "Sensitivity") WHERE "Sensitivity" > 0 AND "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_JournalEntries_Sensitivity" ON "JournalEntries" ("CompanyId", "Sensitivity") WHERE "Sensitivity" > 0 AND "IsDeleted" = false;""",
+
+            // VAT filing history (ภ.พ.30 ย้อนหลังที่ยื่นในระบบเดิม).
+            // One row per (Company, Year, Month) keeps it simple — upsert semantics.
+            """
+            CREATE TABLE IF NOT EXISTS "VatFilingHistories" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "Year" integer NOT NULL,
+                "Month" integer NOT NULL,
+                "SalesTotal" numeric(18,2) NOT NULL DEFAULT 0,
+                "OutputVat" numeric(18,2) NOT NULL DEFAULT 0,
+                "PurchaseTotal" numeric(18,2) NOT NULL DEFAULT 0,
+                "InputVat" numeric(18,2) NOT NULL DEFAULT 0,
+                "NetPayable" numeric(18,2) NOT NULL DEFAULT 0,
+                "IsFiled" boolean NOT NULL DEFAULT true,
+                "FiledAt" timestamp NULL,
+                "FilingReference" varchar(100) NULL,
+                "Notes" text NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_VatFilingHistories" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_VatFilingHistories_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_VatFilingHistories_Company_Year_Month" ON "VatFilingHistories" ("CompanyId", "Year", "Month") WHERE "IsDeleted" = false;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).

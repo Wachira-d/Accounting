@@ -14,8 +14,12 @@
       <div class="flex gap-2">
         <button class="btn btn-secondary" onclick="Page.showReport()">รายงาน</button>
         <button class="btn btn-secondary" onclick="Page.openImport()">นำเข้า CSV</button>
-        <button class="btn btn-secondary" onclick="Page.runDepreciation()">คำนวณค่าเสื่อม</button>
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มสินทรัพย์</button>
+        <button class="btn btn-secondary" onclick="Page.runDepreciation()"
+                data-tour-step="2"
+                data-tour-text="ขั้นที่ 2 — สิ้นเดือนกดคำนวณค่าเสื่อม ระบบสร้าง JE Dr ค่าเสื่อม / Cr ค่าเสื่อมสะสม ให้อัตโนมัติทุกตัว">คำนวณค่าเสื่อม</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มสินทรัพย์ ใส่ราคา / อายุการใช้งาน / วันได้มา → ระบบคิดค่าเสื่อมรายเดือนให้ตามวิธีเส้นตรง">+ เพิ่มสินทรัพย์</button>
       </div>
     </div>
     <div class="toolbar">
@@ -566,6 +570,7 @@
       }
     };
     Page.init();
+    Layout.enableTour('fixed-assets');
   </script>
 </body>
 </html>

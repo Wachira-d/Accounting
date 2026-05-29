@@ -17,6 +17,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CompanyRole> CompanyRoles => Set<CompanyRole>();
     public DbSet<CompanyRolePermission> CompanyRolePermissions => Set<CompanyRolePermission>();
     public DbSet<SensitivityAccessRule> SensitivityAccessRules => Set<SensitivityAccessRule>();
+    public DbSet<VatFilingHistory> VatFilingHistories => Set<VatFilingHistory>();
 
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
